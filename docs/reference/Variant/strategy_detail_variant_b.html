@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Strategy Detail Variant B</title>
+  <style>
+    :root{
+      --bg:#f6f7fb;
+      --card:#ffffff;
+      --text:#111827;
+      --sub:#6b7280;
+      --line:#e5e7eb;
+      --blue:#2563eb;
+      --blue-soft:#eff6ff;
+      --green:#16a34a;
+      --green-soft:#ecfdf5;
+      --red:#dc2626;
+      --red-soft:#fef2f2;
+      --gray:#f9fafb;
+      --shadow:0 8px 24px rgba(17,24,39,.06);
+      --radius:20px;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,Pretendard,Apple SD Gothic Neo,sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{max-width:1320px;margin:0 auto;padding:24px 18px 40px}
+    h1,h2,h3,p{margin:0}
+    .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px}
+    .title p{margin-top:8px;color:var(--sub);font-size:14px}
+    .actions{display:flex;gap:10px;flex-wrap:wrap}
+    .btn{padding:12px 16px;border-radius:14px;border:1px solid var(--line);background:#fff;font-size:14px;font-weight:700}
+    .btn.primary{background:var(--blue);color:#fff;border-color:var(--blue)}
+    .btn.danger{background:var(--red-soft);color:var(--red);border-color:#fecaca}
+    .hero{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px}
+    .k{font-size:13px;color:var(--sub)}
+    .v{font-size:28px;font-weight:800;letter-spacing:-.02em;margin-top:8px}
+    .d{font-size:12px;color:var(--sub);margin-top:8px}
+    .layout{display:grid;grid-template-columns:1.1fr .9fr;gap:16px}
+    .table-wrap table{width:100%;border-collapse:collapse}
+    .table-wrap th,.table-wrap td{padding:12px 8px;border-bottom:1px solid var(--line);font-size:14px;text-align:left}
+    .table-wrap th{color:var(--sub);font-weight:600}
+    .table-wrap tr:last-child td{border-bottom:none}
+    .status-pill{display:inline-flex;padding:7px 10px;border-radius:999px;font-size:12px;font-weight:700;background:var(--blue-soft);color:var(--blue)}
+    .log-list{display:grid;gap:10px}
+    .log-item{padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:#fff}
+    .log-main{font-size:14px}
+    .log-sub{font-size:12px;color:var(--sub);margin-top:4px}
+    .stack{display:grid;gap:16px}
+    .mini-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .mini{padding:14px;border:1px solid var(--line);border-radius:16px;background:var(--gray)}
+    .mini .n{font-size:13px;color:var(--sub)}
+    .mini .num{font-size:24px;font-weight:800;margin-top:8px}
+    @media (max-width:1180px){
+      .hero{grid-template-columns:repeat(2,1fr)}
+      .layout{grid-template-columns:1fr}
+    }
+    @media (max-width:680px){
+      .wrap{padding:18px 14px 32px}
+      .topbar{flex-direction:column}
+      .hero{grid-template-columns:1fr}
+      .mini-grid{grid-template-columns:1fr}
+      .table-wrap th:nth-child(4), .table-wrap td:nth-child(4){display:none}
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="title">
+        <h1>전략 상세 / 운용 현황</h1>
+        <p>종목 상태와 이벤트 로그를 더 밀도 있게 보여주는 트레이딩 집중형 화면입니다.</p>
+      </div>
+      <div class="actions">
+        <button class="btn">전략 수정</button>
+        <button class="btn primary">일시정지</button>
+        <button class="btn danger">전체 청산</button>
+      </div>
+    </div>
+
+    <div class="hero">
+      <div class="card">
+        <div class="k">전략명</div>
+        <div class="v" style="font-size:24px">오프닝 돌파</div>
+        <div class="d">현재 상태 <span class="status-pill">진행중</span></div>
+      </div>
+      <div class="card">
+        <div class="k">오늘 수익률</div>
+        <div class="v">+0.62%</div>
+        <div class="d">목표 +0.50% 초과</div>
+      </div>
+      <div class="card">
+        <div class="k">보유 종목 수</div>
+        <div class="v">6</div>
+        <div class="d">당일 청산 기준</div>
+      </div>
+      <div class="card">
+        <div class="k">이벤트 수</div>
+        <div class="v">14</div>
+        <div class="d">오늘 누적 로그</div>
+      </div>
+    </div>
+
+    <div class="layout">
+      <div class="stack">
+        <div class="card table-wrap">
+          <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:10px;margin-bottom:12px">
+            <div>
+              <h2 style="font-size:18px">보유 종목 상세</h2>
+              <p style="margin-top:4px;color:#6b7280;font-size:13px">현재 전략에서 실제 운용 중인 종목 리스트입니다.</p>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>종목명</th>
+                <th>수익률</th>
+                <th>상태</th>
+                <th>비중</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>삼성전자</td><td style="color:#16a34a">+1.18%</td><td>보유중</td><td>8.4%</td></tr>
+              <tr><td>현대차</td><td style="color:#dc2626">-0.21%</td><td>보유중</td><td>4.6%</td></tr>
+              <tr><td>NAVER</td><td style="color:#16a34a">+0.63%</td><td>부분익절</td><td>5.3%</td></tr>
+              <tr><td>POSCO홀딩스</td><td style="color:#16a34a">+0.41%</td><td>보유중</td><td>3.7%</td></tr>
+              <tr><td>LG전자</td><td style="color:#dc2626">-0.14%</td><td>보유중</td><td>2.9%</td></tr>
+              <tr><td>기아</td><td style="color:#16a34a">+0.22%</td><td>보유중</td><td>2.4%</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <h2 style="font-size:18px">최근 이벤트 로그</h2>
+          <p style="margin-top:4px;color:#6b7280;font-size:13px">주문 및 경고를 빠르게 추적합니다.</p>
+          <div class="log-list" style="margin-top:14px;">
+            <div class="log-item"><div class="log-main">삼성전자 2차 분할매수 체결</div><div class="log-sub">15주 · 평균단가 71,220원 · 09:11:02</div></div>
+            <div class="log-item"><div class="log-main">NAVER 부분익절 실행</div><div class="log-sub">분할매도 · 09:08:27</div></div>
+            <div class="log-item"><div class="log-main">현대차 손절 기준 근접</div><div class="log-sub">현재 -0.21% / 손절 -0.30% · 09:04:15</div></div>
+            <div class="log-item"><div class="log-main">POSCO홀딩스 신규 진입</div><div class="log-sub">오프닝 돌파 조건 충족 · 09:01:33</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stack">
+        <div class="card">
+          <h2 style="font-size:18px">오늘 결과 요약</h2>
+          <div class="mini-grid" style="margin-top:14px;">
+            <div class="mini"><div class="n">진행중</div><div class="num">4</div></div>
+            <div class="mini"><div class="n">목표달성</div><div class="num" style="color:#16a34a">1</div></div>
+            <div class="mini"><div class="n">손절</div><div class="num" style="color:#dc2626">1</div></div>
+            <div class="mini"><div class="n">실패 종료</div><div class="num">0</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 style="font-size:18px">전략 규칙 요약</h2>
+          <div class="mini-grid" style="margin-top:14px;">
+            <div class="mini"><div class="n">할당 금액</div><div class="num">₩20M</div></div>
+            <div class="mini"><div class="n">목표 수익률</div><div class="num">+0.5%</div></div>
+            <div class="mini"><div class="n">손절 기준</div><div class="num">-0.3%</div></div>
+            <div class="mini"><div class="n">최대 보유기간</div><div class="num">당일</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 style="font-size:18px">운영 액션</h2>
+          <div class="log-list" style="margin-top:14px;">
+            <div class="log-item"><div class="log-main">전략 수정</div><div class="log-sub">목표/손절/종료 방식 변경</div></div>
+            <div class="log-item"><div class="log-main">전략 일시정지</div><div class="log-sub">신규 진입 중지, 보유 종목은 유지</div></div>
+            <div class="log-item"><div class="log-main">전체 청산</div><div class="log-sub">현재 전략 종목만 즉시 정리</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

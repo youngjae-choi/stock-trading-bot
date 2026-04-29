@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Strategy Editor Variant A</title>
+  <style>
+    :root{
+      --bg:#f5f7fa;
+      --panel:#ffffff;
+      --text:#0f172a;
+      --sub:#64748b;
+      --line:#e2e8f0;
+      --blue:#2563eb;
+      --blue-soft:#eff6ff;
+      --green:#16a34a;
+      --green-soft:#ecfdf5;
+      --red:#dc2626;
+      --red-soft:#fef2f2;
+      --gray:#f8fafc;
+      --shadow:0 10px 30px rgba(15,23,42,.06);
+      --radius:18px;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,Pretendard,Apple SD Gothic Neo,sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{max-width:1320px;margin:0 auto;padding:24px 18px 40px}
+    h1,h2,h3,p,label{margin:0}
+    .header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px}
+    .header p{margin-top:8px;color:var(--sub);font-size:14px}
+    .btns{display:flex;gap:10px;flex-wrap:wrap}
+    .btn{padding:12px 16px;border-radius:14px;border:1px solid var(--line);background:#fff;font-size:14px;font-weight:700}
+    .btn.primary{background:var(--blue);color:#fff;border-color:var(--blue)}
+    .layout{display:grid;grid-template-columns:1fr 340px;gap:16px}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px}
+    .section-title{font-size:18px}
+    .section-sub{margin-top:4px;color:var(--sub);font-size:13px}
+    .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+    .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:14px}
+    .field{display:grid;gap:8px}
+    .field label{font-size:13px;color:var(--sub);font-weight:600}
+    .input, .textarea, .select{width:100%;padding:13px 14px;border:1px solid var(--line);border-radius:14px;background:#fff;font-size:14px;color:var(--text)}
+    .textarea{min-height:110px;resize:none}
+    .divider{height:1px;background:var(--line);margin:18px 0}
+    .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+    .chip{padding:8px 12px;border-radius:999px;font-size:12px;font-weight:700;background:var(--blue-soft);color:var(--blue)}
+    .toggle-row{display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--line)}
+    .toggle-row:last-child{border-bottom:none}
+    .toggle{width:50px;height:30px;background:#dbeafe;border-radius:999px;position:relative}
+    .toggle::after{content:"";position:absolute;top:4px;left:24px;width:22px;height:22px;background:#2563eb;border-radius:50%}
+    .summary-list{display:grid;gap:12px;margin-top:14px}
+    .summary-item{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:var(--gray);font-size:14px}
+    .note{margin-top:14px;padding:14px;border-radius:14px;background:var(--blue-soft);color:#1d4ed8;font-size:13px;line-height:1.6}
+    .danger{margin-top:12px;padding:14px;border-radius:14px;background:var(--red-soft);color:#b91c1c;font-size:13px;line-height:1.6}
+    @media (max-width:1100px){.layout{grid-template-columns:1fr}.grid-3{grid-template-columns:1fr 1fr}}
+    @media (max-width:680px){.wrap{padding:18px 14px 32px}.header{flex-direction:column}.grid-2,.grid-3{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div>
+        <h1>전략 생성 / 수정</h1>
+        <p>전략의 기본 정보, 금액 배분, 목표/손절, 종료 규칙을 입력하는 화면입니다.</p>
+      </div>
+      <div class="btns">
+        <button class="btn">임시 저장</button>
+        <button class="btn">삭제</button>
+        <button class="btn primary">저장</button>
+      </div>
+    </div>
+
+    <div class="layout">
+      <div class="panel">
+        <h2 class="section-title">기본 정보</h2>
+        <p class="section-sub">전략을 구분할 이름과 설명을 입력합니다.</p>
+        <div class="grid-2">
+          <div class="field">
+            <label>전략 이름</label>
+            <input class="input" value="오프닝 돌파" />
+          </div>
+          <div class="field">
+            <label>전략 상태</label>
+            <div class="select">활성</div>
+          </div>
+        </div>
+        <div class="field" style="margin-top:14px;">
+          <label>전략 설명</label>
+          <textarea class="textarea">시가 이후 강한 거래량과 함께 돌파가 나오는 종목을 단타로 추적하는 전략</textarea>
+        </div>
+
+        <div class="divider"></div>
+
+        <h2 class="section-title">자금 및 목표 설정</h2>
+        <p class="section-sub">한 계좌 안에서 전략별 운용 비중을 배분합니다.</p>
+        <div class="grid-3">
+          <div class="field">
+            <label>할당 금액</label>
+            <input class="input" value="20000000" />
+          </div>
+          <div class="field">
+            <label>목표 수익률 (%)</label>
+            <input class="input" value="0.5" />
+          </div>
+          <div class="field">
+            <label>손절 기준 (%)</label>
+            <input class="input" value="-0.3" />
+          </div>
+          <div class="field">
+            <label>최대 보유기간</label>
+            <div class="select">당일</div>
+          </div>
+          <div class="field">
+            <label>추가 진입 허용</label>
+            <div class="select">허용</div>
+          </div>
+          <div class="field">
+            <label>주문 종료 방식</label>
+            <div class="select">목표 미달 시 일괄매도</div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <h2 class="section-title">매수 / 종료 규칙</h2>
+        <p class="section-sub">규칙은 실제 엔진이 해석 가능한 수준으로 단순하게 작성합니다.</p>
+        <div class="field" style="margin-top:14px;">
+          <label>매수 방식 요약</label>
+          <textarea class="textarea">시가 이후 거래량이 급증하고 전일 고점을 돌파한 종목을 분할매수</textarea>
+        </div>
+        <div class="field" style="margin-top:14px;">
+          <label>종료 방식 요약</label>
+          <textarea class="textarea">목표 수익률 달성 시 분할매도, 손절 기준 도달 시 즉시 전량 매도, 장 종료 전 미달성 물량은 일괄 정리</textarea>
+        </div>
+
+        <div class="chips">
+          <span class="chip">장중 단타</span>
+          <span class="chip">분할매수</span>
+          <span class="chip">당일 청산</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2 class="section-title">설정 요약</h2>
+        <p class="section-sub">저장 전 핵심 항목을 다시 확인합니다.</p>
+        <div class="summary-list">
+          <div class="summary-item"><span>전략명</span><strong>오프닝 돌파</strong></div>
+          <div class="summary-item"><span>할당 금액</span><strong>₩20,000,000</strong></div>
+          <div class="summary-item"><span>목표 / 손절</span><strong>+0.5% / -0.3%</strong></div>
+          <div class="summary-item"><span>최대 보유기간</span><strong>당일</strong></div>
+          <div class="summary-item"><span>현재 상태</span><strong>활성</strong></div>
+        </div>
+
+        <div class="divider"></div>
+
+        <h2 class="section-title">옵션</h2>
+        <div style="margin-top:10px;">
+          <div class="toggle-row"><span>전략 사용</span><div class="toggle"></div></div>
+          <div class="toggle-row"><span>목표 달성 후 신규 진입 차단</span><div class="toggle"></div></div>
+          <div class="toggle-row"><span>손절 후 당일 재진입 금지</span><div class="toggle"></div></div>
+        </div>
+
+        <div class="note">
+          이 화면은 실제 주문 로직을 직접 작성하는 곳이 아니라, 전략의 핵심 파라미터와 운용 규칙을 정리하는 입력 화면입니다.
+        </div>
+
+        <div class="danger">
+          총 할당 금액이 계좌 총자산을 초과하지 않도록 저장 전에 반드시 검증이 필요합니다.
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

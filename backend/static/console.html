@@ -1,0 +1,2187 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dantabot Control Console v1.0</title>
+  <style>
+    :root {
+      --bg: #0f141b;
+      --panel: #151b24;
+      --panel-2: #1b2430;
+      --panel-3: #202b38;
+      --text: #e7edf5;
+      --muted: #8f9bae;
+      --line: #2b3646;
+      --line-soft: #222c3a;
+      --green: #35b779;
+      --green-soft: rgba(53, 183, 121, 0.13);
+      --yellow: #d9a441;
+      --yellow-soft: rgba(217, 164, 65, 0.14);
+      --red: #e35d5d;
+      --red-soft: rgba(227, 93, 93, 0.14);
+      --blue: #5b8def;
+      --blue-soft: rgba(91, 141, 239, 0.14);
+      --shadow: 0 12px 36px rgba(0, 0, 0, 0.22);
+      --radius: 14px;
+      --radius-sm: 10px;
+      --sidebar: 244px;
+      --header: 64px;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Apple SD Gothic Neo", Arial, sans-serif;
+    }
+
+    body.light {
+      --bg: #f3f5f8;
+      --panel: #ffffff;
+      --panel-2: #f8fafc;
+      --panel-3: #eef2f7;
+      --text: #1c2430;
+      --muted: #667085;
+      --line: #d9e0ea;
+      --line-soft: #e8edf3;
+      --green: #188a58;
+      --green-soft: rgba(24, 138, 88, 0.10);
+      --yellow: #b57412;
+      --yellow-soft: rgba(181, 116, 18, 0.12);
+      --red: #c63d3d;
+      --red-soft: rgba(198, 61, 61, 0.12);
+      --blue: #2467d8;
+      --blue-soft: rgba(36, 103, 216, 0.12);
+      --shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    button, input, select, textarea {
+      font-family: inherit;
+    }
+
+    .app {
+      min-height: 100vh;
+    }
+
+    .topbar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: var(--header);
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 18px;
+      z-index: 50;
+    }
+
+    .brand {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 220px;
+    }
+
+    .brand-title {
+      font-size: 15px;
+      font-weight: 750;
+      letter-spacing: 0.1px;
+    }
+
+    .brand-sub {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .top-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: center;
+      padding: 0 10px;
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--muted);
+      display: inline-block;
+    }
+
+    .dot.green { background: var(--green); }
+    .dot.yellow { background: var(--yellow); }
+    .dot.red { background: var(--red); }
+    .dot.blue { background: var(--blue); }
+
+    .btn {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 8px 11px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: 0.16s ease;
+      white-space: nowrap;
+    }
+
+    .btn:hover {
+      border-color: var(--blue);
+      background: var(--panel-3);
+    }
+
+    .btn.primary {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: #fff;
+    }
+
+    .btn.danger {
+      background: var(--red);
+      border-color: var(--red);
+      color: #fff;
+      font-weight: 700;
+    }
+
+    .btn.ghost {
+      background: transparent;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: var(--sidebar) 1fr;
+      padding-top: var(--header);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      position: fixed;
+      top: var(--header);
+      left: 0;
+      bottom: 0;
+      width: var(--sidebar);
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      padding: 14px 12px;
+      overflow-y: auto;
+      z-index: 40;
+    }
+
+    .menu-label {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin: 10px 10px 8px;
+    }
+
+    .nav {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .nav button {
+      width: 100%;
+      text-align: left;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      padding: 10px 11px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 13px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .nav button:hover {
+      background: var(--panel-2);
+      color: var(--text);
+    }
+
+    .nav button.active {
+      background: var(--panel-3);
+      border-color: var(--line);
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .nav small {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .sidebar-footer {
+      margin-top: 18px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      border-radius: var(--radius-sm);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .main {
+      grid-column: 2;
+      padding: 22px;
+      min-width: 0;
+    }
+
+    .screen {
+      display: none;
+      animation: fadeIn 0.18s ease;
+    }
+
+    .screen.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .page-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      margin-bottom: 18px;
+    }
+
+    .page-title {
+      margin: 0 0 6px;
+      font-size: 24px;
+      letter-spacing: -0.02em;
+    }
+
+    .page-desc {
+      margin: 0;
+      color: var(--muted);
+      max-width: 760px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 16px;
+      min-width: 0;
+    }
+
+    .card.compact {
+      padding: 13px;
+    }
+
+    .card-title {
+      margin: 0 0 10px;
+      font-size: 14px;
+      font-weight: 750;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .card-title span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .metric {
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      margin-bottom: 4px;
+    }
+
+    .metric small {
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .good { color: var(--green); }
+    .warn { color: var(--yellow); }
+    .bad { color: var(--red); }
+    .info { color: var(--blue); }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      padding: 5px 8px;
+      font-size: 12px;
+      border: 1px solid var(--line);
+      white-space: nowrap;
+    }
+
+    .status.ok {
+      color: var(--green);
+      background: var(--green-soft);
+      border-color: rgba(53, 183, 121, 0.28);
+    }
+
+    .status.warn {
+      color: var(--yellow);
+      background: var(--yellow-soft);
+      border-color: rgba(217, 164, 65, 0.28);
+    }
+
+    .status.danger {
+      color: var(--red);
+      background: var(--red-soft);
+      border-color: rgba(227, 93, 93, 0.28);
+    }
+
+    .status.info {
+      color: var(--blue);
+      background: var(--blue-soft);
+      border-color: rgba(91, 141, 239, 0.28);
+    }
+
+    .section-gap {
+      height: 14px;
+    }
+
+    .timeline {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(120px, 1fr));
+      gap: 10px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+
+    .timeline-item {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      border-radius: 12px;
+      padding: 11px;
+      min-width: 130px;
+    }
+
+    .timeline-time {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .timeline-name {
+      font-weight: 700;
+      font-size: 13px;
+      margin-bottom: 7px;
+    }
+
+    .funnel {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(120px, 1fr));
+      gap: 10px;
+      overflow-x: auto;
+    }
+
+    .funnel-step {
+      position: relative;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+      min-width: 130px;
+    }
+
+    .funnel-step strong {
+      display: block;
+      font-size: 24px;
+      margin-bottom: 4px;
+    }
+
+    .funnel-step span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .table-wrap {
+      width: 100%;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 780px;
+    }
+
+    th, td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line-soft);
+      text-align: left;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      background: var(--panel-2);
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .check {
+      display: inline-flex;
+      width: 22px;
+      height: 22px;
+      border-radius: 7px;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 12px;
+      border: 1px solid var(--line);
+    }
+
+    .check.yes {
+      background: var(--green-soft);
+      color: var(--green);
+      border-color: rgba(53, 183, 121, 0.28);
+    }
+
+    .check.no {
+      background: var(--red-soft);
+      color: var(--red);
+      border-color: rgba(227, 93, 93, 0.28);
+    }
+
+    .check.wait {
+      background: var(--yellow-soft);
+      color: var(--yellow);
+      border-color: rgba(217, 164, 65, 0.28);
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 14px;
+    }
+
+    .natural-card {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 10px;
+    }
+
+    .natural-card h4 {
+      margin: 0 0 8px;
+      font-size: 14px;
+    }
+
+    .natural-card p {
+      margin: 0;
+      color: var(--text);
+    }
+
+    .natural-card ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+      color: var(--text);
+    }
+
+    .codebox {
+      background: #0b1017;
+      color: #d9e2ef;
+      border: 1px solid #253044;
+      border-radius: 12px;
+      padding: 14px;
+      overflow-x: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      line-height: 1.55;
+      white-space: pre;
+    }
+
+    body.light .codebox {
+      background: #111827;
+      color: #e5edf8;
+    }
+
+    details {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      border-radius: 12px;
+      padding: 12px 14px;
+    }
+
+    details summary {
+      cursor: pointer;
+      font-weight: 750;
+    }
+
+    .log-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 360px;
+      overflow-y: auto;
+    }
+
+    .log-item {
+      display: grid;
+      grid-template-columns: 74px 1fr;
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      border-radius: 10px;
+    }
+
+    .log-time {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .log-text {
+      font-size: 13px;
+    }
+
+    .progress {
+      width: 100%;
+      height: 9px;
+      background: var(--panel-3);
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      margin-top: 8px;
+    }
+
+    .progress span {
+      display: block;
+      height: 100%;
+      background: var(--blue);
+      border-radius: 999px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .field label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .field input, .field select {
+      width: 100%;
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      outline: none;
+    }
+
+    .footerbar {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 12px;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .api-banner {
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      display: none;
+    }
+
+    .api-banner.active {
+      display: block;
+    }
+
+    .api-banner.info {
+      color: var(--blue);
+      background: var(--blue-soft);
+      border-color: rgba(91, 141, 239, 0.28);
+    }
+
+    .api-banner.warn {
+      color: var(--yellow);
+      background: var(--yellow-soft);
+      border-color: rgba(217, 164, 65, 0.28);
+    }
+
+    .mobile-menu {
+      display: none;
+    }
+
+    @media (max-width: 1180px) {
+      .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .split { grid-template-columns: 1fr; }
+      .timeline { grid-template-columns: repeat(4, minmax(130px, 1fr)); }
+    }
+
+    @media (max-width: 860px) {
+      :root {
+        --sidebar: 0px;
+      }
+
+      .topbar {
+        height: auto;
+        min-height: var(--header);
+        align-items: flex-start;
+        padding: 10px 12px;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .brand {
+        min-width: auto;
+      }
+
+      .top-status {
+        order: 3;
+        width: 100%;
+        justify-content: flex-start;
+        padding: 0;
+      }
+
+      .layout {
+        display: block;
+        padding-top: 116px;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .mobile-menu {
+        display: block;
+        width: 100%;
+        background: var(--panel-2);
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px;
+      }
+
+      .main {
+        padding: 14px;
+      }
+
+      .page-head {
+        flex-direction: column;
+      }
+
+      .grid.cols-2,
+      .grid.cols-3,
+      .grid.cols-4 {
+        grid-template-columns: 1fr;
+      }
+
+      .timeline {
+        grid-template-columns: repeat(2, minmax(130px, 1fr));
+      }
+
+      .funnel {
+        grid-template-columns: repeat(2, minmax(130px, 1fr));
+      }
+
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .top-actions {
+        margin-left: auto;
+      }
+    }
+
+    @media (max-width: 520px) {
+      .metric {
+        font-size: 22px;
+      }
+
+      .btn {
+        padding: 7px 9px;
+        font-size: 12px;
+      }
+
+      .timeline {
+        grid-template-columns: 1fr;
+      }
+
+      .funnel {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-title">Dantabot Control Console</div>
+        <div class="brand-sub">AI RulePack 기반 자동매매 운영 관제</div>
+      </div>
+
+      <select id="mobileMenu" class="mobile-menu" aria-label="화면 선택">
+        <option value="today">Today Control</option>
+        <option value="rulepack">AI RulePack</option>
+        <option value="funnel">Funnel Monitor</option>
+        <option value="live">Live Decisions</option>
+        <option value="positions">Positions & Exit</option>
+        <option value="risk">Execution & Risk</option>
+        <option value="data">Data & API</option>
+        <option value="api-logs">API Logs</option>
+        <option value="review">Review & Audit</option>
+        <option value="settings">Settings</option>
+      </select>
+
+      <div class="top-status">
+        <span class="pill"><span class="dot green" id="engineDot"></span><span id="engineText">Auto Engine RUNNING</span></span>
+        <span class="pill"><span class="dot blue"></span><span id="phaseText">현재 단계 계산중</span></span>
+        <span class="pill"><span class="dot green" id="restDot"></span><span id="restStatusText">KIS REST 확인중</span></span>
+        <span class="pill"><span class="dot blue" id="socketDot"></span><span id="socketStatusText">WebSocket 확인중</span></span>
+      </div>
+
+      <div class="top-actions">
+        <button class="btn" id="themeBtn">Light</button>
+        <button class="btn danger" id="haltBtn">긴급정지</button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="menu-label">Operation</div>
+        <nav class="nav" id="nav">
+          <button class="active" data-screen="today">Today Control <small>main</small></button>
+          <button data-screen="rulepack">AI RulePack <small>rules</small></button>
+          <button data-screen="funnel">Funnel Monitor <small>screening</small></button>
+          <button data-screen="live">Live Decisions <small>realtime</small></button>
+          <button data-screen="positions">Positions & Exit <small>exit</small></button>
+          <button data-screen="risk">Execution & Risk <small>logs</small></button>
+          <button data-screen="data">Data & API <small>health</small></button>
+          <button data-screen="api-logs">API Logs <small>admin</small></button>
+          <button data-screen="review">Review & Audit <small>learn</small></button>
+          <button data-screen="settings">Settings <small>admin</small></button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <strong>운영 원칙</strong><br>
+          화면은 조종석이 아니라 관제실입니다. 웹 콘솔이 꺼져도 Python 자동매매 엔진은 독립적으로 동작해야 합니다.
+        </div>
+      </aside>
+
+      <main class="main">
+        <div class="api-banner info active" id="apiStateBanner">백엔드 상태를 확인하는 중입니다. 응답 전까지는 정적 화면과 mock 안내가 표시됩니다.</div>
+
+        <section class="screen active" id="screen-today">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Today Control</h1>
+              <p class="page-desc">오늘 자동매매 사이클, RulePack 적용 상태, Funnel 진행, 리스크 상태를 한 화면에서 확인합니다.</p>
+            </div>
+            <div>
+              <button class="btn primary">시스템 점검</button>
+              <button class="btn">로그 다운로드</button>
+            </div>
+          </div>
+
+          <div class="grid cols-4">
+            <div class="card compact">
+              <div class="card-title">운용 모드 <span>mode</span></div>
+              <div class="metric" id="modeMetric">AUTO</div>
+              <div class="muted" id="modeDetail">RulePack 적용 완료</div>
+            </div>
+            <div class="card compact">
+              <div class="card-title">당일 손익 <span>pnl</span></div>
+              <div class="metric good" id="pnlMetric">+0.12%</div>
+              <div class="muted" id="pnlDetail">일일 손실한도 -2.00%</div>
+            </div>
+            <div class="card compact">
+              <div class="card-title">현재 포지션 <span>positions</span></div>
+              <div class="metric" id="positionsMetric">1 <small>/ 5</small></div>
+              <div class="muted" id="positionsDetail">신규 주문 허용</div>
+            </div>
+            <div class="card compact">
+              <div class="card-title">다음 작업 <span>schedule</span></div>
+              <div class="metric" id="nextJobMetric">11:30</div>
+              <div class="muted" id="nextJobText">중간 리포트</div>
+            </div>
+          </div>
+
+          <div class="section-gap"></div>
+
+          <div class="card">
+            <div class="card-title">Funnel Progress <span>2,500개 종목에서 실시간 후보까지</span></div>
+            <div class="funnel" id="funnelProgress">
+              <div class="funnel-step"><strong>2,500</strong><span>전체 종목</span></div>
+              <div class="funnel-step"><strong>200</strong><span>Layer 1 Universe</span></div>
+              <div class="funnel-step"><strong>15</strong><span>Layer 2 후보</span></div>
+              <div class="funnel-step"><strong>4</strong><span>매수조건 대기</span></div>
+              <div class="funnel-step"><strong>1</strong><span>보유중</span></div>
+            </div>
+          </div>
+
+          <div class="section-gap"></div>
+
+          <div class="split">
+            <div class="card">
+              <div class="card-title">Today's Timeline <span>하루 자동운영 사이클</span></div>
+              <div class="timeline" id="timeline"></div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">System Health <span>핵심 연결 상태</span></div>
+              <div class="grid cols-2">
+                <div class="natural-card">
+                  <h4>KIS Token</h4>
+                  <p><span class="status ok" id="kisTokenStatus">정상</span></p>
+                  <p class="muted" id="kisTokenDetail">07:45 갱신 완료</p>
+                </div>
+                <div class="natural-card">
+                  <h4>RulePack</h4>
+                  <p><span class="status ok" id="rulepackStatus">검증 완료</span></p>
+                  <p class="muted" id="rulepackDetail">Schema / Risk / Runtime 통과</p>
+                </div>
+                <div class="natural-card">
+                  <h4>WebSocket</h4>
+                  <p><span class="status ok" id="websocketStatus">연결중</span></p>
+                  <p class="muted" id="websocketDetail">마지막 수신 0.04초 전</p>
+                </div>
+                <div class="natural-card">
+                  <h4>Risk Guard</h4>
+                  <p><span class="status ok" id="riskStatus">허용</span></p>
+                  <p class="muted" id="riskDetail">신규 진입 가능</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-gap"></div>
+
+          <div class="card">
+            <div class="card-title">Recent Operation Logs <span>최근 시스템 이벤트</span></div>
+            <div class="log-list" id="todayLogs"></div>
+          </div>
+        </section>
+
+        <section class="screen" id="screen-rulepack">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">AI RulePack</h1>
+              <p class="page-desc">시스템끼리는 구조화 RulePack으로 주고받고, 사용자에게는 자연어 운용 설명으로 보여줍니다.</p>
+            </div>
+            <div>
+              <span class="status ok" id="rulepackBadge">RP-20260430-SCALP-001 적용</span>
+            </div>
+          </div>
+
+          <div class="split">
+            <div class="card">
+              <div class="card-title">사용자용 자연어 RulePack <span>기본 표시</span></div>
+
+              <div class="natural-card">
+                <h4>오늘 운용 요약</h4>
+                <p id="rulepackSummary">오늘은 코스닥 중심의 단타 기회를 우선 감시합니다. 시장 리스크는 중간 수준으로 판단되며, 자동매매는 허용하지만 종목당 최대 비중은 총자산의 10% 이내로 제한합니다.</p>
+              </div>
+
+              <div class="natural-card">
+                <h4>오늘 변경된 조건</h4>
+                <ul id="rulepackChanges">
+                  <li>거래량 기준을 1.8배에서 2.0배로 상향했습니다.</li>
+                  <li>RSI 상단 기준을 72에서 70으로 낮췄습니다.</li>
+                  <li>테마 가중치를 20%에서 15%로 줄이고, 기술 조건 비중을 높였습니다.</li>
+                </ul>
+              </div>
+
+              <div class="natural-card">
+                <h4>후보 선정 기준</h4>
+                <p>1차 필터 통과 종목 중 기술적 조건 60%, 기초 조건 25%, 테마 조건 15%를 반영해 상위 15개 종목을 감시 대상으로 선정합니다.</p>
+              </div>
+
+              <div class="natural-card">
+                <h4>매수 조건</h4>
+                <p>VWAP 위, 거래량 2배 이상, 20일선 위, RSI 40~70, 호가 스프레드 0.3% 이하, 지수 동조, AI 신뢰도 0.65 이상일 때만 진입을 검토합니다.</p>
+              </div>
+
+              <div class="natural-card">
+                <h4>매도 조건</h4>
+                <p>손절 -1.5%, 익절 +3.0%, 수익 +2.0% 이후 트레일링 스탑 활성화, 진입 후 30분간 +0.5% 미만이면 시간손절을 검토합니다.</p>
+              </div>
+
+              <div class="natural-card">
+                <h4>리스크 제한</h4>
+                <p>당일 손실이 -2.0%에 도달하면 신규 매수를 전면 중단합니다. 동시에 보유 가능한 종목은 최대 5개입니다.</p>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">검증 결과 <span>system validation</span></div>
+              <div class="natural-card">
+                <h4>JSON Schema</h4>
+                <p><span class="status ok">통과</span></p>
+              </div>
+              <div class="natural-card">
+                <h4>Risk Policy</h4>
+                <p><span class="status ok">통과</span></p>
+                <p class="muted">AI가 손실한도 확대 또는 손절 완화를 시도하지 않았습니다.</p>
+              </div>
+              <div class="natural-card">
+                <h4>Runtime</h4>
+                <p><span class="status ok">적용 완료</span></p>
+                <p class="muted">룰 엔진이 모든 조건을 해석할 수 있습니다.</p>
+              </div>
+
+              <details>
+                <summary>원본 Machine RulePack JSON 보기</summary>
+                <div class="section-gap"></div>
+                <pre class="codebox" id="rulepackJson">{
+  "rulepack_id": "RP-20260430-SCALP-001",
+  "trade_date": "2026-04-30",
+  "mode": "auto",
+  "valid_from": "09:00:00",
+  "valid_until": "15:20:00",
+  "machine_rules": {
+    "layer1_universe": {
+      "min_market_cap_krw": 50000000000,
+      "min_avg_trade_value_20d_krw": 1000000000,
+      "min_listed_days": 60,
+      "exclude_management": true,
+      "exclude_warning": true
+    },
+    "layer2_screening": {
+      "top_n": 15,
+      "weights": {
+        "technical": 0.60,
+        "fundamental": 0.25,
+        "theme": 0.15
+      }
+    },
+    "layer3_entry": {
+      "above_vwap": true,
+      "min_volume_ratio": 2.0,
+      "above_ma20": true,
+      "rsi_min": 40,
+      "rsi_max": 70,
+      "max_spread_rate": 0.003,
+      "index_sync_required": true,
+      "min_ai_confidence": 0.65
+    },
+    "exit_rules": {
+      "stop_loss_rate": -0.015,
+      "take_profit_rate": 0.03,
+      "trailing_activate_profit_rate": 0.02,
+      "trailing_stop_rate": 0.01,
+      "time_stop_minutes": 30
+    },
+    "risk_limits": {
+      "daily_loss_limit": -0.02,
+      "weekly_loss_limit": -0.05,
+      "monthly_loss_limit": -0.08,
+      "max_positions": 5,
+      "max_position_rate_per_stock": 0.10
+    }
+  }
+}</pre>
+              </details>
+            </div>
+          </div>
+        </section>
+
+        <section class="screen" id="screen-funnel">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Funnel Monitor</h1>
+              <p class="page-desc">전체 종목이 어떤 조건으로 200개 유니버스와 15개 후보로 압축됐는지 확인합니다.</p>
+            </div>
+          </div>
+
+          <div class="grid cols-4">
+            <div class="card compact"><div class="card-title">전체 종목</div><div class="metric">2,500</div><div class="muted">KRX 기준</div></div>
+            <div class="card compact"><div class="card-title">Layer 1 통과</div><div class="metric">200</div><div class="muted">유니버스</div></div>
+            <div class="card compact"><div class="card-title">Layer 2 통과</div><div class="metric">15</div><div class="muted">후보 종목</div></div>
+            <div class="card compact"><div class="card-title">현재 매수대기</div><div class="metric">4</div><div class="muted">조건 접근중</div></div>
+          </div>
+
+          <div class="section-gap"></div>
+
+          <div class="split">
+            <div class="card">
+              <div class="card-title">Layer 1 탈락 사유</div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>조건</th><th>탈락 수</th><th>비중</th><th>판단</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td>시가총액 500억 미만</td><td>1,120</td><td>44.8%</td><td><span class="status info">정상</span></td></tr>
+                    <tr><td>20일 평균 거래대금 10억 미만</td><td>830</td><td>33.2%</td><td><span class="status info">정상</span></td></tr>
+                    <tr><td>상장 60일 미만</td><td>72</td><td>2.9%</td><td><span class="status info">정상</span></td></tr>
+                    <tr><td>관리/투자경고</td><td>28</td><td>1.1%</td><td><span class="status ok">제외</span></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Funnel Quality</div>
+              <div class="natural-card">
+                <h4>필터 강도</h4>
+                <p><span class="status ok">적정</span></p>
+                <p class="muted">최근 20거래일 평균 유니버스 188개 대비 오늘 200개입니다.</p>
+              </div>
+              <div class="natural-card">
+                <h4>이상 징후</h4>
+                <p><span class="status ok">없음</span></p>
+                <p class="muted">후보 수 과다/과소, 종목코드 오류, 데이터 누락 없음.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-gap"></div>
+
+          <div class="card">
+            <div class="card-title">후보 15개 선정 결과 <span>상위 일부 샘플</span></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>종목코드</th><th>종목명</th><th>기술</th><th>기초</th><th>테마</th><th>총점</th><th>AI 신뢰도</th><th>상태</th><th>선정 사유</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td>005930</td><td>삼성전자</td><td>0.82</td><td>0.68</td><td>0.61</td><td>0.75</td><td>0.71</td><td><span class="status warn">매수대기</span></td><td>거래량 증가 + 지수 동조</td></tr>
+                  <tr><td>000660</td><td>SK하이닉스</td><td>0.88</td><td>0.64</td><td>0.73</td><td>0.79</td><td>0.77</td><td><span class="status warn">RSI 대기</span></td><td>반도체 테마 강세</td></tr>
+                  <tr><td>035420</td><td>NAVER</td><td>0.69</td><td>0.71</td><td>0.58</td><td>0.67</td><td>0.62</td><td><span class="status info">감시중</span></td><td>AI 신뢰도 경계</td></tr>
+                  <tr><td>068270</td><td>셀트리온</td><td>0.76</td><td>0.66</td><td>0.69</td><td>0.72</td><td>0.70</td><td><span class="status info">감시중</span></td><td>수급 개선</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="screen" id="screen-live">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Live Decisions</h1>
+              <p class="page-desc">후보 종목이 현재 어떤 매수조건을 충족했고, 왜 아직 매수하지 않았는지 보여줍니다.</p>
+            </div>
+            <div>
+              <span class="status ok">실시간 감시중</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Layer 3 조건 충족 상태</div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>종목</th><th>VWAP</th><th>거래량</th><th>MA20</th><th>RSI</th><th>스프레드</th><th>지수동조</th><th>AI</th><th>상태</th><th>대기/차단 사유</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>005930</td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check no">N</span></td><td>0.71</td><td><span class="status warn">매수대기</span></td><td>지수 동조 복귀 대기</td>
+                  </tr>
+                  <tr>
+                    <td>000660</td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check wait">W</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td>0.77</td><td><span class="status warn">RSI 대기</span></td><td>RSI 72.4, 기준 70 초과</td>
+                  </tr>
+                  <tr>
+                    <td>035420</td><td><span class="check no">N</span></td><td><span class="check yes">Y</span></td><td><span class="check no">N</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td>0.62</td><td><span class="status info">감시중</span></td><td>VWAP 하회, AI 신뢰도 미달</td>
+                  </tr>
+                  <tr>
+                    <td>068270</td><td><span class="check yes">Y</span></td><td><span class="check wait">W</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td>0.70</td><td><span class="status warn">거래량 대기</span></td><td>거래량 1.7배, 기준 2.0배 미달</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="section-gap"></div>
+
+          <div class="grid cols-3">
+            <div class="card">
+              <div class="card-title">왜 아직 안 샀는가</div>
+              <p><strong>000660</strong>은 대부분 조건을 충족했지만 RSI가 기준 상단을 초과했습니다.</p>
+              <p class="muted">현재 RSI 72.4 / 허용 범위 40~70</p>
+            </div>
+            <div class="card">
+              <div class="card-title">매수 직전 후보</div>
+              <p><strong>005930</strong>은 지수 동조 조건만 복귀하면 주문 검토 상태로 전환됩니다.</p>
+              <p class="muted">조건 충족 6개 / 7개</p>
+            </div>
+            <div class="card">
+              <div class="card-title">차단 후보</div>
+              <p><strong>035420</strong>은 VWAP 하회와 AI 신뢰도 미달로 신규 진입을 보류합니다.</p>
+              <p class="muted">조건 미충족 3개</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="screen" id="screen-positions">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Positions & Exit</h1>
+              <p class="page-desc">보유 종목의 손절, 익절, 트레일링, 시간손절 조건을 감시합니다.</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">보유 종목 청산 상태</div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>종목코드</th><th>종목명</th><th>진입가</th><th>현재가</th><th>손익률</th><th>손절가</th><th>익절가</th><th>트레일링</th><th>보유시간</th><th>청산대기조건</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>005930</td><td>삼성전자</td><td>72,500</td><td>73,000</td><td class="good">+0.69%</td><td>71,412</td><td>74,675</td><td><span class="status warn">대기</span></td><td>12분</td><td>익절/트레일링 대기</td>
+                  </tr>
+                  <tr>
+                    <td>000660</td><td>SK하이닉스</td><td>184,000</td><td>181,300</td><td class="bad">-1.47%</td><td>181,240</td><td>189,520</td><td><span class="status info">비활성</span></td><td>6분</td><td>손절 근접</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="section-gap"></div>
+
+          <div class="grid cols-3">
+            <div class="card">
+              <div class="card-title">청산 안전장치</div>
+              <p>당일 단타 포지션은 15:20에 자동 청산 검토 상태로 전환됩니다.</p>
+            </div>
+            <div class="card">
+              <div class="card-title">트레일링 조건</div>
+              <p>수익 +2.0% 이상 도달 후 고점 대비 -1.0% 하락 시 청산합니다.</p>
+            </div>
+            <div class="card">
+              <div class="card-title">시간손절 조건</div>
+              <p>30분 보유 후 +0.5% 미만이면 청산 후보로 분류합니다.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="screen" id="screen-risk">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Execution & Risk</h1>
+              <p class="page-desc">주문 실행, 주문 차단, KIS 응답, 리스크 가드 상태를 확인합니다.</p>
+            </div>
+          </div>
+
+          <div class="grid cols-4">
+            <div class="card compact"><div class="card-title">당일 손익</div><div class="metric good">+0.12%</div><div class="progress"><span style="width: 6%;"></span></div></div>
+            <div class="card compact"><div class="card-title">손실한도</div><div class="metric">-2.0%</div><div class="muted">도달 시 신규 주문 중단</div></div>
+            <div class="card compact"><div class="card-title">주문 실행</div><div class="metric">3</div><div class="muted">오늘 총 주문</div></div>
+            <div class="card compact"><div class="card-title">주문 차단</div><div class="metric warn">2</div><div class="muted">조건/리스크 차단</div></div>
+          </div>
+
+          <div class="section-gap"></div>
+
+          <div class="split">
+            <div class="card">
+              <div class="card-title">주문 실행 로그</div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>시각</th><th>종목</th><th>방향</th><th>수량</th><th>근거</th><th>KIS 응답</th><th>상태</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td>09:12:31</td><td>005930</td><td>매수</td><td>100</td><td>Layer 3 조건 7개 충족</td><td>rt_cd 0</td><td><span class="status ok">전량체결</span></td></tr>
+                    <tr><td>09:26:44</td><td>005930</td><td>매도</td><td>100</td><td>트레일링 스탑</td><td>rt_cd 0</td><td><span class="status ok">전량체결</span></td></tr>
+                    <tr><td>10:04:18</td><td>068270</td><td>매수</td><td>50</td><td>조건 충족</td><td>rt_cd 0</td><td><span class="status ok">체결</span></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">주문 차단 로그</div>
+              <div class="log-list">
+                <div class="log-item"><div class="log-time">09:14:02</div><div class="log-text"><strong>000660 매수 차단</strong><br><span class="muted">RSI 72.4, 기준 70 초과</span></div></div>
+                <div class="log-item"><div class="log-time">10:22:51</div><div class="log-text"><strong>035420 매수 차단</strong><br><span class="muted">AI 신뢰도 0.62, 기준 0.65 미달</span></div></div>
+                <div class="log-item"><div class="log-time">10:48:12</div><div class="log-text"><strong>스프레드 경고</strong><br><span class="muted">일부 후보 호가 스프레드 0.3% 근접</span></div></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="screen" id="screen-data">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Data & API</h1>
+              <p class="page-desc">KIS, DART, 뉴스, AI 검색, DB, Redis, Telegram의 상태와 데이터 품질을 확인합니다.</p>
+            </div>
+            <button class="btn primary">데이터 재점검</button>
+          </div>
+
+          <div class="grid cols-4">
+            <div class="card compact"><div class="card-title">KIS REST</div><div class="metric good">정상</div><div class="muted">응답 0.21초</div></div>
+            <div class="card compact"><div class="card-title">KIS WebSocket</div><div class="metric good">정상</div><div class="muted">마지막 수신 0.04초</div></div>
+            <div class="card compact"><div class="card-title">PostgreSQL</div><div class="metric good">정상</div><div class="muted">로그 저장중</div></div>
+            <div class="card compact"><div class="card-title">Telegram</div><div class="metric good">정상</div><div class="muted">08:45 알림 발송</div></div>
+          </div>
+
+          <div class="section-gap"></div>
+
+          <div class="card">
+            <div class="card-title">데이터 품질 체크</div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>항목</th><th>상태</th><th>건수</th><th>마지막 확인</th><th>처리</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>종목코드 포맷 오류</td><td><span class="status ok">정상</span></td><td>0</td><td>방금 전</td><td>없음</td></tr>
+                  <tr><td>현재가 누락</td><td><span class="status ok">정상</span></td><td>0</td><td>방금 전</td><td>없음</td></tr>
+                  <tr><td>호가 누락</td><td><span class="status ok">정상</span></td><td>0</td><td>방금 전</td><td>없음</td></tr>
+                  <tr><td>거래량 이상치</td><td><span class="status warn">주의</span></td><td>1</td><td>2분 전</td><td>후보 점수 계산에서 제외</td></tr>
+                  <tr><td>WebSocket 지연</td><td><span class="status ok">정상</span></td><td>0</td><td>방금 전</td><td>없음</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="screen" id="screen-api-logs">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">API Logs</h1>
+              <p class="page-desc">기능명, 호출 이유, 결과 요약, 호출 시각을 먼저 보여주고 기술 필드는 보조 정보로 유지합니다. LIVE는 외부 실호출, MOCK은 mock-safe 응답, BACKEND는 내부 관리 API 호출입니다.</p>
+            </div>
+            <div>
+              <span class="status info" id="apiLogsCount">0건</span>
+            </div>
+          </div>
+
+          <div class="grid cols-3">
+            <div class="card compact">
+              <div class="card-title">최근 집계 <span>count</span></div>
+              <div class="metric" id="apiLogsMetric">0</div>
+              <div class="muted" id="apiLogsLastUpdate">불러오는 중</div>
+            </div>
+            <div class="card compact">
+              <div class="card-title">출처 구분 <span>source</span></div>
+              <div class="metric info">MOCK / LIVE / BACKEND</div>
+              <div class="muted">PM이 mock-safe 응답과 실제 관리 호출을 분리해서 볼 수 있습니다.</div>
+            </div>
+            <div class="card compact">
+              <div class="card-title">운영 메모 <span>note</span></div>
+              <div class="metric" style="font-size:18px;" id="apiLogsMode">MOCK SAFE</div>
+              <div class="muted" id="apiLogsNote">백엔드 관리 로그를 확인하는 중입니다.</div>
+            </div>
+          </div>
+
+          <div class="section-gap"></div>
+
+          <div class="card">
+            <div class="card-title">최근 호출 로그 <span>feature / purpose / result / called_at 중심</span></div>
+            <div class="table-wrap">
+              <table aria-label="최근 API 호출 로그">
+                <thead>
+                  <tr><th>기능명</th><th>호출 이유</th><th>결과 요약</th><th>언제 호출했는지</th><th>API</th><th>Status</th><th>Source</th><th>Live</th></tr>
+                </thead>
+                <tbody id="apiLogsTableBody">
+                  <tr><td colspan="8" class="muted">관리 로그를 불러오는 중입니다.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="screen" id="screen-review">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Review & Audit</h1>
+              <p class="page-desc">복기의 목적은 리포트가 아니라 학습입니다. 좋은 전략, 나쁜 전략, 좋은 타이밍을 구조화해서 다음 RulePack에 반영합니다.</p>
+            </div>
+            <div>
+              <button class="btn primary">AI 복기 생성</button>
+              <button class="btn">CSV 다운로드</button>
+            </div>
+          </div>
+
+          <div class="grid cols-4">
+            <div class="card compact"><div class="card-title">총 손익</div><div class="metric good">+0.42%</div><div class="muted">실현 기준</div></div>
+            <div class="card compact"><div class="card-title">승률</div><div class="metric">58%</div><div class="muted">7전 4승</div></div>
+            <div class="card compact"><div class="card-title">룰 준수율</div><div class="metric good">100%</div><div class="muted">위반 없음</div></div>
+            <div class="card compact"><div class="card-title">학습 후보</div><div class="metric">6</div><div class="muted">패턴 메모리 저장</div></div>
+          </div>
+
+          <div class="section-gap"></div>
+
+          <div class="split">
+            <div class="card">
+              <div class="card-title">AI 복기 요약 <span>사용자용 자연어</span></div>
+              <div class="natural-card">
+                <h4>잘된 점</h4>
+                <p>코스닥 강세 구간에서 거래량 2.5배 이상, VWAP 위, 스프레드 0.2% 이하 조건을 만족한 진입은 비교적 빠르게 유리한 방향으로 움직였습니다.</p>
+              </div>
+              <div class="natural-card">
+                <h4>개선할 점</h4>
+                <p>RSI 68~70 구간에서 진입한 일부 종목은 진입 후 10분 내 추세가 약해졌고 시간손절 비율이 높았습니다. 내일은 RSI 상단 기준을 67로 낮추는 방안을 검토합니다.</p>
+              </div>
+              <div class="natural-card">
+                <h4>놓친 기회</h4>
+                <p>AI 신뢰도 0.62로 차단된 일부 종목이 이후 10분 내 강하게 상승했습니다. 기술 조건이 완벽할 경우 AI 신뢰도 하한을 보정하는 보조룰이 필요합니다.</p>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">자동학습 Rule Suggestions</div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>대상 룰</th><th>현재</th><th>제안</th><th>근거</th><th>상태</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td>rsi_max</td><td>70</td><td>67</td><td>RSI 68~70 시간손절 증가</td><td><span class="status warn">검토</span></td></tr>
+                    <tr><td>min_volume_ratio</td><td>2.0</td><td>2.2</td><td>2.5배 이상 구간 성과 우수</td><td><span class="status info">대기</span></td></tr>
+                    <tr><td>min_ai_confidence</td><td>0.65</td><td>조건부 0.60</td><td>기술 조건 7개 충족 시 보정</td><td><span class="status warn">검토</span></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-gap"></div>
+
+          <div class="card">
+            <div class="card-title">Pattern Memory <span>구조화 학습 데이터</span></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>패턴</th><th>시장국면</th><th>시간대</th><th>조건 요약</th><th>표본</th><th>승률</th><th>평균손익</th><th>권고</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>GOOD_ENTRY</td><td>코스닥 강세</td><td>09:10~10:20</td><td>거래량 2.5배 이상 + VWAP 위 + 스프레드 0.2% 이하</td><td>26</td><td>63%</td><td class="good">+0.41%</td><td>가중치 강화</td></tr>
+                  <tr><td>BAD_ENTRY</td><td>혼조</td><td>10:30~11:20</td><td>RSI 68 이상 + 거래량 감소 + 스프레드 0.25% 이상</td><td>18</td><td>33%</td><td class="bad">-0.21%</td><td>진입 감점</td></tr>
+                  <tr><td>GOOD_EXIT</td><td>변동성 확대</td><td>장중</td><td>+2% 이후 트레일링 활성화</td><td>12</td><td>67%</td><td class="good">+0.62%</td><td>유지</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="screen" id="screen-settings">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Settings</h1>
+              <p class="page-desc">API, 계좌, 리스크, 알림, 권한 설정을 관리합니다. 장중 변경은 제한적으로만 허용합니다.</p>
+            </div>
+          </div>
+
+          <div class="split">
+            <div class="card">
+              <div class="card-title">Risk Settings</div>
+              <div class="form-grid">
+                <div class="field">
+                  <label>일일 손실한도</label>
+                  <input value="-2.0%" readonly>
+                </div>
+                <div class="field">
+                  <label>주간 손실한도</label>
+                  <input value="-5.0%" readonly>
+                </div>
+                <div class="field">
+                  <label>월간 손실한도</label>
+                  <input value="-8.0%" readonly>
+                </div>
+                <div class="field">
+                  <label>최대 보유 종목</label>
+                  <input value="5" readonly>
+                </div>
+                <div class="field">
+                  <label>종목당 최대 비중</label>
+                  <input value="10%" readonly>
+                </div>
+                <div class="field">
+                  <label>기본 운용모드</label>
+                  <select>
+                    <option>AUTO</option>
+                    <option>MONITOR</option>
+                    <option>HALT</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Notification</div>
+              <div class="natural-card">
+                <h4>Telegram</h4>
+                <p><span class="status ok">활성</span></p>
+                <p class="muted">RulePack 생성, 주문 발생, 차단, 긴급정지, 일일 리포트 발송</p>
+              </div>
+              <div class="natural-card">
+                <h4>권한 정책</h4>
+                <p>조회자는 화면 확인만 가능하며, 긴급정지와 설정 변경은 관리자만 가능합니다.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div class="footerbar">
+          <div>Last update: <span id="lastUpdate">-</span></div>
+          <div id="consoleFooterNote">Prototype v1.0 · 실제 주문 기능 없음 · Python backend API 연결 전 단계</div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>
+  /* Console bootstrap uses FastAPI mock endpoints until live trading is implemented. */
+  var API_BASE = window.location.origin;
+  var screens = document.querySelectorAll(".screen");
+  var navButtons = document.querySelectorAll("#nav button");
+  var mobileMenu = document.getElementById("mobileMenu");
+  var themeBtn = document.getElementById("themeBtn");
+  var haltBtn = document.getElementById("haltBtn");
+  var engineDot = document.getElementById("engineDot");
+  var engineText = document.getElementById("engineText");
+  var restDot = document.getElementById("restDot");
+  var restStatusText = document.getElementById("restStatusText");
+  var socketDot = document.getElementById("socketDot");
+  var socketStatusText = document.getElementById("socketStatusText");
+  var modeMetric = document.getElementById("modeMetric");
+  var modeDetail = document.getElementById("modeDetail");
+  var pnlMetric = document.getElementById("pnlMetric");
+  var pnlDetail = document.getElementById("pnlDetail");
+  var positionsMetric = document.getElementById("positionsMetric");
+  var positionsDetail = document.getElementById("positionsDetail");
+  var phaseText = document.getElementById("phaseText");
+  var nextJobMetric = document.getElementById("nextJobMetric");
+  var nextJobText = document.getElementById("nextJobText");
+  var lastUpdate = document.getElementById("lastUpdate");
+  var timelineEl = document.getElementById("timeline");
+  var todayLogs = document.getElementById("todayLogs");
+  var funnelProgress = document.getElementById("funnelProgress");
+  var kisTokenStatus = document.getElementById("kisTokenStatus");
+  var kisTokenDetail = document.getElementById("kisTokenDetail");
+  var rulepackStatus = document.getElementById("rulepackStatus");
+  var rulepackDetail = document.getElementById("rulepackDetail");
+  var websocketStatus = document.getElementById("websocketStatus");
+  var websocketDetail = document.getElementById("websocketDetail");
+  var riskStatus = document.getElementById("riskStatus");
+  var riskDetail = document.getElementById("riskDetail");
+  var rulepackBadge = document.getElementById("rulepackBadge");
+  var rulepackSummary = document.getElementById("rulepackSummary");
+  var rulepackChanges = document.getElementById("rulepackChanges");
+  var rulepackJson = document.getElementById("rulepackJson");
+  var consoleFooterNote = document.getElementById("consoleFooterNote");
+  var apiStateBanner = document.getElementById("apiStateBanner");
+  var apiLogsCount = document.getElementById("apiLogsCount");
+  var apiLogsMetric = document.getElementById("apiLogsMetric");
+  var apiLogsLastUpdate = document.getElementById("apiLogsLastUpdate");
+  var apiLogsMode = document.getElementById("apiLogsMode");
+  var apiLogsNote = document.getElementById("apiLogsNote");
+  var apiLogsTableBody = document.getElementById("apiLogsTableBody");
+
+  var isHalted = false;
+  var timeline = [
+    { time: "07:45", name: "KIS 토큰 갱신" },
+    { time: "08:00", name: "AI 시장 톤 분석" },
+    { time: "08:15", name: "유니버스 필터" },
+    { time: "08:30", name: "AI 스크리닝" },
+    { time: "08:45", name: "RulePack 생성" },
+    { time: "09:00", name: "실시간 매매 시작" },
+    { time: "11:30", name: "중간 리포트" },
+    { time: "15:20", name: "당일매매 청산" },
+    { time: "15:30", name: "장 마감" },
+    { time: "16:00", name: "AI 복기 리포트" },
+    { time: "16:30", name: "일일 리포트 발송" },
+    { time: "18:00", name: "데이터 백업" },
+    { time: "22:00", name: "야간 미국장 관찰" }
+  ];
+  var sampleLogs = [
+    ["07:45", "KIS 토큰 갱신 완료. Access token 유효성 확인."],
+    ["08:00", "AI 시장 톤 분석 완료. 코스닥 상대 강세, 리스크 중간."],
+    ["08:15", "Layer 1 Universe 생성 완료. 2,500개 중 200개 통과."]
+  ];
+
+  function setApiBanner(kind, message) {
+    if (!apiStateBanner) {
+      return;
+    }
+
+    apiStateBanner.className = "api-banner active " + kind;
+    apiStateBanner.textContent = message;
+  }
+
+  function showScreen(name) {
+    for (var i = 0; i < screens.length; i++) {
+      screens[i].classList.remove("active");
+    }
+
+    var target = document.getElementById("screen-" + name);
+    if (target) {
+      target.classList.add("active");
+    }
+
+    for (var j = 0; j < navButtons.length; j++) {
+      navButtons[j].classList.remove("active");
+      if (navButtons[j].getAttribute("data-screen") === name) {
+        navButtons[j].classList.add("active");
+      }
+    }
+
+    if (mobileMenu) {
+      mobileMenu.value = name;
+    }
+  }
+
+  function setTheme(mode) {
+    if (mode === "light") {
+      document.body.classList.add("light");
+      if (themeBtn) {
+        themeBtn.textContent = "Dark";
+      }
+      localStorage.setItem("dantabot_theme", "light");
+      return;
+    }
+
+    document.body.classList.remove("light");
+    if (themeBtn) {
+      themeBtn.textContent = "Light";
+    }
+    localStorage.setItem("dantabot_theme", "dark");
+  }
+
+  function minutesOf(timeText) {
+    var parts = timeText.split(":");
+    return Number(parts[0]) * 60 + Number(parts[1]);
+  }
+
+  function getCurrentPhase() {
+    var now = new Date();
+    var current = now.getHours() * 60 + now.getMinutes();
+    var active = timeline[0];
+    var next = timeline[1];
+
+    for (var i = 0; i < timeline.length; i++) {
+      if (current >= minutesOf(timeline[i].time)) {
+        active = timeline[i];
+        next = timeline[i + 1] || timeline[0];
+      }
+    }
+
+    return {
+      active: active,
+      next: next,
+      currentMinutes: current
+    };
+  }
+
+  function renderTimeline() {
+    if (!timelineEl) {
+      return;
+    }
+
+    var phase = getCurrentPhase();
+    var html = "";
+
+    for (var i = 0; i < timeline.length; i++) {
+      var item = timeline[i];
+      var itemMinutes = minutesOf(item.time);
+      var status = "waiting";
+
+      if (phase.currentMinutes > itemMinutes) {
+        status = "done";
+      }
+
+      if (item.time === phase.active.time) {
+        status = "active";
+      }
+
+      var label = "대기";
+      var statusClass = "info";
+
+      if (status === "done") {
+        label = "완료";
+        statusClass = "ok";
+      } else if (status === "active") {
+        label = "진행";
+        statusClass = "warn";
+      }
+
+      html += ''
+        + '<div class="timeline-item">'
+        + '  <div class="timeline-time">' + item.time + '</div>'
+        + '  <div class="timeline-name">' + item.name + '</div>'
+        + '  <span class="status ' + statusClass + '">' + label + '</span>'
+        + '</div>';
+    }
+
+    timelineEl.innerHTML = html;
+
+    if (phaseText) {
+      phaseText.textContent = "현재 단계: " + phase.active.name;
+    }
+
+    if (nextJobMetric && phase.next) {
+      nextJobMetric.textContent = phase.next.time;
+    }
+
+    if (nextJobText && phase.next) {
+      nextJobText.textContent = phase.next.name;
+    }
+  }
+
+  function renderLogs() {
+    if (!todayLogs) {
+      return;
+    }
+
+    var html = "";
+    for (var i = 0; i < sampleLogs.length; i++) {
+      html += ''
+        + '<div class="log-item">'
+        + '  <div class="log-time">' + sampleLogs[i][0] + '</div>'
+        + '  <div class="log-text">' + sampleLogs[i][1] + '</div>'
+        + '</div>';
+    }
+
+    todayLogs.innerHTML = html;
+  }
+
+  function updateLastTime() {
+    if (!lastUpdate) {
+      return;
+    }
+
+    var now = new Date();
+    var yyyy = now.getFullYear();
+    var mm = String(now.getMonth() + 1).padStart(2, "0");
+    var dd = String(now.getDate()).padStart(2, "0");
+    var hh = String(now.getHours()).padStart(2, "0");
+    var mi = String(now.getMinutes()).padStart(2, "0");
+    var ss = String(now.getSeconds()).padStart(2, "0");
+    lastUpdate.textContent = yyyy + "-" + mm + "-" + dd + " " + hh + ":" + mi + ":" + ss;
+  }
+
+  function setStatusChip(element, kind, text) {
+    if (!element) {
+      return;
+    }
+    element.className = "status " + kind;
+    element.textContent = text;
+  }
+
+  function setDotStatus(element, kind) {
+    if (!element) {
+      return;
+    }
+
+    element.classList.remove("green", "yellow", "red", "blue");
+
+    if (kind === "ok") {
+      element.classList.add("green");
+    } else if (kind === "warn") {
+      element.classList.add("yellow");
+    } else if (kind === "halted" || kind === "danger") {
+      element.classList.add("red");
+    } else {
+      element.classList.add("blue");
+    }
+  }
+
+  function formatPercent(value) {
+    var numeric = Number(value || 0);
+    var prefix = numeric > 0 ? "+" : "";
+    return prefix + numeric.toFixed(2) + "%";
+  }
+
+  function renderFunnel(funnel) {
+    if (!funnelProgress || !funnel) {
+      return;
+    }
+
+    funnelProgress.innerHTML = ''
+      + '<div class="funnel-step"><strong>' + funnel.market_total + '</strong><span>전체 종목</span></div>'
+      + '<div class="funnel-step"><strong>' + funnel.layer1 + '</strong><span>Layer 1 Universe</span></div>'
+      + '<div class="funnel-step"><strong>' + funnel.layer2 + '</strong><span>Layer 2 후보</span></div>'
+      + '<div class="funnel-step"><strong>' + funnel.entry_waiting + '</strong><span>매수조건 대기</span></div>'
+      + '<div class="funnel-step"><strong>' + funnel.holding + '</strong><span>보유중</span></div>';
+  }
+
+  function renderOverview(payload) {
+    if (!payload) {
+      return;
+    }
+
+    timeline = payload.timeline || timeline;
+    sampleLogs = (payload.logs || []).map(function (entry) {
+      return [entry.time, entry.text];
+    });
+    isHalted = Boolean(payload.emergency_halt);
+
+    if (engineText) {
+      engineText.textContent = isHalted ? "Auto Engine HALTED" : "Auto Engine RUNNING";
+    }
+    setDotStatus(engineDot, isHalted ? "halted" : "ok");
+    setDotStatus(restDot, payload.health.kis_rest.status);
+    setDotStatus(socketDot, payload.health.websocket.status);
+
+    if (restStatusText) {
+      restStatusText.textContent = "KIS REST " + payload.health.kis_rest.detail;
+    }
+    if (socketStatusText) {
+      socketStatusText.textContent = "WebSocket " + payload.health.websocket.detail;
+    }
+    if (modeMetric) {
+      modeMetric.textContent = payload.mode || "AUTO";
+      modeMetric.classList.remove("good", "bad", "warn", "info");
+      modeMetric.classList.add(isHalted ? "bad" : "good");
+    }
+    if (modeDetail) {
+      modeDetail.textContent = payload.mock_mode ? "실거래 엔진 미구현 · 콘솔 mock 상태" : "RulePack 적용 완료";
+    }
+    if (pnlMetric) {
+      pnlMetric.textContent = formatPercent(payload.pnl_percent);
+      pnlMetric.classList.remove("good", "bad");
+      pnlMetric.classList.add(Number(payload.pnl_percent) >= 0 ? "good" : "bad");
+    }
+    if (pnlDetail) {
+      pnlDetail.textContent = "일일 손실한도 " + formatPercent(payload.daily_loss_limit_percent);
+    }
+    if (positionsMetric) {
+      positionsMetric.innerHTML = String(payload.open_positions) + ' <small>/ ' + String(payload.max_positions) + '</small>';
+    }
+    if (positionsDetail) {
+      positionsDetail.textContent = isHalted ? "신규 주문 차단" : "신규 주문 허용";
+    }
+    if (kisTokenDetail) {
+      kisTokenDetail.textContent = payload.updated_at || "-";
+    }
+    if (rulepackDetail) {
+      rulepackDetail.textContent = payload.health.rulepack.detail;
+    }
+    if (websocketDetail) {
+      websocketDetail.textContent = payload.health.websocket.detail;
+    }
+    if (riskDetail) {
+      riskDetail.textContent = payload.health.risk_guard.detail;
+    }
+
+    setStatusChip(kisTokenStatus, "ok", "정상");
+    setStatusChip(rulepackStatus, payload.health.rulepack.status === "ok" ? "ok" : "info", payload.health.rulepack.detail);
+    setStatusChip(websocketStatus, payload.health.websocket.status === "ok" ? "ok" : "info", payload.health.websocket.detail);
+    setStatusChip(riskStatus, isHalted ? "danger" : "ok", isHalted ? "차단" : "허용");
+
+    if (isHalted) {
+      applyHaltState({
+        mode: payload.mode || "HALT"
+      });
+    } else if (haltBtn) {
+      haltBtn.textContent = "긴급정지";
+      haltBtn.disabled = false;
+      haltBtn.style.opacity = "1";
+      haltBtn.style.cursor = "pointer";
+    }
+
+    renderFunnel(payload.funnel);
+    renderTimeline();
+    renderLogs();
+  }
+
+  function renderFallbackOverview(reason) {
+    isHalted = false;
+
+    if (engineText) {
+      engineText.textContent = "Auto Engine MOCK";
+    }
+    if (modeMetric) {
+      modeMetric.textContent = "MOCK";
+      modeMetric.classList.remove("good", "bad", "warn", "info");
+      modeMetric.classList.add("warn");
+    }
+    if (modeDetail) {
+      modeDetail.textContent = "백엔드 overview 연결 실패 · 정적 mock 상태";
+    }
+    if (positionsDetail) {
+      positionsDetail.textContent = "실주문 차단 · mock 표시";
+    }
+    if (restStatusText) {
+      restStatusText.textContent = "KIS REST overview API 실패";
+    }
+    if (socketStatusText) {
+      socketStatusText.textContent = "WebSocket mock 상태";
+    }
+    if (riskDetail) {
+      riskDetail.textContent = reason;
+    }
+
+    setDotStatus(engineDot, "warn");
+    setDotStatus(restDot, "warn");
+    setDotStatus(socketDot, "info");
+    setStatusChip(kisTokenStatus, "warn", "mock");
+    setStatusChip(rulepackStatus, "warn", "fallback");
+    setStatusChip(websocketStatus, "info", "mock");
+    setStatusChip(riskStatus, "warn", "확인 필요");
+    renderTimeline();
+    renderLogs();
+  }
+
+  function renderRulepack(payload) {
+    if (!payload) {
+      return;
+    }
+
+    if (rulepackBadge) {
+      rulepackBadge.textContent = payload.rulepack_id + " " + (payload.status === "mock" ? "mock 적용" : "적용");
+      rulepackBadge.className = "status " + (payload.status === "mock" ? "info" : "ok");
+    }
+    if (rulepackSummary) {
+      rulepackSummary.textContent = payload.summary;
+    }
+    if (rulepackChanges) {
+      rulepackChanges.innerHTML = (payload.changes || []).map(function (text) {
+        return "<li>" + text + "</li>";
+      }).join("");
+    }
+    if (rulepackJson) {
+      rulepackJson.textContent = JSON.stringify(payload, null, 2);
+    }
+  }
+
+  function renderDataHealth(payload) {
+    if (consoleFooterNote && payload && payload.note) {
+      consoleFooterNote.textContent = payload.note;
+    }
+  }
+
+  function getStatusClass(kind) {
+    if (kind === "success" || kind === "ok" || kind === "live") {
+      return "ok";
+    }
+    if (kind === "error" || kind === "danger") {
+      return "danger";
+    }
+    if (kind === "mock") {
+      return "warn";
+    }
+    return "info";
+  }
+
+  function getSourceLabel(source) {
+    if (source === "live") {
+      return "LIVE";
+    }
+    if (source === "backend") {
+      return "BACKEND";
+    }
+    return "MOCK";
+  }
+
+  /* Render admin audit logs so PM can distinguish mock-safe data from real backend actions. */
+  function renderApiLogs(payload) {
+    if (!payload || !apiLogsTableBody) {
+      return;
+    }
+
+    var items = payload.items || [];
+
+    if (apiLogsCount) {
+      apiLogsCount.textContent = String(items.length) + "건";
+      apiLogsCount.className = "status " + (payload.mock_mode ? "warn" : "info");
+    }
+    if (apiLogsMetric) {
+      apiLogsMetric.textContent = String(items.length);
+    }
+    if (apiLogsLastUpdate) {
+      apiLogsLastUpdate.textContent = payload.updated_at || "-";
+    }
+    if (apiLogsMode) {
+      apiLogsMode.textContent = payload.mock_mode ? "MOCK SAFE" : "LIVE";
+      apiLogsMode.className = "metric " + (payload.mock_mode ? "warn" : "good");
+    }
+    if (apiLogsNote) {
+      apiLogsNote.textContent = payload.note || "관리 로그 설명이 없습니다.";
+    }
+
+    if (items.length === 0) {
+      apiLogsTableBody.innerHTML = '<tr><td colspan="8" class="muted">기록된 관리 로그가 없습니다.</td></tr>';
+      return;
+    }
+
+    apiLogsTableBody.innerHTML = items.map(function (entry) {
+      var source = getSourceLabel(entry.source);
+      var apiLabel = entry.api_name_or_path || ((entry.method || '-') + ' ' + (entry.endpoint || '-'));
+      var calledAt = entry.called_at || entry.timestamp || '-';
+      return ''
+        + '<tr>'
+        + '<td>' + (entry.feature_name || '-') + '</td>'
+        + '<td>' + (entry.purpose || '-') + '</td>'
+        + '<td>' + (entry.result_summary || entry.message || '-') + '</td>'
+        + '<td>' + calledAt + '</td>'
+        + '<td>' + apiLabel + '</td>'
+        + '<td><span class="status ' + getStatusClass(entry.status) + '">' + (entry.status || '-') + '</span></td>'
+        + '<td><span class="status ' + getStatusClass(entry.source) + '">' + source + '</span></td>'
+        + '<td><span class="status ' + (entry.live ? 'ok' : 'warn') + '">' + (entry.live ? 'LIVE' : 'NO') + '</span></td>'
+        + '</tr>';
+    }).join("");
+  }
+
+  async function loadApiLogs() {
+    var result = await fetchJson("/api/v1/bot/api-logs");
+    renderApiLogs(result.payload);
+  }
+
+  function applyHaltState(payload) {
+    isHalted = true;
+    if (engineText) {
+      engineText.textContent = "Auto Engine HALTED";
+    }
+    setDotStatus(engineDot, "halted");
+    if (modeMetric) {
+      modeMetric.textContent = payload && payload.mode ? payload.mode : "HALT";
+      modeMetric.classList.remove("good", "warn", "info");
+      modeMetric.classList.add("bad");
+    }
+    if (modeDetail) {
+      modeDetail.textContent = "긴급정지 적용됨";
+    }
+    if (positionsDetail) {
+      positionsDetail.textContent = "신규 주문 차단";
+    }
+    setStatusChip(riskStatus, "danger", "차단");
+    if (riskDetail) {
+      riskDetail.textContent = "긴급정지 요청으로 신규 진입 차단";
+    }
+    if (haltBtn) {
+      haltBtn.textContent = "중단됨";
+      haltBtn.disabled = true;
+      haltBtn.style.opacity = "0.75";
+      haltBtn.style.cursor = "not-allowed";
+    }
+  }
+
+  async function fetchJson(path, options) {
+    var response = await fetch(API_BASE + path, options || {});
+    if (!response.ok) {
+      throw new Error(path + " 요청 실패: " + response.status);
+    }
+
+    var payload = await response.json();
+    if (payload && payload.ok === false) {
+      throw new Error(path + " 응답 오류: " + (payload.error || "unknown"));
+    }
+    return payload;
+  }
+
+  async function loadConsoleData() {
+    var results = await Promise.allSettled([
+      fetchJson("/api/v1/bot/overview"),
+      fetchJson("/api/v1/bot/rulepack/today"),
+      fetchJson("/api/v1/bot/data-health")
+    ]);
+    var apiLogError = null;
+
+    var overviewResult = results[0];
+    var rulepackResult = results[1];
+    var dataHealthResult = results[2];
+    var failedEndpoints = [];
+
+    if (overviewResult.status === "fulfilled") {
+      renderOverview(overviewResult.value.payload);
+    } else {
+      failedEndpoints.push("overview");
+      renderFallbackOverview("overview API 실패");
+      console.error("Overview bootstrap failed:", overviewResult.reason);
+    }
+
+    if (rulepackResult.status === "fulfilled") {
+      renderRulepack(rulepackResult.value.payload);
+    } else {
+      failedEndpoints.push("rulepack");
+      console.error("Rulepack bootstrap failed:", rulepackResult.reason);
+    }
+
+    if (dataHealthResult.status === "fulfilled") {
+      renderDataHealth(dataHealthResult.value.payload);
+    } else {
+      failedEndpoints.push("data-health");
+      console.error("Data health bootstrap failed:", dataHealthResult.reason);
+    }
+
+    try {
+      await loadApiLogs();
+    } catch (error) {
+      apiLogError = error;
+      console.error("API logs bootstrap failed:", error);
+    }
+
+    if (failedEndpoints.length > 0) {
+      var warningMessage = "일부 백엔드 API 연결 실패: " + failedEndpoints.join(", ") + " · 정적 mock 상태를 표시 중입니다.";
+      if (apiLogError) {
+        warningMessage += " 관리 로그 조회도 실패했습니다.";
+      }
+      setApiBanner("warn", warningMessage);
+      if (consoleFooterNote) {
+        consoleFooterNote.textContent = "API 일부 실패 · 실거래 엔진 미구현 · fallback mock 표시중";
+      }
+      return;
+    }
+
+    setApiBanner("info", apiLogError
+      ? "백엔드 API 연결 완료 · 핵심 화면은 mock 응답을 표시하며 관리 로그 조회는 실패했습니다."
+      : "백엔드 API 연결 완료 · 현재 화면은 mock 응답과 실제 백엔드 관리 호출을 함께 표시합니다.");
+    if (consoleFooterNote && dataHealthResult.value && dataHealthResult.value.payload && dataHealthResult.value.payload.note) {
+      consoleFooterNote.textContent = dataHealthResult.value.payload.note;
+    }
+  }
+
+  async function emergencyHalt() {
+    var result = await fetchJson("/api/v1/bot/control/halt", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      }
+    });
+    applyHaltState(result.payload);
+    await loadConsoleData();
+  }
+
+  function bindEvents() {
+    for (var i = 0; i < navButtons.length; i++) {
+      navButtons[i].addEventListener("click", function () {
+        showScreen(this.getAttribute("data-screen"));
+      });
+    }
+
+    if (mobileMenu) {
+      mobileMenu.addEventListener("change", function () {
+        showScreen(this.value);
+      });
+    }
+
+    if (themeBtn) {
+      themeBtn.addEventListener("click", function () {
+        if (document.body.classList.contains("light")) {
+          setTheme("dark");
+        } else {
+          setTheme("light");
+        }
+      });
+    }
+
+    if (haltBtn) {
+      haltBtn.addEventListener("click", async function () {
+        if (isHalted) {
+          return;
+        }
+
+        if (!confirm("긴급정지를 실행할까요? 신규 자동 주문이 즉시 차단됩니다.")) {
+          return;
+        }
+
+        try {
+          await emergencyHalt();
+        } catch (error) {
+          alert("긴급정지 호출에 실패했습니다: " + error.message);
+        }
+      });
+    }
+  }
+
+  function initTheme() {
+    var savedTheme = localStorage.getItem("dantabot_theme");
+    if (savedTheme === "light") {
+      setTheme("light");
+      return;
+    }
+    setTheme("dark");
+  }
+
+  function init() {
+    initTheme();
+    bindEvents();
+    renderTimeline();
+    renderLogs();
+    updateLastTime();
+    loadConsoleData();
+
+    setInterval(function () {
+      renderTimeline();
+      updateLastTime();
+    }, 1000);
+  }
+
+  document.addEventListener("DOMContentLoaded", init);
+</script>
+</body>
+</html>
+

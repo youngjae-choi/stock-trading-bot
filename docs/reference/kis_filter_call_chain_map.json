@@ -1,0 +1,30 @@
+{
+  "version": "2026-04-22",
+  "chains": {
+    "domestic_ranking_core": {
+      "description": "국내주식 랭킹 기반 유니버스 + 최소 단건 보강",
+      "steps": [
+        {"name": "universe", "apis": ["/uapi/domestic-stock/v1/quotations/volume-rank", "/uapi/domestic-stock/v1/ranking/market-cap", "/uapi/domestic-stock/v1/ranking/volume-power"]},
+        {"name": "factors", "apis": ["/uapi/domestic-stock/v1/quotations/inquire-investor-time-by-market", "/uapi/domestic-stock/v1/quotations/investor-trend-estimate"]},
+        {"name": "timeseries", "apis": ["/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice", "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"]},
+        {"name": "snapshot_enrich", "apis": ["/uapi/domestic-stock/v1/quotations/inquire-price", "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"]}
+      ]
+    },
+    "domestic_condition_search": {
+      "description": "조건검색 기반 유니버스",
+      "steps": [
+        {"name": "condition_list", "apis": ["/uapi/domestic-stock/v1/quotations/psearch-title"]},
+        {"name": "condition_result", "apis": ["/uapi/domestic-stock/v1/quotations/psearch-result"]},
+        {"name": "snapshot_enrich", "apis": ["/uapi/domestic-stock/v1/quotations/inquire-price"]}
+      ]
+    },
+    "overseas_ranking_core": {
+      "description": "해외주식 랭킹 기반 유니버스",
+      "steps": [
+        {"name": "universe", "apis": ["/uapi/overseas-stock/v1/ranking/trade-vol", "/uapi/overseas-stock/v1/ranking/market-cap", "/uapi/overseas-stock/v1/ranking/volume-power"]},
+        {"name": "timeseries", "apis": ["/uapi/overseas-price/v1/quotations/dailyprice", "/uapi/overseas-price/v1/quotations/inquire-time-itemchartprice"]},
+        {"name": "snapshot_enrich", "apis": ["/uapi/overseas-price/v1/quotations/price"]}
+      ]
+    }
+  }
+}

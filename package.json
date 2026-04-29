@@ -1,0 +1,13 @@
+{
+  "name": "stock-trading-bot-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal Playwright setup for FastAPI console smoke test",
+  "scripts": {
+    "test:e2e": "bash ./scripts/run-playwright-e2e.sh",
+    "_playwright_test_internal": "playwright test --config=playwright.config.cjs tests/e2e/console-smoke.spec.cjs tests/e2e/health.spec.ts --workers=1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
+  }
+}

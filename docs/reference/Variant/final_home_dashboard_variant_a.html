@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Final Home Dashboard Variant A</title>
+  <style>
+    :root{
+      --bg:#f6f7fb;
+      --card:#ffffff;
+      --text:#111827;
+      --sub:#6b7280;
+      --line:#e5e7eb;
+      --blue:#2563eb;
+      --blue-soft:#eff6ff;
+      --green:#16a34a;
+      --green-soft:#ecfdf5;
+      --red:#dc2626;
+      --red-soft:#fef2f2;
+      --amber:#d97706;
+      --amber-soft:#fff7ed;
+      --gray:#f9fafb;
+      --shadow:0 8px 24px rgba(17,24,39,.06);
+      --radius:20px;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family:Inter, Pretendard, Apple SD Gothic Neo, sans-serif;
+      background:var(--bg);
+      color:var(--text);
+    }
+    .wrap{max-width:1320px;margin:0 auto;padding:24px 18px 40px}
+    h1,h2,h3,p{margin:0}
+    .topbar{
+      display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px;
+    }
+    .title p{margin-top:8px;color:var(--sub);font-size:14px;line-height:1.6}
+    .actions{display:flex;gap:10px;flex-wrap:wrap}
+    .btn{
+      padding:12px 16px;border-radius:14px;border:1px solid var(--line);background:#fff;font-size:14px;font-weight:700;
+    }
+    .hero{
+      display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px;
+    }
+    .card{
+      background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+      box-shadow:var(--shadow);padding:18px;
+    }
+    .k{font-size:13px;color:var(--sub)}
+    .v{font-size:28px;font-weight:800;letter-spacing:-.02em;margin-top:8px}
+    .d{font-size:12px;color:var(--sub);margin-top:8px}
+    .progress{
+      margin-top:12px;height:10px;background:#e5eefc;border-radius:999px;overflow:hidden;
+    }
+    .progress span{
+      display:block;height:100%;width:82%;background:linear-gradient(90deg,#2563eb,#60a5fa);
+    }
+    .layout-1{
+      display:grid;grid-template-columns:1.1fr .9fr;gap:16px;margin-bottom:16px;
+    }
+    .layout-2{
+      display:grid;grid-template-columns:1fr 1fr;gap:16px;
+    }
+    .head{
+      display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:12px;
+    }
+    .head p{margin-top:4px;color:var(--sub);font-size:13px}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:12px 8px;border-bottom:1px solid var(--line);text-align:left;font-size:14px}
+    th{color:var(--sub);font-weight:600}
+    tr:last-child td{border-bottom:none}
+    .pill{
+      display:inline-flex;padding:7px 10px;border-radius:999px;font-size:12px;font-weight:700
+    }
+    .good{background:var(--green-soft);color:var(--green)}
+    .warn{background:var(--amber-soft);color:#b45309}
+    .paper{background:var(--blue-soft);color:var(--blue)}
+    .mini-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .mini{
+      padding:14px;border:1px solid var(--line);border-radius:16px;background:var(--gray)
+    }
+    .mini .n{font-size:13px;color:var(--sub)}
+    .mini .num{font-size:24px;font-weight:800;margin-top:8px}
+    .sys-row{
+      display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--line);font-size:14px;
+    }
+    .sys-row:last-child{border-bottom:none}
+    .log-list{display:grid;gap:10px;margin-top:14px}
+    .log-item{
+      display:flex;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid var(--line);
+      border-radius:14px;background:#fff;
+    }
+    .log-main{font-size:14px}
+    .log-sub{font-size:12px;color:var(--sub);margin-top:4px}
+    .log-time{font-size:12px;color:var(--sub);white-space:nowrap}
+    @media (max-width:1180px){
+      .hero{grid-template-columns:repeat(2,1fr)}
+      .layout-1,.layout-2{grid-template-columns:1fr}
+    }
+    @media (max-width:680px){
+      .wrap{padding:18px 14px 32px}
+      .topbar{flex-direction:column}
+      .hero{grid-template-columns:1fr}
+      .v{font-size:24px}
+      .mini-grid{grid-template-columns:1fr}
+      th:nth-child(4), td:nth-child(4){display:none}
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="title">
+        <h1>홈 대시보드</h1>
+        <p>계좌 1개 기준의 전체 운영 상태를 요약합니다. 전략별 운용 현황과 종목 Top 5, 시스템 상태를 3초 안에 판단할 수 있게 구성합니다.</p>
+      </div>
+      <div class="actions">
+        <button class="btn">전략 목록</button>
+        <button class="btn">시스템 상태</button>
+      </div>
+    </div>
+
+    <div class="hero">
+      <div class="card">
+        <div class="k">계좌 총자산</div>
+        <div class="v">₩100,840,000</div>
+        <div class="d">시작 원금 1억원 기준</div>
+      </div>
+      <div class="card">
+        <div class="k">현재 예수금</div>
+        <div class="v">₩21,480,000</div>
+        <div class="d">대기 전략 자금 포함</div>
+      </div>
+      <div class="card">
+        <div class="k">오늘 손익</div>
+        <div class="v">₩412,500</div>
+        <div class="d" style="color:#16a34a;">+0.41%</div>
+      </div>
+      <div class="card">
+        <div class="k">목표 달성률</div>
+        <div class="v">82%</div>
+        <div class="d">일일 목표 0.50% 기준</div>
+        <div class="progress"><span></span></div>
+      </div>
+    </div>
+
+    <div class="layout-1">
+      <div class="card">
+        <div class="head">
+          <div>
+            <h2 style="font-size:18px;">전략 요약</h2>
+            <p>현재 계좌 안에서 운용 중인 핵심 전략만 표시합니다.</p>
+          </div>
+          <div style="font-size:13px;color:#6b7280;">상위 4개</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>전략명</th>
+              <th>할당금</th>
+              <th>오늘 수익률</th>
+              <th>상태</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>오프닝 돌파</td><td>₩20,000,000</td><td style="color:#16a34a;">+0.62%</td><td><span class="pill paper">진행중</span></td></tr>
+            <tr><td>거래량 급증</td><td>₩20,000,000</td><td style="color:#16a34a;">+0.54%</td><td><span class="pill good">목표달성</span></td></tr>
+            <tr><td>RSI 반등</td><td>₩20,000,000</td><td style="color:#dc2626;">-0.33%</td><td><span class="pill warn">손절</span></td></tr>
+            <tr><td>박스권 이탈</td><td>₩20,000,000</td><td style="color:#16a34a;">+0.18%</td><td><span class="pill paper">진행중</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="head">
+          <div>
+            <h2 style="font-size:18px;">오늘 결과 요약</h2>
+            <p>전략과 종목 기준의 핵심 결과만 요약합니다.</p>
+          </div>
+        </div>
+        <div class="mini-grid">
+          <div class="mini"><div class="n">활성 전략</div><div class="num">3</div></div>
+          <div class="mini"><div class="n">목표달성 종목</div><div class="num" style="color:#16a34a;">6</div></div>
+          <div class="mini"><div class="n">손절 종목</div><div class="num" style="color:#dc2626;">3</div></div>
+          <div class="mini"><div class="n">진행중 종목</div><div class="num">9</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="layout-2">
+      <div class="card">
+        <div class="head">
+          <div>
+            <h2 style="font-size:18px;">보유 종목 Top 5</h2>
+            <p>영향도가 큰 종목만 보여줍니다.</p>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>종목명</th>
+              <th>전략</th>
+              <th>수익률</th>
+              <th>상태</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>삼성전자</td><td>오프닝 돌파</td><td style="color:#16a34a;">+1.18%</td><td>보유중</td></tr>
+            <tr><td>SK하이닉스</td><td>거래량 급증</td><td style="color:#16a34a;">+0.92%</td><td>목표달성</td></tr>
+            <tr><td>NAVER</td><td>박스권 이탈</td><td style="color:#16a34a;">+0.63%</td><td>부분익절</td></tr>
+            <tr><td>현대차</td><td>오프닝 돌파</td><td style="color:#dc2626;">-0.21%</td><td>보유중</td></tr>
+            <tr><td>카카오</td><td>RSI 반등</td><td style="color:#dc2626;">-0.44%</td><td>손절</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="display:grid;gap:16px;">
+        <div class="card">
+          <div class="head">
+            <div>
+              <h2 style="font-size:18px;">시스템 상태</h2>
+              <p>운영 가능한 상태인지 간단히 확인합니다.</p>
+            </div>
+          </div>
+          <div class="sys-row"><span>사용자 로그인</span><strong>정상</strong></div>
+          <div class="sys-row"><span>계좌 모드</span><strong>모의</strong></div>
+          <div class="sys-row"><span>API 연결</span><strong>정상</strong></div>
+          <div class="sys-row"><span>시세 수신</span><strong>정상</strong></div>
+          <div class="sys-row"><span>주문 가능</span><strong>가능</strong></div>
+        </div>
+
+        <div class="card">
+          <div class="head">
+            <div>
+              <h2 style="font-size:18px;">최근 로그</h2>
+              <p>핵심 이벤트 3건만 표시합니다.</p>
+            </div>
+          </div>
+          <div class="log-list">
+            <div class="log-item">
+              <div><div class="log-main">삼성전자 2차 분할매수 체결</div><div class="log-sub">오프닝 돌파 · 15주</div></div>
+              <div class="log-time">09:11:02</div>
+            </div>
+            <div class="log-item">
+              <div><div class="log-main">거래량 급증 전략 목표 달성</div><div class="log-sub">SK하이닉스 부분매도 완료</div></div>
+              <div class="log-time">09:08:27</div>
+            </div>
+            <div class="log-item">
+              <div><div class="log-main">API 토큰 갱신 성공</div><div class="log-sub">다음 만료 예정 15:30:00</div></div>
+              <div class="log-time">08:59:55</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

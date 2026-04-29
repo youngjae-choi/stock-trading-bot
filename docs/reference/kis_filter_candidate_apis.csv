@@ -1,0 +1,54 @@
+﻿seq,menu,api_name,api_id,method,url,tr_real,tr_mock
+38,[국내주식] 기본시세,주식일별분봉조회,국내주식-213,GET,/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice,FHKST03010230,모의투자 미지원
+39,[국내주식] 기본시세,국내주식기간별시세(일/주/월/년),v1_국내주식-016,GET,/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice,FHKST03010100,FHKST03010100
+45,[국내주식] 기본시세,주식현재가 투자자,v1_국내주식-012,GET,/uapi/domestic-stock/v1/quotations/inquire-investor,FHKST01010900,FHKST01010900
+48,[국내주식] 기본시세,주식당일분봉조회,v1_국내주식-022,GET,/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice,FHKST03010200,FHKST03010200
+52,[국내주식] ELW 시세,ELW 민감도 순위,국내주식-170,GET,/uapi/elw/v1/ranking/sensitivity,FHPEW02850000,모의투자 미지원
+54,[국내주식] ELW 시세,ELW 종목검색,국내주식-166,GET,/uapi/elw/v1/quotations/cond-search,FHKEW15100000,모의투자 미지원
+61,[국내주식] ELW 시세,ELW 거래량순위,국내주식-168,GET,/uapi/elw/v1/ranking/volume-rank,FHPEW02780000,모의투자 미지원
+62,[국내주식] ELW 시세,ELW 지표순위,국내주식-169,GET,/uapi/elw/v1/ranking/indicator,FHPEW02790000,모의투자 미지원
+64,[국내주식] ELW 시세,ELW 상승률순위,국내주식-167,GET,/uapi/elw/v1/ranking/updown-rate,FHPEW02770000,모의투자 미지원
+72,[국내주식] 업종/기타,국내주식업종기간별시세(일/주/월/년),v1_국내주식-021,GET,/uapi/domestic-stock/v1/quotations/inquire-daily-indexchartprice,FHKUP03500100,FHKUP03500100
+75,[국내주식] 업종/기타,업종 분봉조회,v1_국내주식-045,GET,/uapi/domestic-stock/v1/quotations/inquire-time-indexchartprice,FHKUP03500200,모의투자 미지원
+113,[국내주식] 시세분석,시장별 투자자매매동향(일별),국내주식-075,GET,/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market,FHPTJ04040000,모의투자 미지원
+115,[국내주식] 시세분석,종목별 투자자매매동향(일별),종목별 투자자매매동향(일별),GET,/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily,FHPTJ04160001,모의투자 미지원
+116,[국내주식] 시세분석,종목조건검색 목록조회,국내주식-038,GET,/uapi/domestic-stock/v1/quotations/psearch-title,HHKST03900300,모의투자 미지원
+120,[국내주식] 시세분석,종목조건검색조회,국내주식-039,GET,/uapi/domestic-stock/v1/quotations/psearch-result,HHKST03900400,모의투자 미지원
+122,[국내주식] 시세분석,국내기관_외국인 매매종목가집계,국내주식-037,GET,/uapi/domestic-stock/v1/quotations/foreign-institution-total,FHPTJ04400000,모의투자 미지원
+127,[국내주식] 시세분석,종목별 외인기관 추정가집계,v1_국내주식-046,GET,/uapi/domestic-stock/v1/quotations/investor-trend-estimate,HHPTJ04160200,모의투자 미지원
+130,[국내주식] 시세분석,프로그램매매 투자자매매동향(당일),국내주식-116,GET,/uapi/domestic-stock/v1/quotations/investor-program-trade-today,HHPPG046600C1,모의투자 미지원
+134,[국내주식] 시세분석,시장별 투자자매매동향(시세),v1_국내주식-074,GET,/uapi/domestic-stock/v1/quotations/inquire-investor-time-by-market,FHPTJ04030000,모의투자 미지원
+140,[국내주식] 순위분석,국내주식 예상체결 상승/하락상위,v1_국내주식-103,GET,/uapi/domestic-stock/v1/ranking/exp-trans-updown,FHPST01820000,모의투자 미지원
+141,[국내주식] 순위분석,국내주식 호가잔량 순위,국내주식-089,GET,/uapi/domestic-stock/v1/ranking/quote-balance,FHPST01720000,모의투자 미지원
+142,[국내주식] 순위분석,국내주식 신용잔고 상위,국내주식-109,GET,/uapi/domestic-stock/v1/ranking/credit-balance,FHKST17010000,모의투자 미지원
+143,[국내주식] 순위분석,국내주식 시간외거래량순위,국내주식-139,GET,/uapi/domestic-stock/v1/ranking/overtime-volume,FHPST02350000,모의투자 미지원
+144,[국내주식] 순위분석,국내주식 배당률 상위,국내주식-106,GET,/uapi/domestic-stock/v1/ranking/dividend-rate,HHKDB13470100,모의투자 미지원
+145,[국내주식] 순위분석,국내주식 시간외잔량 순위,v1_국내주식-093,GET,/uapi/domestic-stock/v1/ranking/after-hour-balance,FHPST01760000,모의투자 미지원
+146,[국내주식] 순위분석,국내주식 공매도 상위종목,국내주식-133,GET,/uapi/domestic-stock/v1/ranking/short-sale,FHPST04820000,모의투자 미지원
+147,[국내주식] 순위분석,국내주식 이격도 순위,v1_국내주식-095,GET,/uapi/domestic-stock/v1/ranking/disparity,FHPST01780000,모의투자 미지원
+148,[국내주식] 순위분석,HTS조회상위20종목,국내주식-214,GET,/uapi/domestic-stock/v1/ranking/hts-top-view,HHMCM000100C0,모의투자 미지원
+149,[국내주식] 순위분석,거래량순위,v1_국내주식-047,GET,/uapi/domestic-stock/v1/quotations/volume-rank,FHPST01710000,모의투자 미지원
+150,[국내주식] 순위분석,국내주식 수익자산지표 순위,v1_국내주식-090,GET,/uapi/domestic-stock/v1/ranking/profit-asset-index,FHPST01730000,모의투자 미지원
+151,[국내주식] 순위분석,국내주식 신고/신저근접종목 상위,v1_국내주식-105,GET,/uapi/domestic-stock/v1/ranking/near-new-highlow,FHPST01870000,모의투자 미지원
+152,[국내주식] 순위분석,국내주식 우선주/괴리율 상위,v1_국내주식-094,GET,/uapi/domestic-stock/v1/ranking/prefer-disparate-ratio,FHPST01770000,모의투자 미지원
+153,[국내주식] 순위분석,국내주식 대량체결건수 상위,국내주식-107,GET,/uapi/domestic-stock/v1/ranking/bulk-trans-num,FHKST190900C0,모의투자 미지원
+154,[국내주식] 순위분석,국내주식 재무비율 순위,v1_국내주식-092,GET,/uapi/domestic-stock/v1/ranking/finance-ratio,FHPST01750000,모의투자 미지원
+155,[국내주식] 순위분석,국내주식 시가총액 상위,v1_국내주식-091,GET,/uapi/domestic-stock/v1/ranking/market-cap,FHPST01740000,모의투자 미지원
+156,[국내주식] 순위분석,국내주식 당사매매종목 상위,v1_국내주식-104,GET,/uapi/domestic-stock/v1/ranking/traded-by-company,FHPST01860000,모의투자 미지원
+157,[국내주식] 순위분석,국내주식 등락률 순위,v1_국내주식-088,GET,/uapi/domestic-stock/v1/ranking/fluctuation,FHPST01700000,모의투자 미지원
+158,[국내주식] 순위분석,국내주식 시장가치 순위,v1_국내주식-096,GET,/uapi/domestic-stock/v1/ranking/market-value,FHPST01790000,모의투자 미지원
+159,[국내주식] 순위분석,국내주식 관심종목등록 상위,v1_국내주식-102,GET,/uapi/domestic-stock/v1/ranking/top-interest-stock,FHPST01800000,모의투자 미지원
+160,[국내주식] 순위분석,국내주식 체결강도 상위,v1_국내주식-101,GET,/uapi/domestic-stock/v1/ranking/volume-power,FHPST01680000,모의투자 미지원
+161,[국내주식] 순위분석,국내주식 시간외등락율순위,국내주식-138,GET,/uapi/domestic-stock/v1/ranking/overtime-fluctuation,FHPST02340000,모의투자 미지원
+254,[해외주식] 기본시세,해외주식 기간별시세,v1_해외주식-010,GET,/uapi/overseas-price/v1/quotations/dailyprice,HHDFS76240000,HHDFS76240000
+258,[해외주식] 기본시세,해외주식조건검색,v1_해외주식-015,GET,/uapi/overseas-price/v1/quotations/inquire-search,HHDFS76410000,HHDFS76410000
+260,[해외주식] 기본시세,해외지수분봉조회,v1_해외주식-031,GET,/uapi/overseas-price/v1/quotations/inquire-time-indexchartprice,FHKST03030200,모의투자 미지원
+261,[해외주식] 기본시세,해외주식분봉조회,v1_해외주식-030,GET,/uapi/overseas-price/v1/quotations/inquire-time-itemchartprice,HHDFS76950200,모의투자 미지원
+264,[해외주식] 기본시세,해외주식 종목/지수/환율기간별시세(일/주/월/년),v1_해외주식-012,GET,/uapi/overseas-price/v1/quotations/inquire-daily-chartprice,FHKST03030100,FHKST03030100
+267,[해외주식] 시세분석,해외주식 거래증가율순위,해외주식-045,GET,/uapi/overseas-stock/v1/ranking/trade-growth,HHDFS76330000,모의투자 미지원
+270,[해외주식] 시세분석,해외주식 거래대금순위,해외주식-044,GET,/uapi/overseas-stock/v1/ranking/trade-pbmn,HHDFS76320010,모의투자 미지원
+271,[해외주식] 시세분석,해외주식 거래량급증,해외주식-039,GET,/uapi/overseas-stock/v1/ranking/volume-surge,HHDFS76270000,모의투자 미지원
+273,[해외주식] 시세분석,해외주식 매수체결강도상위,해외주식-040,GET,/uapi/overseas-stock/v1/ranking/volume-power,HHDFS76280000,모의투자 미지원
+274,[해외주식] 시세분석,해외주식 거래회전율순위,해외주식-046,GET,/uapi/overseas-stock/v1/ranking/trade-turnover,HHDFS76340000,모의투자 미지원
+277,[해외주식] 시세분석,해외주식 시가총액순위,해외주식-047,GET,/uapi/overseas-stock/v1/ranking/market-cap,HHDFS76350100,모의투자 미지원
+281,[해외주식] 시세분석,해외주식 거래량순위,해외주식-043,GET,/uapi/overseas-stock/v1/ranking/trade-vol,HHDFS76310010,모의투자 미지원

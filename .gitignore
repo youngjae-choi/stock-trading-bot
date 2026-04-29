@@ -1,0 +1,29 @@
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Node / Playwright
+node_modules/
+test-results/
+playwright-report/
+
+# Runtime logs and local process output
+logs/
+*.log
+*.pid
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+.codex

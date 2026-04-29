@@ -1,0 +1,25 @@
+# stock-trading-bot.service
+# Render this template through scripts/install_systemd_service.sh before installation.
+
+[Unit]
+Description=Stock Trading Bot FastAPI Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__RUN_USER__
+WorkingDirectory=__WORKDIR__
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-__ENV_FILE__
+ExecStartPre=/usr/bin/mkdir -p __WORKDIR__/logs
+ExecStart=/bin/bash __WORKDIR__/run.sh --systemd
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=30
+StandardOutput=append:__WORKDIR__/logs/systemd-service.log
+StandardError=append:__WORKDIR__/logs/systemd-service.log
+
+[Install]
+WantedBy=multi-user.target
