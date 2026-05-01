@@ -1,0 +1,341 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dantabot.local/schemas/rulepack_schema.json",
+  "title": "RulePack Schema v1.0",
+  "description": "GPT가 생성하는 일일 RulePack의 검증 스키마. 검증 게이트 1단(Schema Validator)이 사용한다. ADR-001, ADR-004, ADR-008 참조.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "rulepack_id",
+    "generated_at",
+    "valid_for_date",
+    "ai_source",
+    "market_context",
+    "risk_limits",
+    "entry_rules",
+    "exit_rules",
+    "candidates",
+    "fallback_policy"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "스키마 버전. 변경 시 마이그레이션 필요."
+    },
+    "rulepack_id": {
+      "type": "string",
+      "pattern": "^RP_[0-9]{8}_[0-9]{4}$",
+      "description": "RP_YYYYMMDD_HHMM 형식. 예: RP_20260501_0850"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 형식. KST 타임존 권장 (+09:00)"
+    },
+    "valid_for_date": {
+      "type": "string",
+      "format": "date",
+      "description": "YYYY-MM-DD 형식. 이 RulePack이 적용될 거래일"
+    },
+    "ai_source": {
+      "type": "object",
+      "description": "각 단계를 어떤 AI/시스템이 담당했는지 추적. ADR-002 참조.",
+      "required": [
+        "global_brief",
+        "market_tone",
+        "screening",
+        "rulepack_structuring",
+        "validation"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "global_brief": {
+          "type": "string",
+          "enum": ["gemini", "groq", "openrouter", "yesterday_cache", "skipped"]
+        },
+        "market_tone": {
+          "type": "string",
+          "enum": ["opus", "yesterday_cache", "system_default"]
+        },
+        "screening": {
+          "type": "string",
+          "enum": ["opus", "yesterday_cache", "system_quantitative_only"]
+        },
+        "rulepack_structuring": {
+          "type": "string",
+          "enum": ["gpt", "yesterday_cache", "system_template"]
+        },
+        "validation": {
+          "type": "string",
+          "const": "system",
+          "description": "검증은 항상 시스템이 수행 (AI 권한 없음, ADR-001)"
+        }
+      }
+    },
+    "market_context": {
+      "type": "object",
+      "required": ["tone_score", "tone_label", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "tone_score": {
+          "type": "number",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "description": "시장 톤 점수. -1.0(매우 부정) ~ +1.0(매우 긍정)"
+        },
+        "tone_label": {
+          "type": "string",
+          "enum": ["risk_on", "neutral", "risk_off"]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "AI 자체 신뢰도. 0.4 미만이면 시스템이 보수적 운용으로 자동 전환"
+        }
+      }
+    },
+    "risk_limits": {
+      "type": "object",
+      "description": "리스크 한도값. L1(절대 한도) ⊇ L2(PM Settings) ⊇ L3(이 값). 시스템이 L1과 L2로 캡한다. ADR-005 참조.",
+      "required": [
+        "daily_loss_limit_rate",
+        "max_positions",
+        "stop_loss_rate",
+        "take_profit_rate",
+        "max_position_size_rate",
+        "max_holding_minutes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "daily_loss_limit_rate": {
+          "type": "number",
+          "minimum": -0.10,
+          "maximum": 0.0,
+          "description": "L1 절대 한도: -0.10. 이 값을 넘는 입력은 시스템이 L1로 캡."
+        },
+        "max_positions": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30,
+          "description": "L1 절대 한도: 30. 동시 보유 종목 수."
+        },
+        "stop_loss_rate": {
+          "type": "number",
+          "minimum": -0.05,
+          "maximum": 0.0,
+          "description": "L1 절대 한도: -0.05. 개별 종목 손절선."
+        },
+        "take_profit_rate": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 0.30,
+          "description": "L1 절대 한도: 0.30. 개별 종목 익절선."
+        },
+        "max_position_size_rate": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "maximum": 0.30,
+          "description": "L1 절대 한도: 0.30. 한 종목당 자산 비중."
+        },
+        "max_holding_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 390,
+          "description": "최대 보유 시간(분). 한국장 운영시간 6시간 30분 = 390분."
+        }
+      }
+    },
+    "entry_rules": {
+      "type": "object",
+      "required": [
+        "buy_signal_priority",
+        "min_volume_multiple_5d",
+        "min_price_change_pct",
+        "max_price_change_pct",
+        "exclude_market_open_minutes",
+        "exclude_market_close_minutes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "buy_signal_priority": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "volume_surge",
+              "price_breakout",
+              "news_match",
+              "sector_momentum",
+              "gap_up",
+              "ma_crossover"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "description": "매수 신호 우선순위. 첫 번째가 최우선."
+        },
+        "min_volume_multiple_5d": {
+          "type": "number",
+          "minimum": 1.0,
+          "maximum": 10.0,
+          "description": "5일 평균 거래량 대비 최소 배수. 1.5 = 150%"
+        },
+        "min_price_change_pct": {
+          "type": "number",
+          "minimum": -10.0,
+          "maximum": 10.0,
+          "description": "진입 시점 당일 등락률 하한 (%)"
+        },
+        "max_price_change_pct": {
+          "type": "number",
+          "minimum": -10.0,
+          "maximum": 30.0,
+          "description": "진입 시점 당일 등락률 상한 (%). 너무 오른 종목 추격 방지"
+        },
+        "exclude_market_open_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30,
+          "description": "장 시작 후 N분간 진입 금지 (변동성 회피)"
+        },
+        "exclude_market_close_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60,
+          "description": "장 마감 전 N분간 진입 금지"
+        }
+      },
+      "allOf": [
+        {
+          "description": "min < max 관계 검증",
+          "if": {
+            "required": ["min_price_change_pct", "max_price_change_pct"]
+          },
+          "then": {
+            "properties": {
+              "min_price_change_pct": {
+                "type": "number"
+              },
+              "max_price_change_pct": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "exit_rules": {
+      "type": "object",
+      "required": [
+        "stop_loss_trigger",
+        "take_profit_trigger",
+        "force_close_at",
+        "max_concurrent_trades_per_ticker"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "stop_loss_trigger": {
+          "type": "string",
+          "enum": ["rate_based", "amount_based", "trailing"],
+          "description": "rate_based: 비율 기반 (권장)"
+        },
+        "take_profit_trigger": {
+          "type": "string",
+          "enum": ["rate_based", "amount_based", "trailing"]
+        },
+        "force_close_at": {
+          "type": "string",
+          "pattern": "^([0-1][0-9]|2[0-3]):[0-5][0-9]$",
+          "description": "HH:MM 형식. 강제 청산 시각. 예: 15:20"
+        },
+        "max_concurrent_trades_per_ticker": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "description": "한 종목당 동시 진행 가능한 거래 수. 보통 1"
+        }
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 30,
+      "description": "오늘의 매수 후보. 빈 배열 허용 (정량 룰만으로 운영하는 경우)",
+      "items": {
+        "type": "object",
+        "required": ["ticker", "name", "rank", "suitability_score", "reason_short"],
+        "additionalProperties": false,
+        "properties": {
+          "ticker": {
+            "type": "string",
+            "pattern": "^[0-9]{6}$",
+            "description": "한국 종목코드 6자리. 예: 005930"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50
+          },
+          "rank": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30
+          },
+          "suitability_score": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0,
+            "description": "Opus가 부여한 정성 적합도. 0.5 미만은 시스템이 자동 제외"
+          },
+          "max_buy_amount_krw": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "최대 매수 금액(원). 0이면 시스템이 자동 계산"
+          },
+          "reason_short": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "선정 사유 한 줄"
+          }
+        }
+      }
+    },
+    "fallback_policy": {
+      "type": "object",
+      "required": [
+        "if_market_data_unavailable",
+        "if_loss_limit_hit",
+        "if_api_error_count_exceeds"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "if_market_data_unavailable": {
+          "type": "string",
+          "enum": ["skip_trading_today", "use_cached_data", "halt_and_alert"],
+          "description": "시장 데이터 수신 불가 시 동작"
+        },
+        "if_loss_limit_hit": {
+          "type": "string",
+          "const": "close_all_block_new",
+          "description": "손실 한도 도달 시 동작은 항상 동일 (변경 불가)"
+        },
+        "if_api_error_count_exceeds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "description": "KIS API 연속 에러 N회 시 매매 중단"
+        }
+      }
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 1000,
+      "description": "특이사항 메모. 폴백 사용 사유, 비정상 데이터 등."
+    }
+  }
+}

@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     KIS_RATE_LIMIT_STANDARD_RPS: float = 20.0
     KIS_RATE_LIMIT_VIRTUAL_RPS: float = 15.0
     KIS_BULK_CONCURRENCY: Optional[int] = None
+    APP_DB_PATH: str = "data/stock_trading_bot.sqlite3"
+    APP_ADMIN_USERNAME: str = "admin"
+    APP_ADMIN_PASSWORD: str = ""
+    APP_SESSION_TTL_HOURS: int = 12
+
+    # LLM API Keys (S2: 시장 톤 분석 — fallback 순서: Gemini → Groq → OpenAI)
+    GEMINI_API_KEY: str = ""   # Google Gemini API key
+    GROQ_API_KEY: str = ""     # Groq API key
+    OPENAI_API_KEY: str = ""   # OpenAI GPT fallback key
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

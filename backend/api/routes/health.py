@@ -8,6 +8,7 @@ import time
 from fastapi import APIRouter
 
 from ...config import get_kis_config_status
+from ...services.db import database_status
 from ...utils import get_kis_rate_limiter_runtime_status
 
 logger = logging.getLogger("BackendHealthAPI")
@@ -28,6 +29,7 @@ async def health_check():
             "kis_configured": config_status["configured"],
             "missing_kis_config": config_status["missing"],
             "kis_rate_limit": kis_rate_limit_status,
+            "database": database_status(),
         }
         logger.info("SUCCESS: /health")
         return payload

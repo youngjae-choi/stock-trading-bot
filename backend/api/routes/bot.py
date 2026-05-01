@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
+from ...api.dependencies import require_console_user
 from ...services.console_state import (
     get_api_audit_logs,
     get_console_overview,
@@ -15,9 +16,10 @@ from ...services.console_state import (
     record_api_audit_log,
     trigger_emergency_halt,
 )
+from ...services.engine import rulepack_store
 
 logger = logging.getLogger("BackendBotConsoleAPI")
-router = APIRouter(prefix="/api/v1/bot", tags=["bot-console"])
+router = APIRouter(prefix="/api/v1/bot", tags=["bot-console"], dependencies=[Depends(require_console_user)])
 
 
 def _build_logged_success_response(
@@ -90,21 +92,41 @@ async def get_bot_overview():
 
 @router.get("/rulepack/today")
 async def get_bot_rulepack_today():
-    """Return today's rulepack summary for the console."""
+    """Return today's active RulePack for the console. Falls back to mock when no active RulePack exists."""
     endpoint = "/api/v1/bot/rulepack/today"
     try:
         logger.info("START: %s", endpoint)
+        from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
+        today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+        live_record = rulepack_store.get_active_rulepack_for_date(today)
+
+        if live_record is not None:
+            logger.info("SUCCESS: %s (live rulepack_id=%s)", endpoint, live_record.get("rulepack_id"))
+            return _build_logged_success_response(
+                endpoint=endpoint,
+                method="GET",
+                payload={"rulepack": live_record},
+                source="backend",
+                message="오늘 활성 RulePack을 DB에서 반환했습니다.",
+                feature_name="오늘 RulePack 조회",
+                purpose="당일 진입 규칙과 리스크 한도를 운영 화면에서 확인",
+                result_summary=f"성공 활성 RulePack {live_record.get('rulepack_id')} 반환",
+                mock=False,
+            )
+
+        # No active RulePack — fall back to mock
         payload = get_rulepack_today()
-        logger.info("SUCCESS: %s", endpoint)
+        logger.info("SUCCESS: %s (mock fallback — no active rulepack for %s)", endpoint, today)
         return _build_logged_success_response(
             endpoint=endpoint,
             method="GET",
             payload=payload,
             source="mock",
-            message="RulePack summary served from mock-safe backend state.",
+            message=f"{today} 활성 RulePack 없음. mock 데이터를 반환합니다.",
             feature_name="오늘 RulePack 조회",
             purpose="당일 진입 규칙과 리스크 한도를 운영 화면에서 확인",
-            result_summary="성공 오늘 RulePack 요약과 검증 상태를 반환",
+            result_summary="성공 오늘 활성 RulePack 없음 — mock 반환",
             mock=True,
         )
     except Exception as exc:
