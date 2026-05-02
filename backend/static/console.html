@@ -828,6 +828,22 @@
         grid-template-columns: 1fr;
       }
     }
+    /* Engine Test */
+    .et-result {
+      font-size: 11px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      background: var(--code-bg, #111);
+      color: var(--code-text, #ccc);
+      padding: 10px;
+      border-radius: 4px;
+      max-height: 220px;
+      overflow-y: auto;
+      margin: 0;
+    }
+    #et-server-log {
+      font-family: monospace;
+    }
   </style>
 </head>
 
@@ -866,6 +882,7 @@
         <option value="data">Data & API</option>
         <option value="api-logs">API Logs</option>
         <option value="review">Review & Audit</option>
+        <option value="engine-test">KIS System Test</option>
         <option value="settings">Settings</option>
       </select>
 
@@ -896,6 +913,7 @@
           <button data-screen="data">Data & API <small>health</small></button>
           <button data-screen="api-logs">API Logs <small>admin</small></button>
           <button data-screen="review">Review & Audit <small>learn</small></button>
+          <button data-screen="engine-test">KIS System Test <small>test</small></button>
           <button data-screen="settings">Settings <small>admin</small></button>
         </nav>
 
@@ -1500,6 +1518,104 @@
               </table>
             </div>
           </div>
+        </section>
+
+        <section class="screen" id="screen-engine-test">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">KIS System Test</h1>
+              <p class="page-sub">S1~S5 각 단계를 수동으로 실행하고 결과를 확인합니다. 실제 KIS API와 DB에 반영됩니다.</p>
+            </div>
+            <div class="page-actions">
+              <button class="btn" onclick="engineTestClearAll()">전체 결과 지우기</button>
+              <button class="btn" onclick="engineTestLoadLogs('')">전체 로그 보기</button>
+            </div>
+          </div>
+
+          <!-- 단계별 카드 그리드 -->
+          <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap:16px; margin-bottom:24px;">
+
+            <!-- S1 -->
+            <div class="card" id="et-card-s1">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <div>
+                  <strong>S1 — KIS 토큰 갱신</strong>
+                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">07:45 KST · token-refresh</div>
+                </div>
+                <span class="badge" id="et-badge-s1">대기</span>
+              </div>
+              <button class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s1')">▶ 실행</button>
+              <pre class="et-result" id="et-result-s1" style="display:none;"></pre>
+            </div>
+
+            <!-- S2 -->
+            <div class="card" id="et-card-s2">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <div>
+                  <strong>S2 — 시장 톤 분석</strong>
+                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">08:00 KST · LLM → market_tone_results</div>
+                </div>
+                <span class="badge" id="et-badge-s2">대기</span>
+              </div>
+              <button class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s2')">▶ 실행</button>
+              <pre class="et-result" id="et-result-s2" style="display:none;"></pre>
+            </div>
+
+            <!-- S3 -->
+            <div class="card" id="et-card-s3">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <div>
+                  <strong>S3 — 유니버스 필터</strong>
+                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">08:15 KST · KIS → universe_filter_results</div>
+                </div>
+                <span class="badge" id="et-badge-s3">대기</span>
+              </div>
+              <button class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s3')">▶ 실행</button>
+              <pre class="et-result" id="et-result-s3" style="display:none;"></pre>
+            </div>
+
+            <!-- S4 -->
+            <div class="card" id="et-card-s4">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <div>
+                  <strong>S4 — 하이브리드 스크리닝</strong>
+                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">08:30 KST · LLM 정성 평가 → hybrid_screening_results</div>
+                </div>
+                <span class="badge" id="et-badge-s4">대기</span>
+              </div>
+              <button class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s4')">▶ 실행</button>
+              <pre class="et-result" id="et-result-s4" style="display:none;"></pre>
+            </div>
+
+            <!-- S5 -->
+            <div class="card" id="et-card-s5">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <div>
+                  <strong>S5 — RulePack 자동 생성</strong>
+                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">08:45 KST · LLM → rulepacks (자동 활성화)</div>
+                </div>
+                <span class="badge" id="et-badge-s5">대기</span>
+              </div>
+              <button class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s5')">▶ 실행</button>
+              <pre class="et-result" id="et-result-s5" style="display:none;"></pre>
+            </div>
+
+          </div>
+
+          <!-- 서버 로그 패널 -->
+          <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+              <strong>서버 로그</strong>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <input type="text" id="etLogFilter" placeholder="필터 키워드 (예: UniverseFilter)" 
+                       style="padding:4px 8px; border-radius:4px; border:1px solid var(--border); background:var(--input-bg); color:var(--text); font-size:12px; width:220px;">
+                <button class="btn" onclick="engineTestLoadLogs(document.getElementById('etLogFilter').value)">불러오기</button>
+                <button class="btn" onclick="engineTestClearLog()">지우기</button>
+              </div>
+            </div>
+            <pre id="et-server-log" style="font-size:11px; max-height:400px; overflow-y:auto; white-space:pre-wrap; word-break:break-all; background:var(--code-bg, #111); padding:12px; border-radius:4px; color:var(--code-text, #ccc);">로그를 불러오려면 위 [불러오기] 버튼을 클릭하세요.</pre>
+          </div>
+
         </section>
 
         <section class="screen" id="screen-settings">
@@ -2320,6 +2436,106 @@
       return;
     }
     setTheme("dark");
+  }
+
+  /* KIS System Test Handlers */
+  async function engineTestRun(step) {
+    var card = document.getElementById("et-card-" + step);
+    var badge = document.getElementById("et-badge-" + step);
+    var resultEl = document.getElementById("et-result-" + step);
+
+    if (badge) {
+      badge.textContent = "실행중...";
+      badge.className = "badge status warn";
+    }
+    if (resultEl) {
+      resultEl.style.display = "block";
+      resultEl.textContent = "서버 응답 대기중...";
+    }
+
+    try {
+      var STEP_URLS = {
+        s1: "/api/v1/engine/token-refresh",
+        s2: "/api/v1/market-tone/analyze",
+        s3: "/api/v1/universe-filter/run",
+        s4: "/api/v1/screening/run",
+        s5: "/api/v1/rulepack-gen/run"
+      };
+      var stepUrl = STEP_URLS[step];
+      if (!stepUrl) {
+        if (badge) {
+          badge.textContent = "오류";
+          badge.className = "badge status danger";
+        }
+        if (resultEl) {
+          resultEl.textContent = "알 수 없는 step: " + step;
+        }
+        return;
+      }
+      var res = await fetch(stepUrl, { method: "POST" });
+      var data = await res.json();
+
+      if (data.ok) {
+        if (badge) {
+          badge.textContent = "성공";
+          badge.className = "badge status ok";
+        }
+        if (resultEl) {
+          resultEl.textContent = JSON.stringify(data.payload, null, 2);
+        }
+      } else {
+        throw new Error(data.error || "알 수 없는 오류");
+      }
+    } catch (e) {
+      if (badge) {
+        badge.textContent = "실패";
+        badge.className = "badge status danger";
+      }
+      if (resultEl) {
+        resultEl.textContent = "Error: " + e.message;
+      }
+    }
+    // 실행 후 로그 자동 새로고침
+    engineTestLoadLogs("");
+  }
+
+  async function engineTestLoadLogs(filter) {
+    var logEl = document.getElementById("et-server-log");
+    if (!logEl) return;
+
+    try {
+      var url = "/api/v1/engine/logs";
+      if (filter) url += "?filter=" + encodeURIComponent(filter);
+      var res = await fetch(url);
+      var data = await res.json();
+      if (data.ok) {
+        var logs = data.payload.logs || (Array.isArray(data.payload.lines) ? data.payload.lines.join("\n") : "");
+        logEl.textContent = logs || "로그가 없습니다.";
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+    } catch (e) {
+      logEl.textContent = "로그를 불러오지 못했습니다: " + e.message;
+    }
+  }
+
+  function engineTestClearLog() {
+    var logEl = document.getElementById("et-server-log");
+    if (logEl) logEl.textContent = "로그가 지워졌습니다 (화면만).";
+  }
+
+  function engineTestClearAll() {
+    ["s1", "s2", "s3", "s4", "s5"].forEach(step => {
+      var badge = document.getElementById("et-badge-" + step);
+      var resultEl = document.getElementById("et-result-" + step);
+      if (badge) {
+        badge.textContent = "대기";
+        badge.className = "badge status info";
+      }
+      if (resultEl) {
+        resultEl.style.display = "none";
+        resultEl.textContent = "";
+      }
+    });
   }
 
   async function init() {
