@@ -43,6 +43,7 @@ def initialize_database() -> None:
     with get_connection() as connection:
         _execute_many(connection, _schema_statements())
         _seed_system_settings(connection)
+        _seed_rule_system(connection)
     logger.info("SUCCESS: db.initialize_database path=%s", _db_path())
 
 
@@ -84,6 +85,70 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
             """,
             (key, _json_dumps(value), value_type, description, "system"),
         )
+
+
+def _seed_rule_system(connection: sqlite3.Connection) -> None:
+    """base_rulepacks, risk_profile_packs 초기값 삽입 (이미 있으면 skip)."""
+    import json as _json
+    now_expr = "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+
+    # Base RulePack v1.0
+    connection.execute(
+        f"""
+        INSERT OR IGNORE INTO base_rulepacks
+            (id, version, take_profit_enabled, force_daily_close, force_exit_time,
+             stop_price_can_only_increase, order_execution, created_at, is_active)
+        VALUES (?, ?, 0, 1, ?, 1, ?, {now_expr}, 1)
+        """,
+        (
+            "base-v1.0",
+            "1.0",
+            "15:20:00",
+            _json.dumps({"entry_order_type": "limit_or_market_by_policy",
+                         "exit_order_type": "market_or_safe_limit"}, ensure_ascii=False),
+        ),
+    )
+
+    # Risk Profile Pack v1.0
+    profiles = {
+        "LOW_VOL": {
+            "initial_stop_loss": -0.02,
+            "trailing_activate_profit": 0.015,
+            "trailing_stop_rate": 0.018,
+            "max_position_rate": 0.15,
+            "max_holding_minutes": 240,
+        },
+        "MID_VOL": {
+            "initial_stop_loss": -0.03,
+            "trailing_activate_profit": 0.025,
+            "trailing_stop_rate": 0.03,
+            "max_position_rate": 0.12,
+            "max_holding_minutes": 180,
+        },
+        "HIGH_VOL": {
+            "initial_stop_loss": -0.045,
+            "trailing_activate_profit": 0.04,
+            "trailing_stop_rate": 0.05,
+            "max_position_rate": 0.08,
+            "max_holding_minutes": 120,
+        },
+        "THEME_SPIKE": {
+            "initial_stop_loss": -0.06,
+            "trailing_activate_profit": 0.05,
+            "trailing_stop_rate": 0.06,
+            "max_position_rate": 0.05,
+            "max_holding_minutes": 60,
+            "reentry_allowed": False,
+        },
+    }
+    connection.execute(
+        f"""
+        INSERT OR IGNORE INTO risk_profile_packs
+            (id, version, profiles, created_at, is_active)
+        VALUES (?, ?, ?, {now_expr}, 1)
+        """,
+        ("profile-v1.0", "1.0", _json.dumps(profiles, ensure_ascii=False)),
+    )
 
 
 def _schema_statements() -> list[str]:
@@ -260,4 +325,103 @@ def _schema_statements() -> list[str]:
         "CREATE INDEX IF NOT EXISTS idx_positions_symbol_captured_at ON positions(symbol, captured_at)",
         "CREATE INDEX IF NOT EXISTS idx_market_snapshots_symbol_captured_at ON market_snapshots(symbol, captured_at)",
         "CREATE INDEX IF NOT EXISTS idx_audit_events_type_created_at ON audit_events(event_type, created_at)",
+        """
+CREATE TABLE IF NOT EXISTS base_rulepacks (
+    id              TEXT PRIMARY KEY,
+    version         TEXT NOT NULL,
+    take_profit_enabled          INTEGER NOT NULL DEFAULT 0,
+    force_daily_close            INTEGER NOT NULL DEFAULT 1,
+    force_exit_time              TEXT NOT NULL DEFAULT '15:20:00',
+    stop_price_can_only_increase INTEGER NOT NULL DEFAULT 1,
+    order_execution TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL,
+    is_active       INTEGER NOT NULL DEFAULT 1
+)
+""",
+        """
+CREATE TABLE IF NOT EXISTS risk_profile_packs (
+    id          TEXT PRIMARY KEY,
+    version     TEXT NOT NULL,
+    profiles    TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    is_active   INTEGER NOT NULL DEFAULT 1
+)
+""",
+        """
+CREATE TABLE IF NOT EXISTS daily_trading_plans (
+    id                   TEXT PRIMARY KEY,
+    trade_date           TEXT NOT NULL UNIQUE,
+    market_tone          TEXT NOT NULL DEFAULT 'neutral',
+    trading_intensity    TEXT NOT NULL DEFAULT 'normal',
+    base_rulepack_id     TEXT NOT NULL DEFAULT 'base-v1.0',
+    risk_profile_pack_id TEXT NOT NULL DEFAULT 'profile-v1.0',
+    new_entry_allowed    INTEGER NOT NULL DEFAULT 1,
+    daily_overrides      TEXT NOT NULL DEFAULT '{}',
+    symbol_assignments   TEXT NOT NULL DEFAULT '[]',
+    excluded_symbols     TEXT NOT NULL DEFAULT '[]',
+    llm_summary          TEXT NOT NULL DEFAULT '',
+    provider             TEXT NOT NULL DEFAULT '',
+    status               TEXT NOT NULL DEFAULT 'draft',
+    validation_result    TEXT NOT NULL DEFAULT '{}',
+    created_at           TEXT NOT NULL,
+    activated_at         TEXT
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_daily_plan_date ON daily_trading_plans(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS symbol_overrides (
+    id              TEXT PRIMARY KEY,
+    symbol_code     TEXT NOT NULL UNIQUE,
+    symbol_name     TEXT NOT NULL DEFAULT '',
+    default_profile TEXT NOT NULL DEFAULT 'MID_VOL',
+    override_values TEXT NOT NULL DEFAULT '{}',
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+)
+""",
+        """
+CREATE TABLE IF NOT EXISTS rule_compositions (
+    id                   TEXT PRIMARY KEY,
+    trade_date           TEXT NOT NULL,
+    symbol_code          TEXT NOT NULL,
+    final_rule           TEXT NOT NULL,
+    base_rulepack_id     TEXT NOT NULL,
+    risk_profile_pack_id TEXT NOT NULL,
+    daily_plan_id        TEXT NOT NULL,
+    profile_assigned     TEXT NOT NULL,
+    created_at           TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_rule_comp_date ON rule_compositions(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS position_stop_states (
+    position_id               TEXT PRIMARY KEY,
+    symbol_code               TEXT NOT NULL,
+    entry_price               REAL NOT NULL DEFAULT 0.0,
+    highest_price_since_entry REAL NOT NULL DEFAULT 0.0,
+    initial_stop_price        REAL NOT NULL DEFAULT 0.0,
+    trailing_stop_price       REAL NOT NULL DEFAULT 0.0,
+    active_stop_price         REAL NOT NULL DEFAULT 0.0,
+    trailing_active           INTEGER NOT NULL DEFAULT 0,
+    profile_assigned          TEXT NOT NULL DEFAULT 'MID_VOL',
+    last_updated_at           TEXT NOT NULL
+)
+""",
+        """
+CREATE TABLE IF NOT EXISTS trading_signals (
+    id            TEXT PRIMARY KEY,
+    trade_date    TEXT NOT NULL,
+    symbol        TEXT NOT NULL,
+    name          TEXT NOT NULL DEFAULT '',
+    signal_type   TEXT NOT NULL DEFAULT 'BUY',
+    trigger_price REAL NOT NULL DEFAULT 0.0,
+    confidence    REAL NOT NULL DEFAULT 0.0,
+    rule_matched  TEXT NOT NULL DEFAULT '{}',
+    profile_assigned TEXT NOT NULL DEFAULT 'MID_VOL',
+    status        TEXT NOT NULL DEFAULT 'pending',
+    created_at    TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_trading_signals_trade_date ON trading_signals(trade_date)",
     ]

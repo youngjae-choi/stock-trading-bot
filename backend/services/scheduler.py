@@ -154,32 +154,27 @@ async def job_hybrid_screening() -> None:
         logger.error("FAIL: [Job4] 하이브리드 스크리닝 실패 — reason=%s", exc)
 
 
-async def job_rulepack_generation() -> None:
-    """Job 5 (08:45 KST): RulePack 자동 생성 (S5 구현).
+async def job_daily_plan() -> None:
+    """Job 5 (08:45 KST): Daily Plan 자동 생성 (S5 구현).
 
-    S4 스크리닝 결과를 LLM에 넘겨 오늘의 RulePack JSON을 생성하고 자동 활성화한다.
+    S4 스크리닝 결과를 LLM에 넘겨 오늘의 Daily Trading Plan을 생성하고 저장한다.
     """
     today = _today_kst()
-    logger.info("START: [Job5] RulePack 자동 생성 (%s KST)", today)
+    logger.info("START: [Job5] Daily Plan 자동 생성 (%s KST)", today)
     try:
         from .settings_store import get_setting
         if get_setting("schedule_skip_today") == "true":
-            logger.info("SKIP: [Job5] 비거래일 — RulePack 생성 스킵")
+            logger.info("SKIP: [Job5] 비거래일 — Daily Plan 생성 스킵")
             return
     except Exception:
         pass
 
     try:
-        from .engine.rulepack_generation import run_rulepack_generation
-        result = await run_rulepack_generation()
-        logger.info(
-            "SUCCESS: [Job5] RulePack 생성 완료 rulepack_id=%s provider=%s caps=%d",
-            result.get("rulepack_id", ""),
-            result.get("provider", ""),
-            result.get("cap_applied_count", 0),
-        )
+        from .engine.daily_plan import run_daily_plan_generation
+        result = await run_daily_plan_generation()
+        logger.info("SUCCESS: [Scheduler] S5 Daily Plan result=%s", result)
     except Exception as exc:
-        logger.error("FAIL: [Job5] RulePack 생성 실패 — reason=%s", exc)
+        logger.error("FAIL: [Scheduler] S5 Daily Plan error=%s", exc)
 
 
 async def job_decision_engine_start() -> None:
@@ -367,10 +362,10 @@ def _build_scheduler() -> AsyncIOScheduler:
     )
     hour, minute = _parse_time("s5")
     scheduler.add_job(
-        job_rulepack_generation,
+        job_daily_plan,
         CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
-        id="job_rulepack_generation",
-        name="RulePack 자동 생성",
+        id="job_daily_plan",
+        name="Daily Plan 자동 생성",
         replace_existing=True,
     )
     hour, minute = _parse_time("s6")

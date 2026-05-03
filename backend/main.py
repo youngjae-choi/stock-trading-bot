@@ -35,6 +35,10 @@ from .api.routes.settings import router as settings_router
 from .api.routes.trades import router as trades_router
 from .api.routes.trading_data import router as trading_data_router
 from .api.routes.screening import router as screening_router
+from .api.routes.rule import router as rule_router
+from .api.routes.daily_plan import router as daily_plan_router
+from .api.routes.symbol_override import router as symbol_override_router
+from .api.routes.trading_monitor import router as trading_monitor_router
 from .api.routes.universe import router as universe_router, filter_router as universe_filter_router
 from .config import settings, validate_config
 from .services.auth_service import initialize_auth
@@ -101,6 +105,10 @@ app.include_router(scheduler_router)
 app.include_router(market_tone_router)
 app.include_router(decision_router)
 app.include_router(orders_router)
+app.include_router(rule_router)
+app.include_router(daily_plan_router)
+app.include_router(symbol_override_router)
+app.include_router(trading_monitor_router)
 
 
 if __name__ == "__main__":

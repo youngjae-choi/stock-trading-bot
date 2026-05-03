@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from ..db import get_connection
 from ..kis.realtime_ws import realtime_ws_manager
 from .hybrid_screening import get_today_screening
-from .rulepack_store import get_active_rulepack_for_date
+from .rule_cache import load_daily_rules, get_rule, clear_cache, get_meta
 
 logger = logging.getLogger("DecisionEngine")
 
@@ -79,7 +79,6 @@ class DecisionEngine:
     def __init__(self):
         """Initialize in-memory runtime state for one trading session."""
         self._active = False
-        self._rulepack: dict[str, Any] = {}
         self._candidates: dict[str, dict[str, Any]] = {}
         self._signal_sent: set[str] = set()
 
@@ -89,12 +88,6 @@ class DecisionEngine:
         logger.info("START: [S6] Decision Engine activate trade_date=%s", today)
         _ensure_signals_table()
 
-        rulepack = get_active_rulepack_for_date(today)
-        if not rulepack:
-            self._active = False
-            logger.warning("WARN: [S6] 오늘 활성 RulePack 없음 — Decision Engine 비활성")
-            return {"ok": False, "reason": "no_active_rulepack"}
-
         screening = get_today_screening(today)
         candidates = screening.get("candidates", []) if screening else []
         if not candidates:
@@ -102,7 +95,6 @@ class DecisionEngine:
             logger.warning("WARN: [S6] 오늘 S4 스크리닝 결과 없음 — Decision Engine 비활성")
             return {"ok": False, "reason": "no_screening_results"}
 
-        self._rulepack = rulepack.get("machine_rules", {}) or {}
         self._candidates = {
             symbol: candidate
             for candidate in candidates
@@ -112,6 +104,8 @@ class DecisionEngine:
             self._active = False
             logger.warning("WARN: [S6] S4 후보에 유효한 종목코드 없음 — Decision Engine 비활성")
             return {"ok": False, "reason": "no_valid_candidates"}
+
+        load_daily_rules(today, list(self._candidates.keys()))
 
         self._signal_sent = set()
         self._active = True
@@ -124,7 +118,7 @@ class DecisionEngine:
         await realtime_ws_manager.start(symbols=symbols)
 
         logger.info("SUCCESS: [S6] Decision Engine 활성화 candidates=%d symbols=%s", len(symbols), symbols)
-        return {"ok": True, "candidates": len(symbols), "symbols": symbols}
+        return {"ok": True, "candidates": len(symbols), "symbols": symbols, "cache_meta": get_meta()}
 
     async def deactivate(self) -> None:
         """장 종료 시 호출 — WS 콜백 등록을 해제하고 실시간 연결을 종료한다."""
@@ -134,6 +128,7 @@ class DecisionEngine:
         from .position_manager import position_manager
 
         position_manager.deactivate()
+        clear_cache()
         await realtime_ws_manager.stop()
         logger.info("SUCCESS: [S6] Decision Engine 비활성화")
 
@@ -159,8 +154,8 @@ class DecisionEngine:
             return
 
         candidate = self._candidates[symbol]
-        rules = self._rulepack.get("layer3_entry", {}) if isinstance(self._rulepack, dict) else {}
-        matched = self._evaluate_rules(candidate=candidate, rules=rules, tick=tick)
+        final_rule = get_rule(symbol) or {}
+        matched = self._evaluate_rules(candidate=candidate, final_rule=final_rule, tick=tick)
 
         if all(matched.values()):
             await self._emit_signal(symbol, candidate, price, matched)
@@ -169,24 +164,24 @@ class DecisionEngine:
         self,
         *,
         candidate: dict[str, Any],
-        rules: dict[str, Any],
+        final_rule: dict[str, Any],
         tick: dict[str, Any],
     ) -> dict[str, bool]:
         """Evaluate currently supported S6 entry rules.
 
         Args:
             candidate: S4 candidate metadata for the symbol.
-            rules: Active RulePack layer3_entry rules.
+            final_rule: Resolved final rule from rule_cache.
             tick: Parsed realtime tick payload.
         """
-        ai_conf_min = float(rules.get("ai_confidence_min", 0.0) or 0.0)
+        ai_conf_min = float(final_rule.get("ai_confidence_min", 0.0) or 0.0)
         ai_conf = _candidate_confidence(candidate)
 
         # 현재 WS tick에는 5일 평균 거래량 기준값이 없으므로 수신 여부만 기본 충족으로 둔다.
         volume_value = tick.get("volume")
         volume_seen = volume_value not in (None, "")
         return {
-            "volume_ratio": bool(volume_seen or rules.get("volume_ratio_min", 1.0) <= 1.0),
+            "volume_ratio": bool(volume_seen or final_rule.get("volume_ratio_min", 1.0) <= 1.0),
             "ai_confidence": ai_conf >= ai_conf_min,
         }
 
@@ -209,6 +204,7 @@ class DecisionEngine:
         today = _today_kst()
         signal_id = str(uuid.uuid4())
         confidence = _candidate_confidence(candidate)
+        profile_assigned = (get_rule(symbol) or {}).get("profile_assigned", "MID_VOL")
 
         _ensure_signals_table()
         with get_connection() as conn:
@@ -216,8 +212,8 @@ class DecisionEngine:
                 """
                 INSERT INTO trading_signals
                     (id, trade_date, symbol, name, signal_type, trigger_price,
-                     confidence, rule_matched, status, created_at)
-                VALUES (?, ?, ?, ?, 'BUY', ?, ?, ?, 'pending', ?)
+                     confidence, rule_matched, profile_assigned, status, created_at)
+                VALUES (?, ?, ?, ?, 'BUY', ?, ?, ?, ?, 'pending', ?)
                 """,
                 (
                     signal_id,
@@ -227,6 +223,7 @@ class DecisionEngine:
                     price,
                     confidence,
                     json.dumps(matched, ensure_ascii=False),
+                    profile_assigned,
                     _now_kst().isoformat(),
                 ),
             )
