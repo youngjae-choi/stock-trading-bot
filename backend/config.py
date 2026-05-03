@@ -28,10 +28,11 @@ class Settings(BaseSettings):
     APP_ADMIN_PASSWORD: str = ""
     APP_SESSION_TTL_HOURS: int = 12
 
-    # LLM API Keys (S2: 시장 톤 분석 — fallback 순서: Gemini → Groq → OpenAI)
-    GEMINI_API_KEY: str = ""   # Google Gemini API key
-    GROQ_API_KEY: str = ""     # Groq API key
-    OPENAI_API_KEY: str = ""   # OpenAI GPT fallback key
+    # LLM API Keys (fallback 순서: Anthropic → Gemini → Groq → OpenAI)
+    ANTHROPIC_API_KEY: str = ""  # Anthropic Claude API key (1순위)
+    GEMINI_API_KEY: str = ""     # Google Gemini API key (2순위)
+    GROQ_API_KEY: str = ""       # Groq API key (3순위)
+    OPENAI_API_KEY: str = ""     # OpenAI GPT fallback key (4순위)
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

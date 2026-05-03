@@ -698,32 +698,6 @@
       flex-wrap: wrap;
     }
 
-    .api-banner {
-      margin-bottom: 14px;
-      padding: 12px 14px;
-      border-radius: 12px;
-      border: 1px solid var(--line);
-      background: var(--panel-2);
-      color: var(--text);
-      display: none;
-    }
-
-    .api-banner.active {
-      display: block;
-    }
-
-    .api-banner.info {
-      color: var(--blue);
-      background: var(--blue-soft);
-      border-color: rgba(91, 141, 239, 0.28);
-    }
-
-    .api-banner.warn {
-      color: var(--yellow);
-      background: var(--yellow-soft);
-      border-color: rgba(217, 164, 65, 0.28);
-    }
-
     .mobile-menu {
       display: none;
     }
@@ -874,24 +848,16 @@
 
       <select id="mobileMenu" class="mobile-menu" aria-label="화면 선택">
         <option value="today">Today Control</option>
+        <option value="trading">Trading Monitor</option>
+        <option value="statistics">Trade History</option>
         <option value="rulepack">AI RulePack</option>
         <option value="funnel">Funnel Monitor</option>
-        <option value="live">Live Decisions</option>
-        <option value="positions">Positions & Exit</option>
-        <option value="risk">Execution & Risk</option>
+        <option value="review">Review & Audit</option>
         <option value="data">Data & API</option>
         <option value="api-logs">API Logs</option>
-        <option value="review">Review & Audit</option>
         <option value="engine-test">KIS System Test</option>
         <option value="settings">Settings</option>
       </select>
-
-      <div class="top-status">
-        <span class="pill"><span class="dot green" id="engineDot"></span><span id="engineText">Auto Engine RUNNING</span></span>
-        <span class="pill"><span class="dot blue"></span><span id="phaseText">현재 단계 계산중</span></span>
-        <span class="pill"><span class="dot green" id="restDot"></span><span id="restStatusText">KIS REST 확인중</span></span>
-        <span class="pill"><span class="dot blue" id="socketDot"></span><span id="socketStatusText">WebSocket 확인중</span></span>
-      </div>
 
       <div class="top-actions">
         <button class="btn" id="themeBtn">Light</button>
@@ -905,14 +871,13 @@
         <div class="menu-label">Operation</div>
         <nav class="nav" id="nav">
           <button class="active" data-screen="today">Today Control <small>main</small></button>
+          <button data-screen="trading">Trading Monitor <small>live</small></button>
+          <button data-screen="statistics">Trade History <small>trades</small></button>
           <button data-screen="rulepack">AI RulePack <small>rules</small></button>
           <button data-screen="funnel">Funnel Monitor <small>screening</small></button>
-          <button data-screen="live">Live Decisions <small>realtime</small></button>
-          <button data-screen="positions">Positions & Exit <small>exit</small></button>
-          <button data-screen="risk">Execution & Risk <small>logs</small></button>
+          <button data-screen="review">Review & Audit <small>learn</small></button>
           <button data-screen="data">Data & API <small>health</small></button>
           <button data-screen="api-logs">API Logs <small>admin</small></button>
-          <button data-screen="review">Review & Audit <small>learn</small></button>
           <button data-screen="engine-test">KIS System Test <small>test</small></button>
           <button data-screen="settings">Settings <small>admin</small></button>
         </nav>
@@ -924,18 +889,13 @@
       </aside>
 
       <main class="main">
-        <div class="api-banner info active" id="apiStateBanner">백엔드 상태를 확인하는 중입니다. 응답 전까지는 정적 화면과 mock 안내가 표시됩니다.</div>
-
         <section class="screen active" id="screen-today">
           <div class="page-head">
             <div>
               <h1 class="page-title">Today Control</h1>
               <p class="page-desc">오늘 자동매매 사이클, RulePack 적용 상태, Funnel 진행, 리스크 상태를 한 화면에서 확인합니다.</p>
             </div>
-            <div>
-              <button class="btn primary">시스템 점검</button>
-              <button class="btn">로그 다운로드</button>
-            </div>
+            <button class="btn" onclick="loadConsoleData()">새로고침</button>
           </div>
 
           <div class="grid cols-4">
@@ -976,44 +936,124 @@
 
           <div class="section-gap"></div>
 
-          <div class="split">
-            <div class="card">
-              <div class="card-title">Today's Timeline <span>하루 자동운영 사이클</span></div>
-              <div class="timeline" id="timeline"></div>
+          <div class="card">
+            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+              <span>오늘 운영 현황</span>
+              <button class="btn" style="font-size:11px; padding:2px 8px;" onclick="loadConsoleData()">새로고침</button>
             </div>
-
-            <div class="card">
-              <div class="card-title">System Health <span>핵심 연결 상태</span></div>
-              <div class="grid cols-2">
-                <div class="natural-card">
-                  <h4>KIS Token</h4>
-                  <p><span class="status ok" id="kisTokenStatus">정상</span></p>
-                  <p class="muted" id="kisTokenDetail">07:45 갱신 완료</p>
-                </div>
-                <div class="natural-card">
-                  <h4>RulePack</h4>
-                  <p><span class="status ok" id="rulepackStatus">검증 완료</span></p>
-                  <p class="muted" id="rulepackDetail">Schema / Risk / Runtime 통과</p>
-                </div>
-                <div class="natural-card">
-                  <h4>WebSocket</h4>
-                  <p><span class="status ok" id="websocketStatus">연결중</span></p>
-                  <p class="muted" id="websocketDetail">마지막 수신 0.04초 전</p>
-                </div>
-                <div class="natural-card">
-                  <h4>Risk Guard</h4>
-                  <p><span class="status ok" id="riskStatus">허용</span></p>
-                  <p class="muted" id="riskDetail">신규 진입 가능</p>
-                </div>
-              </div>
-            </div>
+            <div id="today-ops-feed" style="display:flex; flex-direction:column; gap:0;"></div>
           </div>
 
           <div class="section-gap"></div>
+          <div class="card" id="today-orders-card">
+            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+              <span>오늘 주문내역</span>
+              <button class="btn" onclick="loadTodayOrders()">새로고침</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>시간</th><th>종목</th><th>구분</th><th>수량</th><th>가격</th><th>상태</th></tr>
+                </thead>
+                <tbody id="tm-orders-tbody">
+                  <tr><td colspan="6" class="muted" style="text-align:center;">주문내역 없음</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
 
-          <div class="card">
-            <div class="card-title">Recent Operation Logs <span>최근 시스템 이벤트</span></div>
-            <div class="log-list" id="todayLogs"></div>
+        <section class="screen" id="screen-trading">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Trading Monitor</h1>
+              <p class="page-desc">매수 후보와 보유 포지션의 신호 접근률을 실시간으로 감시합니다.</p>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <button id="tm-de-toggle" class="btn" onclick="toggleDecisionEngine()" style="min-width:120px;">
+                <span id="tm-de-label">DE 상태 로딩중</span>
+              </button>
+              <button class="btn" onclick="loadTradingMonitor()">새로고침</button>
+            </div>
+          </div>
+
+          <!-- 상단: 계좌정보 + RulePack 조건 -->
+          <div style="display:flex; gap:16px; margin-bottom:16px; flex-wrap:wrap;">
+
+            <div class="card" style="flex:1; min-width:240px;">
+              <div class="card-title" style="display:flex; justify-content:space-between;">
+                <span>계좌 정보</span>
+                <button class="btn" style="font-size:11px; padding:2px 8px;" onclick="loadAccountBalance()">새로고침</button>
+              </div>
+              <div style="font-size:11px; color:var(--muted); margin-bottom:8px;" id="tm-account-no">계좌번호: -</div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                <div style="background:var(--bg2); border-radius:6px; padding:8px 10px;">
+                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">예수금</div>
+                  <div style="font-size:14px; font-weight:700;" id="tm-deposit">-</div>
+                </div>
+                <div style="background:var(--bg2); border-radius:6px; padding:8px 10px;">
+                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">총평가금액</div>
+                  <div style="font-size:14px; font-weight:700;" id="tm-total-eval">-</div>
+                </div>
+                <div style="background:var(--bg2); border-radius:6px; padding:8px 10px;">
+                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">보유종목</div>
+                  <div style="font-size:14px; font-weight:700;" id="tm-holdings-count">-</div>
+                </div>
+                <div style="background:var(--bg2); border-radius:6px; padding:8px 10px;">
+                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">오늘 실현손익</div>
+                  <div style="font-size:14px; font-weight:700;" id="tm-pnl-today">-</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card" style="flex:1; min-width:240px;">
+              <div class="card-title">
+                오늘 매매 조건
+                <span id="tm-rulepack-id" style="font-size:10px; color:var(--muted); font-weight:400; margin-left:8px;">-</span>
+              </div>
+              <div style="margin-bottom:10px;">
+                <div style="font-size:10px; color:var(--muted); font-weight:600; margin-bottom:6px; letter-spacing:0.05em;">매수 조건</div>
+                <div style="display:flex; flex-wrap:wrap; gap:5px;" id="tm-buy-conditions">
+                  <span style="background:var(--bg2); border-radius:4px; padding:3px 7px; font-size:11px; color:var(--muted);">로딩중</span>
+                </div>
+              </div>
+              <div>
+                <div style="font-size:10px; color:var(--muted); font-weight:600; margin-bottom:6px; letter-spacing:0.05em;">위험 한도</div>
+                <div style="display:flex; flex-wrap:wrap; gap:5px;" id="tm-risk-conditions">
+                  <span style="background:var(--bg2); border-radius:4px; padding:3px 7px; font-size:11px; color:var(--muted);">로딩중</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 하단: 매수/매도 모니터링 2열 -->
+          <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+
+            <!-- 좌: 매수 종목 모니터링 -->
+            <div class="card" style="flex:1; min-width:280px;">
+              <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>매수 종목 모니터링</span>
+                <span id="tm-buy-refresh-countdown" style="font-size:11px; color:var(--muted);">10s</span>
+              </div>
+              <p style="font-size:11px; color:var(--muted); margin-bottom:12px;">S4 후보 종목의 매수 신호 접근률 (AI 신뢰도 기준). 높을수록 매수 조건에 근접.</p>
+              <div id="tm-buy-list" style="display:flex; flex-direction:column; gap:10px;">
+                <div style="color:var(--muted); font-size:13px; text-align:center; padding:20px 0;">데이터 로딩중...</div>
+              </div>
+            </div>
+
+            <!-- 우: 매도 종목 모니터링 -->
+            <div class="card" style="flex:1; min-width:280px;">
+              <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>매도 종목 모니터링</span>
+                <span id="tm-sell-refresh-countdown" style="font-size:11px; color:var(--muted);">10s</span>
+              </div>
+              <p style="font-size:11px; color:var(--muted); margin-bottom:12px;">보유 포지션의 청산 조건 접근률. 손절/익절 중 더 가까운 쪽 기준. 높을수록 청산 임박.</p>
+              <div id="tm-sell-list" style="display:flex; flex-direction:column; gap:10px;">
+                <div style="color:var(--muted); font-size:13px; text-align:center; padding:20px 0;">데이터 로딩중...</div>
+              </div>
+            </div>
+
           </div>
         </section>
 
@@ -1144,15 +1184,16 @@
           <div class="page-head">
             <div>
               <h1 class="page-title">Funnel Monitor</h1>
-              <p class="page-desc">전체 종목이 어떤 조건으로 200개 유니버스와 15개 후보로 압축됐는지 확인합니다.</p>
+              <p class="page-desc">전체 종목이 어떤 조건으로 유니버스와 후보 종목으로 압축됐는지 확인합니다. 숫자는 매일 달라집니다.</p>
             </div>
+            <button class="btn" onclick="loadFunnelData()">새로고침</button>
           </div>
 
           <div class="grid cols-4">
-            <div class="card compact"><div class="card-title">전체 종목</div><div class="metric">2,500</div><div class="muted">KRX 기준</div></div>
-            <div class="card compact"><div class="card-title">Layer 1 통과</div><div class="metric">200</div><div class="muted">유니버스</div></div>
-            <div class="card compact"><div class="card-title">Layer 2 통과</div><div class="metric">15</div><div class="muted">후보 종목</div></div>
-            <div class="card compact"><div class="card-title">현재 매수대기</div><div class="metric">4</div><div class="muted">조건 접근중</div></div>
+            <div class="card compact"><div class="card-title">전체 종목</div><div class="metric" id="funnel-total">2,500</div><div class="muted">KRX 기준</div></div>
+            <div class="card compact"><div class="card-title">Layer 1 통과</div><div class="metric" id="funnel-layer1">200</div><div class="muted">유니버스</div></div>
+            <div class="card compact"><div class="card-title">Layer 2 통과</div><div class="metric" id="funnel-layer2">-</div><div class="muted">후보 종목</div></div>
+            <div class="card compact"><div class="card-title">현재 매수대기</div><div class="metric" id="funnel-candidates">-</div><div class="muted">조건 접근중</div></div>
           </div>
 
           <div class="section-gap"></div>
@@ -1193,7 +1234,7 @@
           <div class="section-gap"></div>
 
           <div class="card">
-            <div class="card-title">후보 15개 선정 결과 <span>상위 일부 샘플</span></div>
+            <div class="card-title">후보 선정 결과 <span>상위 일부 샘플</span></div>
             <div class="table-wrap">
               <table>
                 <thead>
@@ -1201,11 +1242,8 @@
                     <th>종목코드</th><th>종목명</th><th>기술</th><th>기초</th><th>테마</th><th>총점</th><th>AI 신뢰도</th><th>상태</th><th>선정 사유</th>
                   </tr>
                 </thead>
-                <tbody>
-                  <tr><td>005930</td><td>삼성전자</td><td>0.82</td><td>0.68</td><td>0.61</td><td>0.75</td><td>0.71</td><td><span class="status warn">매수대기</span></td><td>거래량 증가 + 지수 동조</td></tr>
-                  <tr><td>000660</td><td>SK하이닉스</td><td>0.88</td><td>0.64</td><td>0.73</td><td>0.79</td><td>0.77</td><td><span class="status warn">RSI 대기</span></td><td>반도체 테마 강세</td></tr>
-                  <tr><td>035420</td><td>NAVER</td><td>0.69</td><td>0.71</td><td>0.58</td><td>0.67</td><td>0.62</td><td><span class="status info">감시중</span></td><td>AI 신뢰도 경계</td></tr>
-                  <tr><td>068270</td><td>셀트리온</td><td>0.76</td><td>0.66</td><td>0.69</td><td>0.72</td><td>0.70</td><td><span class="status info">감시중</span></td><td>수급 개선</td></tr>
+                <tbody id="funnel-candidates-tbody">
+                  <tr><td colspan="9" class="muted" style="text-align:center;">새로고침을 눌러 불러오기</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1216,57 +1254,42 @@
           <div class="page-head">
             <div>
               <h1 class="page-title">Live Decisions</h1>
-              <p class="page-desc">후보 종목이 현재 어떤 매수조건을 충족했고, 왜 아직 매수하지 않았는지 보여줍니다.</p>
-            </div>
-            <div>
-              <span class="status ok">실시간 감시중</span>
+              <p class="page-desc">Decision Engine 상태와 오늘 생성된 매수 신호를 실시간으로 확인합니다.</p>
             </div>
           </div>
 
-          <div class="card">
-            <div class="card-title">Layer 3 조건 충족 상태</div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>종목</th><th>VWAP</th><th>거래량</th><th>MA20</th><th>RSI</th><th>스프레드</th><th>지수동조</th><th>AI</th><th>상태</th><th>대기/차단 사유</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td>005930</td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check no">N</span></td><td>0.71</td><td><span class="status warn">매수대기</span></td><td>지수 동조 복귀 대기</td>
-                  </tr>
-                  <tr>
-                    <td>000660</td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check wait">W</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td>0.77</td><td><span class="status warn">RSI 대기</span></td><td>RSI 72.4, 기준 70 초과</td>
-                  </tr>
-                  <tr>
-                    <td>035420</td><td><span class="check no">N</span></td><td><span class="check yes">Y</span></td><td><span class="check no">N</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td>0.62</td><td><span class="status info">감시중</span></td><td>VWAP 하회, AI 신뢰도 미달</td>
-                  </tr>
-                  <tr>
-                    <td>068270</td><td><span class="check yes">Y</span></td><td><span class="check wait">W</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td><span class="check yes">Y</span></td><td>0.70</td><td><span class="status warn">거래량 대기</span></td><td>거래량 1.7배, 기준 2.0배 미달</td>
-                  </tr>
-                </tbody>
-              </table>
+          <div class="card" id="live-engine-card">
+            <div class="card-title">Decision Engine 상태</div>
+            <div id="live-engine-status" style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:12px;">
+              <div>상태: <span id="live-engine-active" class="status warn">로딩중</span></div>
+              <div>WS: <span id="live-engine-ws" class="muted">-</span></div>
+              <div>후보 종목: <span id="live-engine-candidates" class="muted">-</span></div>
+              <div>신호 발행: <span id="live-engine-signals-sent" class="muted">-</span></div>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn primary" id="live-btn-activate" onclick="liveDecisionActivate()">수동 활성화</button>
+              <button class="btn" id="live-btn-deactivate" onclick="liveDecisionDeactivate()">비활성화</button>
             </div>
           </div>
 
           <div class="section-gap"></div>
 
-          <div class="grid cols-3">
-            <div class="card">
-              <div class="card-title">왜 아직 안 샀는가</div>
-              <p><strong>000660</strong>은 대부분 조건을 충족했지만 RSI가 기준 상단을 초과했습니다.</p>
-              <p class="muted">현재 RSI 72.4 / 허용 범위 40~70</p>
+          <div class="card">
+            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+              <span>오늘 매수 신호</span>
+              <button class="btn" onclick="loadLiveData()">새로고침</button>
             </div>
-            <div class="card">
-              <div class="card-title">매수 직전 후보</div>
-              <p><strong>005930</strong>은 지수 동조 조건만 복귀하면 주문 검토 상태로 전환됩니다.</p>
-              <p class="muted">조건 충족 6개 / 7개</p>
-            </div>
-            <div class="card">
-              <div class="card-title">차단 후보</div>
-              <p><strong>035420</strong>은 VWAP 하회와 AI 신뢰도 미달로 신규 진입을 보류합니다.</p>
-              <p class="muted">조건 미충족 3개</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>시간</th><th>종목코드</th><th>종목명</th><th>진입가</th><th>신뢰도</th><th>상태</th>
+                  </tr>
+                </thead>
+                <tbody id="live-signals-tbody">
+                  <tr><td colspan="6" class="muted" style="text-align:center;">로딩중...</td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </section>
@@ -1279,22 +1302,73 @@
             </div>
           </div>
 
-          <div class="card">
-            <div class="card-title">보유 종목 청산 상태</div>
+          <div class="card" id="positions-account-card">
+            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+              <span>계좌 정보</span>
+              <button class="btn" onclick="loadAccountBalance()">새로고침</button>
+            </div>
+            <div id="positions-account-info" style="margin-bottom:12px;">
+              <div class="muted" style="font-size:13px;" id="positions-account-no">계좌번호: -</div>
+              <div style="display:flex; gap:24px; margin-top:6px;">
+                <div>예수금: <strong id="positions-deposit">-</strong>원</div>
+                <div>총평가금액: <strong id="positions-total-eval">-</strong>원</div>
+              </div>
+            </div>
+            <div class="card-title" style="margin-top:16px; margin-bottom:8px;">보유 종목</div>
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>종목코드</th><th>종목명</th><th>진입가</th><th>현재가</th><th>손익률</th><th>손절가</th><th>익절가</th><th>트레일링</th><th>보유시간</th><th>청산대기조건</th>
+                    <th>종목코드</th><th>종목명</th><th>수량</th><th>매입평균가</th><th>현재가</th><th>손익률</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody id="positions-holdings-tbody">
+                  <tr><td colspan="6" class="muted" style="text-align:center;">로딩중...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="section-gap"></div>
+
+          <div class="card">
+            <div class="card-title">
+              <span>실시간 포지션 감시</span>
+              <div style="display:flex; gap:8px;">
+                <button class="btn" onclick="loadPositionMonitoring()">새로고침</button>
+                <button class="btn danger" onclick="liquidateAll()">전체 청산</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
                   <tr>
-                    <td>005930</td><td>삼성전자</td><td>72,500</td><td>73,000</td><td class="good">+0.69%</td><td>71,412</td><td>74,675</td><td><span class="status warn">대기</span></td><td>12분</td><td>익절/트레일링 대기</td>
+                    <th>종목코드</th><th>종목명</th><th>수량</th><th>진입가</th><th>현재가</th><th>손익률</th><th>손절가</th><th>익절가</th><th>트레일링</th><th>보유시간</th>
                   </tr>
+                </thead>
+                <tbody id="positions-monitor-tbody">
+                  <tr><td colspan="10" class="muted" style="text-align:center;">로딩중...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="section-gap"></div>
+
+          <div class="card">
+            <div class="card-title">
+              <span>오늘 주문내역</span>
+              <button class="btn" onclick="loadTodayOrders()">새로고침</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
                   <tr>
-                    <td>000660</td><td>SK하이닉스</td><td>184,000</td><td>181,300</td><td class="bad">-1.47%</td><td>181,240</td><td>189,520</td><td><span class="status info">비활성</span></td><td>6분</td><td>손절 근접</td>
+                    <th>시간</th><th>종목</th><th>구분</th><th>수량</th><th>가격</th><th>주문번호</th><th>상태</th>
                   </tr>
+                </thead>
+                <tbody id="orders-today-tbody">
+                  <tr><td colspan="7" class="muted" style="text-align:center;">로딩중...</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1324,13 +1398,14 @@
               <h1 class="page-title">Execution & Risk</h1>
               <p class="page-desc">주문 실행, 주문 차단, KIS 응답, 리스크 가드 상태를 확인합니다.</p>
             </div>
+            <button class="btn" onclick="loadExecutionRisk()">새로고침</button>
           </div>
 
           <div class="grid cols-4">
-            <div class="card compact"><div class="card-title">당일 손익</div><div class="metric good">+0.12%</div><div class="progress"><span style="width: 6%;"></span></div></div>
+            <div class="card compact"><div class="card-title">당일 손익</div><div class="metric" id="risk-pnl">-</div><div class="progress"><span style="width: 0%;"></span></div></div>
             <div class="card compact"><div class="card-title">손실한도</div><div class="metric">-2.0%</div><div class="muted">도달 시 신규 주문 중단</div></div>
-            <div class="card compact"><div class="card-title">주문 실행</div><div class="metric">3</div><div class="muted">오늘 총 주문</div></div>
-            <div class="card compact"><div class="card-title">주문 차단</div><div class="metric warn">2</div><div class="muted">조건/리스크 차단</div></div>
+            <div class="card compact"><div class="card-title">주문 실행</div><div class="metric" id="risk-orders-count">-</div><div class="muted">오늘 총 주문</div></div>
+            <div class="card compact"><div class="card-title">주문 차단</div><div class="metric" id="risk-blocked-count">-</div><div class="muted">조건/리스크 차단</div></div>
           </div>
 
           <div class="section-gap"></div>
@@ -1341,12 +1416,10 @@
               <div class="table-wrap">
                 <table>
                   <thead>
-                    <tr><th>시각</th><th>종목</th><th>방향</th><th>수량</th><th>근거</th><th>KIS 응답</th><th>상태</th></tr>
+                    <tr><th>시각</th><th>종목</th><th>방향</th><th>수량</th><th>가격</th><th>사유</th><th>상태</th></tr>
                   </thead>
-                  <tbody>
-                    <tr><td>09:12:31</td><td>005930</td><td>매수</td><td>100</td><td>Layer 3 조건 7개 충족</td><td>rt_cd 0</td><td><span class="status ok">전량체결</span></td></tr>
-                    <tr><td>09:26:44</td><td>005930</td><td>매도</td><td>100</td><td>트레일링 스탑</td><td>rt_cd 0</td><td><span class="status ok">전량체결</span></td></tr>
-                    <tr><td>10:04:18</td><td>068270</td><td>매수</td><td>50</td><td>조건 충족</td><td>rt_cd 0</td><td><span class="status ok">체결</span></td></tr>
+                  <tbody id="risk-orders-tbody">
+                    <tr><td colspan="7" class="muted" style="text-align:center;">새로고침을 눌러 불러오기</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -1355,9 +1428,7 @@
             <div class="card">
               <div class="card-title">주문 차단 로그</div>
               <div class="log-list">
-                <div class="log-item"><div class="log-time">09:14:02</div><div class="log-text"><strong>000660 매수 차단</strong><br><span class="muted">RSI 72.4, 기준 70 초과</span></div></div>
-                <div class="log-item"><div class="log-time">10:22:51</div><div class="log-text"><strong>035420 매수 차단</strong><br><span class="muted">AI 신뢰도 0.62, 기준 0.65 미달</span></div></div>
-                <div class="log-item"><div class="log-time">10:48:12</div><div class="log-text"><strong>스프레드 경고</strong><br><span class="muted">일부 후보 호가 스프레드 0.3% 근접</span></div></div>
+                <p class="muted" style="font-size:13px;">실시간 차단 로그는 서버 로그에서 확인하세요.<br>KIS System Test → 서버 로그 패널 (필터: "BLOCK" 또는 "차단")</p>
               </div>
             </div>
           </div>
@@ -1367,33 +1438,55 @@
           <div class="page-head">
             <div>
               <h1 class="page-title">Data & API</h1>
-              <p class="page-desc">KIS, DART, 뉴스, AI 검색, DB, Redis, Telegram의 상태와 데이터 품질을 확인합니다.</p>
+              <p class="page-desc">KIS, LLM Provider, DB 상태를 확인합니다.</p>
             </div>
-            <button class="btn primary">데이터 재점검</button>
+            <button class="btn" onclick="loadDataHealth()">새로고침</button>
           </div>
 
           <div class="grid cols-4">
-            <div class="card compact"><div class="card-title">KIS REST</div><div class="metric good">정상</div><div class="muted">응답 0.21초</div></div>
-            <div class="card compact"><div class="card-title">KIS WebSocket</div><div class="metric good">정상</div><div class="muted">마지막 수신 0.04초</div></div>
-            <div class="card compact"><div class="card-title">PostgreSQL</div><div class="metric good">정상</div><div class="muted">로그 저장중</div></div>
-            <div class="card compact"><div class="card-title">Telegram</div><div class="metric good">정상</div><div class="muted">08:45 알림 발송</div></div>
+            <div class="card compact"><div class="card-title">KIS REST</div><div class="metric" id="dh-kisRest">-</div><div class="muted" id="dh-kisRestDetail">확인중</div></div>
+            <div class="card compact"><div class="card-title">KIS WebSocket</div><div class="metric" id="dh-kisWs">-</div><div class="muted" id="dh-kisWsDetail">확인중</div></div>
+            <div class="card compact"><div class="card-title">LLM Router</div><div class="metric" id="dh-llm">-</div><div class="muted" id="dh-llmDetail">provider 확인중</div></div>
+            <div class="card compact"><div class="card-title">SQLite DB</div><div class="metric good" id="dh-db">로컬</div><div class="muted" id="dh-dbDetail">data/ 디렉토리</div></div>
           </div>
 
           <div class="section-gap"></div>
 
+          <div class="card" style="margin-bottom:16px;">
+            <div class="card-title">System Health <span>엔진 & 연결 상태</span></div>
+            <div class="grid cols-2">
+              <div class="natural-card">
+                <h4>Auto Engine</h4>
+                <p><span class="status ok" id="kisTokenStatus">확인중</span></p>
+                <p class="muted" id="kisTokenDetail">RulePack 적용 상태</p>
+              </div>
+              <div class="natural-card">
+                <h4>RulePack</h4>
+                <p><span class="status ok" id="rulepackStatus">확인중</span></p>
+                <p class="muted" id="rulepackDetail">오늘 활성 RulePack</p>
+              </div>
+              <div class="natural-card">
+                <h4>WebSocket</h4>
+                <p><span class="status ok" id="websocketStatus">확인중</span></p>
+                <p class="muted" id="websocketDetail">S4 완료 후 자동 구독</p>
+              </div>
+              <div class="natural-card">
+                <h4>Risk Guard</h4>
+                <p><span class="status ok" id="riskStatus">확인중</span></p>
+                <p class="muted" id="riskDetail">긴급정지 상태</p>
+              </div>
+            </div>
+          </div>
+
           <div class="card">
-            <div class="card-title">데이터 품질 체크</div>
+            <div class="card-title">LLM Provider 상태 <span>llm_router 우선순위 순서</span></div>
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>항목</th><th>상태</th><th>건수</th><th>마지막 확인</th><th>처리</th></tr>
+                  <tr><th>Provider</th><th>역할</th><th>모델</th><th>상태</th></tr>
                 </thead>
-                <tbody>
-                  <tr><td>종목코드 포맷 오류</td><td><span class="status ok">정상</span></td><td>0</td><td>방금 전</td><td>없음</td></tr>
-                  <tr><td>현재가 누락</td><td><span class="status ok">정상</span></td><td>0</td><td>방금 전</td><td>없음</td></tr>
-                  <tr><td>호가 누락</td><td><span class="status ok">정상</span></td><td>0</td><td>방금 전</td><td>없음</td></tr>
-                  <tr><td>거래량 이상치</td><td><span class="status warn">주의</span></td><td>1</td><td>2분 전</td><td>후보 점수 계산에서 제외</td></tr>
-                  <tr><td>WebSocket 지연</td><td><span class="status ok">정상</span></td><td>0</td><td>방금 전</td><td>없음</td></tr>
+                <tbody id="llmProvidersTableBody">
+                  <tr><td colspan="4" class="muted">불러오는 중...</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1410,26 +1503,6 @@
               <span class="status info" id="apiLogsCount">0건</span>
             </div>
           </div>
-
-          <div class="grid cols-3">
-            <div class="card compact">
-              <div class="card-title">최근 집계 <span>count</span></div>
-              <div class="metric" id="apiLogsMetric">0</div>
-              <div class="muted" id="apiLogsLastUpdate">불러오는 중</div>
-            </div>
-            <div class="card compact">
-              <div class="card-title">출처 구분 <span>source</span></div>
-              <div class="metric info">MOCK / LIVE / BACKEND</div>
-              <div class="muted">PM이 mock-safe 응답과 실제 관리 호출을 분리해서 볼 수 있습니다.</div>
-            </div>
-            <div class="card compact">
-              <div class="card-title">운영 메모 <span>note</span></div>
-              <div class="metric" style="font-size:18px;" id="apiLogsMode">MOCK SAFE</div>
-              <div class="muted" id="apiLogsNote">백엔드 관리 로그를 확인하는 중입니다.</div>
-            </div>
-          </div>
-
-          <div class="section-gap"></div>
 
           <div class="card">
             <div class="card-title">최근 호출 로그 <span>feature / purpose / result / called_at 중심</span></div>
@@ -1453,69 +1526,119 @@
               <p class="page-desc">복기의 목적은 리포트가 아니라 학습입니다. 좋은 전략, 나쁜 전략, 좋은 타이밍을 구조화해서 다음 RulePack에 반영합니다.</p>
             </div>
             <div>
-              <button class="btn primary">AI 복기 생성</button>
-              <button class="btn">CSV 다운로드</button>
+              <button class="btn primary" onclick="runDailySummary()">일일 요약 생성 (S10)</button>
+              <button class="btn" onclick="loadReviewData()">새로고침</button>
             </div>
           </div>
 
           <div class="grid cols-4">
-            <div class="card compact"><div class="card-title">총 손익</div><div class="metric good">+0.42%</div><div class="muted">실현 기준</div></div>
-            <div class="card compact"><div class="card-title">승률</div><div class="metric">58%</div><div class="muted">7전 4승</div></div>
-            <div class="card compact"><div class="card-title">룰 준수율</div><div class="metric good">100%</div><div class="muted">위반 없음</div></div>
-            <div class="card compact"><div class="card-title">학습 후보</div><div class="metric">6</div><div class="muted">패턴 메모리 저장</div></div>
+            <div class="card compact"><div class="card-title">총 손익</div><div class="metric" id="review-pnl">-</div><div class="muted">실현 기준</div></div>
+            <div class="card compact"><div class="card-title">승률</div><div class="metric" id="review-winrate">-</div><div class="muted" id="review-winrate-detail">-</div></div>
+            <div class="card compact"><div class="card-title">매매일수</div><div class="metric" id="review-trade-days">-</div><div class="muted">데이터 있는 날</div></div>
+            <div class="card compact"><div class="card-title">총 주문수</div><div class="metric" id="review-total-orders">-</div><div class="muted">전체 집계</div></div>
           </div>
 
           <div class="section-gap"></div>
 
           <div class="split">
             <div class="card">
-              <div class="card-title">AI 복기 요약 <span>사용자용 자연어</span></div>
+              <div class="card-title">가장 최근 거래일 요약</div>
               <div class="natural-card">
-                <h4>잘된 점</h4>
-                <p>코스닥 강세 구간에서 거래량 2.5배 이상, VWAP 위, 스프레드 0.2% 이하 조건을 만족한 진입은 비교적 빠르게 유리한 방향으로 움직였습니다.</p>
+                <h4>가장 최근 거래일 요약</h4>
+                <p id="review-latest-summary">-</p>
               </div>
               <div class="natural-card">
-                <h4>개선할 점</h4>
-                <p>RSI 68~70 구간에서 진입한 일부 종목은 진입 후 10분 내 추세가 약해졌고 시간손절 비율이 높았습니다. 내일은 RSI 상단 기준을 67로 낮추는 방안을 검토합니다.</p>
+                <h4>시장 톤</h4>
+                <p id="review-latest-tone">-</p>
               </div>
               <div class="natural-card">
-                <h4>놓친 기회</h4>
-                <p>AI 신뢰도 0.62로 차단된 일부 종목이 이후 10분 내 강하게 상승했습니다. 기술 조건이 완벽할 경우 AI 신뢰도 하한을 보정하는 보조룰이 필요합니다.</p>
+                <h4>RulePack</h4>
+                <p id="review-latest-rulepack">-</p>
               </div>
             </div>
 
             <div class="card">
-              <div class="card-title">자동학습 Rule Suggestions</div>
+              <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>일별 거래 이력 <span>Statistics 화면에서 상세 확인 가능</span></span>
+                <button class="btn" onclick="showScreen('statistics')">Statistics →</button>
+              </div>
               <div class="table-wrap">
                 <table>
                   <thead>
-                    <tr><th>대상 룰</th><th>현재</th><th>제안</th><th>근거</th><th>상태</th></tr>
+                    <tr><th>날짜</th><th>주문</th><th>매수</th><th>매도</th><th>손익</th><th>시장톤</th></tr>
                   </thead>
-                  <tbody>
-                    <tr><td>rsi_max</td><td>70</td><td>67</td><td>RSI 68~70 시간손절 증가</td><td><span class="status warn">검토</span></td></tr>
-                    <tr><td>min_volume_ratio</td><td>2.0</td><td>2.2</td><td>2.5배 이상 구간 성과 우수</td><td><span class="status info">대기</span></td></tr>
-                    <tr><td>min_ai_confidence</td><td>0.65</td><td>조건부 0.60</td><td>기술 조건 7개 충족 시 보정</td><td><span class="status warn">검토</span></td></tr>
+                  <tbody id="review-history-tbody">
+                    <tr><td colspan="6" class="muted">로딩중...</td></tr>
                   </tbody>
                 </table>
               </div>
             </div>
           </div>
+        </section>
 
-          <div class="section-gap"></div>
+        <section class="screen" id="screen-statistics">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Trade History</h1>
+              <p class="page-desc">기간별 전체 주문 내역 (체결·미체결 포함)을 조회합니다.</p>
+            </div>
+            <button class="btn" onclick="loadAllOrders()">새로고침</button>
+          </div>
+
+          <div style="display:flex; gap:8px; margin-bottom:16px; align-items:center; flex-wrap:wrap;">
+            <span style="color:var(--muted); font-size:13px;">기간:</span>
+            <button class="btn primary" id="sf-today" onclick="setStatsFilter('today')">오늘</button>
+            <button class="btn" id="sf-week" onclick="setStatsFilter('week')">이번주</button>
+            <button class="btn" id="sf-month" onclick="setStatsFilter('month')">이번달</button>
+            <button class="btn" id="sf-lastmonth" onclick="setStatsFilter('lastmonth')">지난달</button>
+            <button class="btn" id="sf-all" onclick="setStatsFilter('all')">전체</button>
+            <input type="date" id="sf-date" style="padding:5px; border-radius:5px; background:var(--panel-2); color:var(--text); border:1px solid var(--line);" onchange="loadStatisticsDetail(this.value)">
+          </div>
+
+          <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:16px;">
+            <div class="card compact"><div class="card-title">매매일수</div><div class="metric" id="st-days">-</div><div class="muted">S10 집계 기준</div></div>
+            <div class="card compact"><div class="card-title">총 주문수</div><div class="metric" id="st-orders">-</div><div class="muted">전체 기간</div></div>
+            <div class="card compact"><div class="card-title">수익일 비율</div><div class="metric" id="st-winrate">-</div><div class="muted" id="st-winrate-detail">-</div></div>
+            <div class="card compact"><div class="card-title">누적 손익</div><div class="metric" id="st-pnl">-</div><div class="muted">실현 기준 합산</div></div>
+            <div class="card compact"><div class="card-title">일 평균 손익</div><div class="metric" id="st-avg-pnl">-</div><div class="muted">거래일 기준</div></div>
+          </div>
 
           <div class="card">
-            <div class="card-title">Pattern Memory <span>구조화 학습 데이터</span></div>
+            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+              <span id="st-table-title">주문 내역</span>
+              <button class="btn" onclick="loadAllOrders()">새로고침</button>
+            </div>
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>패턴</th><th>시장국면</th><th>시간대</th><th>조건 요약</th><th>표본</th><th>승률</th><th>평균손익</th><th>권고</th></tr>
+                  <tr>
+                    <th>시간</th>
+                    <th>종목명</th>
+                    <th>코드</th>
+                    <th>구분</th>
+                    <th>수량</th>
+                    <th>가격</th>
+                    <th>상태</th>
+                  </tr>
                 </thead>
-                <tbody>
-                  <tr><td>GOOD_ENTRY</td><td>코스닥 강세</td><td>09:10~10:20</td><td>거래량 2.5배 이상 + VWAP 위 + 스프레드 0.2% 이하</td><td>26</td><td>63%</td><td class="good">+0.41%</td><td>가중치 강화</td></tr>
-                  <tr><td>BAD_ENTRY</td><td>혼조</td><td>10:30~11:20</td><td>RSI 68 이상 + 거래량 감소 + 스프레드 0.25% 이상</td><td>18</td><td>33%</td><td class="bad">-0.21%</td><td>진입 감점</td></tr>
-                  <tr><td>GOOD_EXIT</td><td>변동성 확대</td><td>장중</td><td>+2% 이후 트레일링 활성화</td><td>12</td><td>67%</td><td class="good">+0.62%</td><td>유지</td></tr>
+                <tbody id="st-orders-tbody">
+                  <tr><td colspan="7" class="muted" style="text-align:center;">로딩중...</td></tr>
                 </tbody>
               </table>
+            </div>
+          </div>
+
+          <div class="section-gap"></div>
+          <div class="card">
+            <div class="card-title">알림 연동 상태</div>
+            <div class="natural-card" style="display:flex; gap:16px; align-items:center;">
+              <div>
+                <h4 style="margin:0 0 4px;">Telegram Bot</h4>
+                <p style="margin:0;"><span class="status ok" id="telegram-status">확인중</span></p>
+              </div>
+              <div style="color:var(--muted); font-size:12px;" id="telegram-detail">
+                RulePack 생성, 주문 발생, 차단, 긴급정지, 일일 리포트 발송
+              </div>
             </div>
           </div>
         </section>
@@ -1600,6 +1723,71 @@
               <pre class="et-result" id="et-result-s5" style="display:none;"></pre>
             </div>
 
+            <!-- S6 -->
+            <div class="card" id="et-card-s6">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <div>
+                  <strong>S6 — Decision Engine 활성화</strong>
+                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">09:00 KST · WS 연결 + RulePack 조건 감시</div>
+                </div>
+                <span class="badge" id="et-badge-s6">대기</span>
+              </div>
+              <button class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s6')">▶ 활성화</button>
+              <pre class="et-result" id="et-result-s6" style="display:none;"></pre>
+            </div>
+
+            <!-- S7 -->
+            <div class="card" id="et-card-s7">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <div>
+                  <strong>S7 — 주문 실행 (수동 테스트)</strong>
+                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">09:00~ KST · 오늘 발행된 주문 내역 조회</div>
+                </div>
+                <span class="badge" id="et-badge-s7">대기</span>
+              </div>
+              <button class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s7')">▶ 오늘 주문 현황</button>
+              <pre class="et-result" id="et-result-s7" style="display:none;"></pre>
+            </div>
+
+            <!-- S8 -->
+            <div class="card" id="et-card-s8">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <div>
+                  <strong>S8 — Position Manager 상태</strong>
+                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">장중 · WS tick → 손절/익절 감시</div>
+                </div>
+                <span class="badge" id="et-badge-s8">대기</span>
+              </div>
+              <button class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s8')">▶ 포지션 조회</button>
+              <pre class="et-result" id="et-result-s8" style="display:none;"></pre>
+            </div>
+
+            <!-- S9 -->
+            <div class="card" id="et-card-s9">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <div>
+                  <strong>S9 — 당일 청산</strong>
+                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">15:20 KST · 전량 시장가 청산</div>
+                </div>
+                <span class="badge" id="et-badge-s9">대기</span>
+              </div>
+              <button class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s9')">▶ 즉시 전체 청산</button>
+              <pre class="et-result" id="et-result-s9" style="display:none;"></pre>
+            </div>
+
+            <!-- S10 -->
+            <div class="card" id="et-card-s10">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <div>
+                  <strong>S10 — 일일 요약 + DB 백업</strong>
+                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">18:00 KST · trading_orders 집계 → daily_trade_summary + SQLite 백업</div>
+                </div>
+                <span class="badge" id="et-badge-s10">대기</span>
+              </div>
+              <button class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s10')">▶ 일일 요약 생성</button>
+              <pre class="et-result" id="et-result-s10" style="display:none;"></pre>
+            </div>
+
           </div>
 
           <!-- 서버 로그 패널 -->
@@ -1626,54 +1814,78 @@
             </div>
           </div>
 
-          <div class="split">
-            <div class="card">
-              <div class="card-title">Risk Settings</div>
-              <div class="form-grid">
-                <div class="field">
-                  <label>일일 손실한도</label>
-                  <input value="-2.0%" readonly>
-                </div>
-                <div class="field">
-                  <label>주간 손실한도</label>
-                  <input value="-5.0%" readonly>
-                </div>
-                <div class="field">
-                  <label>월간 손실한도</label>
-                  <input value="-8.0%" readonly>
-                </div>
-                <div class="field">
-                  <label>최대 보유 종목</label>
-                  <input value="5" readonly>
-                </div>
-                <div class="field">
-                  <label>종목당 최대 비중</label>
-                  <input value="10%" readonly>
-                </div>
-                <div class="field">
-                  <label>기본 운용모드</label>
-                  <select>
-                    <option>AUTO</option>
-                    <option>MONITOR</option>
-                    <option>HALT</option>
-                  </select>
-                </div>
+          <div class="card">
+            <div class="card-title">리스크 & 청산 설정 <span>system_settings</span></div>
+            <p class="muted" style="margin-bottom:12px; font-size:12px;">이 설정값을 기준으로 RulePack의 위험 한도가 자동 적용됩니다.</p>
+
+            <!-- 포트폴리오 위험 한도 -->
+            <div style="font-size:11px; color:var(--muted); font-weight:600; margin-bottom:8px; letter-spacing:0.05em;">포트폴리오 위험 한도 (전체 계좌 기준)</div>
+            <div class="form-grid" id="riskSettingsForm">
+              <div class="field">
+                <label>일일 손실 한도</label>
+                <input id="risk-daily-loss" value="-2.0%" readonly>
+                <small class="muted">당일 계좌 전체 손익이 이 이하로 떨어지면 신규 매수를 중단</small>
+              </div>
+              <div class="field">
+                <label>주간 손실 한도</label>
+                <input id="risk-weekly-loss" value="-5.0%" readonly>
+              </div>
+              <div class="field">
+                <label>월간 손실 한도</label>
+                <input id="risk-monthly-loss" value="-8.0%" readonly>
+              </div>
+              <div class="field">
+                <label>최대 보유 종목</label>
+                <input id="risk-max-positions" value="5" readonly>
+              </div>
+              <div class="field">
+                <label>종목당 최대 비중</label>
+                <input id="risk-position-size" value="10%" readonly>
+              </div>
+              <div class="field">
+                <label>기본 운용 모드</label>
+                <select id="risk-mode">
+                  <option>AUTO</option>
+                  <option>MONITOR</option>
+                  <option>HALT</option>
+                </select>
               </div>
             </div>
 
-            <div class="card">
-              <div class="card-title">Notification</div>
-              <div class="natural-card">
-                <h4>Telegram</h4>
-                <p><span class="status ok">활성</span></p>
-                <p class="muted">RulePack 생성, 주문 발생, 차단, 긴급정지, 일일 리포트 발송</p>
-              </div>
-              <div class="natural-card">
-                <h4>권한 정책</h4>
-                <p>조회자는 화면 확인만 가능하며, 긴급정지와 설정 변경은 관리자만 가능합니다.</p>
-              </div>
+            <hr style="border:none; border-top:1px solid var(--border,var(--line)); margin:16px 0;">
+
+            <!-- 포지션별 청산 기준 -->
+            <div style="font-size:11px; color:var(--muted); font-weight:600; margin-bottom:4px; letter-spacing:0.05em;">포지션별 청산 기준 (개별 종목 기준)</div>
+            <p class="muted" style="font-size:11px; margin-bottom:10px;">포트폴리오 한도(위)와 별개로, 개별 종목 진입가 대비 손절/익절 기준을 설정합니다. 비워두면 RulePack 값을 사용합니다.</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>항목</th><th>현재값</th><th>새 값</th><th>저장</th><th>예시</th></tr>
+                </thead>
+                <tbody id="exitOverrideSettingsTableBody">
+                  <tr><td colspan="5" class="muted">설정을 불러오는 중입니다...</td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
+
+          <div class="section-gap"></div>
+
+          <div class="card">
+            <div class="card-title">스케줄러 시간 설정 <span>system_settings</span></div>
+            <p class="muted" style="margin-bottom: 15px;">⚠️ 변경 후 서버를 재시작해야 반영됩니다.</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>단계</th><th>설명</th><th>현재 시간</th><th>새 시간</th><th>저장</th></tr>
+                </thead>
+                <tbody id="schedulerSettingsTableBody">
+                  <tr><td colspan="5" class="muted">설정을 불러오는 중입니다...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
         </section>
 
         <div class="footerbar">
@@ -1713,8 +1925,7 @@
   var nextJobMetric = document.getElementById("nextJobMetric");
   var nextJobText = document.getElementById("nextJobText");
   var lastUpdate = document.getElementById("lastUpdate");
-  var timelineEl = document.getElementById("timeline");
-  var todayLogs = document.getElementById("todayLogs");
+  var todayOpsFeed = document.getElementById("today-ops-feed");
   var funnelProgress = document.getElementById("funnelProgress");
   var kisTokenStatus = document.getElementById("kisTokenStatus");
   var kisTokenDetail = document.getElementById("kisTokenDetail");
@@ -1729,7 +1940,6 @@
   var rulepackChanges = document.getElementById("rulepackChanges");
   var rulepackJson = document.getElementById("rulepackJson");
   var consoleFooterNote = document.getElementById("consoleFooterNote");
-  var apiStateBanner = document.getElementById("apiStateBanner");
   var apiLogsCount = document.getElementById("apiLogsCount");
   var apiLogsMetric = document.getElementById("apiLogsMetric");
   var apiLogsLastUpdate = document.getElementById("apiLogsLastUpdate");
@@ -1739,6 +1949,7 @@
 
   var isHalted = false;
   var currentUser = null;
+  var overviewData = null;
   var timeline = [
     { time: "07:45", name: "KIS 토큰 갱신" },
     { time: "08:00", name: "AI 시장 톤 분석" },
@@ -1760,16 +1971,13 @@
     ["08:15", "Layer 1 Universe 생성 완료. 2,500개 중 200개 통과."]
   ];
 
-  function setApiBanner(kind, message) {
-    if (!apiStateBanner) {
-      return;
+  /* Switch visible console screen and trigger the screen-specific data refresh. */
+  function showScreen(name) {
+    if (window._tmRefreshInterval) {
+      clearInterval(window._tmRefreshInterval);
+      window._tmRefreshInterval = null;
     }
 
-    apiStateBanner.className = "api-banner active " + kind;
-    apiStateBanner.textContent = message;
-  }
-
-  function showScreen(name) {
     for (var i = 0; i < screens.length; i++) {
       screens[i].classList.remove("active");
     }
@@ -1788,6 +1996,80 @@
 
     if (mobileMenu) {
       mobileMenu.value = name;
+    }
+
+    if (name === "settings") {
+      initSettingsUI();
+    }
+
+    if (name === "data") {
+      loadDataHealth();
+    }
+
+    if (name === "funnel") {
+      loadFunnelData();
+    }
+
+    if (name === "trading") {
+      loadTradingMonitor();
+      var tmCountdown = 10;
+      var updateCounters = function() {
+        var b = document.getElementById("tm-buy-refresh-countdown");
+        var s = document.getElementById("tm-sell-refresh-countdown");
+        if (b) b.textContent = tmCountdown + "s";
+        if (s) s.textContent = tmCountdown + "s";
+        tmCountdown--;
+        if (tmCountdown < 0) {
+          tmCountdown = 10;
+          loadTradingMonitor();
+        }
+      };
+      updateCounters();
+      window._tmRefreshInterval = setInterval(updateCounters, 1000);
+    }
+
+    if (name === "today") {
+      loadTodayOrders();
+    }
+
+    if (name === "risk") {
+      loadExecutionRisk();
+    }
+
+    if (name === "review") {
+      loadReviewData();
+    }
+
+    if (name === "statistics") {
+      loadStatistics();
+      loadAllOrders();
+    }
+
+    if (name === "positions") {
+      loadAccountBalance();
+      loadPositionMonitoring();
+      loadTodayOrders();
+      if (positionsRefreshTimer) clearInterval(positionsRefreshTimer);
+      positionsRefreshTimer = setInterval(function() {
+        loadPositionMonitoring();
+        loadTodayOrders();
+      }, 10000);
+    } else {
+      if (positionsRefreshTimer) {
+        clearInterval(positionsRefreshTimer);
+        positionsRefreshTimer = null;
+      }
+    }
+
+    if (name === "live") {
+      loadLiveData();
+      if (liveRefreshTimer) clearInterval(liveRefreshTimer);
+      liveRefreshTimer = setInterval(loadLiveData, 10000);
+    } else {
+      if (liveRefreshTimer) {
+        clearInterval(liveRefreshTimer);
+        liveRefreshTimer = null;
+      }
     }
   }
 
@@ -1833,76 +2115,87 @@
     };
   }
 
-  function renderTimeline() {
-    if (!timelineEl) {
-      return;
-    }
+  /* Render today's operations as a vertical feed with step status and matching log text. */
+  function renderTodayFeed() {
+    var feed = todayOpsFeed || document.getElementById("today-ops-feed");
+    if (!feed) return;
 
+    var source = overviewData || { timeline: timeline, logs: sampleLogs.map(function(log) { return { time: log[0], text: log[1] }; }) };
+    var steps = source.timeline || [];
+    var logs = source.logs || [];
     var phase = getCurrentPhase();
-    var html = "";
 
-    for (var i = 0; i < timeline.length; i++) {
-      var item = timeline[i];
-      var itemMinutes = minutesOf(item.time);
-      var status = "waiting";
+    var keywordMap = {
+      "KIS 토큰": ["KIS", "토큰"],
+      "AI 시장 톤": ["시장 톤", "tone="],
+      "유니버스 필터": ["유니버스", "필터"],
+      "AI 스크리닝": ["스크리닝", "후보"],
+      "RulePack": ["RulePack", "rulepack"],
+      "실시간 매매": ["매수 신호", "매매 시작"],
+      "중간 리포트": ["중간"],
+      "당일매매 청산": ["청산"],
+      "AI 복기": ["복기"],
+      "일일 리포트": ["리포트"]
+    };
 
-      if (phase.currentMinutes > itemMinutes) {
-        status = "done";
-      }
-
-      if (item.time === phase.active.time) {
-        status = "active";
-      }
-
-      var label = "대기";
-      var statusClass = "info";
-
-      if (status === "done") {
-        label = "완료";
-        statusClass = "ok";
-      } else if (status === "active") {
-        label = "진행";
-        statusClass = "warn";
-      }
-
-      html += ''
-        + '<div class="timeline-item">'
-        + '  <div class="timeline-time">' + item.time + '</div>'
-        + '  <div class="timeline-name">' + item.name + '</div>'
-        + '  <span class="status ' + statusClass + '">' + label + '</span>'
-        + '</div>';
+    function normalizedStatus(step) {
+      if (step.status) return step.status;
+      if (phase.currentMinutes > minutesOf(step.time || "00:00")) return "완료";
+      if (phase.active && step.time === phase.active.time) return "실행중";
+      return "대기";
     }
 
-    timelineEl.innerHTML = html;
+    function matchLog(stepName) {
+      var keywords = [];
+      Object.keys(keywordMap).forEach(function(k) {
+        if (stepName.indexOf(k) >= 0) keywords = keywordMap[k];
+      });
+      if (!keywords.length) return null;
+      return logs.find(function(l) {
+        return keywords.some(function(kw) { return (l.text || "").indexOf(kw) >= 0; });
+      }) || null;
+    }
 
-    if (phaseText) {
+    var statusIcon = { "완료": "✓", "실행중": "↻", "대기": "○" };
+    var statusColor = { "완료": "var(--green,#22c55e)", "실행중": "var(--blue,#3b82f6)", "대기": "var(--muted,#888)" };
+
+    if (phaseText && phase.active) {
       phaseText.textContent = "현재 단계: " + phase.active.name;
     }
-
     if (nextJobMetric && phase.next) {
       nextJobMetric.textContent = phase.next.time;
     }
-
     if (nextJobText && phase.next) {
       nextJobText.textContent = phase.next.name;
     }
-  }
 
-  function renderLogs() {
-    if (!todayLogs) {
+    if (!steps.length) {
+      feed.innerHTML = '<div class="muted" style="padding:8px 0;">오늘 운영 일정 없음</div>';
       return;
     }
 
-    var html = "";
-    for (var i = 0; i < sampleLogs.length; i++) {
-      html += ''
-        + '<div class="log-item">'
-        + '  <div class="log-time">' + sampleLogs[i][0] + '</div>'
-        + '  <div class="log-text">' + sampleLogs[i][1] + '</div>'
-        + '</div>';
-    }
-
-    todayLogs.innerHTML = html;
+    feed.innerHTML = steps.map(function(step) {
+      var status = normalizedStatus(step);
+      var icon = statusIcon[status] || "○";
+      var color = statusColor[status] || "var(--muted)";
+      var log = matchLog(step.name || "");
+      var logHtml = log
+        ? '<div style="font-size:11px; color:var(--muted); margin-top:2px; padding-left:4px; border-left:2px solid var(--border,var(--line));">'
+          + (log.time ? '<span style="margin-right:6px;">' + escapeHtml(log.time) + '</span>' : '')
+          + escapeHtml(log.text || '') + '</div>'
+        : '';
+      return '<div style="display:flex; gap:12px; align-items:flex-start; padding:8px 0; border-bottom:1px solid var(--border,var(--line));">'
+        + '<div style="font-size:16px; line-height:1; width:20px; text-align:center; flex-shrink:0; color:' + color + ';">' + icon + '</div>'
+        + '<div style="flex:1; min-width:0;">'
+          + '<div style="display:flex; gap:8px; align-items:baseline;">'
+            + '<span style="font-size:12px; color:var(--muted); min-width:40px;">' + escapeHtml(step.time || '') + '</span>'
+            + '<span style="font-size:13px; font-weight:600;">' + escapeHtml(step.name || '') + '</span>'
+            + '<span style="font-size:11px; color:' + color + '; margin-left:auto;">' + escapeHtml(status) + '</span>'
+          + '</div>'
+          + logHtml
+        + '</div>'
+      + '</div>';
+    }).join('');
   }
 
   function updateLastTime() {
@@ -1926,6 +2219,16 @@
     }
     element.className = "status " + kind;
     element.textContent = text;
+  }
+
+  /* Escape dynamic table values before writing HTML strings. */
+  function escapeHtml(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
   function setDotStatus(element, kind) {
@@ -1970,6 +2273,7 @@
       return;
     }
 
+    overviewData = payload;
     timeline = payload.timeline || timeline;
     sampleLogs = (payload.logs || []).map(function (entry) {
       return [entry.time, entry.text];
@@ -2041,12 +2345,12 @@
     }
 
     renderFunnel(payload.funnel);
-    renderTimeline();
-    renderLogs();
+    renderTodayFeed();
   }
 
   function renderFallbackOverview(reason) {
     isHalted = false;
+    overviewData = { timeline: timeline, logs: sampleLogs.map(function(log) { return { time: log[0], text: log[1] }; }) };
 
     if (engineText) {
       engineText.textContent = "Auto Engine MOCK";
@@ -2079,8 +2383,7 @@
     setStatusChip(rulepackStatus, "warn", "fallback");
     setStatusChip(websocketStatus, "info", "mock");
     setStatusChip(riskStatus, "warn", "확인 필요");
-    renderTimeline();
-    renderLogs();
+    renderTodayFeed();
   }
 
   function renderRulepack(payload) {
@@ -2168,7 +2471,13 @@
     apiLogsTableBody.innerHTML = items.map(function (entry) {
       var source = getSourceLabel(entry.source);
       var apiLabel = entry.api_name_or_path || ((entry.method || '-') + ' ' + (entry.endpoint || '-'));
-      var calledAt = entry.called_at || entry.timestamp || '-';
+      var rawTime = entry.called_at || entry.timestamp || '';
+      var calledAt = '-';
+      if (rawTime && rawTime.length >= 19) {
+        calledAt = rawTime.slice(2, 10) + ' ' + rawTime.slice(11, 19);
+      } else if (rawTime) {
+        calledAt = rawTime;
+      }
       return ''
         + '<tr>'
         + '<td>' + (entry.feature_name || '-') + '</td>'
@@ -2184,8 +2493,19 @@
   }
 
   async function loadApiLogs() {
-    var result = await fetchJson("/api/v1/bot/api-logs");
-    renderApiLogs(result.payload);
+    var today = new Date();
+    var dateStr = today.getFullYear() + '-'
+      + String(today.getMonth()+1).padStart(2,'0') + '-'
+      + String(today.getDate()).padStart(2,'0');
+    var result = await fetchJson('/api/v1/bot/api-logs?date=' + dateStr);
+    // 백엔드가 date 파라미터 미지원 시 클라이언트에서 필터
+    if (result && result.payload && Array.isArray(result.payload)) {
+      result.payload = result.payload.filter(function(e) {
+        var ts = e.called_at || e.timestamp || '';
+        return ts.startsWith(dateStr);
+      });
+    }
+    renderApiLogs(result && result.payload);
   }
 
   function applyHaltState(payload) {
@@ -2210,10 +2530,40 @@
       riskDetail.textContent = "긴급정지 요청으로 신규 진입 차단";
     }
     if (haltBtn) {
-      haltBtn.textContent = "중단됨";
-      haltBtn.disabled = true;
-      haltBtn.style.opacity = "0.75";
-      haltBtn.style.cursor = "not-allowed";
+      haltBtn.textContent = "운영재개";
+      haltBtn.classList.remove("danger");
+      haltBtn.classList.add("warn");
+      haltBtn.disabled = false;
+      haltBtn.style.opacity = "1";
+      haltBtn.style.cursor = "pointer";
+    }
+  }
+
+  function applyResumeState(payload) {
+    isHalted = false;
+    if (engineText) {
+      engineText.textContent = "Auto Engine RUNNING";
+    }
+    setDotStatus(engineDot, "ok");
+    if (modeMetric) {
+      modeMetric.textContent = payload && payload.mode ? payload.mode : "AUTO";
+      modeMetric.classList.remove("bad");
+      modeMetric.classList.add("good");
+    }
+    if (modeDetail) {
+      modeDetail.textContent = "운영 재개됨";
+    }
+    if (positionsDetail) {
+      positionsDetail.textContent = "신규 주문 허용";
+    }
+    setStatusChip(riskStatus, "ok", "정상");
+    if (riskDetail) {
+      riskDetail.textContent = "신규 주문 허용";
+    }
+    if (haltBtn) {
+      haltBtn.textContent = "긴급정지";
+      haltBtn.classList.remove("warn");
+      haltBtn.classList.add("danger");
     }
   }
 
@@ -2293,7 +2643,7 @@
     showLogin("로그아웃되었습니다.");
   }
 
-  async function loadConsoleData() {
+	  async function loadConsoleData() {
     var results = await Promise.allSettled([
       fetchJson("/api/v1/bot/overview"),
       fetchJson("/api/v1/bot/rulepack/today"),
@@ -2328,28 +2678,30 @@
       console.error("Data health bootstrap failed:", dataHealthResult.reason);
     }
 
-    try {
-      await loadApiLogs();
-    } catch (error) {
-      apiLogError = error;
-      console.error("API logs bootstrap failed:", error);
-    }
+	    try {
+	      await loadApiLogs();
+	    } catch (error) {
+	      apiLogError = error;
+	      console.error("API logs bootstrap failed:", error);
+	    }
+
+	    try {
+	      await loadTodayOrders();
+	    } catch (error) {
+	      console.error("Today orders bootstrap failed:", error);
+	    }
 
     if (failedEndpoints.length > 0) {
       var warningMessage = "일부 백엔드 API 연결 실패: " + failedEndpoints.join(", ") + " · 정적 mock 상태를 표시 중입니다.";
       if (apiLogError) {
         warningMessage += " 관리 로그 조회도 실패했습니다.";
       }
-      setApiBanner("warn", warningMessage);
       if (consoleFooterNote) {
         consoleFooterNote.textContent = "API 일부 실패 · 실거래 엔진 미구현 · fallback mock 표시중";
       }
       return;
     }
 
-    setApiBanner("info", apiLogError
-      ? "백엔드 API 연결 완료 · 핵심 화면은 mock 응답을 표시하며 관리 로그 조회는 실패했습니다."
-      : "백엔드 API 연결 완료 · 현재 화면은 mock 응답과 실제 백엔드 관리 호출을 함께 표시합니다.");
     if (consoleFooterNote && dataHealthResult.value && dataHealthResult.value.payload && dataHealthResult.value.payload.note) {
       consoleFooterNote.textContent = dataHealthResult.value.payload.note;
     }
@@ -2363,6 +2715,17 @@
       }
     });
     applyHaltState(result.payload);
+    await loadConsoleData();
+  }
+
+  async function emergencyResume() {
+    var result = await fetchJson("/api/v1/bot/control/resume", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      }
+    });
+    applyResumeState(result.payload);
     await loadConsoleData();
   }
 
@@ -2413,6 +2776,14 @@
     if (haltBtn) {
       haltBtn.addEventListener("click", async function () {
         if (isHalted) {
+          if (!confirm("긴급정지를 해제하고 운영을 재개할까요?")) {
+            return;
+          }
+          try {
+            await emergencyResume();
+          } catch (error) {
+            alert("운영재개 호출에 실패했습니다: " + error.message);
+          }
           return;
         }
 
@@ -2459,7 +2830,12 @@
         s2: "/api/v1/market-tone/analyze",
         s3: "/api/v1/universe-filter/run",
         s4: "/api/v1/screening/run",
-        s5: "/api/v1/rulepack-gen/run"
+        s5: "/api/v1/rulepack-gen/run",
+        s6: "/api/v1/decision/activate",
+        s7: "/api/v1/orders/today", // /api/v1/orders/today handles s7 today order status.
+        s8: "/api/v1/orders/positions",
+        s9: "/api/v1/orders/liquidate-all",
+        s10: "/api/v1/trades/run-summary"
       };
       var stepUrl = STEP_URLS[step];
       if (!stepUrl) {
@@ -2472,7 +2848,11 @@
         }
         return;
       }
-      var res = await fetch(stepUrl, { method: "POST" });
+      
+      var method = (step === "s8" || step === "s7") ? "GET" : "POST";
+      if (step === "s10") method = "POST";
+
+      var res = await fetch(stepUrl, { method: method });
       var data = await res.json();
 
       if (data.ok) {
@@ -2524,7 +2904,7 @@
   }
 
   function engineTestClearAll() {
-    ["s1", "s2", "s3", "s4", "s5"].forEach(step => {
+    ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10"].forEach(step => {
       var badge = document.getElementById("et-badge-" + step);
       var resultEl = document.getElementById("et-result-" + step);
       if (badge) {
@@ -2538,6 +2918,994 @@
     });
   }
 
+  /* Settings Handlers */
+  var schedulerKeys = [
+    { key: "schedule_s1_time", label: "S1 토큰 갱신", default: "07:45" },
+    { key: "schedule_s2_time", label: "S2 시장 분석", default: "08:00" },
+    { key: "schedule_s3_time", label: "S3 유니버스", default: "08:15" },
+    { key: "schedule_s4_time", label: "S4 스크리닝", default: "08:30" },
+    { key: "schedule_s5_time", label: "S5 RulePack", default: "08:45" },
+    { key: "schedule_close_time", label: "당일 청산", default: "15:20" },
+    { key: "schedule_backup_time", label: "데이터 백업", default: "18:00" },
+    { key: "schedule_usmarket_time", label: "야간 미국장", default: "22:00" }
+  ];
+
+  var exitOverrideKeys = [
+    { key: "override_stop_loss_rate", label: "손절률 (stop_loss)", placeholder: "-0.015", example: "예: -0.015 = -1.5%" },
+    { key: "override_take_profit_rate", label: "익절률 (take_profit)", placeholder: "0.03", example: "예: 0.03 = 3%" },
+    { key: "override_trailing_activate_rate", label: "트레일링 활성기준", placeholder: "0.02", example: "예: 0.02 = +2% 도달 시 활성화" },
+    { key: "override_trailing_stop_rate", label: "트레일링 손절률", placeholder: "0.01", example: "예: 0.01 = 고점 -1% 시 청산" }
+  ];
+
+  /* Load persisted scheduler times into the Settings table. */
+  async function loadSchedulerSettings() {
+    try {
+      var res = await fetchJson("/api/v1/settings");
+      var settings = res.payload.items || [];
+      var settingsMap = {};
+      settings.forEach(function(s) { settingsMap[s.key] = s.value; });
+
+      var html = schedulerKeys.map(function(k) {
+        var current = settingsMap[k.key] || k.default;
+        return ''
+          + '<tr>'
+          + '  <td>' + k.label + '</td>'
+          + '  <td class="muted">' + k.key + '</td>'
+          + '  <td>' + escapeHtml(current) + '</td>'
+          + '  <td><input type="text" id="input-' + k.key + '" value="' + escapeHtml(current) + '" style="width: 80px; padding: 5px; border-radius: 5px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);"></td>'
+          + '  <td><button class="btn primary" onclick="saveSchedulerSetting(\'' + k.key + '\')">저장</button></td>'
+          + '</tr>';
+      }).join("");
+      var tbody = document.getElementById("schedulerSettingsTableBody");
+      if (tbody) tbody.innerHTML = html;
+    } catch (e) {
+      console.error("Failed to load scheduler settings", e);
+      var tbody = document.getElementById("schedulerSettingsTableBody");
+      if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="muted">설정 로드 실패: ' + escapeHtml(e.message) + '</td></tr>';
+    }
+  }
+
+  /* Save one scheduler time through the frontend-compatible settings POST route. */
+  async function saveSchedulerSetting(key) {
+    var input = document.getElementById("input-" + key);
+    if (!input) return;
+    var val = input.value;
+    if (!/^\d{2}:\d{2}$/.test(val)) {
+      alert("시간 형식이 올바르지 않습니다 (HH:MM)");
+      return;
+    }
+    try {
+      await fetchJson("/api/v1/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: key, value: val })
+      });
+      alert("저장됨 (재시작 필요)");
+      loadSchedulerSettings();
+    } catch (e) {
+      alert("저장 실패: " + e.message);
+    }
+  }
+
+  /* Load manual exit-rule override values into the Settings table. */
+  async function loadExitOverrideSettings() {
+    try {
+      var res = await fetchJson("/api/v1/settings");
+      var settings = res.payload.items || [];
+      var settingsMap = {};
+      settings.forEach(function(s) { settingsMap[s.key] = s.value; });
+
+      var html = exitOverrideKeys.map(function(k) {
+        var current = settingsMap[k.key] == null ? "" : String(settingsMap[k.key]);
+        var currentLabel = current === "" ? "-" : current;
+        return ''
+          + '<tr>'
+          + '  <td>' + k.label + '</td>'
+          + '  <td>' + escapeHtml(currentLabel) + '</td>'
+          + '  <td><input type="text" id="input-' + k.key + '" value="' + escapeHtml(current) + '" placeholder="' + escapeHtml(k.placeholder) + '" style="width: 120px; padding: 5px; border-radius: 5px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);"></td>'
+          + '  <td><button class="btn primary" onclick="saveExitOverrideSetting(\'' + k.key + '\')">저장</button></td>'
+          + '  <td class="muted">' + k.example + '</td>'
+          + '</tr>';
+      }).join("");
+      var tbody = document.getElementById("exitOverrideSettingsTableBody");
+      if (tbody) tbody.innerHTML = html;
+    } catch (e) {
+      console.error("Failed to load exit override settings", e);
+      var tbody = document.getElementById("exitOverrideSettingsTableBody");
+      if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="muted">설정 로드 실패: ' + escapeHtml(e.message) + '</td></tr>';
+    }
+  }
+
+  /* POST /api/v1/settings saves one exit-rule override value. */
+  async function saveExitOverrideSetting(key) {
+    var input = document.getElementById("input-" + key);
+    if (!input) return;
+    var val = input.value.trim();
+    if (val !== "" && !/^-?\d+(\.\d+)?$/.test(val)) {
+      alert("숫자 형식으로 입력하거나 비워두세요. 예: -0.015");
+      return;
+    }
+    try {
+      await fetchJson("/api/v1/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: key, value: val })
+      });
+      alert("저장됨");
+      loadExitOverrideSettings();
+    } catch (e) {
+      alert("저장 실패: " + e.message);
+    }
+  }
+
+  /* ── Positions & Exit: Monitoring & Orders ── */
+  var positionsRefreshTimer = null;
+
+  /* Write identical text into every element id that exists on the active console page. */
+  function setTextForIds(ids, text) {
+    for (var i = 0; i < ids.length; i++) {
+      var element = document.getElementById(ids[i]);
+      if (element) {
+        element.textContent = text;
+      }
+    }
+  }
+
+  /* Write identical table HTML into every table body id that exists on the active console page. */
+  function setHtmlForIds(ids, html) {
+    for (var i = 0; i < ids.length; i++) {
+      var element = document.getElementById(ids[i]);
+      if (element) {
+        element.innerHTML = html;
+      }
+    }
+  }
+
+  async function loadPositionMonitoring() {
+    try {
+      var data = await fetchJson("/api/v1/orders/positions");
+      var hasLegacyTbody = Boolean(document.getElementById("positions-monitor-tbody"));
+      if (!hasLegacyTbody) return;
+
+      var positions = data.payload.positions || [];
+      var legacyRowsHtml = "";
+      if (positions.length === 0) {
+        legacyRowsHtml = '<tr><td colspan="10" class="muted" style="text-align:center;">보유 포지션 없음</td></tr>';
+      } else {
+        var now = new Date();
+        legacyRowsHtml = positions.map(function(pos) {
+          var pnl = pos.pnl_pct || 0;
+          var pnlClass = pnl >= 0 ? "good" : "bad";
+          var pnlStr = (pnl >= 0 ? "+" : "") + pnl.toFixed(2) + "%";
+          
+          var trailingHtml = pos.trailing_active 
+            ? '<span class="status ok">활성</span>' 
+            : '<span class="status warn">대기</span>';
+
+          var entryTime = new Date(pos.entry_time);
+          var durationMinutes = Math.floor((now - entryTime) / (1000 * 60));
+          var durationStr = durationMinutes + "분";
+
+          return '<tr>'
+            + '<td>' + (pos.symbol || "") + '</td>'
+            + '<td>' + (pos.name || "") + '</td>'
+            + '<td>' + (pos.qty || 0).toLocaleString() + '</td>'
+            + '<td>' + (pos.entry_price || 0).toLocaleString() + '</td>'
+            + '<td>' + (pos.current_price || 0).toLocaleString() + '</td>'
+            + '<td class="' + pnlClass + '">' + pnlStr + '</td>'
+            + '<td>' + (pos.stop_loss_price || 0).toLocaleString() + '</td>'
+            + '<td>' + (pos.take_profit_price || 0).toLocaleString() + '</td>'
+            + '<td>' + trailingHtml + '</td>'
+              + '<td>' + durationStr + '</td>'
+              + '</tr>';
+        }).join("");
+      }
+      setHtmlForIds(["positions-monitor-tbody"], legacyRowsHtml);
+    } catch (e) {
+      setHtmlForIds(
+        ["positions-monitor-tbody"],
+        '<tr><td colspan="10" class="muted" style="text-align:center;">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>'
+      );
+    }
+  }
+
+  async function loadTodayOrders() {
+    try {
+      var data = await fetchJson("/api/v1/orders/today");
+      var hasLegacyTbody = Boolean(document.getElementById("orders-today-tbody"));
+      var hasTradingTbody = Boolean(document.getElementById("tm-orders-tbody"));
+      if (!hasLegacyTbody && !hasTradingTbody) return;
+
+      var orders = data.payload.orders || [];
+      var legacyRowsHtml = "";
+      var tradingRowsHtml = "";
+      if (orders.length === 0) {
+        legacyRowsHtml = '<tr><td colspan="7" class="muted" style="text-align:center;">오늘 주문 없음</td></tr>';
+        tradingRowsHtml = '<tr><td colspan="6" class="muted" style="text-align:center;">오늘 주문 없음</td></tr>';
+      } else {
+        legacyRowsHtml = orders.map(function(ord) {
+          var sideLabel = ord.side === "buy" ? "매수" : "매도";
+          var statusMap = {
+            "submitted": "제출됨",
+            "filled": "체결됨",
+            "failed": "실패",
+            "cancelled": "취소"
+          };
+          var statusLabel = statusMap[ord.status] || ord.status;
+          var timeStr = (ord.created_at || "").split("T")[1] || "";
+          if (timeStr.includes(".")) timeStr = timeStr.split(".")[0];
+
+          return '<tr>'
+            + '<td>' + timeStr + '</td>'
+            + '<td>' + (ord.symbol || "") + (ord.name ? " (" + ord.name + ")" : "") + '</td>'
+            + '<td>' + sideLabel + '</td>'
+            + '<td>' + (ord.qty || 0).toLocaleString() + '</td>'
+            + '<td>' + (ord.price || 0).toLocaleString() + '</td>'
+            + '<td>' + (ord.kis_order_no || "-") + '</td>'
+            + '<td>' + statusLabel + '</td>'
+            + '</tr>';
+        }).join("");
+        tradingRowsHtml = orders.map(function(ord) {
+          var sideLabel = ord.side === "buy" ? "매수" : "매도";
+          var statusMap = {
+            "submitted": "제출됨",
+            "filled": "체결됨",
+            "failed": "실패",
+            "cancelled": "취소"
+          };
+          var statusLabel = statusMap[ord.status] || ord.status;
+          var timeStr = (ord.created_at || "").split("T")[1] || "";
+          if (timeStr.includes(".")) timeStr = timeStr.split(".")[0];
+
+          return '<tr>'
+            + '<td>' + escapeHtml(timeStr) + '</td>'
+            + '<td>' + escapeHtml(ord.symbol || "") + (ord.name ? '<br><span class="muted" style="font-size:11px;">' + escapeHtml(ord.name) + '</span>' : '') + '</td>'
+            + '<td>' + escapeHtml(sideLabel) + '</td>'
+            + '<td>' + (ord.qty || 0).toLocaleString() + '</td>'
+            + '<td>' + (ord.price || 0).toLocaleString() + '</td>'
+            + '<td>' + escapeHtml(statusLabel) + '</td>'
+            + '</tr>';
+        }).join("");
+      }
+      setHtmlForIds(["orders-today-tbody"], legacyRowsHtml);
+      setHtmlForIds(["tm-orders-tbody"], tradingRowsHtml);
+    } catch (e) {
+      setHtmlForIds(
+        ["orders-today-tbody"],
+        '<tr><td colspan="7" class="muted" style="text-align:center;">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>'
+      );
+      setHtmlForIds(
+        ["tm-orders-tbody"],
+        '<tr><td colspan="6" class="muted" style="text-align:center;">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>'
+      );
+    }
+  }
+
+  async function liquidateAll() {
+    if (!confirm("전체 포지션을 즉시 청산할까요?")) return;
+    try {
+      await fetchJson("/api/v1/orders/liquidate-all", { method: "POST" });
+      alert("전체 청산 주문이 전송되었습니다.");
+      loadPositionMonitoring();
+      loadTodayOrders();
+    } catch (e) {
+      alert("청산 실패: " + e.message);
+    }
+  }
+
+  /* ── Positions & Exit: Account Balance ── */
+  async function loadAccountBalance() {
+    try {
+      var data = await fetchJson("/api/v1/account/balance");
+      if (!data.ok) throw new Error(data.message || "API 오류");
+      var p = data.payload;
+      setTextForIds(["positions-account-no"], "계좌번호: " + (p.account_no || "-"));
+      setTextForIds(["positions-deposit"], (p.deposit || 0).toLocaleString());
+      setTextForIds(["positions-total-eval"], (p.total_eval || 0).toLocaleString());
+
+      if (document.getElementById("positions-holdings-tbody")) {
+        var positions = p.positions || [];
+        var rowsHtml = "";
+        if (positions.length === 0) {
+          rowsHtml = '<tr><td colspan="6" class="muted" style="text-align:center;">보유 종목 없음</td></tr>';
+        } else {
+          rowsHtml = positions.map(function(pos) {
+            var pnl = pos.pnl_pct || 0;
+            var pnlClass = pnl >= 0 ? "good" : "bad";
+            var pnlStr = (pnl >= 0 ? "+" : "") + pnl.toFixed(2) + "%";
+            return '<tr>'
+              + '<td>' + (pos.symbol || "") + '</td>'
+              + '<td>' + (pos.name || "") + '</td>'
+              + '<td>' + (pos.qty || 0).toLocaleString() + '</td>'
+              + '<td>' + (pos.avg_price || 0).toLocaleString() + '</td>'
+              + '<td>' + (pos.current_price || 0).toLocaleString() + '</td>'
+              + '<td class="' + pnlClass + '">' + pnlStr + '</td>'
+              + '</tr>';
+          }).join("");
+        }
+        setHtmlForIds(["positions-holdings-tbody"], rowsHtml);
+      }
+    } catch (e) {
+      setHtmlForIds(
+        ["positions-holdings-tbody"],
+        '<tr><td colspan="6" class="muted" style="text-align:center;">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>'
+      );
+    }
+  }
+
+  /* ── Live Decisions: Decision Engine ── */
+  var liveRefreshTimer = null;
+
+  /* Render one Trading Monitor approach bar for a symbol with a 0-100 proximity rate. */
+  function _tmApproachBar(label, code, rate, colorFn) {
+    var pct = Math.min(100, Math.max(0, Number(rate) || 0));
+    var color = colorFn(pct);
+    return ''
+      + '<div style="display:flex; flex-direction:column; gap:4px;">'
+      + '  <div style="display:flex; justify-content:space-between; align-items:baseline;">'
+      + '    <span style="font-size:13px; font-weight:600;">' + escapeHtml(label || "-") + '</span>'
+      + '    <span style="font-size:11px; color:var(--muted);">' + escapeHtml(code || "") + '</span>'
+      + '  </div>'
+      + '  <div style="display:flex; align-items:center; gap:8px;">'
+      + '    <div style="flex:1; background:var(--bg2); border-radius:4px; height:10px; overflow:hidden;">'
+      + '      <div style="width:' + pct + '%; height:100%; background:' + color + '; border-radius:4px; transition:width 0.8s ease;"></div>'
+      + '    </div>'
+      + '    <span style="font-size:12px; font-weight:700; min-width:36px; text-align:right; color:' + color + ';">' + pct.toFixed(0) + '%</span>'
+      + '  </div>'
+      + '</div>';
+  }
+
+  /* Choose the buy-side approach color by proximity rate. */
+  function _buyColor(pct) {
+    if (pct >= 80) return "var(--green, #22c55e)";
+    if (pct >= 50) return "var(--yellow, #eab308)";
+    return "var(--muted, #888)";
+  }
+
+  /* Choose the sell-side approach color by proximity rate. */
+  function _sellColor(pct) {
+    if (pct >= 80) return "var(--red, #ef4444)";
+    if (pct >= 50) return "var(--yellow, #eab308)";
+    return "var(--muted, #888)";
+  }
+
+  /* Load Trading Monitor account, RulePack, buy candidates, and sell approach data. */
+  async function loadTradingMonitor() {
+    try {
+      var statusData = await fetchJson("/api/v1/decision/status");
+      if (statusData && statusData.ok && statusData.payload) {
+        var active = Boolean(statusData.payload.active);
+        var btn = document.getElementById("tm-de-toggle");
+        var lbl = document.getElementById("tm-de-label");
+        if (btn && lbl) {
+          lbl.textContent = active ? "● DE 활성" : "○ DE 비활성";
+          btn.className = "btn " + (active ? "primary" : "");
+          btn._deActive = active;
+        }
+      }
+    } catch(e) {
+      console.warn("loadTradingMonitor status error", e);
+    }
+
+    try {
+      var rulepackData = await fetchJson("/api/v1/bot/rulepack/today");
+      if (rulepackData && rulepackData.ok && rulepackData.payload) {
+        var rp = rulepackData.payload.rulepack || rulepackData.payload;
+        setTextForIds(["tm-rulepack-id"], rp.rulepack_id || "-");
+        var machineRules = rp.machine_rules || {};
+        var layer3 = machineRules.layer3_entry || {};
+        var riskLimits = machineRules.risk_limits || {};
+
+        var buyEl = document.getElementById("tm-buy-conditions");
+        if (buyEl) {
+          var buyItems = [
+            layer3.vwap_position ? "VWAP: " + escapeHtml(layer3.vwap_position) : (layer3.above_vwap != null ? (layer3.above_vwap ? "VWAP 위" : "VWAP 무관") : null),
+            layer3.volume_ratio_min != null ? "거래량비 ≥" + Number(layer3.volume_ratio_min) + "x" : (layer3.min_volume_ratio != null ? "거래량비 ≥" + Number(layer3.min_volume_ratio) + "x" : null),
+            layer3.rsi_range ? "RSI " + Number(layer3.rsi_range[0]) + "~" + Number(layer3.rsi_range[1]) : (layer3.rsi_min != null && layer3.rsi_max != null ? "RSI " + Number(layer3.rsi_min) + "~" + Number(layer3.rsi_max) : null),
+            layer3.ai_confidence_min != null ? "AI ≥" + (Number(layer3.ai_confidence_min) * 100).toFixed(0) + "%" : (layer3.min_ai_confidence != null ? "AI ≥" + (Number(layer3.min_ai_confidence) * 100).toFixed(0) + "%" : null),
+            layer3.ma5_above_ma20 != null ? (layer3.ma5_above_ma20 ? "MA5>MA20" : "MA5무관") : (layer3.above_ma20 != null ? (layer3.above_ma20 ? "MA20 위" : "MA20 무관") : null)
+          ].filter(Boolean);
+          buyEl.innerHTML = buyItems.length
+            ? buyItems.map(function(text) { return '<span style="background:var(--bg2); border-radius:4px; padding:3px 7px; font-size:11px;">' + text + '</span>'; }).join("")
+            : '<span style="color:var(--muted); font-size:11px;">정보 없음</span>';
+        }
+
+        var riskEl = document.getElementById("tm-risk-conditions");
+        if (riskEl) {
+          var riskItems = [
+            riskLimits.max_positions ? "최대 " + riskLimits.max_positions + "포지션" : null,
+            riskLimits.daily_loss_limit_rate != null ? "일손절 " + (Number(riskLimits.daily_loss_limit_rate) * 100).toFixed(1) + "%" : (riskLimits.daily_loss_limit != null ? "일손절 " + (Number(riskLimits.daily_loss_limit) * 100).toFixed(1) + "%" : null),
+            riskLimits.position_size_pct ? "비중 " + Number(riskLimits.position_size_pct) + "%" : (riskLimits.max_position_rate_per_stock != null ? "비중 " + (Number(riskLimits.max_position_rate_per_stock) * 100).toFixed(0) + "%" : null)
+          ].filter(Boolean);
+          riskEl.innerHTML = riskItems.length
+            ? riskItems.map(function(text) { return '<span style="background:var(--bg2); border:1px solid var(--warn,#f59e0b); border-radius:4px; padding:3px 7px; font-size:11px;">' + text + '</span>'; }).join("")
+            : '<span style="color:var(--muted); font-size:11px;">정보 없음</span>';
+        }
+      } else {
+        setTextForIds(["tm-rulepack-id"], "-");
+        setHtmlForIds(["tm-buy-conditions", "tm-risk-conditions"], '<span style="color:var(--muted); font-size:11px;">오늘 RulePack 없음</span>');
+      }
+    } catch(e) {
+      console.warn("loadTradingMonitor rulepack error", e);
+      setTextForIds(["tm-rulepack-id"], "-");
+      setHtmlForIds(["tm-buy-conditions", "tm-risk-conditions"], '<span style="color:var(--muted); font-size:11px;">RulePack 불러오기 실패</span>');
+    }
+
+    try {
+      var screeningData = await fetchJson("/api/v1/screening/today");
+      var listEl = document.getElementById("tm-buy-list");
+      if (listEl) {
+        var screeningPayload = screeningData && screeningData.payload ? screeningData.payload : {};
+        var candidates = Array.isArray(screeningPayload) ? screeningPayload : (screeningPayload.candidates || []);
+        if (screeningData && screeningData.ok && candidates.length > 0) {
+          candidates = candidates.slice().sort(function(a, b) {
+            return (Number(b.confidence) || 0) - (Number(a.confidence) || 0);
+          });
+          listEl.innerHTML = candidates.map(function(c) {
+            var code = c.ticker || c.symbol || "";
+            var rate = (Number(c.confidence) || 0) * 100;
+            return _tmApproachBar(c.name || code, code, rate, _buyColor);
+          }).join("");
+        } else {
+          listEl.innerHTML = '<div style="color:var(--muted); font-size:13px; text-align:center; padding:20px 0;">오늘 S4 스크리닝 결과 없음</div>';
+        }
+      }
+    } catch(e) {
+      console.warn("loadTradingMonitor screening error", e);
+      var buyListEl = document.getElementById("tm-buy-list");
+      if (buyListEl) buyListEl.innerHTML = '<div style="color:var(--muted); font-size:13px; text-align:center; padding:20px 0;">데이터 조회 실패</div>';
+    }
+
+    try {
+      var accountData = await fetchJson("/api/v1/account/balance");
+      var sellListEl = document.getElementById("tm-sell-list");
+      var accountNo = document.getElementById("tm-account-no");
+      var depositEl = document.getElementById("tm-deposit");
+      var totalEl = document.getElementById("tm-total-eval");
+      var countEl = document.getElementById("tm-holdings-count");
+      var pnlEl = document.getElementById("tm-pnl-today");
+
+      if (accountData && accountData.ok && accountData.payload) {
+        var acct = accountData.payload;
+        var holdings = acct.holdings || acct.positions || [];
+        if (accountNo) accountNo.textContent = "계좌번호: " + (acct.account_no || "-");
+        if (depositEl) depositEl.textContent = acct.deposit != null ? Number(acct.deposit).toLocaleString() + "원" : "-";
+        if (totalEl) totalEl.textContent = acct.total_eval != null ? Number(acct.total_eval).toLocaleString() + "원" : "-";
+        if (countEl) countEl.textContent = holdings.length + "종목";
+        if (pnlEl) {
+          var pnl = acct.total_pnl_pct != null ? Number(acct.total_pnl_pct) : null;
+          if (pnl != null && !Number.isNaN(pnl)) {
+            pnlEl.textContent = (pnl >= 0 ? "+" : "") + pnl.toFixed(2) + "%";
+          } else if (acct.realized_pnl_today != null || acct.pnl_today != null) {
+            pnlEl.textContent = Number(acct.realized_pnl_today != null ? acct.realized_pnl_today : acct.pnl_today).toLocaleString() + "원";
+          } else {
+            pnlEl.textContent = "-";
+          }
+        }
+
+        if (sellListEl) {
+          if (holdings.length === 0) {
+            sellListEl.innerHTML = '<div style="color:var(--muted); font-size:13px; text-align:center; padding:20px 0;">보유 포지션 없음</div>';
+          } else {
+            var withRate = holdings.map(function(h) {
+              var hPnl = Number(h.pnl_pct) || 0;
+              var stopApproach = hPnl < 0 ? Math.min(100, Math.abs(hPnl) / 3.0 * 100) : 0;
+              var profitApproach = hPnl > 0 ? Math.min(100, hPnl / 5.0 * 100) : 0;
+              return Object.assign({}, h, { rate: Math.max(stopApproach, profitApproach) });
+            }).sort(function(a, b) {
+              return b.rate - a.rate;
+            });
+
+            sellListEl.innerHTML = withRate.map(function(h) {
+              return _tmApproachBar(h.name || h.symbol, h.symbol, h.rate, _sellColor);
+            }).join("");
+          }
+        }
+      }
+    } catch(e) {
+      console.warn("loadTradingMonitor account error", e);
+      var sellListErrorEl = document.getElementById("tm-sell-list");
+      if (sellListErrorEl) sellListErrorEl.innerHTML = '<div style="color:var(--muted); font-size:13px; text-align:center; padding:20px 0;">데이터 조회 실패</div>';
+    }
+  }
+
+  /* Toggle the Decision Engine from the Trading Monitor header and refresh status. */
+  async function toggleDecisionEngine() {
+    var btn = document.getElementById("tm-de-toggle");
+    var isActive = btn && btn._deActive;
+    if (isActive) {
+      await liveDecisionDeactivate();
+    } else {
+      await liveDecisionActivate();
+    }
+    setTimeout(loadTradingMonitor, 500);
+  }
+
+  async function loadLiveData() {
+    try {
+      var statusData = await fetchJson("/api/v1/decision/status");
+      if (statusData.ok) {
+        var s = statusData.payload;
+        var activeEl = document.getElementById("live-engine-active");
+        var wsEl = document.getElementById("live-engine-ws");
+        var candidatesEl = document.getElementById("live-engine-candidates");
+        var signalsSentEl = document.getElementById("live-engine-signals-sent");
+
+        if (activeEl) {
+          activeEl.textContent = s.active ? "활성" : "비활성";
+          activeEl.className = "status " + (s.active ? "ok" : "warn");
+        }
+        if (wsEl) {
+          wsEl.textContent = s.ws_connected ? "연결됨" : "끊김";
+          wsEl.style.color = s.ws_connected ? "var(--green)" : "var(--red)";
+        }
+        if (candidatesEl) candidatesEl.textContent = (s.candidates != null ? s.candidates : "-") + "개";
+        if (signalsSentEl) signalsSentEl.textContent = (s.signals_sent != null ? s.signals_sent : "-") + "건";
+      }
+    } catch (e) {
+      /* ignore status fetch error */
+    }
+
+    try {
+      var signalsData = await fetchJson("/api/v1/decision/signals/today");
+      var tbody = document.getElementById("live-signals-tbody");
+      if (tbody && signalsData.ok) {
+        var signals = signalsData.payload || [];
+        if (signals.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;">아직 신호 없음</td></tr>';
+        } else {
+          tbody.innerHTML = signals.map(function(sig) {
+            return '<tr>'
+              + '<td>' + (sig.time || "") + '</td>'
+              + '<td>' + (sig.symbol || "") + '</td>'
+              + '<td>' + (sig.name || "") + '</td>'
+              + '<td>' + (sig.entry_price != null ? sig.entry_price.toLocaleString() : "-") + '</td>'
+              + '<td>' + (sig.confidence != null ? sig.confidence.toFixed(2) : "-") + '</td>'
+              + '<td>' + (sig.status || "대기중") + '</td>'
+              + '</tr>';
+          }).join("");
+        }
+      }
+    } catch (e) {
+      var tbody3 = document.getElementById("live-signals-tbody");
+      if (tbody3) tbody3.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;">불러오기 실패: ' + e.message + '</td></tr>';
+    }
+  }
+
+  async function liveDecisionActivate() {
+    if (!confirm("Decision Engine을 수동으로 활성화할까요?")) return;
+    try {
+      await fetchJson("/api/v1/decision/activate", { method: "POST" });
+      loadLiveData();
+      loadTradingMonitor();
+    } catch (e) {
+      alert("활성화 실패: " + e.message);
+    }
+  }
+
+  async function liveDecisionDeactivate() {
+    if (!confirm("Decision Engine을 비활성화할까요?")) return;
+    try {
+      await fetchJson("/api/v1/decision/deactivate", { method: "POST" });
+      loadLiveData();
+      loadTradingMonitor();
+    } catch (e) {
+      alert("비활성화 실패: " + e.message);
+    }
+  }
+
+  /* ── Data & API Health ── */
+  async function loadDataHealth() {
+    try {
+      var r = await fetchJson("/api/v1/bot/data-health");
+      var m = (r.payload && r.payload.metrics) ? r.payload.metrics : {};
+
+      function applyMetricCard(idVal, idDetail, key) {
+        var s = m[key] || {};
+        var el = document.getElementById(idVal);
+        var eld = document.getElementById(idDetail);
+        var status = s.status || "info";
+        if (el) {
+          el.textContent = status === "ok" ? "정상" : status === "warn" ? "주의" : "미구현";
+          el.className = "metric " + (status === "ok" ? "good" : status === "warn" ? "warn" : "info");
+        }
+        if (eld) {
+          eld.textContent = s.detail || "-";
+        }
+      }
+
+      applyMetricCard("dh-kisRest", "dh-kisRestDetail", "kis_rest");
+      applyMetricCard("dh-kisWs", "dh-kisWsDetail", "kis_ws");
+      applyMetricCard("dh-llm", "dh-llmDetail", "llm_router");
+      applyMetricCard("dh-db", "dh-dbDetail", "db");
+    } catch(e) {
+      console.warn("loadDataHealth error", e);
+    }
+
+    try {
+      var r2 = await fetchJson("/api/v1/market-tone/providers");
+      var providers = (r2.payload && r2.payload.providers) ? r2.payload.providers : (Array.isArray(r2.payload) ? r2.payload : []);
+      var tbody = document.getElementById("llmProvidersTableBody");
+      if (tbody) {
+        if (providers.length === 0) {
+          tbody.innerHTML = "<tr><td colspan='4' class='muted'>Provider 없음</td></tr>";
+        } else {
+          tbody.innerHTML = providers.map(function(p) {
+            var statusCls = p.enabled ? "ok" : "warn";
+            var statusTxt = p.enabled ? "활성" : "비활성";
+            return '<tr>'
+              + '<td>' + escapeHtml(p.name || "-") + '</td>'
+              + '<td>' + escapeHtml(p.role || "-") + '</td>'
+              + '<td>' + escapeHtml(p.model || "-") + '</td>'
+              + '<td><span class="status ' + statusCls + '">' + statusTxt + '</span></td>'
+              + '</tr>';
+          }).join("");
+        }
+      }
+    } catch (e) {
+      console.warn("loadDataHealth providers error", e);
+      var tbody2 = document.getElementById("llmProvidersTableBody");
+      if (tbody2) tbody2.innerHTML = '<tr><td colspan="4" class="muted">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>';
+    }
+
+    var telegramEl = document.getElementById('telegram-status');
+    if (telegramEl) {
+      telegramEl.textContent = '활성';
+      telegramEl.className = 'status ok';
+    }
+  }
+
+  /* ── Funnel Monitor ── */
+  async function loadFunnelData() {
+    try {
+      var overviewData = await fetchJson("/api/v1/bot/overview");
+      var funnel = overviewData.payload && overviewData.payload.funnel;
+      if (funnel) {
+        var totalEl = document.getElementById("funnel-total");
+        var l1El = document.getElementById("funnel-layer1");
+        if (totalEl) totalEl.textContent = (funnel.market_total || "-").toLocaleString();
+        if (l1El) l1El.textContent = (funnel.layer1 || "-").toLocaleString();
+      }
+    } catch (e) { /* ignore overview fail */ }
+
+    try {
+      var screenData = await fetchJson("/api/v1/screening/today");
+      var sc = screenData.payload && screenData.payload.screening;
+      if (sc) {
+        var l2El = document.getElementById("funnel-layer2");
+        var candEl = document.getElementById("funnel-candidates");
+        if (l2El) l2El.textContent = sc.output_count != null ? sc.output_count : "-";
+        if (candEl) candEl.textContent = sc.output_count != null ? sc.output_count : "-";
+
+        var tbody = document.getElementById("funnel-candidates-tbody");
+        var candidates = sc.candidates;
+        if (tbody && Array.isArray(candidates) && candidates.length > 0) {
+          tbody.innerHTML = candidates.map(function(c) {
+            var score = c.suitability_score != null ? c.suitability_score.toFixed(2) : "-";
+            var conf = c.confidence != null ? c.confidence.toFixed(2) : "-";
+            return '<tr>'
+              + '<td>' + escapeHtml(c.symbol || "") + '</td>'
+              + '<td>' + escapeHtml(c.name || "") + '</td>'
+              + '<td>' + score + '</td>'
+              + '<td>-</td><td>-</td>'
+              + '<td>' + score + '</td>'
+              + '<td>' + conf + '</td>'
+              + '<td><span class="status info">감시중</span></td>'
+              + '<td>' + escapeHtml(c.reason || "") + '</td>'
+              + '</tr>';
+          }).join("");
+        } else if (tbody && sc.output_count === 0) {
+          tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">오늘 스크리닝 결과 없음 (S4 미실행)</td></tr>';
+        }
+      }
+    } catch (e) {
+      var tbody2 = document.getElementById("funnel-candidates-tbody");
+      if (tbody2) tbody2.innerHTML = '<tr><td colspan="9" class="muted">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>';
+    }
+  }
+
+  /* ── Execution & Risk ── */
+  async function loadExecutionRisk() {
+    try {
+      var data = await fetchJson("/api/v1/orders/today");
+      var orders = (data.payload && data.payload.orders) || [];
+
+      var ordersCountEl = document.getElementById("risk-orders-count");
+      if (ordersCountEl) ordersCountEl.textContent = orders.length;
+
+      var tbody = document.getElementById("risk-orders-tbody");
+      if (tbody) {
+        if (orders.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">오늘 주문 없음</td></tr>';
+        } else {
+          tbody.innerHTML = orders.map(function(ord) {
+            var sideLabel = ord.side === "buy" ? "매수" : "매도";
+            var timeStr = (ord.created_at || "").split("T")[1] || "";
+            if (timeStr.includes(".")) timeStr = timeStr.split(".")[0];
+            var statusCls = ord.status === "filled" ? "ok" : ord.status === "failed" ? "danger" : "info";
+            var statusLabel = { submitted: "제출됨", filled: "전량체결", failed: "실패", cancelled: "취소" }[ord.status] || ord.status || "-";
+            return '<tr>'
+              + '<td>' + timeStr + '</td>'
+              + '<td>' + escapeHtml((ord.symbol || "") + (ord.name ? " " + ord.name : "")) + '</td>'
+              + '<td>' + sideLabel + '</td>'
+              + '<td>' + (ord.qty || 0).toLocaleString() + '</td>'
+              + '<td>' + (ord.price || 0).toLocaleString() + '</td>'
+              + '<td>' + escapeHtml(ord.reason || "-") + '</td>'
+              + '<td><span class="status ' + statusCls + '">' + statusLabel + '</span></td>'
+              + '</tr>';
+          }).join("");
+        }
+      }
+    } catch (e) {
+      var tbody2 = document.getElementById("risk-orders-tbody");
+      if (tbody2) tbody2.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>';
+    }
+  }
+
+  /* ── Review & Audit ── */
+  async function loadReviewData() {
+    try {
+      var data = await fetchJson("/api/v1/trades/history?limit=30");
+      var items = (data.payload && data.payload.items) || [];
+
+      var tradeDays = items.length;
+      var totalOrders = 0;
+      var profitDays = 0;
+      var pnlSum = 0;
+      items.forEach(function(item) {
+        totalOrders += item.total_orders || 0;
+        pnlSum += item.realized_pnl_pct || 0;
+        if ((item.realized_pnl_pct || 0) > 0) profitDays++;
+      });
+      var winrate = tradeDays > 0 ? Math.round(profitDays / tradeDays * 100) : 0;
+
+      function setRV(id, text, cls) {
+        var el = document.getElementById(id);
+        if (el) { el.textContent = text; if (cls) el.className = "metric " + cls; }
+      }
+
+      setRV("review-trade-days", tradeDays + "일");
+      setRV("review-total-orders", totalOrders + "건");
+      var pnlCls = pnlSum >= 0 ? "good" : "bad";
+      setRV("review-pnl", (pnlSum >= 0 ? "+" : "") + pnlSum.toFixed(2) + "%", pnlCls);
+      setRV("review-winrate", winrate + "%", winrate >= 50 ? "good" : "warn");
+      var wrDetail = document.getElementById("review-winrate-detail");
+      if (wrDetail) wrDetail.textContent = profitDays + "수익일 / " + tradeDays + "거래일";
+
+      if (items.length > 0) {
+        var latest = items[0];
+        var summEl = document.getElementById("review-latest-summary");
+        var toneEl = document.getElementById("review-latest-tone");
+        var rpEl = document.getElementById("review-latest-rulepack");
+        if (summEl) summEl.textContent = latest.trade_date + " · 주문 " + (latest.total_orders || 0) + "건 · 손익 " + (latest.realized_pnl_pct || 0).toFixed(2) + "%";
+        if (toneEl) toneEl.textContent = latest.market_tone || "(없음)";
+        if (rpEl) rpEl.textContent = latest.rulepack_id || "(없음)";
+      }
+
+      var tbody = document.getElementById("review-history-tbody");
+      if (tbody) {
+        if (items.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;">거래 이력 없음 (S10 실행 전)</td></tr>';
+        } else {
+          tbody.innerHTML = items.map(function(item) {
+            var pnl = item.realized_pnl_pct || 0;
+            var pnlStr = (pnl >= 0 ? "+" : "") + pnl.toFixed(2) + "%";
+            return '<tr style="cursor:pointer;" onclick="showScreen(\'statistics\')">'
+              + '<td>' + (item.trade_date || "") + '</td>'
+              + '<td>' + (item.total_orders || 0) + '</td>'
+              + '<td>' + (item.buy_orders || 0) + '</td>'
+              + '<td>' + (item.sell_orders || 0) + '</td>'
+              + '<td class="' + (pnl >= 0 ? "good" : "bad") + '">' + pnlStr + '</td>'
+              + '<td>' + escapeHtml(item.market_tone || "-") + '</td>'
+              + '</tr>';
+          }).join("");
+        }
+      }
+    } catch (e) {
+      var tbody3 = document.getElementById("review-history-tbody");
+      if (tbody3) tbody3.innerHTML = '<tr><td colspan="6" class="muted">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>';
+    }
+  }
+
+  async function runDailySummary() {
+    if (!confirm("오늘 거래를 집계하고 DB를 백업할까요? (S10 실행)")) return;
+    try {
+      await fetchJson("/api/v1/trades/run-summary", { method: "POST" });
+      alert("일일 요약 생성 완료. 새로고침합니다.");
+      loadReviewData();
+    } catch (e) {
+      alert("실패: " + e.message);
+    }
+  }
+
+  /* ── Statistics ── */
+  var stAllItems = [];
+  var stFilter = "today";
+
+  function setStatsFilter(filter) {
+    stFilter = filter;
+    ["today", "week", "all", "month", "lastmonth"].forEach(function(f) {
+      var btn = document.getElementById("sf-" + f);
+      if (btn) btn.className = "btn" + (f === filter ? " primary" : "");
+    });
+    renderStatsSummary();
+    loadAllOrders();
+  }
+
+  function filterStItems(items) {
+    if (stFilter === "all") return items;
+    var now = new Date();
+    var year = now.getFullYear();
+    var month = String(now.getMonth() + 1).padStart(2, "0");
+    var todayStr = year + "-" + month + "-" + String(now.getDate()).padStart(2, "0");
+    if (stFilter === "today") {
+      return items.filter(function(i) { return (i.trade_date || "") === todayStr; });
+    }
+    if (stFilter === "week") {
+      var day = now.getDay();
+      var monday = new Date(now);
+      monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
+      var mondayStr = monday.getFullYear() + "-" + String(monday.getMonth() + 1).padStart(2, "0") + "-" + String(monday.getDate()).padStart(2, "0");
+      return items.filter(function(i) { return (i.trade_date || "") >= mondayStr; });
+    }
+    if (stFilter === "month") {
+      var prefix = year + "-" + month;
+      return items.filter(function(i) { return (i.trade_date || "").startsWith(prefix); });
+    }
+    if (stFilter === "lastmonth") {
+      var lm = now.getMonth() === 0 ? 12 : now.getMonth();
+      var ly = now.getMonth() === 0 ? year - 1 : year;
+      var lmStr = ly + "-" + String(lm).padStart(2, "0");
+      return items.filter(function(i) { return (i.trade_date || "").startsWith(lmStr); });
+    }
+    return items;
+  }
+
+  async function loadStatistics() {
+    try {
+      var data = await fetchJson("/api/v1/trades/history?limit=120");
+      stAllItems = (data.payload && data.payload.items) || [];
+      renderStatsSummary();
+    } catch (e) {
+      console.error("[ERROR]", "loadStatistics", "-", e.message);
+      stAllItems = [];
+      renderStatsSummary();
+    }
+  }
+
+  function renderStatsSummary() {
+    var items = filterStItems(stAllItems || []);
+    var days = items.length;
+    var totalOrders = 0, profitDays = 0, pnlSum = 0;
+    items.forEach(function(item) {
+      totalOrders += item.total_orders || 0;
+      pnlSum += item.realized_pnl_pct || 0;
+      if ((item.realized_pnl_pct || 0) > 0) profitDays++;
+    });
+    var winrate = days > 0 ? Math.round(profitDays / days * 100) : 0;
+    var avgPnl = days > 0 ? pnlSum / days : 0;
+
+    function setST(id, text, cls) {
+      var el = document.getElementById(id);
+      if (el) { el.textContent = text; if (cls) el.className = "metric " + cls; }
+    }
+    setST("st-days", days + "일");
+    setST("st-orders", totalOrders + "건");
+    setST("st-winrate", winrate + "%", winrate >= 50 ? "good" : "warn");
+    var wd = document.getElementById("st-winrate-detail");
+    if (wd) wd.textContent = profitDays + "수익일 / " + days + "거래일";
+    setST("st-pnl", (pnlSum >= 0 ? "+" : "") + pnlSum.toFixed(2) + "%", pnlSum >= 0 ? "good" : "bad");
+    setST("st-avg-pnl", (avgPnl >= 0 ? "+" : "") + avgPnl.toFixed(2) + "%", avgPnl >= 0 ? "good" : "bad");
+
+  }
+
+  /* Load the Trade History order table for the active period filter. */
+  async function loadAllOrders() {
+    var tbody = document.getElementById("st-orders-tbody");
+    var title = document.getElementById("st-table-title");
+    if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">로딩중...</td></tr>';
+
+    try {
+      var orders = [];
+      if (stFilter === "today") {
+        var todayResponse = await fetchJson("/api/v1/orders/today");
+        orders = (todayResponse && todayResponse.payload && todayResponse.payload.orders) || [];
+      } else {
+        var limit = stFilter === "all" ? 500 : 120;
+        await fetchJson("/api/v1/trades/history?limit=" + limit);
+        var signalsResponse = await fetchJson("/api/v1/decision/signals/today");
+        orders = (signalsResponse && signalsResponse.payload && signalsResponse.payload.signals) || [];
+      }
+
+      var now = new Date();
+      var todayStr = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
+      if (stFilter === "today") {
+        orders = orders.filter(function(o) { return (o.trade_date || (o.created_at || "").slice(0, 10) || todayStr) === todayStr; });
+      }
+      if (stFilter === "week") {
+        var day = now.getDay();
+        var monday = new Date(now);
+        monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
+        var mondayStr = monday.getFullYear() + "-" + String(monday.getMonth() + 1).padStart(2, "0") + "-" + String(monday.getDate()).padStart(2, "0");
+        orders = orders.filter(function(o) { return (o.trade_date || (o.created_at || "").slice(0, 10)) >= mondayStr; });
+      }
+      if (stFilter === "month") {
+        var monthPrefix = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
+        orders = orders.filter(function(o) { return (o.trade_date || (o.created_at || "").slice(0, 10)).indexOf(monthPrefix) === 0; });
+      }
+      if (stFilter === "lastmonth") {
+        var lastMonth = now.getMonth() === 0 ? 12 : now.getMonth();
+        var lastYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+        var lastMonthPrefix = lastYear + "-" + String(lastMonth).padStart(2, "0");
+        orders = orders.filter(function(o) { return (o.trade_date || (o.created_at || "").slice(0, 10)).indexOf(lastMonthPrefix) === 0; });
+      }
+
+      var filterLabel = { today: "오늘", week: "이번주", month: "이번달", lastmonth: "지난달", all: "전체" };
+      if (title) title.textContent = (filterLabel[stFilter] || "") + " 주문 내역";
+
+      renderOrdersTable(orders, "해당 기간 주문 없음");
+    } catch (e) {
+      console.error("[ERROR]", "loadAllOrders", "-", e.message);
+      if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">조회 실패: ' + escapeHtml(e.message || "") + '</td></tr>';
+    }
+  }
+
+  /* Render order-like records from orders or decision signals into the unified table. */
+  function renderOrdersTable(orders, emptyMessage) {
+    var tbody = document.getElementById("st-orders-tbody");
+    if (!tbody) return;
+    if (!orders || orders.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">' + escapeHtml(emptyMessage || "주문 없음") + '</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = orders.map(function(o) {
+      var rawSide = o.side || o.action || "buy";
+      var side = rawSide === "buy" ? '<span class="status ok">매수</span>' : '<span class="status warn">매도</span>';
+      var statusMap = { executed: "체결", filled: "체결", completed: "체결", pending: "대기", submitted: "접수", failed: "실패", cancelled: "취소" };
+      var rawStatus = o.status || o.signal_status || "pending";
+      var statusCls = (rawStatus === "executed" || rawStatus === "filled" || rawStatus === "completed") ? "ok" : (rawStatus === "failed" || rawStatus === "cancelled") ? "danger" : "warn";
+      var statusLabel = statusMap[rawStatus] || rawStatus || "-";
+      var timeStr = (o.created_at || o.time || "").slice(0, 19).replace("T", " ");
+      var price = o.price != null ? o.price : (o.entry_price != null ? o.entry_price : o.target_price);
+      return '<tr>'
+        + '<td style="font-size:12px;">' + escapeHtml(timeStr || "-") + '</td>'
+        + '<td>' + escapeHtml(o.name || o.symbol_name || "-") + '</td>'
+        + '<td style="font-size:12px; color:var(--muted);">' + escapeHtml(o.symbol || "-") + '</td>'
+        + '<td>' + side + '</td>'
+        + '<td>' + escapeHtml(String(o.qty || o.quantity || "-")) + '</td>'
+        + '<td>' + (price ? Number(price).toLocaleString() + "원" : "-") + '</td>'
+        + '<td><span class="status ' + statusCls + '">' + escapeHtml(statusLabel) + '</span></td>'
+        + '</tr>';
+    }).join("");
+  }
+
+  async function loadStatisticsDetail(tradeDate) {
+    if (!tradeDate) return;
+    var sfDate = document.getElementById("sf-date");
+    if (sfDate) sfDate.value = tradeDate;
+    var tbody = document.getElementById("st-orders-tbody");
+    var title = document.getElementById("st-table-title");
+    if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">로딩중...</td></tr>';
+    if (title) title.textContent = tradeDate + " 주문 내역";
+
+    try {
+      var data = await fetchJson("/api/v1/trades/history/" + tradeDate);
+      var p = data.payload || {};
+      var orders = p.orders || [];
+      var signals = p.signals || [];
+      renderOrdersTable(orders.concat(signals), "해당 날짜 주문 없음");
+    } catch (e) {
+      console.error("[ERROR]", "loadStatisticsDetail", "-", e.message);
+      if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>';
+    }
+  }
+
+  function initSettingsUI() {
+    loadSchedulerSettings();
+    loadExitOverrideSettings();
+  }
+
   async function init() {
     initTheme();
     bindEvents();
@@ -2545,13 +3913,12 @@
     if (!isAuthenticated) {
       return;
     }
-    renderTimeline();
-    renderLogs();
+    renderTodayFeed();
     updateLastTime();
     loadConsoleData();
 
     setInterval(function () {
-      renderTimeline();
+      renderTodayFeed();
       updateLastTime();
     }, 1000);
   }

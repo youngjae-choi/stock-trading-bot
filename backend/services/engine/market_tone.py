@@ -31,12 +31,14 @@ _TONE_PROMPT = """
 - 결과는 반드시 아래 JSON 형식으로만 작성한다 (다른 텍스트 없이).
 
 오늘 날짜: {date}
-분석 시각: 장 시작 전 (08:00 KST)
+분석 시각: 장 시작 전
+
+{market_data}
 
 분석 작업:
-한국 주식시장 오늘의 시장 톤을 종합 판단해줘.
-전일 미국 나스닥/S&P500 방향, 달러 환율, 국채금리 방향을 고려해.
-(실제 데이터가 없으면 "데이터 미제공"으로 기록하고 confidence를 낮춰.)
+위 해외 시장 데이터를 기반으로 한국 주식시장 오늘의 시장 톤을 종합 판단해줘.
+S&P500/NASDAQ 방향, 달러 환율 강약, 국채금리 방향, 원유 흐름을 종합한다.
+(데이터가 "없음"으로 표시된 항목은 무시하고 가용한 데이터만 활용한다.)
 
 출력 JSON:
 {{
@@ -45,7 +47,7 @@ _TONE_PROMPT = """
   "summary": "한 줄 요약 (50자 이내)",
   "key_factors": ["요인1", "요인2"],
   "risk_factors": ["리스크1"],
-  "data_note": "실제 데이터 미제공 — 기본 분석 결과"
+  "data_note": "활용한 데이터 출처 메모"
 }}
 """
 
@@ -129,8 +131,38 @@ async def run_market_tone_analysis() -> dict[str, Any]:
 
     _ensure_table()
 
+    # 해외 시장 데이터를 먼저 수집하고 실패 시에도 LLM 분석 자체는 계속 진행한다.
+    try:
+        from .market_data_fetcher import fetch_overnight_market_summary, format_for_prompt
+
+        market_data = await fetch_overnight_market_summary()
+        market_data_text = format_for_prompt(market_data)
+    except Exception as exc:
+        logger.warning("WARN: MarketToneService 해외 시장 데이터 실시간 수집 실패 — %s", exc)
+        # S11 overnight snapshot fallback.
+        try:
+            from .us_market_watch import get_latest_snapshot
+            from .market_data_fetcher import format_for_prompt as _fmt
+
+            snapshot = get_latest_snapshot()
+            if snapshot and snapshot.get("raw_data") and isinstance(snapshot["raw_data"], dict):
+                market_data_text = _fmt(snapshot["raw_data"])
+                market_data_text += (
+                    f"\n[참고: S11 스냅샷 기준 {snapshot['snapshot_date']} "
+                    f"{snapshot['snapshot_time']} KST]"
+                )
+                logger.info(
+                    "INFO: MarketToneService S11 스냅샷 폴백 적용 date=%s time=%s",
+                    snapshot["snapshot_date"], snapshot["snapshot_time"],
+                )
+            else:
+                market_data_text = "[전날 밤 해외 시장 현황]\n  데이터 수집 실패 — 가용한 정보만 기준으로 판단"
+        except Exception as snap_exc:
+            logger.warning("WARN: MarketToneService S11 스냅샷 폴백도 실패 — %s", snap_exc)
+            market_data_text = "[전날 밤 해외 시장 현황]\n  데이터 수집 실패 — 가용한 정보만 기준으로 판단"
+
     # LLM 호출
-    prompt = _TONE_PROMPT.format(date=today)
+    prompt = _TONE_PROMPT.replace("{date}", today).replace("{market_data}", market_data_text)
     llm_result = await llm_router.call_llm(prompt, task_name="시장 톤 분석")
 
     # 파싱

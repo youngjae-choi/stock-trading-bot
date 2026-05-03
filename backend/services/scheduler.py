@@ -9,6 +9,8 @@ S2~S13 단계에서 placeholder job들이 실 구현으로 교체된다.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -20,6 +22,11 @@ logger = logging.getLogger("Scheduler")
 # ---------------------------------------------------------------------------
 # Job 함수
 # ---------------------------------------------------------------------------
+
+
+def _today_kst() -> str:
+    """Return today's date in Asia/Seoul as YYYY-MM-DD for scheduler decisions."""
+    return datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
 
 
 async def job_refresh_kis_token() -> None:
@@ -40,6 +47,30 @@ async def job_refresh_kis_token() -> None:
         logger.error("FAIL: [Job1] KIS 토큰 갱신 실패 — reason=%s", exc)
         # 서버는 계속 실행 (job 실패가 서버를 종료하지 않음)
 
+    # 오늘 거래일 여부 확인 → system_settings에 플래그 저장
+    try:
+        from .kis.domestic.service import check_trading_day
+        from .settings_store import upsert_setting
+        from zoneinfo import ZoneInfo
+
+        today_yyyymmdd = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
+        is_trading = await check_trading_day(today_yyyymmdd)
+
+        upsert_setting(
+            key="schedule_skip_today",
+            value=str(not is_trading).lower(),
+            value_type="string",
+            description="오늘 비거래일 여부 (S1이 매일 갱신)",
+            actor="scheduler_s1",
+        )
+        if not is_trading:
+            logger.info("INFO: [Job1] 오늘(%s)은 비거래일 — S2~S5 스킵 플래그 세팅", today_yyyymmdd)
+        else:
+            logger.info("INFO: [Job1] 오늘(%s)은 거래일 — 정상 진행", today_yyyymmdd)
+    except Exception as exc:
+        logger.error("FAIL: [Job1] 거래일 확인 실패 — S2~S5는 정상 실행 reason=%s", exc)
+        # 실패 시 플래그 세팅 안 함 → 나머지 job은 정상 실행
+
 
 async def job_market_tone_analysis() -> None:
     """Job 2 (08:00 KST): LLM을 통한 시장 톤 분석 (S2 구현).
@@ -48,6 +79,14 @@ async def job_market_tone_analysis() -> None:
     분석 실패 시 neutral 기본값을 저장하고 서버는 계속 실행된다.
     """
     logger.info("START: [Job2] 시장 톤 분석 (08:00 KST)")
+    try:
+        from .settings_store import get_setting
+        if get_setting("schedule_skip_today") == "true":
+            logger.info("SKIP: [Job2] 비거래일 — 시장 톤 분석 스킵")
+            return
+    except Exception:
+        pass
+
     try:
         from .engine.market_tone import run_market_tone_analysis
         result = await run_market_tone_analysis()
@@ -64,7 +103,16 @@ async def job_universe_filter() -> None:
 
     KIS 거래량/거래대금 순위를 병렬 호출해 오늘의 유니버스를 구성하고 DB에 저장한다.
     """
-    logger.info("START: [Job3] 유니버스 필터 (08:15 KST)")
+    today = _today_kst()
+    logger.info("START: [Job3] 유니버스 필터 (%s KST)", today)
+    try:
+        from .settings_store import get_setting
+        if get_setting("schedule_skip_today") == "true":
+            logger.info("SKIP: [Job3] 비거래일 — 유니버스 필터 스킵")
+            return
+    except Exception:
+        pass
+
     try:
         from .engine.universe_filter import run_universe_filter
         result = await run_universe_filter()
@@ -83,7 +131,16 @@ async def job_hybrid_screening() -> None:
 
     LLM이 S3 유니버스 필터 결과를 정성 평가해 suitability_score를 부여한다.
     """
-    logger.info("START: [Job4] 하이브리드 스크리닝 (08:30 KST)")
+    today = _today_kst()
+    logger.info("START: [Job4] 하이브리드 스크리닝 (%s KST)", today)
+    try:
+        from .settings_store import get_setting
+        if get_setting("schedule_skip_today") == "true":
+            logger.info("SKIP: [Job4] 비거래일 — 하이브리드 스크리닝 스킵")
+            return
+    except Exception:
+        pass
+
     try:
         from .engine.hybrid_screening import run_hybrid_screening
         result = await run_hybrid_screening()
@@ -102,7 +159,16 @@ async def job_rulepack_generation() -> None:
 
     S4 스크리닝 결과를 LLM에 넘겨 오늘의 RulePack JSON을 생성하고 자동 활성화한다.
     """
-    logger.info("START: [Job5] RulePack 자동 생성 (08:45 KST)")
+    today = _today_kst()
+    logger.info("START: [Job5] RulePack 자동 생성 (%s KST)", today)
+    try:
+        from .settings_store import get_setting
+        if get_setting("schedule_skip_today") == "true":
+            logger.info("SKIP: [Job5] 비거래일 — RulePack 생성 스킵")
+            return
+    except Exception:
+        pass
+
     try:
         from .engine.rulepack_generation import run_rulepack_generation
         result = await run_rulepack_generation()
@@ -116,31 +182,90 @@ async def job_rulepack_generation() -> None:
         logger.error("FAIL: [Job5] RulePack 생성 실패 — reason=%s", exc)
 
 
-async def job_intraday_liquidation() -> None:
-    """Job 6 (15:20 KST): 당일 청산 placeholder.
+async def job_decision_engine_start() -> None:
+    """Job 6 (09:00 KST): S6 Decision Engine 활성화 + WS 연결."""
+    logger.info("START: [Job6] Decision Engine 활성화 (09:00 KST)")
+    try:
+        from .settings_store import get_setting
+        if get_setting("schedule_skip_today") == "true":
+            logger.info("SKIP: [Job6] 비거래일 — Decision Engine 활성화 스킵")
+            return
+    except Exception:
+        pass
 
-    실 구현은 S9 단계에서 추가된다.
-    """
-    logger.info("START: [Job6] 당일 청산 placeholder (실 구현: S9)")
-    logger.info("SUCCESS: [Job6] 당일 청산 placeholder 완료")
+    try:
+        from .engine.decision_engine import decision_engine
+        result = await decision_engine.activate()
+        logger.info(
+            "SUCCESS: [Job6] Decision Engine active=%s candidates=%s",
+            result.get("ok"),
+            result.get("candidates", 0),
+        )
+    except Exception as exc:
+        logger.error("FAIL: [Job6] Decision Engine 활성화 실패 — reason=%s", exc)
+
+
+async def job_decision_engine_stop() -> None:
+    """Job 9 (15:20 KST): S6 비활성화 + WS 종료."""
+    logger.info("START: [Job9] Decision Engine 비활성화 (15:20 KST)")
+    try:
+        from .engine.decision_engine import decision_engine
+        await decision_engine.deactivate()
+        logger.info("SUCCESS: [Job9] Decision Engine 비활성화 완료")
+    except Exception as exc:
+        logger.error("FAIL: [Job9] 비활성화 실패 — reason=%s", exc)
+
+
+async def job_eod_liquidation() -> None:
+    """Job S9 (15:20 KST): 당일 포지션 전량 청산 후 Decision Engine을 종료한다."""
+    logger.info("START: [Job S9] 당일 청산 (15:20 KST)")
+    try:
+        from .engine.eod_liquidation import run_eod_liquidation
+
+        result = await run_eod_liquidation()
+        logger.info("SUCCESS: [Job S9] 청산 완료 liquidated=%d", result.get("liquidated", 0))
+    except Exception as exc:
+        logger.error("FAIL: [Job S9] 청산 실패 — reason=%s", exc)
+
+    try:
+        from .engine.decision_engine import decision_engine
+
+        await decision_engine.deactivate()
+        logger.info("SUCCESS: [Job S9] Decision Engine 비활성화 완료")
+    except Exception as exc:
+        logger.error("FAIL: [Job S9] Decision Engine 비활성화 실패 — reason=%s", exc)
 
 
 async def job_data_backup() -> None:
-    """Job 7 (18:00 KST): 데이터 백업 placeholder.
-
-    실 구현은 S12 단계에서 추가된다.
-    """
-    logger.info("START: [Job7] 데이터 백업 placeholder (실 구현: S12)")
-    logger.info("SUCCESS: [Job7] 데이터 백업 placeholder 완료")
+    """Job S10 (18:00 KST): 당일 거래 결과 집계 + DB 백업."""
+    logger.info("START: [Job S10] 당일 거래 요약 + DB 백업 (18:00 KST)")
+    try:
+        from .engine.daily_summary import run_daily_summary
+        result = await run_daily_summary()
+        logger.info(
+            "SUCCESS: [Job S10] 완료 orders=%d pnl=%.0f backup=%s",
+            result.get("total_orders", 0),
+            result.get("realized_pnl", 0),
+            result.get("backup", {}).get("ok"),
+        )
+    except Exception as exc:
+        logger.error("FAIL: [Job S10] 실패 — reason=%s", exc)
 
 
 async def job_us_market_watch() -> None:
-    """Job 8 (22:00 KST): 야간 미국장 관찰 placeholder.
-
-    실 구현은 S13 단계에서 추가된다.
-    """
-    logger.info("START: [Job8] 야간 미국장 관찰 placeholder (실 구현: S13)")
-    logger.info("SUCCESS: [Job8] 야간 미국장 관찰 placeholder 완료")
+    """Job S11 (22:00 KST): 미국 장중 지표 수집 + DB 저장."""
+    logger.info("START: [Job S11] 미국장 관찰 (22:00 KST)")
+    try:
+        from .engine.us_market_watch import run_us_market_watch
+        result = await run_us_market_watch()
+        logger.info(
+            "SUCCESS: [Job S11] 완료 sp500=%s nasdaq=%s usdkrw=%s",
+            result.get("sp500_chg_pct"),
+            result.get("nasdaq_chg_pct"),
+            result.get("usdkrw_rate"),
+        )
+    except Exception as exc:
+        logger.error("FAIL: [Job S11] 실패 — reason=%s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -154,60 +279,128 @@ def _build_scheduler() -> AsyncIOScheduler:
     timezone은 Asia/Seoul로 고정한다.
     job 실패 시 예외가 외부로 전파되지 않도록 각 job 함수에서 try/except 처리한다.
     """
+    schedule_times = {
+        "s1": "07:45",
+        "s2": "08:00",
+        "s3": "08:15",
+        "s4": "08:30",
+        "s5": "08:45",
+        "s6": "09:00",
+        "s9": "15:20",
+        "backup": "18:00",
+        "us_watch": "22:00",
+    }
+    try:
+        from .settings_store import list_settings
+
+        saved = {
+            item["key"]: item["value"]
+            for item in list_settings()
+            if isinstance(item.get("key"), str) and item["key"].startswith("schedule_")
+        }
+        for key in schedule_times:
+            db_key = f"schedule_{key}_time"
+            if isinstance(saved.get(db_key), str):
+                schedule_times[key] = saved[db_key]
+        logger.info("INFO: Scheduler 시간 로드 times=%s", schedule_times)
+    except Exception as exc:
+        logger.warning("WARN: Scheduler settings 로드 실패 — 기본값 사용 reason=%s", exc)
+
+    def _parse_time(setting_key: str) -> tuple[int, int]:
+        """Parse HH:MM scheduler settings, falling back to the built-in default on invalid values."""
+        raw_time = schedule_times[setting_key]
+        try:
+            hour_text, minute_text = raw_time.split(":", maxsplit=1)
+            hour = int(hour_text)
+            minute = int(minute_text)
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                raise ValueError(f"out of range: {raw_time}")
+            return hour, minute
+        except Exception as exc:
+            logger.warning("WARN: Scheduler invalid time key=%s value=%s reason=%s", setting_key, raw_time, exc)
+            fallback = {
+                "s1": (7, 45),
+                "s2": (8, 0),
+                "s3": (8, 15),
+                "s4": (8, 30),
+                "s5": (8, 45),
+                "s6": (9, 0),
+                "s9": (15, 20),
+                "backup": (18, 0),
+                "us_watch": (22, 0),
+            }
+            return fallback[setting_key]
+
     scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
 
+    hour, minute = _parse_time("s1")
     scheduler.add_job(
         job_refresh_kis_token,
-        CronTrigger(hour=7, minute=45, timezone="Asia/Seoul"),
+        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
         id="job_refresh_kis_token",
         name="KIS 토큰 선제 갱신",
         replace_existing=True,
     )
+    hour, minute = _parse_time("s2")
     scheduler.add_job(
         job_market_tone_analysis,
-        CronTrigger(hour=8, minute=0, timezone="Asia/Seoul"),
+        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
         id="job_market_tone_analysis",
         name="시장 톤 분석",
         replace_existing=True,
     )
+    hour, minute = _parse_time("s3")
     scheduler.add_job(
         job_universe_filter,
-        CronTrigger(hour=8, minute=15, timezone="Asia/Seoul"),
+        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
         id="job_universe_filter",
         name="유니버스 필터",
         replace_existing=True,
     )
+    hour, minute = _parse_time("s4")
     scheduler.add_job(
         job_hybrid_screening,
-        CronTrigger(hour=8, minute=30, timezone="Asia/Seoul"),
+        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
         id="job_hybrid_screening",
         name="하이브리드 스크리닝",
         replace_existing=True,
     )
+    hour, minute = _parse_time("s5")
     scheduler.add_job(
         job_rulepack_generation,
-        CronTrigger(hour=8, minute=45, timezone="Asia/Seoul"),
+        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
         id="job_rulepack_generation",
         name="RulePack 자동 생성",
         replace_existing=True,
     )
+    hour, minute = _parse_time("s6")
     scheduler.add_job(
-        job_intraday_liquidation,
-        CronTrigger(hour=15, minute=20, timezone="Asia/Seoul"),
-        id="job_intraday_liquidation",
+        job_decision_engine_start,
+        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
+        id="job_decision_engine_start",
+        name="Decision Engine 활성화",
+        replace_existing=True,
+    )
+    hour, minute = _parse_time("s9")
+    scheduler.add_job(
+        job_eod_liquidation,
+        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
+        id="job_eod_liquidation",
         name="당일 청산",
         replace_existing=True,
     )
+    hour, minute = _parse_time("backup")
     scheduler.add_job(
         job_data_backup,
-        CronTrigger(hour=18, minute=0, timezone="Asia/Seoul"),
+        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
         id="job_data_backup",
         name="데이터 백업",
         replace_existing=True,
     )
+    hour, minute = _parse_time("us_watch")
     scheduler.add_job(
         job_us_market_watch,
-        CronTrigger(hour=22, minute=0, timezone="Asia/Seoul"),
+        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
         id="job_us_market_watch",
         name="야간 미국장 관찰",
         replace_existing=True,

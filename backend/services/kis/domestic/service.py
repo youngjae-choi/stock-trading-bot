@@ -250,3 +250,26 @@ async def get_investor_profile(
             "FID_INPUT_ISCD": symbol,
         },
     )
+
+
+async def check_trading_day(date_str: str) -> bool:
+    """KIS API로 해당 날짜가 주식 거래일인지 확인한다.
+
+    Args:
+        date_str: YYYYMMDD 형식
+    Returns:
+        True = 거래일, False = 비거래일/조회실패
+    """
+    try:
+        resp = await kis_client.request(
+            method="GET",
+            path="/uapi/domestic-stock/v1/quotations/chk-holiday",
+            tr_id="CTCA0903R",
+            params={"BASS_DT": date_str},
+        )
+        output = resp.get("output", [])
+        if output and output[0].get("tr_day_yn") == "Y":
+            return True
+        return False
+    except Exception:
+        return False

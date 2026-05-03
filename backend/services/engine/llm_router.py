@@ -1,4 +1,4 @@
-"""LLM 라우터 — Gemini → Groq → OpenAI GPT 순서로 fallback 호출.
+"""LLM 라우터 — Anthropic → Gemini → Groq → OpenAI GPT 순서로 fallback 호출.
 
 S2 시장 톤 분석, S8 중간 리포트, S10 복기 리포트, S13 야간 관찰 등에서 공통으로 사용한다.
 각 provider는 API 키가 설정된 경우에만 활성화된다.
@@ -21,9 +21,10 @@ logger = logging.getLogger("LLMRouter")
 # Provider 정의
 # ---------------------------------------------------------------------------
 
-_GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+_GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 _GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 _OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+_ANTHROPIC_MODEL = "claude-opus-4-6"
 _GROQ_MODEL = "llama-3.1-8b-instant"
 _OPENAI_MODEL = "gpt-4o-mini"
 _TIMEOUT = 30.0
@@ -32,9 +33,10 @@ _TIMEOUT = 30.0
 def _providers_in_order() -> list[dict[str, Any]]:
     """활성화된 provider를 우선순위 순서대로 반환한다."""
     candidates = [
-        {"name": "gemini",  "key": settings.GEMINI_API_KEY},
-        {"name": "groq",    "key": settings.GROQ_API_KEY},
-        {"name": "openai",  "key": settings.OPENAI_API_KEY},
+        {"name": "anthropic", "key": settings.ANTHROPIC_API_KEY},
+        {"name": "gemini",    "key": settings.GEMINI_API_KEY},
+        {"name": "groq",      "key": settings.GROQ_API_KEY},
+        {"name": "openai",    "key": settings.OPENAI_API_KEY},
     ]
     return [p for p in candidates if p["key"]]
 
@@ -42,6 +44,19 @@ def _providers_in_order() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Provider별 호출 함수
 # ---------------------------------------------------------------------------
+
+async def _call_anthropic(prompt: str, api_key: str) -> str:
+    """Anthropic Claude API를 호출하고 응답 텍스트를 반환한다."""
+    import anthropic as _anthropic
+
+    client = _anthropic.AsyncAnthropic(api_key=api_key)
+    message = await client.messages.create(
+        model=_ANTHROPIC_MODEL,
+        max_tokens=8192,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return message.content[0].text
+
 
 async def _call_gemini(prompt: str, api_key: str) -> str:
     """Gemini REST API를 호출하고 응답 텍스트를 반환한다."""
@@ -100,6 +115,7 @@ async def _call_openai(prompt: str, api_key: str) -> str:
 
 
 _CALLERS = {
+    "anthropic": _call_anthropic,
     "gemini": _call_gemini,
     "groq": _call_groq,
     "openai": _call_openai,
@@ -111,7 +127,7 @@ _CALLERS = {
 # ---------------------------------------------------------------------------
 
 async def call_llm(prompt: str, task_name: str = "") -> dict[str, Any]:
-    """LLM을 Gemini → Groq → OpenAI 순서로 fallback 호출한다.
+    """LLM을 Anthropic → Gemini → Groq → OpenAI 순서로 fallback 호출한다.
 
     Args:
         prompt: LLM에 전달할 전체 프롬프트 문자열.
@@ -152,16 +168,22 @@ async def call_llm(prompt: str, task_name: str = "") -> dict[str, Any]:
 def provider_status() -> list[dict[str, Any]]:
     """현재 설정된 provider 목록과 활성화 여부를 반환한다 (API 키 노출 없음)."""
     all_providers = [
-        {"name": "gemini", "key": settings.GEMINI_API_KEY,  "role": "long_summary"},
-        {"name": "groq",   "key": settings.GROQ_API_KEY,    "role": "fast_classify"},
-        {"name": "openai", "key": settings.OPENAI_API_KEY,  "role": "fallback_gpt"},
+        {"name": "anthropic", "key": settings.ANTHROPIC_API_KEY, "role": "primary_claude"},
+        {"name": "gemini",    "key": settings.GEMINI_API_KEY,    "role": "long_summary"},
+        {"name": "groq",      "key": settings.GROQ_API_KEY,      "role": "fast_classify"},
+        {"name": "openai",    "key": settings.OPENAI_API_KEY,    "role": "fallback_gpt"},
     ]
     return [
         {
             "name": p["name"],
             "role": p["role"],
             "enabled": bool(p["key"]),
-            "model": {"gemini": "gemini-1.5-flash", "groq": _GROQ_MODEL, "openai": _OPENAI_MODEL}[p["name"]],
+            "model": {
+                "anthropic": _ANTHROPIC_MODEL,
+                "gemini": "gemini-2.0-flash",
+                "groq": _GROQ_MODEL,
+                "openai": _OPENAI_MODEL,
+            }[p["name"]],
         }
         for p in all_providers
     ]

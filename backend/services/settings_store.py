@@ -39,6 +39,17 @@ def list_settings() -> list[dict[str, Any]]:
     return settings
 
 
+def get_setting(key: str, default: Any = None) -> Any:
+    """단일 키 조회. 없으면 default 반환."""
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT value_json FROM system_settings WHERE key = ?", (key,)
+        ).fetchone()
+    if row is None:
+        return default
+    return json.loads(row["value_json"])
+
+
 def upsert_setting(key: str, value: Any, value_type: str, description: str, actor: str) -> dict[str, Any]:
     """Create or update one system setting by key."""
     logger.info("START: settings_store.upsert_setting key=%s", key)

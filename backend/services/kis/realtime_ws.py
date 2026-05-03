@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from collections import deque
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import httpx
 import websockets
@@ -27,6 +27,7 @@ class RealtimeWSManager:
         self._runner_task: asyncio.Task | None = None
         self._ws: websockets.WebSocketClientProtocol | None = None
         self._stop_event = asyncio.Event()
+        self._tick_callbacks: list[Callable[[dict[str, Any]], Awaitable[None]]] = []
         self.is_connected: bool = False
 
     async def start(self, symbols: list[str]) -> None:
@@ -67,6 +68,27 @@ class RealtimeWSManager:
             n = 1
         n = min(n, 200)
         return list(self._cache)[-n:]
+
+    def register_tick_callback(self, cb: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
+        """Register an async callback that receives parsed tick payloads.
+
+        Args:
+            cb: Async callable invoked for every parsed symbol tick.
+        """
+        if cb not in self._tick_callbacks:
+            self._tick_callbacks.append(cb)
+            logger.info("SUCCESS: realtime tick callback registered count=%d", len(self._tick_callbacks))
+
+    def unregister_tick_callback(self, cb: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
+        """Unregister a previously registered async tick callback.
+
+        Args:
+            cb: Async callable to remove.
+        """
+        before = len(self._tick_callbacks)
+        self._tick_callbacks = [callback for callback in self._tick_callbacks if callback != cb]
+        if len(self._tick_callbacks) != before:
+            logger.info("SUCCESS: realtime tick callback unregistered count=%d", len(self._tick_callbacks))
 
     async def _run(self) -> None:
         while not self._stop_event.is_set():
@@ -142,6 +164,19 @@ class RealtimeWSManager:
                 entry["fields"] = fields
 
         self._cache.append(entry)
+        if entry.get("symbol") and self._tick_callbacks:
+            tick = {
+                "symbol": entry.get("symbol"),
+                "price": entry.get("price"),
+                "volume": entry.get("trade_volume"),
+                "time": entry.get("trade_time"),
+                "fields": entry.get("fields", []),
+            }
+            for cb in list(self._tick_callbacks):
+                try:
+                    await cb(tick)
+                except Exception as exc:
+                    logger.error("FAIL: tick callback error — %s", exc)
 
     async def _issue_approval_key(self) -> str:
         url = f"{kis_client.base_url}/oauth2/Approval"

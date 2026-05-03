@@ -190,6 +190,14 @@ async def run_hybrid_screening() -> dict[str, Any]:
                 """,
                 (record_id, today, "[]", "[]", 0.0, "none", 0, 0, now),
             )
+        # S3 결과가 없으면 이전 후보 종목 기반 실시간 구독도 함께 정리한다.
+        try:
+            from ..kis.realtime_ws import realtime_ws_manager
+
+            await realtime_ws_manager.stop()
+            logger.info("INFO: HybridScreening S3 결과 없음 — KIS WebSocket 구독 중지")
+        except Exception as ws_exc:
+            logger.warning("WARN: HybridScreening KIS WebSocket 중지 실패 — %s", ws_exc)
         return {
             "ok": True,
             "trade_date": today,
@@ -281,6 +289,23 @@ async def run_hybrid_screening() -> dict[str, Any]:
         "SUCCESS: HybridScreeningService trade_date=%s output=%d provider=%s confidence=%.2f",
         today, len(candidates), provider, overall_confidence,
     )
+
+    # S4 완료 후 후보 종목을 KIS WebSocket에 자동 구독해 실시간 체결 데이터를 수집한다.
+    try:
+        from ..kis.realtime_ws import realtime_ws_manager
+
+        tickers = [c["ticker"] for c in candidates if c.get("ticker")]
+        if tickers:
+            await realtime_ws_manager.start(symbols=tickers)
+            logger.info(
+                "SUCCESS: HybridScreening KIS WebSocket 구독 시작 symbols=%s count=%d",
+                tickers,
+                len(tickers),
+            )
+        else:
+            logger.warning("WARN: HybridScreening 후보 종목 없음 — KIS WebSocket 구독 생략")
+    except Exception as ws_exc:
+        logger.warning("WARN: HybridScreening KIS WebSocket 시작 실패 — %s", ws_exc)
     return result
 
 

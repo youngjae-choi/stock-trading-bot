@@ -11,15 +11,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .api.routes.alerts import router as alerts_router
+from .api.routes.account import router as account_router
 from .api.routes.auth import router as auth_router
 from .api.routes.scheduler import router as scheduler_router
 from .api.routes.market_tone import router as market_tone_router
+from .api.routes.orders import router as orders_router
 from .api.routes.autotrade import router as autotrade_router
 from .api.routes.bot import router as bot_router
 from .api.routes.rulepack import router as rulepack_router
 from .api.routes.rulepack_gen import router as rulepack_gen_router
 from .api.routes.engine_test import router as engine_test_router
 from .api.routes.console import router as console_router
+from .api.routes.decision import router as decision_router
 from .api.routes.fundamental import router as fundamental_router
 from .api.routes.health import router as health_router
 from .api.routes.kis import router as kis_router
@@ -29,6 +32,7 @@ from .api.routes.sim import router as sim_router
 from .api.routes.strategy import router as strategy_router
 from .api.routes.testing import router as testing_router
 from .api.routes.settings import router as settings_router
+from .api.routes.trades import router as trades_router
 from .api.routes.trading_data import router as trading_data_router
 from .api.routes.screening import router as screening_router
 from .api.routes.universe import router as universe_router, filter_router as universe_filter_router
@@ -73,6 +77,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(console_router)
 app.include_router(auth_router)
 app.include_router(health_router)
+app.include_router(account_router)
 app.include_router(alerts_router)
 app.include_router(meta_router)
 app.include_router(kis_router)
@@ -90,9 +95,12 @@ app.include_router(autotrade_router)
 app.include_router(bot_router)
 app.include_router(rulepack_router)
 app.include_router(settings_router)
+app.include_router(trades_router)
 app.include_router(trading_data_router)
 app.include_router(scheduler_router)
 app.include_router(market_tone_router)
+app.include_router(decision_router)
+app.include_router(orders_router)
 
 
 if __name__ == "__main__":

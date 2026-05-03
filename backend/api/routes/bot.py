@@ -15,6 +15,7 @@ from ...services.console_state import (
     get_rulepack_today,
     record_api_audit_log,
     trigger_emergency_halt,
+    trigger_resume,
 )
 from ...services.engine import rulepack_store
 
@@ -69,7 +70,7 @@ def _build_logged_error_response(*, endpoint: str, method: str, error_message: s
 
 @router.get("/overview")
 async def get_bot_overview():
-    """Return mock-safe overview data for the console dashboard."""
+    """Return live DB and runtime overview data for the console dashboard."""
     endpoint = "/api/v1/bot/overview"
     try:
         logger.info("START: %s", endpoint)
@@ -79,12 +80,12 @@ async def get_bot_overview():
             endpoint=endpoint,
             method="GET",
             payload=payload,
-            source="mock",
-            message="Console overview served from mock-safe backend state.",
+            source="backend",
+            message="Console overview served from live DB and runtime state.",
             feature_name="운영 개요 조회",
             purpose="운영 화면에서 엔진 상태와 리스크 상태를 한 번에 확인",
-            result_summary="성공 mock 운영 개요와 오늘 상태 요약을 반환",
-            mock=True,
+            result_summary="성공 실 DB 기반 운영 개요 반환",
+            mock=False,
         )
     except Exception as exc:
         return _build_logged_error_response(endpoint=endpoint, method="GET", error_message=f"Failed to load bot overview: {str(exc)}")
@@ -177,6 +178,29 @@ async def halt_bot_control():
         )
     except Exception as exc:
         return _build_logged_error_response(endpoint=endpoint, method="POST", error_message=f"Failed to halt bot control: {str(exc)}")
+
+
+@router.post("/control/resume")
+async def resume_bot_control():
+    """Clear the emergency halt state and resume auto operation."""
+    endpoint = "/api/v1/bot/control/resume"
+    try:
+        logger.info("START: %s", endpoint)
+        payload = trigger_resume()
+        logger.info("SUCCESS: %s", endpoint)
+        return _build_logged_success_response(
+            endpoint=endpoint,
+            method="POST",
+            payload=payload,
+            source="backend",
+            message="Resume request recorded. Bot control state returned to running.",
+            feature_name="운영 재개",
+            purpose="긴급정지 후 자동 주문 차단을 해제하고 정상 운영 상태로 복귀",
+            result_summary="성공 긴급정지 해제, 엔진 상태를 AUTO로 전환",
+            mock=True,
+        )
+    except Exception as exc:
+        return _build_logged_error_response(endpoint=endpoint, method="POST", error_message=f"Failed to resume bot control: {str(exc)}")
 
 
 @router.get("/api-logs")

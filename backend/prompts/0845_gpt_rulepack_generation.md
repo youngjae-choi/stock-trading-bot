@@ -1,4 +1,4 @@
-# 08:45 GPT — RulePack JSON 생성 (가장 중요한 단계)
+# GPT — RulePack JSON 생성 (가장 중요한 단계)
 
 ## 역할
 너는 **JSON 변환기**다. Opus의 정성 판단 결과를 시스템이 실행 가능한 RulePack JSON으로 변환한다.

@@ -7,6 +7,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from .db import get_connection
+
 logger = logging.getLogger("BackendConsoleState")
 _API_LOG_LIMIT = 50
 
@@ -14,7 +16,7 @@ _API_LOG_METADATA: dict[str, dict[str, str]] = {
     "/api/v1/bot/overview": {
         "feature_name": "운영 개요 조회",
         "purpose": "운영 화면에서 엔진 상태와 리스크 상태를 한 번에 확인",
-        "result_summary": "성공 mock 운영 개요와 오늘 상태 요약을 반환",
+        "result_summary": "성공 실 DB 기반 운영 개요 반환",
     },
     "/api/v1/bot/rulepack/today": {
         "feature_name": "오늘 RulePack 조회",
@@ -30,6 +32,11 @@ _API_LOG_METADATA: dict[str, dict[str, str]] = {
         "feature_name": "긴급정지 실행",
         "purpose": "이상 징후 발생 시 신규 자동 주문을 즉시 차단",
         "result_summary": "성공 긴급정지를 기록하고 엔진 상태를 HALT로 전환",
+    },
+    "/api/v1/bot/control/resume": {
+        "feature_name": "운영 재개",
+        "purpose": "긴급정지 후 자동 주문 차단을 해제하고 정상 운영 상태로 복귀",
+        "result_summary": "성공 긴급정지 해제, 엔진 상태를 AUTO로 전환",
     },
     "/api/v1/bot/api-logs": {
         "feature_name": "API 로그 조회",
@@ -278,15 +285,306 @@ def get_api_audit_logs() -> dict[str, Any]:
 
 
 def get_console_overview() -> dict[str, Any]:
-    """Return the current console overview payload."""
+    """Return real-time console overview built from live DB and runtime state."""
     logger.info("START: console_state.get_console_overview")
-    payload = _clone_state()["overview"]
-    payload["mode"] = _CONSOLE_STATE["mode"]
-    payload["engine_status"] = _CONSOLE_STATE["engine_status"]
-    payload["emergency_halt"] = _CONSOLE_STATE["emergency_halt"]
-    payload["mock_mode"] = _CONSOLE_STATE["mock_mode"]
-    payload["updated_at"] = _utc_now_iso()
-    logger.info("SUCCESS: console_state.get_console_overview")
+    from zoneinfo import ZoneInfo
+
+    now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+    today = now_kst.strftime("%Y-%m-%d")
+
+    # 1. KIS token status
+    try:
+        from .kis.common.client import kis_client
+
+        kis_ok = kis_client._token_is_valid() if kis_client is not None else False
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_console_overview kis token check failed - %s", exc)
+        kis_ok = False
+
+    # 2. WebSocket runtime status
+    try:
+        from .kis.realtime_ws import realtime_ws_manager
+
+        ws_connected = realtime_ws_manager.is_connected
+        ws_symbols = getattr(realtime_ws_manager, "_symbols", [])
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_console_overview websocket check failed - %s", exc)
+        ws_connected = False
+        ws_symbols = []
+
+    # 3. Active RulePack status
+    rulepack = None
+    try:
+        from .engine.rulepack_store import get_active_rulepack_for_date
+
+        rulepack = get_active_rulepack_for_date(today)
+        rulepack_ready = rulepack is not None
+        rulepack_id = rulepack.get("rulepack_id", "") if rulepack else ""
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_console_overview rulepack check failed - %s", exc)
+        rulepack_ready = False
+        rulepack_id = ""
+
+    # 4. Decision engine status
+    try:
+        from .engine.decision_engine import decision_engine
+
+        engine_active = decision_engine._active
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_console_overview decision engine check failed - %s", exc)
+        engine_active = False
+
+    # 5. Open position count
+    try:
+        from .engine.position_manager import position_manager
+
+        positions = position_manager.get_positions()
+        open_positions = len(positions)
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_console_overview position check failed - %s", exc)
+        open_positions = 0
+
+    # 6. Today's signal/order summary
+    signals_pending = 0
+    signals_executed = 0
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) as cnt FROM trading_signals WHERE trade_date=? GROUP BY status",
+                (today,),
+            ).fetchall()
+        for row in rows:
+            if row["status"] == "pending":
+                signals_pending = row["cnt"]
+            elif row["status"] == "executed":
+                signals_executed = row["cnt"]
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_console_overview trading signal summary failed - %s", exc)
+
+    # 7. Today's realized PnL percentage
+    pnl_pct = 0.0
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                """SELECT realized_pnl_pct FROM daily_trade_summary
+                   WHERE trade_date=? ORDER BY created_at DESC LIMIT 1""",
+                (today,),
+            ).fetchone()
+        if row:
+            pnl_pct = float(row["realized_pnl_pct"] or 0.0)
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_console_overview pnl summary unavailable - %s", exc)
+
+    # 8. Funnel aggregation from persisted pipeline outputs
+    market_total = 0
+    layer1_count = 0
+    layer2_count = 0
+    try:
+        with get_connection() as conn:
+            row = conn.execute("SELECT COUNT(*) as cnt FROM symbols WHERE is_active=1").fetchone()
+            market_total = row["cnt"] if row else 0
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_console_overview market count failed - %s", exc)
+
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                """SELECT items FROM universe_filter_results
+                   WHERE trade_date=? ORDER BY created_at DESC LIMIT 1""",
+                (today,),
+            ).fetchone()
+        if row:
+            import json as _json
+
+            data = _json.loads(row["items"] or "[]")
+            layer1_count = len(data) if isinstance(data, list) else len(data.get("items", []))
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_console_overview layer1 count failed - %s", exc)
+
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                """SELECT output_count FROM hybrid_screening_results
+                   WHERE trade_date=? ORDER BY created_at DESC LIMIT 1""",
+                (today,),
+            ).fetchone()
+        if row:
+            layer2_count = row["output_count"] or 0
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_console_overview layer2 count failed - %s", exc)
+
+    # 9. Timeline step completion checks
+    def _step_done(table: str, date_col: str = "trade_date") -> bool:
+        """Return whether a date-scoped pipeline table has at least one row for today."""
+        try:
+            with get_connection() as conn:
+                row = conn.execute(
+                    f"SELECT 1 FROM {table} WHERE {date_col}=? LIMIT 1", (today,)
+                ).fetchone()
+            return row is not None
+        except Exception:
+            return False
+
+    s2_done = _step_done("market_tone_results")
+    s3_done = _step_done("universe_filter_results")
+    s4_done = _step_done("hybrid_screening_results")
+    s5_done = rulepack_ready
+
+    now_time = now_kst.strftime("%H:%M")
+
+    def _tl_status(step_time: str, done: bool) -> str:
+        """Map a scheduled step and completion flag to the console timeline status."""
+        if done:
+            return "완료"
+        if now_time >= step_time:
+            return "실행중"
+        return "대기"
+
+    timeline = [
+        {"time": "07:45", "name": "KIS 토큰 갱신", "status": "완료" if kis_ok else ("완료" if now_time > "07:50" else "대기")},
+        {"time": "08:00", "name": "AI 시장 톤 분석", "status": _tl_status("08:00", s2_done)},
+        {"time": "08:15", "name": "유니버스 필터", "status": _tl_status("08:15", s3_done)},
+        {"time": "08:30", "name": "AI 스크리닝", "status": _tl_status("08:30", s4_done)},
+        {"time": "08:45", "name": "RulePack 생성", "status": _tl_status("08:45", s5_done)},
+        {"time": "09:00", "name": "실시간 매매 시작", "status": "완료" if engine_active else ("실행중" if now_time >= "09:00" else "대기")},
+        {"time": "11:30", "name": "중간 리포트", "status": _tl_status("11:30", False)},
+        {"time": "15:20", "name": "당일매매 청산", "status": _tl_status("15:20", False)},
+        {"time": "16:00", "name": "AI 복기 리포트", "status": _tl_status("16:00", False)},
+        {"time": "16:30", "name": "일일 리포트", "status": _tl_status("16:30", False)},
+        {"time": "18:00", "name": "데이터 백업", "status": _tl_status("18:00", False)},
+    ]
+
+    schedule_order = [
+        ("07:45", "KIS 토큰 갱신"), ("08:00", "AI 시장 톤 분석"),
+        ("08:15", "유니버스 필터"), ("08:30", "AI 스크리닝"),
+        ("08:45", "RulePack 생성"), ("09:00", "실시간 매매 시작"),
+        ("11:30", "중간 리포트"), ("15:20", "당일매매 청산"),
+        ("16:00", "AI 복기 리포트"), ("16:30", "일일 리포트"),
+        ("18:00", "데이터 백업"), ("22:00", "미국장 야간 관찰"),
+    ]
+    next_job = {"time": "-", "name": "-"}
+    for scheduled_time, name in schedule_order:
+        if now_time < scheduled_time:
+            next_job = {"time": scheduled_time, "name": name}
+            break
+
+    # 10. Recent operation logs from DB events
+    logs = []
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                """SELECT time(created_at, '+9 hours') as kst_time, 'AI 시장 톤 분석 완료 tone='||tone as text
+                   FROM market_tone_results WHERE trade_date=? ORDER BY created_at DESC LIMIT 1""",
+                (today,),
+            ).fetchall()
+        for row in rows:
+            logs.append({"time": (row["kst_time"] or "")[:5], "text": row["text"]})
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_console_overview market tone log failed - %s", exc)
+
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                """SELECT time(created_at, '+9 hours') as kst_time, raw_input_count, output_count
+                   FROM hybrid_screening_results WHERE trade_date=? ORDER BY created_at DESC LIMIT 1""",
+                (today,),
+            ).fetchall()
+        for row in rows:
+            logs.append({
+                "time": (row["kst_time"] or "")[:5],
+                "text": f"AI 스크리닝 완료 - 입력 {row['raw_input_count']}종목 -> 후보 {row['output_count']}종목",
+            })
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_console_overview screening log failed - %s", exc)
+
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                """SELECT time(created_at, '+9 hours') as kst_time, symbol, name, status
+                   FROM trading_signals WHERE trade_date=? ORDER BY created_at DESC LIMIT 5""",
+                (today,),
+            ).fetchall()
+        for row in rows:
+            logs.append({
+                "time": (row["kst_time"] or "")[:5],
+                "text": f"매수 신호 - {row['name']}({row['symbol']}) status={row['status']}",
+            })
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_console_overview signal log failed - %s", exc)
+
+    if not logs:
+        logs.append({"time": now_time, "text": "오늘 운영 이벤트 없음"})
+
+    logs = sorted(logs, key=lambda x: x["time"], reverse=True)[:10]
+
+    # 11. Risk limits from active RulePack
+    max_positions = 5
+    daily_loss_limit_pct = -2.0
+    try:
+        if rulepack:
+            machine_rules = rulepack.get("machine_rules") or {}
+            if isinstance(machine_rules, str):
+                import json as _json2
+
+                machine_rules = _json2.loads(machine_rules)
+            risk_limits = machine_rules.get("risk_limits", {})
+            max_positions = int(risk_limits.get("max_positions", 5))
+            daily_loss_limit_pct = float(risk_limits.get("daily_loss_limit_rate", -0.02)) * 100
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_console_overview risk limits failed - %s", exc)
+
+    emergency_halt = _CONSOLE_STATE["emergency_halt"]
+    payload = {
+        "trade_date": today,
+        "pnl_percent": pnl_pct,
+        "daily_loss_limit_percent": daily_loss_limit_pct,
+        "open_positions": open_positions,
+        "max_positions": max_positions,
+        "rulepack_ready": rulepack_ready,
+        "rulepack_id": rulepack_id,
+        "engine_active": engine_active,
+        "signals_pending": signals_pending,
+        "signals_executed": signals_executed,
+        "timeline": timeline,
+        "next_job": next_job,
+        "health": {
+            "kis_rest": {
+                "status": "ok" if kis_ok else "warn",
+                "detail": "토큰 유효" if kis_ok else "토큰 없음 또는 만료",
+            },
+            "websocket": {
+                "status": "ok" if ws_connected else "warn",
+                "detail": f"연결됨 - {len(ws_symbols)}개 구독중" if ws_connected else "미연결 (S4 완료 후 자동 시작)",
+            },
+            "rulepack": {
+                "status": "ok" if rulepack_ready else "warn",
+                "detail": f"활성 RulePack: {rulepack_id}" if rulepack_ready else "오늘 활성 RulePack 없음",
+            },
+            "risk_guard": {
+                "status": "halted" if emergency_halt else "ok",
+                "detail": "긴급정지 적용됨" if emergency_halt else "신규 진입 허용",
+            },
+        },
+        "funnel": {
+            "market_total": market_total,
+            "layer1": layer1_count,
+            "layer2": layer2_count,
+            "entry_waiting": signals_pending,
+            "holding": open_positions,
+        },
+        "logs": logs,
+        "emergency_halt": emergency_halt,
+        "mock_mode": False,
+        "updated_at": _utc_now_iso(),
+        "note": "실 DB 및 런타임 상태 기반 응답",
+    }
+    logger.info(
+        "SUCCESS: console_state.get_console_overview trade_date=%s kis=%s ws=%s rulepack=%s",
+        today,
+        kis_ok,
+        ws_connected,
+        rulepack_ready,
+    )
     return payload
 
 
@@ -301,12 +599,60 @@ def get_rulepack_today() -> dict[str, Any]:
 
 
 def get_data_health() -> dict[str, Any]:
-    """Return backend data-health information for the console."""
+    """Return backend data-health with real KIS token status."""
     logger.info("START: console_state.get_data_health")
-    payload = _clone_state()["data_health"]
-    payload["emergency_halt"] = _CONSOLE_STATE["emergency_halt"]
-    payload["updated_at"] = _utc_now_iso()
-    logger.info("SUCCESS: console_state.get_data_health")
+
+    try:
+        from .kis.common.client import kis_client  # noqa: PLC0415
+
+        kis_token_ok = kis_client._token_is_valid()
+        kis_status = "ok" if kis_token_ok else "warn"
+        kis_detail = "토큰 유효" if kis_token_ok else "토큰 없음 또는 만료"
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_data_health kis token check failed - %s", exc)
+        kis_status = "info"
+        kis_detail = "KIS 토큰 상태 확인 불가 - KIS System Test S1으로 확인"
+
+    try:
+        from .db import database_status  # noqa: PLC0415
+
+        db_health = database_status()
+        db_status = "ok" if db_health.get("ok") else "warn"
+        db_detail = str(db_health.get("path") or "DB 경로 확인 불가")
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_data_health db check failed - %s", exc)
+        db_status = "warn"
+        db_detail = "DB 상태 확인 불가"
+
+    # KIS WebSocket 실제 연결 상태를 확인해 콘솔 데이터 헬스에 반영한다.
+    try:
+        from .kis.realtime_ws import realtime_ws_manager  # noqa: PLC0415
+
+        ws_connected = realtime_ws_manager.is_connected
+        ws_symbols = getattr(realtime_ws_manager, "_symbols", [])
+        if ws_connected:
+            ws_status = "ok"
+            ws_detail = f"연결됨 — {len(ws_symbols)}개 종목 구독중"
+        else:
+            ws_status = "warn"
+            ws_detail = "미연결 (S4 스크리닝 완료 후 자동 시작)"
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_data_health kis ws check failed - %s", exc)
+        ws_status = "warn"
+        ws_detail = "상태 확인 불가"
+
+    payload = {
+        "emergency_halt": _CONSOLE_STATE["emergency_halt"],
+        "updated_at": _utc_now_iso(),
+        "metrics": {
+            "kis_rest": {"status": kis_status, "detail": kis_detail},
+            "kis_ws": {"status": ws_status, "detail": ws_detail},
+            "llm_router": {"status": "ok", "detail": "LLM Router 활성화 (/api/v1/market-tone/providers 참조)"},
+            "db": {"status": db_status, "detail": db_detail},
+        },
+        "note": "KIS REST 토큰은 백엔드 singleton 캐시 기준이며, KIS WebSocket은 S4 스크리닝 완료 후 자동 구독됩니다.",
+    }
+    logger.info("SUCCESS: console_state.get_data_health kis=%s db=%s", kis_status, db_status)
     return payload
 
 
@@ -337,4 +683,34 @@ def trigger_emergency_halt() -> dict[str, Any]:
         "live": False,
         "source": "backend",
         "message": "Emergency halt applied. Automated live trading remains unimplemented; console is now mock-halted.",
+    }
+
+
+def trigger_resume() -> dict[str, Any]:
+    """Clear the halted state and return to running mode."""
+    logger.info("START: console_state.trigger_resume")
+    _CONSOLE_STATE["mode"] = "AUTO"
+    _CONSOLE_STATE["engine_status"] = "running"
+    _CONSOLE_STATE["emergency_halt"] = False
+    _CONSOLE_STATE["overview"]["health"]["risk_guard"] = {
+        "status": "ok",
+        "detail": "운영 재개. 신규 주문 허용.",
+    }
+    now = datetime.now(timezone.utc).astimezone()
+    _CONSOLE_STATE["overview"]["logs"].insert(
+        0,
+        {
+            "time": now.strftime("%H:%M"),
+            "text": "운영 재개. 자동 주문 차단이 해제되었습니다.",
+        },
+    )
+    logger.info("SUCCESS: console_state.trigger_resume")
+    return {
+        "halted": False,
+        "mode": _CONSOLE_STATE["mode"],
+        "engine_status": _CONSOLE_STATE["engine_status"],
+        "updated_at": _utc_now_iso(),
+        "live": False,
+        "source": "backend",
+        "message": "Resume applied. Console state returned to running.",
     }
