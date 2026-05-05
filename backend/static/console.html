@@ -2180,8 +2180,8 @@
             <div class="card" id="et-card-s1">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
-                  <strong>S1 — KIS 토큰 갱신</strong>
-                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">07:45 KST · token-refresh</div>
+                  <strong id="et-title-s1">S1 토큰 갱신</strong>
+                  <div id="et-detail-s1" style="font-size:12px; color:var(--muted); margin-top:2px;">07:45 KST · KIS token-refresh</div>
                 </div>
                 <span class="badge" id="et-badge-s1">대기</span>
               </div>
@@ -2193,8 +2193,8 @@
             <div class="card" id="et-card-s2">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
-                  <strong>S2 — 시장 톤 분석</strong>
-                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">08:00 KST · LLM → market_tone_results</div>
+                  <strong id="et-title-s2">S2 시장톤 분석</strong>
+                  <div id="et-detail-s2" style="font-size:12px; color:var(--muted); margin-top:2px;">08:00 KST · LLM → market_tone_results</div>
                 </div>
                 <span class="badge" id="et-badge-s2">대기</span>
               </div>
@@ -2206,8 +2206,8 @@
             <div class="card" id="et-card-s3">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
-                  <strong>S3 — 유니버스 필터</strong>
-                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">08:15 KST · KIS → universe_filter_results</div>
+                  <strong id="et-title-s3">S3 유니버스 필터</strong>
+                  <div id="et-detail-s3" style="font-size:12px; color:var(--muted); margin-top:2px;">08:15 KST · KIS → universe_filter_results</div>
                 </div>
                 <span class="badge" id="et-badge-s3">대기</span>
               </div>
@@ -2219,8 +2219,8 @@
             <div class="card" id="et-card-s4">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
-                  <strong>S4 — 하이브리드 스크리닝</strong>
-                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">08:30 KST · LLM 정성 평가 → hybrid_screening_results</div>
+                  <strong id="et-title-s4">S4 하이브리드 스크리닝</strong>
+                  <div id="et-detail-s4" style="font-size:12px; color:var(--muted); margin-top:2px;">08:30 KST · LLM 정성 평가 → hybrid_screening_results</div>
                 </div>
                 <span class="badge" id="et-badge-s4">대기</span>
               </div>
@@ -2232,9 +2232,9 @@
             <div class="card" id="et-card-s5">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
-                  <strong>S5 — Daily Trading Plan 생성</strong>
-                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">
-                    08:45 KST · Scheduler → daily_trading_plans
+                  <strong id="et-title-s5">S5 Daily Plan 생성</strong>
+                  <div id="et-detail-s5" style="font-size:12px; color:var(--muted); margin-top:2px;">
+                    08:40 KST · Scheduler → daily_trading_plans
                   </div>
                 </div>
                 <span class="badge" id="et-badge-s5">대기</span>
@@ -2247,9 +2247,9 @@
             <div class="card" id="et-card-s5v">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
-                  <strong>S5-V — Daily Plan Validation</strong>
-                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">
-                    08:50 KST · Schema/Risk Guard 검증
+                  <strong id="et-title-s5v">S5-V Daily Plan 검증</strong>
+                  <div id="et-detail-s5v" style="font-size:12px; color:var(--muted); margin-top:2px;">
+                    08:45 KST · Schema/Risk Guard 검증
                   </div>
                 </div>
                 <span class="badge" id="et-badge-s5v">대기</span>
@@ -2258,12 +2258,27 @@
               <pre class="et-result" id="et-result-s5v" style="display:none;"></pre>
             </div>
 
+            <!-- S5-A -->
+            <div class="card" id="et-card-s5a">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <div>
+                  <strong id="et-title-s5a">S5-A Daily Plan 활성화 확인</strong>
+                  <div id="et-detail-s5a" style="font-size:12px; color:var(--muted); margin-top:2px;">
+                    08:55 KST · active plan 상태 확인
+                  </div>
+                </div>
+                <span class="badge" id="et-badge-s5a">대기</span>
+              </div>
+              <button class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s5a')">▶ 활성화 확인</button>
+              <pre class="et-result" id="et-result-s5a" style="display:none;"></pre>
+            </div>
+
             <!-- S6 -->
             <div class="card" id="et-card-s6">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
-                  <strong>S6 — Decision Engine 활성화</strong>
-                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">09:00 KST · WS 연결 + Base RulePack + Risk Profile + Daily Plan 조건 감시</div>
+                  <strong id="et-title-s6">S6 Decision Engine 활성화</strong>
+                  <div id="et-detail-s6" style="font-size:12px; color:var(--muted); margin-top:2px;">09:45 KST · WS 연결 + RulePack + Risk Profile + Daily Plan 조건 감시</div>
                 </div>
                 <span class="badge" id="et-badge-s6">대기</span>
               </div>
@@ -2275,8 +2290,8 @@
             <div class="card" id="et-card-s7">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
-                  <strong>S7 — 주문 실행 (수동 테스트)</strong>
-                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">09:00~ KST · 오늘 발행된 주문 내역 조회</div>
+                  <strong id="et-title-s7">S7 주문 실행</strong>
+                  <div id="et-detail-s7" style="font-size:12px; color:var(--muted); margin-top:2px;">실시간 · 오늘 발행된 주문 내역 조회</div>
                 </div>
                 <span class="badge" id="et-badge-s7">대기</span>
               </div>
@@ -2288,8 +2303,8 @@
             <div class="card" id="et-card-s8">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
-                  <strong>S8 — Position Manager 상태</strong>
-                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">장중 · WS tick → 초기손절/트레일링스탑/강제청산 감시</div>
+                  <strong id="et-title-s8">S8 Position Manager</strong>
+                  <div id="et-detail-s8" style="font-size:12px; color:var(--muted); margin-top:2px;">실시간 · WS tick → 손절/트레일링/강제청산 감시</div>
                 </div>
                 <span class="badge" id="et-badge-s8">대기</span>
               </div>
@@ -2301,8 +2316,8 @@
             <div class="card" id="et-card-s9">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
-                  <strong>S9 — 당일 청산</strong>
-                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">15:20 KST · 전량 시장가 청산</div>
+                  <strong id="et-title-s9">S9 당일 청산</strong>
+                  <div id="et-detail-s9" style="font-size:12px; color:var(--muted); margin-top:2px;">15:20 KST · 전량 시장가 청산</div>
                 </div>
                 <span class="badge" id="et-badge-s9">대기</span>
               </div>
@@ -2314,8 +2329,8 @@
             <div class="card" id="et-card-s10">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
-                  <strong>S10 — 일일 요약 + DB 백업</strong>
-                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">18:00 KST · trading_orders 집계 → daily_trade_summary + SQLite 백업</div>
+                  <strong id="et-title-s10">S10 일일 요약 + DB 백업</strong>
+                  <div id="et-detail-s10" style="font-size:12px; color:var(--muted); margin-top:2px;">18:00 KST · trading_orders 집계 → daily_trade_summary + SQLite 백업</div>
                 </div>
                 <span class="badge" id="et-badge-s10">대기</span>
               </div>
@@ -2327,8 +2342,8 @@
             <div class="card" id="et-card-s11">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
-                  <strong>S11 — Learning Memory Builder</strong>
-                  <div style="font-size:12px; color:var(--muted); margin-top:2px;">
+                  <strong id="et-title-s11">S11 Learning Memory Builder</strong>
+                  <div id="et-detail-s11" style="font-size:12px; color:var(--muted); margin-top:2px;">
                     22:00 KST · Review & Audit → Learning Memory
                   </div>
                 </div>
@@ -2583,21 +2598,24 @@
   var isHalted = false;
   var currentUser = null;
   var overviewData = null;
-  var timeline = [
-    { time: "07:45", name: "KIS 토큰 갱신" },
-    { time: "08:00", name: "AI 시장 톤 분석" },
-    { time: "08:15", name: "유니버스 필터" },
-    { time: "08:30", name: "AI 스크리닝" },
-    { time: "08:45", name: "S5 Daily Plan 자동 생성" },
-    { time: "09:00", name: "실시간 매매 시작" },
-    { time: "11:30", name: "중간 리포트" },
-    { time: "15:20", name: "당일매매 청산" },
-    { time: "15:30", name: "장 마감" },
-    { time: "16:00", name: "AI 복기 리포트" },
-    { time: "16:30", name: "일일 리포트 발송" },
-    { time: "18:00", name: "데이터 백업" },
-    { time: "22:00", name: "야간 미국장 관찰" }
+  var OPS_STEPS = [
+    { id: 's1', label: 'S1 토큰 갱신', defaultTime: '07:45', settingKey: 'schedule_s1_time', detail: 'KIS token-refresh' },
+    { id: 's2', label: 'S2 시장톤 분석', defaultTime: '08:00', settingKey: 'schedule_s2_time', detail: 'LLM -> market_tone_results' },
+    { id: 's3', label: 'S3 유니버스 필터', defaultTime: '08:15', settingKey: 'schedule_s3_time', detail: 'KIS -> universe_filter_results' },
+    { id: 's4', label: 'S4 하이브리드 스크리닝', defaultTime: '08:30', settingKey: 'schedule_s4_time', detail: 'LLM 정성 평가 -> hybrid_screening_results' },
+    { id: 's5', label: 'S5 Daily Plan 생성', defaultTime: '08:40', settingKey: 'schedule_s5_time', detail: 'Scheduler -> daily_trading_plans' },
+    { id: 's5v', label: 'S5-V Daily Plan 검증', defaultTime: '08:45', settingKey: 'schedule_s5v_time', detail: 'Schema/Risk Guard 검증' },
+    { id: 's5a', label: 'S5-A Daily Plan 활성화 확인', defaultTime: '08:55', settingKey: 'schedule_s5a_time', detail: 'active plan 상태 확인' },
+    { id: 's6', label: 'S6 Decision Engine 활성화', defaultTime: '09:45', settingKey: 'schedule_s6_time', detail: 'WS 연결 + RulePack + Risk Profile + Daily Plan 조건 감시' },
+    { id: 's7', label: 'S7 주문 실행', defaultTime: '실시간', settingKey: 'schedule_s7_time', detail: '오늘 발행된 주문 내역 조회' },
+    { id: 's8', label: 'S8 Position Manager', defaultTime: '실시간', settingKey: 'schedule_s8_time', detail: 'WS tick -> 손절/트레일링/강제청산 감시' },
+    { id: 's9', label: 'S9 당일 청산', defaultTime: '15:20', settingKey: 'schedule_s9_time', detail: '전량 시장가 청산' },
+    { id: 's10', label: 'S10 일일 요약 + DB 백업', defaultTime: '18:00', settingKey: 'schedule_s10_time', detail: 'trading_orders 집계 -> daily_trade_summary + SQLite 백업' },
+    { id: 's11', label: 'S11 Learning Memory Builder', defaultTime: '22:00', settingKey: 'schedule_s11_time', detail: 'Review & Audit -> Learning Memory' },
   ];
+  var timeline = OPS_STEPS
+    .filter(function(step) { return /^\d{2}:\d{2}$/.test(step.defaultTime); })
+    .map(function(step) { return { time: step.defaultTime, name: step.label }; });
   var sampleLogs = [
     ["07:45", "KIS 토큰 갱신 완료. Access token 유효성 확인."],
     ["08:00", "AI 시장 톤 분석 완료. 코스닥 상대 강세, 리스크 중간."],
@@ -2749,21 +2767,39 @@
     localStorage.setItem("dantabot_theme", "dark");
   }
 
+  function isClockTime(timeText) {
+    return /^\d{2}:\d{2}$/.test(String(timeText || ""));
+  }
+
   function minutesOf(timeText) {
     var parts = timeText.split(":");
     return Number(parts[0]) * 60 + Number(parts[1]);
   }
 
-  function getCurrentPhase() {
+  function stepDisplayTime(step, settingsMap) {
+    return (settingsMap && settingsMap[step.settingKey]) || step.defaultTime;
+  }
+
+  function getScheduledTimeline(settingsMap) {
+    return OPS_STEPS
+      .map(function(step) {
+        return { time: stepDisplayTime(step, settingsMap), name: step.label };
+      })
+      .filter(function(item) { return isClockTime(item.time); })
+      .sort(function(a, b) { return minutesOf(a.time) - minutesOf(b.time); });
+  }
+
+  function getCurrentPhase(settingsMap) {
+    var currentTimeline = getScheduledTimeline(settingsMap);
     var now = new Date();
     var current = now.getHours() * 60 + now.getMinutes();
-    var active = timeline[0];
-    var next = timeline[1];
+    var active = currentTimeline[0] || { time: "-", name: "-" };
+    var next = currentTimeline[1] || active;
 
-    for (var i = 0; i < timeline.length; i++) {
-      if (current >= minutesOf(timeline[i].time)) {
-        active = timeline[i];
-        next = timeline[i + 1] || timeline[0];
+    for (var i = 0; i < currentTimeline.length; i++) {
+      if (current >= minutesOf(currentTimeline[i].time)) {
+        active = currentTimeline[i];
+        next = currentTimeline[i + 1] || currentTimeline[0];
       }
     }
 
@@ -2774,35 +2810,10 @@
     };
   }
 
-  var OPS_STEPS = [
-    { id: 's1', label: 'S1 KIS 토큰',     defaultTime: '07:45', settingKey: 's1' },
-    { id: 's2', label: 'S2 시장톤',        defaultTime: '08:00', settingKey: 's2' },
-    { id: 's3', label: 'S3 유니버스',      defaultTime: '08:15', settingKey: 's3' },
-    { id: 's4', label: 'S4 스크리닝',      defaultTime: '08:30', settingKey: 's4' },
-    { id: 's5', label: 'S5 Daily Plan',   defaultTime: '08:45', settingKey: 's5' },
-    { id: 's6', label: 'S6 엔진',          defaultTime: '실시간', settingKey: null },
-    { id: 's7', label: 'S7 주문',          defaultTime: '실시간', settingKey: null },
-    { id: 's8', label: 'S8 포지션',        defaultTime: '실시간', settingKey: null },
-    { id: 's9', label: 'S9 청산',          defaultTime: '15:20', settingKey: 's9' },
-    { id: 's10', label: 'S10 요약',        defaultTime: '18:00', settingKey: 's10' },
-    { id: 's11', label: 'S11 메모리',      defaultTime: '22:00', settingKey: 's11' },
-  ];
-
   /* Render today's operations as a horizontal timeline with dynamic status logic. */
   async function renderTodayFeed() {
     var feed = todayOpsFeed || document.getElementById("today-ops-feed");
     if (!feed) return;
-
-    var phase = getCurrentPhase();
-    if (phaseText && phase.active) {
-      phaseText.textContent = "현재 단계: " + phase.active.name;
-    }
-    if (nextJobMetric && phase.next) {
-      nextJobMetric.textContent = phase.next.time;
-    }
-    if (nextJobText && phase.next) {
-      nextJobText.textContent = phase.next.name;
-    }
 
     try {
       // 1. Fetch settings for dynamic times
@@ -2812,6 +2823,16 @@
         settingsData.payload.items.forEach(s => {
           settingsMap[s.key] = s.value;
         });
+      }
+      var phase = getCurrentPhase(settingsMap);
+      if (phaseText && phase.active) {
+        phaseText.textContent = "현재 단계: " + phase.active.name;
+      }
+      if (nextJobMetric && phase.next) {
+        nextJobMetric.textContent = phase.next.time;
+      }
+      if (nextJobText && phase.next) {
+        nextJobText.textContent = phase.next.name;
       }
 
       // 2. Fetch statuses in parallel
@@ -2840,6 +2861,8 @@
         s3: isOk(2) ? 'completed' : 'pending',
         s4: isOk(3) ? 'completed' : 'pending',
         s5: isOk(4) ? 'completed' : 'pending',
+        s5v: isOk(4) && ['validated', 'active'].indexOf(statusResults[4].value.payload?.plan?.status) >= 0 ? 'completed' : 'pending',
+        s5a: isOk(4) && statusResults[4].value.payload?.plan?.status === 'active' ? 'completed' : 'pending',
         s6: isOk(5) && statusResults[5].value.payload.active ? 'running' : 'pending',
         s7: isOk(6) && statusResults[6].value.payload.orders && statusResults[6].value.payload.orders.length > 0 ? 'completed' : 'pending',
         s8: isOk(7) && statusResults[7].value.payload.positions && statusResults[7].value.payload.positions.length > 0 ? 'completed' : 'pending',
@@ -2853,8 +2876,8 @@
         var nowMin = phase.currentMinutes;
         OPS_STEPS.forEach(step => {
           if (stepStates[step.id] === 'pending') {
-            var sTime = settingsMap['schedule_' + step.id + '_time'] || step.defaultTime;
-            if (sTime !== '실시간' && nowMin >= minutesOf(sTime) && nowMin < minutesOf(sTime) + 15) {
+            var sTime = stepDisplayTime(step, settingsMap);
+            if (isClockTime(sTime) && nowMin >= minutesOf(sTime) && nowMin < minutesOf(sTime) + 15) {
               stepStates[step.id] = 'running';
             }
           }
@@ -2863,7 +2886,7 @@
 
       var html = '';
       OPS_STEPS.forEach((step, index) => {
-        var sTime = settingsMap['schedule_' + step.id + '_time'] || step.defaultTime;
+        var sTime = stepDisplayTime(step, settingsMap);
         var state = stepStates[step.id];
         
         var bgColor = 'var(--panel-2)';
@@ -2883,7 +2906,7 @@
         html += '<div style="flex:0 0 90px; text-align:center;">'
           + '<div style="font-size:10px; color:var(--muted); margin-bottom:4px;">' + sTime + '</div>'
           + '<div style="padding:6px 4px; border-radius:6px; font-size:11px; font-weight:600; background:' + bgColor + '; border: 1px solid ' + borderColor + ';">'
-          + step.id.toUpperCase() + '<br>' + step.label.split(' ').slice(1).join(' ')
+          + step.label
           + '</div>'
           + '<div style="font-size:10px; margin-top:4px; color:var(--muted)">' + statusText + '</div>'
           + '</div>';
@@ -3510,17 +3533,45 @@
   }
 
   /* KIS System Test Handlers */
+  async function loadSettingsMap() {
+    try {
+      var res = await fetchJson("/api/v1/settings");
+      var settings = res.payload.items || [];
+      var settingsMap = {};
+      settings.forEach(function(s) { settingsMap[s.key] = s.value; });
+      return settingsMap;
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function applyOperationMetadata(settingsMap) {
+    OPS_STEPS.forEach(function(step) {
+      var titleEl = document.getElementById("et-title-" + step.id);
+      var detailEl = document.getElementById("et-detail-" + step.id);
+      var displayTime = stepDisplayTime(step, settingsMap || {});
+      var timeText = isClockTime(displayTime) ? displayTime + " KST" : displayTime;
+      if (titleEl) titleEl.textContent = step.label;
+      if (detailEl) detailEl.textContent = timeText + " · " + step.detail;
+    });
+  }
+
   async function engineTestLoadTodayResults() {
+    applyOperationMetadata(await loadSettingsMap());
     var steps = [
       { id: 's1', call: () => fetchJson('/api/v1/scheduler/status').then(r => r.payload?.last_run ? r : {ok:false}) },
       { id: 's2', call: () => fetchJson('/api/v1/market-tone/today') },
       { id: 's3', call: () => fetchJson('/api/v1/universe-filter/today') },
       { id: 's4', call: () => fetchJson('/api/v1/screening/today') },
       { id: 's5', call: () => fetchJson('/api/v1/daily-plan/today') },
+      { id: 's5v', call: () => fetchJson('/api/v1/daily-plan/today').then(r => ['validated', 'active'].indexOf(r.payload?.plan?.status) >= 0 ? r : {ok:false}) },
+      { id: 's5a', call: () => fetchJson('/api/v1/daily-plan/today').then(r => r.payload?.plan?.status === 'active' ? r : {ok:false}) },
       { id: 's6', call: () => fetchJson('/api/v1/decision/status').then(r => r.payload?.active ? r : {ok:false}) },
       { id: 's7', call: () => fetchJson('/api/v1/orders/today').then(r => (r.payload?.orders?.length > 0) ? r : {ok:false}) },
       { id: 's8', call: () => fetchJson('/api/v1/orders/positions').then(r => (r.payload?.positions?.length > 0) ? r : {ok:false}) },
+      { id: 's9', call: () => fetchJson('/api/v1/orders/today').then(r => ({ ok: false, payload: r.payload })) },
       { id: 's10', call: () => fetchJson('/api/v1/trades/summary/today').catch(() => ({ok:false})) },
+      { id: 's11', call: () => fetchJson('/api/v1/review/memories').then(r => (r.payload?.length > 0) ? r : {ok:false}).catch(() => ({ok:false})) },
     ];
 
     for (var step of steps) {
@@ -3574,6 +3625,7 @@
         s4: "/api/v1/screening/run",
         s5: "/api/v1/daily-plan/generate",
         s5v: "/api/v1/daily-plan/validate",
+        s5a: "/api/v1/daily-plan/activate",
         s6: "/api/v1/decision/activate",
         s7: "/api/v1/orders/today",
         s8: "/api/v1/orders/positions",
@@ -3648,7 +3700,8 @@
   }
 
   function engineTestClearAll() {
-    ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10"].forEach(step => {
+    OPS_STEPS.forEach(function(opStep) {
+      var step = opStep.id;
       var badge = document.getElementById("et-badge-" + step);
       var resultEl = document.getElementById("et-result-" + step);
       if (badge) {
@@ -3663,20 +3716,9 @@
   }
 
   /* Settings Handlers */
-  var schedulerKeys = [
-    { key: "schedule_s1_time", label: "S1 토큰 갱신", default: "07:45" },
-    { key: "schedule_s2_time", label: "S2 시장 분석", default: "08:00" },
-    { key: "schedule_s3_time", label: "S3 유니버스", default: "08:15" },
-    { key: "schedule_s4_time", label: "S4 스크리닝", default: "08:30" },
-    { key: "schedule_s5_time",  label: "S5 Daily Plan 자동 생성", default: "08:45" },
-    { key: "schedule_s5v_time", label: "S5-V Daily Plan 자동 검증", default: "08:50" },
-    { key: "schedule_s5a_time", label: "S5-A Daily Plan 활성화 확인", default: "08:55" },
-    { key: "schedule_s10_time", label: "S10 Review & Audit", default: "16:00" },
-    { key: "schedule_s11_time", label: "S11 Learning Memory Builder", default: "16:30" },
-    { key: "schedule_close_time", label: "당일 청산", default: "15:20" },
-    { key: "schedule_backup_time", label: "데이터 백업", default: "18:00" },
-    { key: "schedule_usmarket_time", label: "야간 미국장", default: "22:00" }
-  ];
+  var schedulerKeys = OPS_STEPS.map(function(step) {
+    return { key: step.settingKey, label: step.label, default: step.defaultTime };
+  });
 
   var exitOverrideKeys = [
     { key: "override_stop_loss_rate", label: "손절률 (stop_loss)", placeholder: "-0.015", example: "예: -0.015 = -1.5%" },
@@ -3718,8 +3760,8 @@
     var input = document.getElementById("input-" + key);
     if (!input) return;
     var val = input.value;
-    if (!/^\d{2}:\d{2}$/.test(val)) {
-      alert("시간 형식이 올바르지 않습니다 (HH:MM)");
+    if (!isClockTime(val) && val !== "실시간") {
+      alert("시간 형식이 올바르지 않습니다 (HH:MM 또는 실시간)");
       return;
     }
     try {
