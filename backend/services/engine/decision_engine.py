@@ -78,6 +78,45 @@ def _candidate_confidence(candidate: dict[str, Any]) -> float:
         return 0.0
 
 
+def _to_float_or_none(value: Any) -> float | None:
+    """숫자 변환 가능한 값만 float로 반환한다.
+
+    Args:
+        value: Candidate, tick, or rule value to parse.
+    """
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _first_float(*values: Any) -> float | None:
+    """여러 후보 값 중 실제 숫자로 확인 가능한 첫 값을 반환한다.
+
+    Args:
+        values: Values ordered by runtime trust priority.
+    """
+    for value in values:
+        parsed = _to_float_or_none(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _rules_allow_signal(matched: dict[str, Any]) -> bool:
+    """현재 S6 매수 신호 발행에 필요한 게이트 조건 통과 여부를 반환한다.
+
+    Args:
+        matched: Rule evaluation payload from `_evaluate_rules`.
+    """
+    return all(
+        bool(matched.get(key))
+        for key in ("volume_ratio", "ai_confidence", "price_change")
+    )
+
+
 def _get_setting_float(key: str, default: float) -> float:
     """system_settings에서 숫자 값을 읽는다. 실패 시 default 반환.
 
@@ -287,7 +326,7 @@ class DecisionEngine:
         final_rule = get_rule(symbol) or {}
         matched = self._evaluate_rules(candidate=candidate, final_rule=final_rule, tick=tick)
 
-        if all(matched.values()):
+        if _rules_allow_signal(matched):
             await self._emit_signal(symbol, candidate, price, matched)
 
     def _evaluate_rules(
@@ -296,8 +335,8 @@ class DecisionEngine:
         candidate: dict[str, Any],
         final_rule: dict[str, Any],
         tick: dict[str, Any],
-    ) -> dict[str, bool]:
-        """Evaluate currently supported S6 entry rules.
+    ) -> dict[str, Any]:
+        """Evaluate currently supported S6 entry rules and record unavailable Layer3 checks.
 
         Args:
             candidate: S4 candidate metadata for the symbol.
@@ -324,19 +363,77 @@ class DecisionEngine:
         price_min_pct = max(price_min_pct, price_floor)
         price_max_pct = min(price_max_pct, price_ceil)
 
-        try:
-            change_rate = float(tick.get("change_rate") or tick.get("prdy_ctrt") or 0.0)
-        except (TypeError, ValueError):
-            change_rate = 0.0
-        price_ok = price_min_pct <= change_rate <= price_max_pct if price_min_pct > 0 else True
+        change_rate = _first_float(
+            tick.get("change_rate"),
+            tick.get("prdy_ctrt"),
+            candidate.get("change_rate"),
+            candidate.get("chg_rate"),
+        )
+        price_ok = (
+            price_min_pct <= change_rate <= price_max_pct
+            if change_rate is not None
+            else price_min_pct <= 0
+        )
 
-        # 현재 WS tick에는 5일 평균 거래량 기준값이 없으므로 수신 여부만 기본 충족으로 둔다.
-        volume_value = tick.get("volume")
-        volume_seen = volume_value not in (None, "")
+        parsed_volume_ratio_min = _first_float(final_rule.get("volume_ratio_min"))
+        volume_ratio_min = parsed_volume_ratio_min if parsed_volume_ratio_min is not None else 1.0
+        volume_ratio = _first_float(
+            candidate.get("volume_ratio"),
+            candidate.get("vol_ratio"),
+            candidate.get("volume_ratio_20d"),
+            tick.get("volume_ratio"),
+        )
+        volume_ok = volume_ratio >= volume_ratio_min if volume_ratio is not None else volume_ratio_min <= 1.0
+
+        unavailable_conditions: dict[str, Any] = {}
+        if change_rate is None and price_min_pct > 0:
+            unavailable_conditions["price_change"] = {
+                "reason": "change_rate_missing",
+                "required": {"min_pct": price_min_pct, "max_pct": price_max_pct},
+            }
+        if volume_ratio is None and volume_ratio_min > 1.0:
+            unavailable_conditions["volume_ratio"] = {
+                "reason": "volume_ratio_missing",
+                "required": {"min": volume_ratio_min},
+            }
+
+        # 현재 tick/candidate에는 아래 Layer3 지표가 없으므로 임의 계산하지 않고 상태만 남긴다.
+        layer3_unavailable = {
+            "vwap_position": "vwap_missing",
+            "ma5_above_ma20": "moving_average_missing",
+            "rsi_range": "rsi_missing",
+            "spread_max_pct": "spread_missing",
+        }
+        for key, reason in layer3_unavailable.items():
+            if key in final_rule:
+                value = final_rule.get(key)
+                if value not in (None, "", "any"):
+                    unavailable_conditions[key] = {
+                        "reason": reason,
+                        "required": value,
+                    }
+
+        if unavailable_conditions:
+            logger.warning(
+                "WARN: [S6] 일부 Layer3 조건 평가 불가 symbol=%s unavailable=%s",
+                str(candidate.get("symbol") or candidate.get("ticker") or ""),
+                sorted(unavailable_conditions.keys()),
+            )
+
         return {
-            "volume_ratio": bool(volume_seen or final_rule.get("volume_ratio_min", 1.0) <= 1.0),
+            "volume_ratio": volume_ok,
             "ai_confidence": ai_conf >= ai_conf_min,
             "price_change": price_ok,
+            "observed_values": {
+                "ai_confidence": ai_conf,
+                "ai_confidence_min": ai_conf_min,
+                "change_rate": change_rate,
+                "price_change_min_pct": price_min_pct,
+                "price_change_max_pct": price_max_pct,
+                "volume_ratio": volume_ratio,
+                "volume_ratio_min": volume_ratio_min,
+            },
+            "unavailable_conditions": unavailable_conditions,
         }
 
     async def _emit_signal(
@@ -344,7 +441,7 @@ class DecisionEngine:
         symbol: str,
         candidate: dict[str, Any],
         price: float,
-        matched: dict[str, bool],
+        matched: dict[str, Any],
     ) -> None:
         """BUY 신호를 DB에 저장하고 중복 발행을 방지한다.
 

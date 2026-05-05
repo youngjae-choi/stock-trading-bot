@@ -101,10 +101,14 @@ def get_symbol_overrides() -> dict[str, dict[str, Any]]:
 
 
 def _get_active_rulepack_entry_rules(trade_date: str) -> dict[str, Any]:
-    """활성 RulePack의 machine_rules.entry_rules 반환. 없으면 빈 dict.
+    """활성 RulePack의 진입 조건을 하위 호환 방식으로 병합해 반환한다.
 
     Args:
         trade_date: YYYY-MM-DD trade date used to select the active RulePack.
+
+    Returns:
+        `machine_rules.layer3_entry`와 legacy `machine_rules.entry_rules`를 병합한 dict.
+        같은 키가 있으면 기존 S4 생성 경로 호환을 위해 `entry_rules` 값을 우선한다.
     """
     try:
         with get_connection() as conn:
@@ -117,9 +121,31 @@ def _get_active_rulepack_entry_rules(trade_date: str) -> dict[str, Any]:
         if not row or not row["machine_rules"]:
             return {}
         machine_rules = json.loads(row["machine_rules"])
-        return machine_rules.get("entry_rules", {}) or {}
+        if not isinstance(machine_rules, dict):
+            logger.warning("WARN: [RuleResolver] machine_rules 형식 오류 — dict 아님")
+            return {}
+
+        layer3_entry = machine_rules.get("layer3_entry", {}) or {}
+        entry_rules = machine_rules.get("entry_rules", {}) or {}
+        if not isinstance(layer3_entry, dict):
+            logger.warning("WARN: [RuleResolver] layer3_entry 형식 오류 — dict 아님")
+            layer3_entry = {}
+        if not isinstance(entry_rules, dict):
+            logger.warning("WARN: [RuleResolver] entry_rules 형식 오류 — dict 아님")
+            entry_rules = {}
+
+        merged = dict(layer3_entry)
+        merged.update(entry_rules)
+        if merged:
+            logger.info(
+                "SUCCESS: [RuleResolver] active RulePack entry merged trade_date=%s layer3_keys=%d entry_keys=%d",
+                trade_date,
+                len(layer3_entry),
+                len(entry_rules),
+            )
+        return merged
     except Exception as exc:
-        logger.warning("WARN: [RuleResolver] rulepack entry_rules 조회 실패 — %s", exc)
+        logger.warning("WARN: [RuleResolver] rulepack 진입 조건 조회 실패 — %s", exc)
         return {}
 
 
