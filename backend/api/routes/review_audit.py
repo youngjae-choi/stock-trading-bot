@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 
 from ...services.engine.review_audit import get_review_report, run_review_audit
 
@@ -36,9 +36,19 @@ def _read_audit_md(date: str) -> str | None:
 
 
 @router.post("/run")
-async def run() -> dict:
-    """Run S10 Review & Audit manually for today's KST trade date."""
-    trade_date = _today_kst()
+async def run(payload: dict | None = Body(default=None)) -> dict:
+    """Run S10 Review & Audit manually for a requested date or today's KST date.
+
+    Args:
+        payload: Optional JSON body with ``date`` or ``trade_date`` in YYYY-MM-DD format.
+    """
+    requested_date = (payload or {}).get("date") or (payload or {}).get("trade_date")
+    trade_date = str(requested_date or _today_kst())
+    try:
+        datetime.strptime(trade_date, "%Y-%m-%d")
+    except ValueError as exc:
+        logger.warning("WARN: POST /api/v1/review-audit/run invalid date=%s", trade_date)
+        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD") from exc
     logger.info("START: POST /api/v1/review-audit/run trade_date=%s", trade_date)
     try:
         result = await run_review_audit(trade_date)

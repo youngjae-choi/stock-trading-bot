@@ -382,6 +382,8 @@ class DecisionEngine:
             candidate.get("vol_ratio"),
             candidate.get("volume_ratio_20d"),
             tick.get("volume_ratio"),
+            tick.get("prev_volume_ratio"),
+            tick.get("prdy_vol_vrss_acml_vol_rate"),
         )
         volume_ok = volume_ratio >= volume_ratio_min if volume_ratio is not None else volume_ratio_min <= 1.0
 

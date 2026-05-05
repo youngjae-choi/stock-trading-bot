@@ -248,6 +248,30 @@ def _schema_statements() -> list[str]:
         )
         """,
         """
+        CREATE TABLE IF NOT EXISTS user_mfa_methods (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            method_type TEXT NOT NULL,
+            label TEXT NOT NULL DEFAULT '',
+            secret_json TEXT NOT NULL DEFAULT '{}',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS mfa_challenges (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            purpose TEXT NOT NULL,
+            method_type TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            consumed_at TEXT
+        )
+        """,
+        """
         CREATE TABLE IF NOT EXISTS system_settings (
             key TEXT PRIMARY KEY,
             value_json TEXT NOT NULL,
@@ -393,6 +417,8 @@ def _schema_statements() -> list[str]:
         """,
         "CREATE INDEX IF NOT EXISTS idx_rulepacks_trade_date ON rulepacks(trade_date)",
         "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_user_mfa_methods_user_id ON user_mfa_methods(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_mfa_challenges_user_id ON mfa_challenges(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_orders_symbol_requested_at ON orders(symbol, requested_at)",
         "CREATE INDEX IF NOT EXISTS idx_fills_symbol_filled_at ON fills(symbol, filled_at)",
         "CREATE INDEX IF NOT EXISTS idx_positions_symbol_captured_at ON positions(symbol, captured_at)",

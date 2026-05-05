@@ -202,6 +202,7 @@ def resolve_symbol_rule(
         float(final.get("max_position_rate", guard_max_pos_rate)),
         guard_max_pos_rate,
     )
+    final["max_positions"] = int(global_risk.get("max_positions", final.get("max_positions", 5)) or 5)
     final["force_exit_time"] = global_risk.get("force_exit_time", "15:20:00")
     final["new_entry_cutoff_time"] = global_risk.get("new_entry_cutoff_time", "15:10:00")
     final["take_profit_enabled"] = False               # 항상 OFF

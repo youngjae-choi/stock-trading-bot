@@ -251,11 +251,17 @@
     }
 
     .menu-label {
-      color: var(--muted);
+      color: var(--text);
       font-size: 11px;
+      font-weight: 800;
+      font-style: italic;
       text-transform: uppercase;
       letter-spacing: 0.08em;
-      margin: 10px 10px 8px;
+      margin: 12px 8px 8px;
+      padding: 6px 8px 6px 10px;
+      border-left: 3px solid var(--accent);
+      border-radius: 4px;
+      background: var(--panel-2);
     }
 
     .nav {
@@ -815,7 +821,23 @@
         <label for="loginPassword">비밀번호</label>
         <input id="loginPassword" type="password" autocomplete="current-password">
       </div>
-      <button class="btn primary" type="submit">로그인</button>
+      <div id="mfaPanel" style="display:none; border-top:1px solid var(--line); margin-top:14px; padding-top:14px;">
+        <div class="field" id="mfaMethodField" style="display:none;">
+          <label for="mfaMethodSelect">2차 인증 수단</label>
+          <select id="mfaMethodSelect">
+            <option value="totp">인증 앱</option>
+            <option value="backup_codes">백업 코드</option>
+          </select>
+        </div>
+        <button class="btn" type="button" id="mfaStartBtn" style="display:none; width:100%; margin-bottom:10px;">선택한 수단 등록</button>
+        <div id="mfaSetupBox" class="muted" style="display:none; font-size:12px; line-height:1.5; margin-bottom:10px;"></div>
+        <div class="field" id="mfaCodeField" style="display:none;">
+          <label for="mfaCode">2차 인증 코드</label>
+          <input id="mfaCode" autocomplete="one-time-code" inputmode="numeric" placeholder="인증 코드 입력">
+        </div>
+        <button class="btn primary" type="button" id="mfaVerifyBtn" style="display:none; width:100%;">인증 완료</button>
+      </div>
+      <button class="btn primary" type="submit" id="loginSubmitBtn">로그인</button>
       <div class="login-status" id="loginStatus">서버 인증 상태를 확인하는 중입니다.</div>
     </form>
   </section>
@@ -1591,11 +1613,11 @@
               <table>
                 <thead>
                   <tr>
-                    <th>시간</th><th>종목코드</th><th>종목명</th><th>진입가</th><th>신뢰도</th><th>상태</th>
+                    <th>시간</th><th>종목코드</th><th>종목명</th><th>진입가</th><th>신뢰도</th><th>상태</th><th>조건 추적</th>
                   </tr>
                 </thead>
                 <tbody id="live-signals-tbody">
-                  <tr><td colspan="6" class="muted" style="text-align:center;">로딩중...</td></tr>
+                  <tr><td colspan="7" class="muted" style="text-align:center;">로딩중...</td></tr>
                 </tbody>
               </table>
             </div>
@@ -2267,7 +2289,29 @@
           </div>
 
           <div class="card">
-            <div class="card-title">리스크 & 청산 설정 <span>system_settings</span></div>
+            <div class="card-title">매수 조건 가드레일 <span style="font-size:11px; color:var(--muted)">AI가 매일 설정 / 이 값이 절대 하한선/상한선</span></div>
+            <table style="width:100%; border-collapse:collapse; font-size:13px;">
+              <thead>
+                <tr style="border-bottom:1px solid var(--border);">
+                  <th style="text-align:left; padding:6px 0;">항목</th>
+                  <th style="text-align:left; padding:6px 0;">현재 AI 설정</th>
+                  <th style="text-align:left; padding:6px 0;">가드레일 (수동)</th>
+                  <th style="text-align:left; padding:6px 0;">설명</th>
+                </tr>
+              </thead>
+              <tbody id="buy-condition-tbody">
+                <tr><td colspan="4" class="muted" style="text-align:center;">로딩중...</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="section-gap"></div>
+
+          <div class="card">
+            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+              <span>리스크 & 청산 설정 <span>system_settings</span></span>
+              <button class="btn primary" onclick="saveRiskSettings()">저장</button>
+            </div>
             <p class="muted" style="margin-bottom:12px; font-size:12px;">이 설정값을 기준으로 Risk Profile Pack의 위험 한도가 자동 적용됩니다.</p>
 
             <!-- 포트폴리오 위험 한도 -->
@@ -2275,7 +2319,7 @@
             <div class="form-grid" id="riskSettingsForm">
               <div class="field">
                 <label>일일 손실 한도</label>
-                <input id="risk-daily-loss" value="-2.0%" readonly>
+                <input id="risk-daily-loss" type="number" step="0.1" value="-2.0">
                 <small class="muted">당일 계좌 전체 손익이 이 이하로 떨어지면 신규 매수를 중단</small>
               </div>
               <div class="field">
@@ -2288,11 +2332,11 @@
               </div>
               <div class="field">
                 <label>최대 보유 종목</label>
-                <input id="risk-max-positions" value="5" readonly>
+                <input id="risk-max-positions" type="number" step="1" min="1" value="5">
               </div>
               <div class="field">
-                <label>종목당 최대 비중</label>
-                <input id="risk-position-size" value="10%" readonly>
+                <label>종목당 최대 비중 (%)</label>
+                <input id="risk-position-size" type="number" step="0.1" min="0" value="10">
               </div>
               <div class="field">
                 <label>기본 운용 모드</label>
@@ -2406,25 +2450,6 @@
 
           <div class="section-gap"></div>
 
-          <div class="card">
-            <div class="card-title">매수 조건 가드레일 <span style="font-size:11px; color:var(--muted)">AI가 매일 설정 / 이 값이 절대 하한선/상한선</span></div>
-            <table style="width:100%; border-collapse:collapse; font-size:13px;">
-              <thead>
-                <tr style="border-bottom:1px solid var(--border);">
-                  <th style="text-align:left; padding:6px 0;">항목</th>
-                  <th style="text-align:left; padding:6px 0;">현재 AI 설정</th>
-                  <th style="text-align:left; padding:6px 0;">가드레일 (수동)</th>
-                  <th style="text-align:left; padding:6px 0;">설명</th>
-                </tr>
-              </thead>
-              <tbody id="buy-condition-tbody">
-                <tr><td colspan="4" class="muted" style="text-align:center;">로딩중...</td></tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div class="section-gap"></div>
-
         </section>
 
         <div class="footerbar">
@@ -2445,6 +2470,15 @@
   var loginUsername = document.getElementById("loginUsername");
   var loginPassword = document.getElementById("loginPassword");
   var loginStatus = document.getElementById("loginStatus");
+  var loginSubmitBtn = document.getElementById("loginSubmitBtn");
+  var mfaPanel = document.getElementById("mfaPanel");
+  var mfaMethodField = document.getElementById("mfaMethodField");
+  var mfaMethodSelect = document.getElementById("mfaMethodSelect");
+  var mfaStartBtn = document.getElementById("mfaStartBtn");
+  var mfaSetupBox = document.getElementById("mfaSetupBox");
+  var mfaCodeField = document.getElementById("mfaCodeField");
+  var mfaCode = document.getElementById("mfaCode");
+  var mfaVerifyBtn = document.getElementById("mfaVerifyBtn");
   var themeBtn = document.getElementById("themeBtn");
   var logoutBtn = document.getElementById("logoutBtn");
   var haltBtn = document.getElementById("haltBtn");
@@ -2484,6 +2518,7 @@
 
   var isHalted = false;
   var currentUser = null;
+  var mfaState = null;
   var overviewData = null;
   var OPS_STEPS = [
     { id: 's1', label: 'S1 토큰 갱신', defaultTime: '07:45', settingKey: 'schedule_s1_time', detail: 'KIS token-refresh' },
@@ -3202,22 +3237,162 @@
     return payload;
   }
 
-  function showLogin(message) {
+  function showLogin(message, options) {
+    var opts = options || {};
     document.body.classList.add("auth-required");
     currentUser = null;
+    resetMfaPanel();
     if (loginStatus) {
       loginStatus.textContent = message || "로그인이 필요합니다.";
       loginStatus.classList.toggle("error", Boolean(message));
     }
-    if (loginPassword) {
+    if (loginPassword && opts.clearPassword) {
       loginPassword.value = "";
+    }
+    if (loginPassword && opts.focusPassword) {
       loginPassword.focus();
     }
+  }
+
+  function resetMfaPanel() {
+    mfaState = null;
+    if (mfaPanel) mfaPanel.style.display = "none";
+    if (mfaMethodField) mfaMethodField.style.display = "none";
+    if (mfaStartBtn) mfaStartBtn.style.display = "none";
+    if (mfaSetupBox) {
+      mfaSetupBox.style.display = "none";
+      mfaSetupBox.innerHTML = "";
+    }
+    if (mfaCodeField) mfaCodeField.style.display = "none";
+    if (mfaVerifyBtn) mfaVerifyBtn.style.display = "none";
+    if (mfaCode) mfaCode.value = "";
+    if (loginSubmitBtn) {
+      loginSubmitBtn.style.display = "";
+      loginSubmitBtn.textContent = "로그인";
+      loginSubmitBtn.disabled = false;
+    }
+  }
+
+  function showMfaEnrollment(payload) {
+    mfaState = { mode: "enroll", challengeId: payload.challenge_id };
+    if (loginSubmitBtn) loginSubmitBtn.style.display = "none";
+    if (mfaPanel) mfaPanel.style.display = "";
+    if (mfaMethodField) mfaMethodField.style.display = "";
+    if (mfaStartBtn) {
+      mfaStartBtn.style.display = "";
+      mfaStartBtn.textContent = "선택한 수단 등록";
+      mfaStartBtn.disabled = false;
+    }
+    if (mfaSetupBox) {
+      mfaSetupBox.style.display = "";
+      mfaSetupBox.textContent = "원하는 2차 인증 수단을 선택해 등록하세요.";
+    }
+    if (mfaCodeField) mfaCodeField.style.display = "none";
+    if (mfaVerifyBtn) mfaVerifyBtn.style.display = "none";
+    if (loginStatus) {
+      loginStatus.textContent = "비밀번호 확인 완료. 2차 인증 수단을 등록하세요.";
+      loginStatus.classList.remove("error");
+    }
+  }
+
+  function showMfaLogin(payload) {
+    mfaState = { mode: "login", challengeId: payload.challenge_id };
+    if (loginSubmitBtn) loginSubmitBtn.style.display = "none";
+    if (mfaPanel) mfaPanel.style.display = "";
+    if (mfaMethodField) mfaMethodField.style.display = "none";
+    if (mfaStartBtn) mfaStartBtn.style.display = "none";
+    if (mfaSetupBox) {
+      var labels = (payload.methods || []).map(function(m) { return m.label || m.method_type; }).join(", ");
+      mfaSetupBox.style.display = "";
+      mfaSetupBox.textContent = "등록된 2차 인증 수단: " + (labels || "인증 코드");
+    }
+    if (mfaCodeField) mfaCodeField.style.display = "";
+    if (mfaVerifyBtn) {
+      mfaVerifyBtn.style.display = "";
+      mfaVerifyBtn.textContent = "2차 인증 확인";
+    }
+    if (loginStatus) {
+      loginStatus.textContent = "2차 인증 코드를 입력하세요.";
+      loginStatus.classList.remove("error");
+    }
+    if (mfaCode) mfaCode.focus();
+  }
+
+  async function startMfaEnrollment() {
+    if (!mfaState || mfaState.mode !== "enroll") return;
+    var method = mfaMethodSelect ? mfaMethodSelect.value : "totp";
+    if (mfaStartBtn) {
+      mfaStartBtn.disabled = true;
+      mfaStartBtn.textContent = "등록 준비 중...";
+    }
+    var data = await fetchJson("/api/v1/auth/mfa/enroll/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ challenge_id: mfaState.challengeId, method_type: method })
+    });
+    mfaState = { mode: "enroll_verify", method: method, challengeId: data.payload.challenge_id };
+    if (mfaStartBtn) mfaStartBtn.style.display = "none";
+    if (mfaCodeField) mfaCodeField.style.display = "";
+    if (mfaVerifyBtn) {
+      mfaVerifyBtn.style.display = "";
+      mfaVerifyBtn.textContent = "등록 완료";
+    }
+    if (method === "totp") {
+      if (mfaSetupBox) {
+        mfaSetupBox.style.display = "";
+        var qrSrc = data.payload.qr_svg_data_uri || "";
+        mfaSetupBox.innerHTML = ""
+          + "<div style=\"display:flex; gap:12px; align-items:flex-start; flex-wrap:wrap;\">"
+          + (qrSrc ? "<img alt=\"2차 인증 QR 코드\" src=\"" + escapeHtml(qrSrc) + "\" style=\"width:160px; height:160px; padding:10px; border:1px solid var(--line); border-radius:6px; background:#fff;\">" : "")
+          + "<div style=\"min-width:180px; flex:1;\">"
+          + "<div>인증 앱에서 QR 코드를 스캔한 뒤 6자리 코드를 입력하세요.</div>"
+          + "<div style=\"margin-top:8px; font-weight:700; word-break:break-all; color:var(--text);\">"
+          + escapeHtml(data.payload.secret)
+          + "</div>"
+          + "<div style=\"margin-top:6px; font-size:11px; word-break:break-all;\">QR 스캔이 안 되면 위 키를 직접 입력하세요.</div>"
+          + "</div></div>";
+      }
+      if (mfaCode) {
+        mfaCode.placeholder = "6자리 인증 앱 코드";
+        mfaCode.value = "";
+        mfaCode.focus();
+      }
+    } else {
+      if (mfaSetupBox) {
+        mfaSetupBox.style.display = "";
+        mfaSetupBox.innerHTML = "아래 백업 코드를 안전한 곳에 보관하세요. 등록 확인을 위해 코드 하나를 입력하세요.<br><pre style=\"white-space:pre-wrap; margin:8px 0 0;\">"
+          + escapeHtml((data.payload.codes || []).join("\n"))
+          + "</pre>";
+      }
+      if (mfaCode) {
+        mfaCode.placeholder = "백업 코드 하나 입력";
+        mfaCode.value = "";
+        mfaCode.focus();
+      }
+    }
+  }
+
+  async function verifyMfaCode() {
+    if (!mfaState) return;
+    var endpoint = mfaState.mode === "login" ? "/api/v1/auth/mfa/verify" : "/api/v1/auth/mfa/enroll/verify";
+    var data = await fetchJson(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ challenge_id: mfaState.challengeId, code: mfaCode ? mfaCode.value : "" })
+    });
+    if (loginStatus) {
+      loginStatus.textContent = mfaState.mode === "login" ? "2차 인증 완료. 콘솔을 여는 중입니다." : "2차 인증 수단 등록 완료. 콘솔을 여는 중입니다.";
+      loginStatus.classList.remove("error");
+    }
+    resetMfaPanel();
+    showConsole(data.payload.user);
+    await loadConsoleData();
   }
 
   function showConsole(user) {
     currentUser = user || null;
     document.body.classList.remove("auth-required");
+    resetMfaPanel();
     if (loginStatus) {
       loginStatus.textContent = "";
       loginStatus.classList.remove("error");
@@ -3252,13 +3427,21 @@
       throw new Error("아이디 또는 비밀번호를 확인하세요.");
     }
     var result = await response.json();
+    if (result.payload && result.payload.status === "mfa_enrollment_required") {
+      showMfaEnrollment(result.payload);
+      return;
+    }
+    if (result.payload && result.payload.status === "mfa_required") {
+      showMfaLogin(result.payload);
+      return;
+    }
     showConsole(result.payload.user);
     await loadConsoleData();
   }
 
   async function logout() {
     await fetch(API_BASE + "/api/v1/auth/logout", { method: "POST" });
-    showLogin("로그아웃되었습니다.");
+    showLogin("로그아웃되었습니다.", { clearPassword: true, focusPassword: true });
   }
 
 	  async function loadConsoleData() {
@@ -3343,9 +3526,56 @@
       loginForm.addEventListener("submit", async function (event) {
         event.preventDefault();
         try {
-          await submitLogin();
+          if (mfaState && (mfaState.mode === "login" || mfaState.mode === "enroll_verify")) {
+            await verifyMfaCode();
+          } else if (mfaState && mfaState.mode === "enroll") {
+            await startMfaEnrollment();
+          } else {
+            await submitLogin();
+          }
         } catch (error) {
-          showLogin(error.message);
+          if (mfaState) {
+            if (mfaStartBtn && mfaState.mode === "enroll") {
+              mfaStartBtn.disabled = false;
+              mfaStartBtn.textContent = "선택한 수단 등록";
+            }
+            if (loginStatus) {
+              loginStatus.textContent = "2차 인증 처리 실패: " + error.message;
+              loginStatus.classList.add("error");
+            }
+          } else {
+            showLogin(error.message);
+          }
+        }
+      });
+    }
+
+    if (mfaStartBtn) {
+      mfaStartBtn.addEventListener("click", async function () {
+        try {
+          await startMfaEnrollment();
+        } catch (error) {
+          if (mfaStartBtn) {
+            mfaStartBtn.disabled = false;
+            mfaStartBtn.textContent = "선택한 수단 등록";
+          }
+          if (loginStatus) {
+            loginStatus.textContent = "2차 인증 등록 시작 실패: " + error.message;
+            loginStatus.classList.add("error");
+          }
+        }
+      });
+    }
+
+    if (mfaVerifyBtn) {
+      mfaVerifyBtn.addEventListener("click", async function () {
+        try {
+          await verifyMfaCode();
+        } catch (error) {
+          if (loginStatus) {
+            loginStatus.textContent = "2차 인증 실패: 코드를 확인하세요.";
+            loginStatus.classList.add("error");
+          }
         }
       });
     }
@@ -3612,6 +3842,84 @@
     { key: "override_trailing_activate_rate", label: "트레일링 활성기준", placeholder: "0.02", example: "예: 0.02 = +2% 도달 시 활성화" },
     { key: "override_trailing_stop_rate", label: "트레일링 손절률", placeholder: "0.01", example: "예: 0.01 = 고점 -1% 시 청산" }
   ];
+
+  /* Load editable global risk settings into the Settings form. */
+  async function loadRiskSettings() {
+    try {
+      var settingsMap = await loadSettingsMap();
+      var dailyLoss = document.getElementById("risk-daily-loss");
+      var maxPositions = document.getElementById("risk-max-positions");
+      var positionSize = document.getElementById("risk-position-size");
+      var riskMode = document.getElementById("risk-mode");
+      var cutoffTime = document.getElementById("setting-cutoff-time");
+      var forceExitTime = document.getElementById("setting-force-exit-time");
+
+      if (dailyLoss) dailyLoss.value = settingsMap["risk.daily_loss_limit_percent"] ?? "-2.0";
+      if (maxPositions) maxPositions.value = settingsMap["risk.max_positions"] ?? "5";
+      if (positionSize) positionSize.value = ((Number(settingsMap["risk.max_position_rate_per_stock"] ?? 0.10) || 0.10) * 100).toFixed(1).replace(/\.0$/, "");
+      if (riskMode) riskMode.value = settingsMap["engine.mode"] || "MONITOR";
+      if (cutoffTime) cutoffTime.value = settingsMap["risk.new_entry_cutoff_time"] || "15:10";
+      if (forceExitTime) forceExitTime.value = settingsMap["risk.force_exit_time"] || "15:20";
+    } catch (e) {
+      console.error("Failed to load risk settings", e);
+    }
+  }
+
+  /* Persist editable global risk settings through system_settings. */
+  async function saveRiskSettings() {
+    var dailyLoss = document.getElementById("risk-daily-loss");
+    var maxPositions = document.getElementById("risk-max-positions");
+    var positionSize = document.getElementById("risk-position-size");
+    var riskMode = document.getElementById("risk-mode");
+    var cutoffTime = document.getElementById("setting-cutoff-time");
+    var forceExitTime = document.getElementById("setting-force-exit-time");
+
+    var dailyLossValue = Number(dailyLoss && dailyLoss.value);
+    var maxPositionsValue = Number(maxPositions && maxPositions.value);
+    var positionSizeValue = Number(positionSize && positionSize.value);
+    var cutoffValue = cutoffTime ? cutoffTime.value.trim() : "";
+    var forceExitValue = forceExitTime ? forceExitTime.value.trim() : "";
+
+    if (!Number.isFinite(dailyLossValue) || dailyLossValue >= 0) {
+      alert("일일 손실 한도는 음수 숫자로 입력하세요.");
+      return;
+    }
+    if (!Number.isInteger(maxPositionsValue) || maxPositionsValue < 1) {
+      alert("최대 보유 종목은 1 이상의 정수로 입력하세요.");
+      return;
+    }
+    if (!Number.isFinite(positionSizeValue) || positionSizeValue <= 0 || positionSizeValue > 100) {
+      alert("종목당 최대 비중은 0보다 크고 100 이하인 숫자로 입력하세요.");
+      return;
+    }
+    if (!isClockTime(cutoffValue) || !isClockTime(forceExitValue)) {
+      alert("시간 형식이 올바르지 않습니다 (HH:MM).");
+      return;
+    }
+
+    var items = [
+      { key: "risk.daily_loss_limit_percent", value: dailyLossValue, value_type: "number" },
+      { key: "risk.max_positions", value: maxPositionsValue, value_type: "number" },
+      { key: "risk.max_position_rate_per_stock", value: positionSizeValue / 100, value_type: "number" },
+      { key: "engine.mode", value: riskMode ? riskMode.value : "MONITOR", value_type: "string" },
+      { key: "risk.new_entry_cutoff_time", value: cutoffValue, value_type: "string" },
+      { key: "risk.force_exit_time", value: forceExitValue, value_type: "string" }
+    ];
+
+    try {
+      await Promise.all(items.map(function(item) {
+        return fetchJson("/api/v1/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(item)
+        });
+      }));
+      alert("저장됨");
+      loadRiskSettings();
+    } catch (e) {
+      alert("저장 실패: " + e.message);
+    }
+  }
 
   /* Load persisted scheduler times into the Settings table. */
   async function loadSchedulerSettings() {
@@ -4469,26 +4777,72 @@
       var signalsData = await fetchJson("/api/v1/decision/signals/today");
       var tbody = document.getElementById("live-signals-tbody");
       if (tbody && signalsData.ok) {
-        var signals = signalsData.payload || [];
+        var payload = signalsData.payload || {};
+        var signals = Array.isArray(payload) ? payload : (payload.signals || []);
         if (signals.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;">아직 신호 없음</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">아직 신호 없음</td></tr>';
         } else {
           tbody.innerHTML = signals.map(function(sig) {
+            var matched = parseRuleMatched(sig.rule_matched);
+            var unavailable = matched.unavailable_conditions || {};
+            var unavailableKeys = Object.keys(unavailable);
+            var observed = matched.observed_values || {};
+            var conditionSummary = unavailableKeys.length
+              ? '<span class="status warn">' + unavailableKeys.length + '개 확인필요</span>'
+              : '<span class="status ok">추적 정상</span>';
+            var conditionDetail = buildRuleTraceDetail(observed, unavailableKeys);
             return '<tr>'
-              + '<td>' + (sig.time || "") + '</td>'
-              + '<td>' + (sig.symbol || "") + '</td>'
-              + '<td>' + (sig.name || "") + '</td>'
-              + '<td>' + (sig.entry_price != null ? sig.entry_price.toLocaleString() : "-") + '</td>'
-              + '<td>' + (sig.confidence != null ? sig.confidence.toFixed(2) : "-") + '</td>'
-              + '<td>' + (sig.status || "대기중") + '</td>'
+              + '<td>' + escapeHtml(formatSignalTime(sig.created_at || sig.time || "")) + '</td>'
+              + '<td>' + escapeHtml(sig.symbol || "") + '</td>'
+              + '<td>' + escapeHtml(sig.name || "") + '</td>'
+              + '<td>' + formatWonNumber(sig.trigger_price != null ? sig.trigger_price : sig.entry_price) + '</td>'
+              + '<td>' + (sig.confidence != null ? escapeHtml(Number(sig.confidence).toFixed(2)) : "-") + '</td>'
+              + '<td>' + escapeHtml(sig.status || "대기중") + '</td>'
+              + '<td>' + conditionSummary + conditionDetail + '</td>'
               + '</tr>';
           }).join("");
         }
       }
     } catch (e) {
       var tbody3 = document.getElementById("live-signals-tbody");
-      if (tbody3) tbody3.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;">불러오기 실패: ' + e.message + '</td></tr>';
+      if (tbody3) tbody3.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>';
     }
+  }
+
+  /* Parse the persisted S6 rule_matched JSON without breaking the live table on legacy rows. */
+  function parseRuleMatched(value) {
+    if (!value) return {};
+    if (typeof value === 'object') return value;
+    try {
+      return JSON.parse(value);
+    } catch (e) {
+      return {};
+    }
+  }
+
+  /* Build compact condition trace text for S6 signal rows. */
+  function buildRuleTraceDetail(observed, unavailableKeys) {
+    var pieces = [];
+    if (observed.change_rate != null) pieces.push('등락률 ' + Number(observed.change_rate).toFixed(2) + '%');
+    if (observed.volume_ratio != null) pieces.push('거래량배수 ' + Number(observed.volume_ratio).toFixed(2));
+    if (unavailableKeys.length) pieces.push('확인필요: ' + unavailableKeys.join(', '));
+    if (!pieces.length) return '';
+    return '<div class="muted" style="font-size:10px; margin-top:3px; max-width:220px; white-space:normal;">' + escapeHtml(pieces.join(' · ')) + '</div>';
+  }
+
+  /* Format S6 signal timestamp for the compact live table. */
+  function formatSignalTime(value) {
+    if (!value) return '';
+    var d = new Date(value);
+    if (Number.isNaN(d.getTime())) return String(value).slice(0, 19);
+    return d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  /* Format KRW-like numeric values while preserving empty states. */
+  function formatWonNumber(value) {
+    if (value == null || value === '') return '-';
+    var n = Number(value);
+    return Number.isNaN(n) ? escapeHtml(value) : escapeHtml(n.toLocaleString());
   }
 
   async function liveDecisionActivate() {
@@ -4883,14 +5237,26 @@
       var el = document.getElementById(id);
       if (el) el.innerHTML = html;
     };
+    var num = function(value, fallback) {
+      var parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : (fallback || 0);
+    };
+    var countOf = function(row) {
+      return num(row.total_orders != null ? row.total_orders : (row.trade_count != null ? row.trade_count : row.count), 0);
+    };
+    var avgPnlOf = function(row) {
+      if (row.avg_pnl_pct != null) return num(row.avg_pnl_pct, 0);
+      if (row.avg_pnl != null) return num(row.avg_pnl, 0);
+      return null;
+    };
 
     var d = new Date(r.trade_date + 'T00:00:00');
     var title = (d.getMonth() + 1) + '월 ' + d.getDate() + '일 시스템 점검 보고서';
     setEl('ra-report-title', title);
     setEl('ra-report-subtitle', '시장톤: ' + (r.market_tone || '-') + ' | RulePack: ' + (r.rulepack_id || '-'));
 
-    setEl('ra-total-orders', (r.total_orders || 0) + '건');
-    setEl('ra-orders-detail', '매수' + (r.buy_orders || 0) + ' / 매도' + (r.sell_orders || 0) + ' / 실패' + (r.failed_orders || 0));
+    setEl('ra-total-orders', num(r.total_orders, r.total_trades || 0) + '건');
+    setEl('ra-orders-detail', '매수' + num(r.buy_orders, 0) + ' / 매도' + num(r.sell_orders, 0) + ' / 실패' + num(r.failed_orders, 0));
 
     var pnl = r.realized_pnl;
     var pnlEl = document.getElementById('ra-pnl');
@@ -4902,8 +5268,10 @@
     setEl('ra-pnl-pct', pct != null ? (pct >= 0 ? '+' : '') + Number(pct).toFixed(2) + '%' : '-');
 
     var exitSummary = r.exit_summary || {};
-    var topExit = Object.entries(exitSummary).sort(function(a, b) { return (b[1] || 0) - (a[1] || 0); })[0];
-    setEl('ra-top-exit', topExit ? topExit[0].replace(/_/g, ' ') + ' (' + topExit[1] + ')' : '-');
+    var topExit = Object.entries(exitSummary).sort(function(a, b) {
+      return num((b[1] || {}).count, 0) - num((a[1] || {}).count, 0);
+    })[0];
+    setEl('ra-top-exit', topExit ? topExit[0].replace(/_/g, ' ') + ' (' + num((topExit[1] || {}).count, 0) + '건)' : '-');
 
     var tq = r.trailing_quality || {};
     setEl('ra-trailing', tq.quality_grade || '-');
@@ -4912,12 +5280,15 @@
     var profiles = r.profile_performance || [];
     if (profiles.length) {
       setHtml('ra-profile-tbody', profiles.map(function(p) {
-        var fillRate = p.total_orders > 0 ? Math.round((p.filled_orders || 0) / p.total_orders * 100) : 0;
-        var pnlPct = p.avg_pnl_pct != null ? (p.avg_pnl_pct >= 0 ? '+' : '') + Number(p.avg_pnl_pct).toFixed(2) + '%' : '-';
-        var color = (p.avg_pnl_pct || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+        var total = countOf(p);
+        var filled = num(p.filled_orders != null ? p.filled_orders : p.win_count, 0);
+        var fillRate = total > 0 ? Math.round(filled / total * 100) : 0;
+        var avgPnl = avgPnlOf(p);
+        var pnlPct = avgPnl != null ? (avgPnl >= 0 ? '+' : '') + Number(avgPnl).toFixed(2) + '%' : '-';
+        var color = (avgPnl || 0) >= 0 ? 'var(--green)' : 'var(--red)';
         return '<tr>'
           + '<td><strong>' + escapeHtml(p.profile || '') + '</strong></td>'
-          + '<td>' + (p.total_orders || 0) + '건</td>'
+          + '<td>' + total + '건</td>'
           + '<td>' + fillRate + '%</td>'
           + '<td style="color:' + color + ';">' + pnlPct + '</td>'
           + '<td>' + escapeHtml(p.evaluation || '-') + '</td>'
@@ -4930,11 +5301,12 @@
     var exits = r.exit_reason_performance || [];
     if (exits.length) {
       setHtml('ra-exit-tbody', exits.map(function(e) {
-        var pnlPct = e.avg_pnl_pct != null ? (e.avg_pnl_pct >= 0 ? '+' : '') + Number(e.avg_pnl_pct).toFixed(2) + '%' : '-';
-        var color = (e.avg_pnl_pct || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+        var avgPnl = avgPnlOf(e);
+        var pnlPct = avgPnl != null ? (avgPnl >= 0 ? '+' : '') + Number(avgPnl).toFixed(2) + '%' : '-';
+        var color = (avgPnl || 0) >= 0 ? 'var(--green)' : 'var(--red)';
         return '<tr>'
           + '<td>' + escapeHtml((e.exit_reason || '').replace(/_/g, ' ')) + '</td>'
-          + '<td>' + (e.count || 0) + '건</td>'
+          + '<td>' + countOf(e) + '건</td>'
           + '<td style="color:' + color + ';">' + pnlPct + '</td>'
           + '</tr>';
       }).join(''));
@@ -4966,6 +5338,16 @@
 
     // DB 기반 요약 텍스트 생성 (MD 없을 때 fallback)
     var lines = [];
+    var countOf = function(row) {
+      var value = row.total_orders != null ? row.total_orders : (row.trade_count != null ? row.trade_count : row.count);
+      var parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    var avgPnlOf = function(row) {
+      var value = row.avg_pnl_pct != null ? row.avg_pnl_pct : row.avg_pnl;
+      var parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
     lines.push('===================================');
     lines.push('  ' + dateLabel + ' 시스템 점검 보고서');
     lines.push('  (DB 자동 생성 — 수동 점검 파일 없음)');
@@ -4990,7 +5372,8 @@
     var profiles = r.profile_performance || [];
     if (profiles.length) {
       profiles.forEach(function(p) {
-        lines.push('  ' + (p.profile || '-').padEnd(16) + ' | 주문 ' + (p.total_orders || 0) + '건 | 평균 손익 ' + (p.avg_pnl_pct != null ? (p.avg_pnl_pct >= 0 ? '+' : '') + Number(p.avg_pnl_pct).toFixed(2) + '%' : '-'));
+        var avgPnl = avgPnlOf(p);
+        lines.push('  ' + (p.profile || '-').padEnd(16) + ' | 주문 ' + countOf(p) + '건 | 평균 손익 ' + (avgPnl != null ? (avgPnl >= 0 ? '+' : '') + avgPnl.toFixed(2) + '%' : '-'));
       });
     } else {
       lines.push('  데이터 없음');
@@ -5000,7 +5383,8 @@
     var exits = r.exit_reason_performance || [];
     if (exits.length) {
       exits.forEach(function(e) {
-        lines.push('  ' + (e.exit_reason || '-').replace(/_/g, ' ').padEnd(20) + ' | ' + (e.count || 0) + '건 | ' + (e.avg_pnl_pct != null ? (e.avg_pnl_pct >= 0 ? '+' : '') + Number(e.avg_pnl_pct).toFixed(2) + '%' : '-'));
+        var avgPnl = avgPnlOf(e);
+        lines.push('  ' + (e.exit_reason || '-').replace(/_/g, ' ').padEnd(20) + ' | ' + countOf(e) + '건 | ' + (avgPnl != null ? (avgPnl >= 0 ? '+' : '') + avgPnl.toFixed(2) + '%' : '-'));
       });
     } else {
       lines.push('  데이터 없음');
@@ -5023,15 +5407,17 @@
     if (modal) modal.style.display = 'none';
   }
 
-  /* Request Review & Audit generation for today, then reload the Review screen state. */
+  /* Request Review & Audit generation for the selected date, then reload the Review screen state. */
   async function runReviewAudit() {
     console.info('[INFO] ReviewAudit - generate start');
     try {
       var today = new Date();
-      var todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
-      await fetch('/api/v1/review-audit/run', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({date: todayStr})});
-      await loadReviewAuditScreen();
-      console.info('[INFO] ReviewAudit - generate complete', todayStr);
+      var defaultDate = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+      var input = document.getElementById('ra-date-input');
+      var targetDate = input && input.value ? input.value : defaultDate;
+      await fetch('/api/v1/review-audit/run', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({date: targetDate})});
+      await loadReviewByDate(targetDate);
+      console.info('[INFO] ReviewAudit - generate complete', targetDate);
     } catch (e) {
       console.error('[ERROR] ReviewAudit - generate failed', e.message);
       alert('생성 실패: ' + e.message);
@@ -6315,6 +6701,8 @@
   }
 
   function initSettingsUI() {
+    loadBuyConditions();
+    loadRiskSettings();
     loadSchedulerSettings();
     loadExitOverrideSettings();
     loadSettingsProfiles();

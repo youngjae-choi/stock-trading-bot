@@ -31,9 +31,23 @@ def _global_risk() -> dict[str, Any]:
         "daily_loss_limit": float(get_setting("risk.daily_loss_limit_percent", -2.0) or -2.0),
         "max_positions": int(get_setting("risk.max_positions", 5) or 5),
         "max_position_rate_per_stock": float(get_setting("risk.max_position_rate_per_stock", 0.10) or 0.10),
-        "force_exit_time": "15:20:00",
-        "new_entry_cutoff_time": "15:10:00",
+        "force_exit_time": _clock_with_seconds(get_setting("risk.force_exit_time", "15:20") or "15:20", "15:20:00"),
+        "new_entry_cutoff_time": _clock_with_seconds(
+            get_setting("risk.new_entry_cutoff_time", "15:10") or "15:10",
+            "15:10:00",
+        ),
     }
+
+
+def _clock_with_seconds(value: Any, default: str) -> str:
+    """Normalize HH:MM settings into HH:MM:SS rule values."""
+    text = str(value or "").strip()
+    parts = text.split(":")
+    if len(parts) == 2 and all(part.isdigit() for part in parts):
+        return f"{int(parts[0]):02d}:{int(parts[1]):02d}:00"
+    if len(parts) == 3 and all(part.isdigit() for part in parts):
+        return f"{int(parts[0]):02d}:{int(parts[1]):02d}:{int(parts[2]):02d}"
+    return default
 
 
 @router.get("/base")

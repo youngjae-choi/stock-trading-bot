@@ -17,6 +17,49 @@ from .common.client import kis_client
 
 logger = logging.getLogger("KISRealtimeWS")
 
+_H0STCNT0_FIELDS = (
+    "mksc_shrn_iscd",
+    "stck_cntg_hour",
+    "stck_prpr",
+    "prdy_vrss_sign",
+    "prdy_vrss",
+    "prdy_ctrt",
+    "wghn_avrg_stck_prc",
+    "stck_oprc",
+    "stck_hgpr",
+    "stck_lwpr",
+    "askp1",
+    "bidp1",
+    "cntg_vol",
+    "acml_vol",
+    "acml_tr_pbmn",
+    "seln_cntg_csnu",
+    "shnu_cntg_csnu",
+    "ntby_cntg_csnu",
+    "cttr",
+    "seln_cntg_smtn",
+    "shnu_cntg_smtn",
+    "ccld_dvsn",
+    "shnu_rate",
+    "prdy_vol_vrss_acml_vol_rate",
+)
+
+
+def _h0stcnt0_value(fields: list[str], key: str) -> str | None:
+    """Return one documented H0STCNT0 field value when present.
+
+    Args:
+        fields: Caret-delimited realtime body fields from KIS.
+        key: Lowercase field name from the documented H0STCNT0 column list.
+    """
+    try:
+        index = _H0STCNT0_FIELDS.index(key)
+    except ValueError:
+        return None
+    if len(fields) <= index:
+        return None
+    return fields[index]
+
 
 class RealtimeWSManager:
     """Singleton-style manager for KIS realtime websocket sessions."""
@@ -155,12 +198,15 @@ class RealtimeWSManager:
                 body = parts[3]
                 fields = body.split("^") if body else []
                 if fields:
-                    entry["symbol"] = fields[0]
-                    if len(fields) > 2:
-                        entry["price"] = fields[2]
-                    if len(fields) > 12:
-                        entry["trade_time"] = fields[1]
-                        entry["trade_volume"] = fields[12]
+                    # H0STCNT0 국내주식 실시간체결가의 공식 샘플 컬럼 순서에 맞춰 핵심 값을 추출한다.
+                    entry["symbol"] = _h0stcnt0_value(fields, "mksc_shrn_iscd") or fields[0]
+                    entry["trade_time"] = _h0stcnt0_value(fields, "stck_cntg_hour")
+                    entry["price"] = _h0stcnt0_value(fields, "stck_prpr")
+                    entry["change_rate"] = _h0stcnt0_value(fields, "prdy_ctrt")
+                    entry["trade_volume"] = _h0stcnt0_value(fields, "cntg_vol")
+                    entry["accumulated_volume"] = _h0stcnt0_value(fields, "acml_vol")
+                    entry["trade_strength"] = _h0stcnt0_value(fields, "cttr")
+                    entry["prev_volume_ratio"] = _h0stcnt0_value(fields, "prdy_vol_vrss_acml_vol_rate")
                 entry["fields"] = fields
 
         self._cache.append(entry)
@@ -168,7 +214,13 @@ class RealtimeWSManager:
             tick = {
                 "symbol": entry.get("symbol"),
                 "price": entry.get("price"),
+                "change_rate": entry.get("change_rate"),
+                "prdy_ctrt": entry.get("change_rate"),
                 "volume": entry.get("trade_volume"),
+                "trade_volume": entry.get("trade_volume"),
+                "accumulated_volume": entry.get("accumulated_volume"),
+                "trade_strength": entry.get("trade_strength"),
+                "prev_volume_ratio": entry.get("prev_volume_ratio"),
                 "time": entry.get("trade_time"),
                 "fields": entry.get("fields", []),
             }

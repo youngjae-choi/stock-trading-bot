@@ -54,7 +54,7 @@ test('backend console routes respond with html', async ({ request }) => {
   expect(await consoleResponse.text()).toContain('Dantabot Control Console');
 });
 
-test('bot console api endpoints respond with mock payloads', async ({ request }) => {
+test('bot console api endpoints respond with current payloads', async ({ request }) => {
   await login(request);
   const overviewResponse = await request.get(`${backendUrl}/api/v1/bot/overview`);
   const rulepackResponse = await request.get(`${backendUrl}/api/v1/bot/rulepack/today`);
@@ -74,12 +74,13 @@ test('bot console api endpoints respond with mock payloads', async ({ request })
   const halt = await haltResponse.json();
   const apiLogs = await apiLogsResponse.json();
 
-  expect(overview.mock).toBeTruthy();
-  expect(overview.source).toBe('mock');
-  expect(overview.live).toBeFalsy();
-  expect(overview.payload.mock_mode).toBeTruthy();
+  expect(overview.ok).toBeTruthy();
+  expect(overview.source).toBe('backend');
+  expect(overview.live).toBeTruthy();
+  expect(overview.payload.trade_date).toEqual(expect.any(String));
+  expect(overview.payload.health).toEqual(expect.any(Object));
   expect(rulepack.payload.status).toBe('mock');
-  expect(dataHealth.payload.note).toContain('mock');
+  expect(dataHealth.payload.note).toEqual(expect.any(String));
   expect(halt.payload.halted).toBeTruthy();
   expect(apiLogs.source).toBe('backend');
   expect(apiLogs.live).toBeFalsy();

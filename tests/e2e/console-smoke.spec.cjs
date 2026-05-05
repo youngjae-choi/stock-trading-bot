@@ -18,7 +18,7 @@ async function login(page, url) {
   await page.locator('#loginUsername').fill(envValue('APP_ADMIN_USERNAME', 'admin'));
   await page.locator('#loginPassword').fill(envValue('APP_ADMIN_PASSWORD'));
   await page.getByRole('button', { name: '로그인' }).click();
-  await expect(page.getByRole('heading', { name: 'Today Control' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: "Today's" })).toBeVisible();
 }
 
 test('fastapi console root serves html shell', async ({ request }) => {
@@ -44,9 +44,10 @@ test('fastapi console page can call halt api', async ({ page }) => {
   const haltButton = page.locator('#haltBtn');
   await page.getByRole('button', { name: /Data & API/i }).click();
   await expect(page.getByRole('heading', { name: 'Data & API' })).toBeVisible();
-  await expect(page.locator('#da-rule-system')).toContainText('Base RulePack');
-  await expect(page.locator('#da-rule-system')).toContainText('Risk Profile Pack');
-  await expect(page.locator('#da-rule-system')).toContainText('Daily Plan');
+  const dataScreen = page.locator('#screen-data');
+  await expect(dataScreen.getByText('Base RulePack', { exact: true })).toBeVisible();
+  await expect(dataScreen.getByText('Risk Profile Pack', { exact: true })).toBeVisible();
+  await expect(dataScreen.getByText('Daily Plan', { exact: true })).toBeVisible();
 
   // Already halted: button shows "운영재개"
   if ((await haltButton.textContent())?.trim() === '운영재개') {

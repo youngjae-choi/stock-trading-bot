@@ -47,6 +47,15 @@ def _position_size_pct(final_rule: dict[str, Any]) -> float:
     return 100.0
 
 
+def _time_from_rule(value: Any, fallback: tuple[int, int]) -> tuple[int, int]:
+    """Return hour and minute parsed from an HH:MM or HH:MM:SS rule value."""
+    text = str(value or "").strip()
+    parts = text.split(":")
+    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+        return int(parts[0]), int(parts[1])
+    return fallback
+
+
 def run_preflight(
     signal: dict[str, Any],
     final_rule: dict[str, Any],
@@ -59,12 +68,13 @@ def run_preflight(
 
     now = _now_kst()
 
-    # 1. 장 운영 시간 (09:00~15:20 매수 가능, 15:20 이후 신규매수 금지)
+    # 1. 장 운영 시간 및 설정된 신규매수 금지 시간 확인
     market_open = now.replace(hour=9, minute=0, second=0, microsecond=0)
-    entry_cutoff = now.replace(hour=15, minute=20, second=0, microsecond=0)
+    cutoff_hour, cutoff_minute = _time_from_rule(final_rule.get("new_entry_cutoff_time"), (15, 20))
+    entry_cutoff = now.replace(hour=cutoff_hour, minute=cutoff_minute, second=0, microsecond=0)
     if not (market_open <= now < entry_cutoff):
         checks["market_hours"] = PREFLIGHT_BLOCK
-        block_reasons.append("신규매수 시간 외 (09:00~15:20)")
+        block_reasons.append(f"신규매수 시간 외 (09:00~{cutoff_hour:02d}:{cutoff_minute:02d})")
     else:
         checks["market_hours"] = PREFLIGHT_OK
 
