@@ -828,20 +828,20 @@
       </div>
 
       <select id="mobileMenu" class="mobile-menu" aria-label="화면 선택">
-        <option value="today">Today Control</option>
+        <option value="today">Today's</option>
         <option value="trading">Trading Monitor</option>
         <option value="statistics">Trade History</option>
-        <option value="rulepack">Daily Plan & RulePack</option>
+        <option value="rulepack">Daily Plan</option>
         <option value="funnel">Funnel Monitor</option>
-        <option value="expert-knowledge">Expert Knowledge</option>
+        <option value="expert-knowledge">Knowledge</option>
         <option value="alerts">Alert Center</option>
         <option value="approval" style="display:none">Approval Queue</option>
-        <option value="shadow-trading">미진입 추적</option>
+        <option value="shadow-trading">Missed Entries</option>
         <option value="false-positive">False Positive</option>
-        <option value="confidence-cal" style="display:none">Confidence Cal.</option>
-        <option value="review">Review & Audit</option>
+        <option value="confidence-cal" style="display:none">CALIBRATION</option>
+        <option value="review">Trade Review</option>
         <option value="data">Data & API</option>
-        <option value="engine-test">KIS System Test</option>
+        <option value="engine-test">System Diagnostics</option>
         <option value="settings">Settings</option>
       </select>
 
@@ -856,23 +856,23 @@
       <aside class="sidebar">
         <div class="menu-label">Operation</div>
         <nav class="nav" id="nav">
-          <button class="active" data-screen="today">Today Control <small>main</small></button>
+          <button class="active" data-screen="today">Today's <small>main</small></button>
           <button data-screen="trading">Trading Monitor <small>live</small></button>
           <button data-screen="statistics">Trade History <small>trades</small></button>
-          <button data-screen="rulepack">Daily Plan & RulePack <small>rules</small></button>
+          <button data-screen="rulepack">Daily Plan <small>rules</small></button>
           <button data-screen="funnel">Funnel Monitor <small>screening</small></button>
-          <button data-screen="expert-knowledge">Expert Knowledge <small>knowledge</small></button>
+          <button data-screen="expert-knowledge">Knowledge <small>knowledge</small></button>
           <button data-screen="alerts">Alert Center <small>alerts</small></button>
           <button data-screen="approval" style="display:none">Approval Queue <small>approval</small></button>
 
-          <div class="menu-label">판단 검증</div>
-          <button data-screen="shadow-trading">미진입 추적 <small>missed</small></button>
+          <div class="menu-label">Analysis</div>
+          <button data-screen="shadow-trading">Missed Entries <small>missed</small></button>
           <button data-screen="false-positive">False Positive <small>fp</small></button>
-          <button data-screen="confidence-cal" style="display:none">Confidence Cal. <small>conf-cal</small></button>
+          <button data-screen="confidence-cal" style="display:none">CALIBRATION <small>cal</small></button>
 
-          <button data-screen="review">Review & Audit <small>learn</small></button>
+          <button data-screen="review">Trade Review <small>review</small></button>
           <button data-screen="data">Data & API <small>health</small></button>
-          <button data-screen="engine-test">KIS System Test <small>test</small></button>
+          <button data-screen="engine-test">System Diagnostics <small>diag</small></button>
           <button data-screen="settings">Settings <small>admin</small></button>
         </nav>
 
@@ -886,7 +886,7 @@
         <section class="screen active" id="screen-today">
           <div class="page-head">
             <div>
-              <h1 class="page-title">Today Control</h1>
+              <h1 class="page-title">Today's</h1>
               <p class="page-desc">오늘 자동매매 사이클, RulePack 적용 상태, Funnel 진행, 리스크 상태를 한 화면에서 확인합니다.</p>
             </div>
             <button class="btn" onclick="refreshTodayControl()">새로고침</button>
@@ -971,7 +971,7 @@
             <div id="today-ops-feed" style="display:flex; gap:8px; overflow-x:auto; padding-bottom:8px;"></div>
             <div style="text-align:right; margin-top:8px;">
               <button class="btn" style="font-size:11px;" onclick="showScreen('engine-test')">
-                자세히보기 (KIS System Test) →
+                자세히보기 (System Diagnostics) →
               </button>
             </div>
           </div>
@@ -1048,32 +1048,38 @@
             </div>
 
             <!-- 계좌 정보 (오른쪽) -->
-            <div class="card" style="flex:1; min-width:240px;">
-              <div class="card-title" style="display:flex; justify-content:space-between;">
-                <span>계좌 정보</span>
+            <div class="card" style="flex:1; min-width:280px;">
+              <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>계좌 정보 <span style="font-size:11px; color:var(--muted); font-weight:400;" id="tm-account-no"></span></span>
                 <button class="btn" style="font-size:11px; padding:2px 8px;" onclick="loadAccountBalance()">새로고침</button>
               </div>
-              <div style="font-size:11px; color:var(--muted); margin-bottom:8px;" id="tm-account-no">계좌번호: -</div>
-              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                <div style="background:var(--bg2); border-radius:6px; padding:8px 10px;">
-                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">예수금</div>
-                  <div style="font-size:14px; font-weight:700;" id="tm-deposit">-</div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+                <div style="background:var(--panel-2); border-radius:6px; padding:8px 10px;">
+                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">주문가능 예수금</div>
+                  <div style="font-size:15px; font-weight:700; color:var(--green);" id="tm-buyable-cash">-</div>
+                  <div style="font-size:10px; color:var(--muted);" id="tm-deposit-limit">한도 -</div>
                 </div>
-                <div style="background:var(--bg2); border-radius:6px; padding:8px 10px;">
-                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">주식매수 가능금액</div>
-                  <div style="font-size:14px; font-weight:700;" id="tm-buyable-cash">-</div>
+                <div style="background:var(--panel-2); border-radius:6px; padding:8px 10px;">
+                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">주식 평가금액</div>
+                  <div style="font-size:15px; font-weight:700;" id="tm-stock-eval">-</div>
+                  <div style="font-size:10px; color:var(--muted);" id="tm-holdings-count">보유 -종목</div>
                 </div>
-                <div style="background:var(--bg2); border-radius:6px; padding:8px 10px;">
+                <div style="background:var(--panel-2); border-radius:6px; padding:8px 10px;">
                   <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">총평가금액</div>
-                  <div style="font-size:14px; font-weight:700;" id="tm-total-eval">-</div>
+                  <div style="font-size:15px; font-weight:700;" id="tm-total-eval">-</div>
                 </div>
-                <div style="background:var(--bg2); border-radius:6px; padding:8px 10px;">
-                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">오늘 P&L</div>
-                  <div style="font-size:14px; font-weight:700;" id="tm-pnl-today">-</div>
+                <div style="background:var(--panel-2); border-radius:6px; padding:8px 10px;">
+                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">평가손익 / 수익률</div>
+                  <div style="font-size:15px; font-weight:700;" id="tm-pnl-today">-</div>
+                  <div style="font-size:10px;" id="tm-pnl-rate">-</div>
                 </div>
-                <div style="background:var(--bg2); border-radius:6px; padding:8px 10px; grid-column: span 2;">
-                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">보유종목</div>
-                  <div style="font-size:14px; font-weight:700;" id="tm-holdings-count">-</div>
+                <div style="background:var(--panel-2); border-radius:6px; padding:8px 10px;">
+                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">당일 매수</div>
+                  <div style="font-size:13px; font-weight:600;" id="tm-today-buy">-</div>
+                </div>
+                <div style="background:var(--panel-2); border-radius:6px; padding:8px 10px;">
+                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">당일 매도</div>
+                  <div style="font-size:13px; font-weight:600;" id="tm-today-sell">-</div>
                 </div>
               </div>
             </div>
@@ -1113,7 +1119,7 @@
         <section class="screen" id="screen-rulepack">
           <div class="page-head">
             <div>
-              <h1 class="page-title">Daily Plan &amp; RulePack</h1>
+              <h1 class="page-title">Daily Plan</h1>
               <p class="page-desc">오늘 적용되는 Base RulePack, Risk Profile Pack, Daily Trading Plan의 합성 결과를 확인합니다.</p>
             </div>
             <div style="display:flex; gap:8px; align-items:center;">
@@ -1342,7 +1348,7 @@
         <section class="screen" id="screen-expert-knowledge">
           <div class="page-head">
             <div>
-              <h1 class="page-title">Expert Knowledge</h1>
+              <h1 class="page-title">Knowledge</h1>
               <p class="page-desc">PDF 전략 문서를 업로드하면 AI가 매매 조건을 추출해 Settings에 반영합니다.</p>
             </div>
           </div>
@@ -1452,7 +1458,7 @@
         <section class="screen" id="screen-shadow-trading">
           <div class="page-head">
             <div>
-              <h1 class="page-title">미진입 추적</h1>
+              <h1 class="page-title">Missed Entries</h1>
               <p class="page-desc">오늘 매수하지 않은 종목이 이후 어떻게 움직였는지 추적합니다.</p>
             </div>
             <button class="btn" onclick="loadMissedTracking()">새로고침</button>
@@ -1528,7 +1534,7 @@
         <section class="screen" id="screen-confidence-cal">
           <div class="page-head">
             <div>
-              <h1 class="page-title">Confidence Calibration</h1>
+              <h1 class="page-title">CALIBRATION</h1>
               <p class="page-desc">Confidence 구간별 예측 정확도를 분석합니다.</p>
             </div>
             <div>
@@ -1615,8 +1621,8 @@
             <div id="positions-account-info" style="margin-bottom:12px;">
               <div class="muted" style="font-size:13px;" id="positions-account-no">계좌번호: -</div>
               <div style="display:flex; gap:24px; margin-top:6px;">
-                <div>예수금: <strong id="positions-deposit">-</strong>원</div>
-                <div>총평가금액: <strong id="positions-total-eval">-</strong>원</div>
+                <div>주문가능 예수금: <strong id="positions-deposit">-</strong></div>
+                <div>총평가금액: <strong id="positions-total-eval">-</strong></div>
               </div>
             </div>
             <div class="card-title" style="margin-top:16px; margin-bottom:8px;">보유 종목</div>
@@ -1732,7 +1738,7 @@
             <div class="card">
               <div class="card-title">주문 차단 로그</div>
               <div class="log-list">
-                <p class="muted" style="font-size:13px;">실시간 차단 로그는 서버 로그에서 확인하세요.<br>KIS System Test → 서버 로그 패널 (필터: "BLOCK" 또는 "차단")</p>
+                <p class="muted" style="font-size:13px;">실시간 차단 로그는 서버 로그에서 확인하세요.<br>System Diagnostics → 서버 로그 패널 (필터: "BLOCK" 또는 "차단")</p>
               </div>
             </div>
           </div>
@@ -1742,79 +1748,119 @@
           <div class="page-head">
             <div>
               <h1 class="page-title">Data & API</h1>
-              <p class="page-desc">KIS, LLM Provider, DB 상태를 확인합니다.</p>
+              <p class="page-desc">연결 상태 · 시스템 구성 · LLM 공급자를 확인합니다.</p>
             </div>
             <button class="btn" onclick="loadDataAndApi()">새로고침</button>
           </div>
 
+          <!-- 연결 상태 — 5개 연결을 한눈에 -->
           <div class="card" style="margin-bottom:16px;">
-            <div class="card-title">Rule System</div>
-            <div class="grid" style="grid-template-columns:repeat(3, 1fr); gap:10px; margin-top:8px;" id="da-rule-system">
-              <div class="card compact"><div class="card-title">Base RulePack</div><div class="metric" id="da-base-id" style="font-size:13px;">-</div></div>
-              <div class="card compact"><div class="card-title">Risk Profile Pack</div><div class="metric" id="da-profile-id" style="font-size:13px;">-</div></div>
-              <div class="card compact"><div class="card-title">Daily Plan</div><div class="metric" id="da-plan-id" style="font-size:13px;">-</div></div>
-              <div class="card compact"><div class="card-title">배정 종목 수</div><div class="metric" id="da-assignments-n" style="font-size:13px;">-개</div></div>
-              <div class="card compact"><div class="card-title">고정 익절</div><div class="metric" style="font-size:13px; color:#f85149;">OFF</div></div>
-              <div class="card compact"><div class="card-title">트레일링 청산</div><div class="metric" style="font-size:13px; color:#3fb950;">ON</div></div>
+            <div class="card-title" style="margin-bottom:12px;">연결 상태</div>
+            <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:12px;">
+              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
+                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">KIS REST</div>
+                <div style="font-size:20px; font-weight:700;" id="dh-kisRest">-</div>
+                <div style="font-size:11px; color:var(--muted);" id="dh-kisRestDetail">확인중</div>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
+                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">KIS WebSocket</div>
+                <div style="font-size:20px; font-weight:700;" id="dh-kisWs">-</div>
+                <div style="font-size:11px; color:var(--muted);" id="dh-kisWsDetail">확인중</div>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
+                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">LLM Router</div>
+                <div style="font-size:20px; font-weight:700;" id="dh-llm">-</div>
+                <div style="font-size:11px; color:var(--muted);" id="dh-llmDetail">provider 확인중</div>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
+                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">SQLite DB</div>
+                <div style="font-size:20px; font-weight:700; color:var(--green);" id="dh-db">로컬</div>
+                <div style="font-size:11px; color:var(--muted);" id="dh-dbDetail">data/ 디렉토리</div>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
+                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">Telegram</div>
+                <div style="font-size:20px; font-weight:700;" id="da-telegram-status">-</div>
+                <div style="font-size:11px; color:var(--muted);" id="da-telegram-detail">상태 확인 중</div>
+              </div>
             </div>
           </div>
 
-          <div class="grid" style="grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:16px;">
-            <div class="card compact"><div class="card-title">KIS REST</div><div class="metric" id="dh-kisRest">-</div><div class="muted" id="dh-kisRestDetail">확인중</div></div>
-            <div class="card compact"><div class="card-title">KIS WebSocket</div><div class="metric" id="dh-kisWs">-</div><div class="muted" id="dh-kisWsDetail">확인중</div></div>
-            <div class="card compact"><div class="card-title">LLM Router</div><div class="metric" id="dh-llm">-</div><div class="muted" id="dh-llmDetail">provider 확인중</div></div>
-            <div class="card compact"><div class="card-title">SQLite DB</div><div class="metric good" id="dh-db">로컬</div><div class="muted" id="dh-dbDetail">data/ 디렉토리</div></div>
-            <div class="card compact" id="telegram-status"><div class="card-title">Telegram</div><div class="metric" id="da-telegram-status">-</div><div class="muted" id="da-telegram-detail">상태 확인 중</div></div>
+          <!-- 시스템 구성 — 엔진 상태 + 룰 구성 2열 -->
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
+            <!-- 엔진 상태 -->
+            <div class="card">
+              <div class="card-title" style="margin-bottom:12px;">엔진 상태</div>
+              <div style="display:flex; flex-direction:column; gap:10px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px;">Auto Engine</span>
+                  <div style="text-align:right;">
+                    <span class="status ok" id="kisTokenStatus">확인중</span>
+                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="kisTokenDetail">Auto Engine 상태</div>
+                  </div>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px;">Rule Composition</span>
+                  <div style="text-align:right;">
+                    <span class="status ok" id="rulepackStatus">확인중</span>
+                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="rulepackDetail">오늘 활성 룰</div>
+                  </div>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px;">WebSocket 구독</span>
+                  <div style="text-align:right;">
+                    <span class="status ok" id="websocketStatus">확인중</span>
+                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="websocketDetail">S4 완료 후 자동 구독</div>
+                  </div>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px;">Risk Guard</span>
+                  <div style="text-align:right;">
+                    <span class="status ok" id="riskStatus">확인중</span>
+                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="riskDetail">긴급정지 상태</div>
+                  </div>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px;">Data Quality</span>
+                  <div style="text-align:right;">
+                    <span class="status ok" id="dq-overall-status">NORMAL</span>
+                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="dq-overall-detail">데이터 이상 없음</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 룰 구성 -->
+            <div class="card">
+              <div class="card-title" style="margin-bottom:12px;">룰 구성</div>
+              <div style="display:flex; flex-direction:column; gap:10px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px; color:var(--muted);">Base RulePack</span>
+                  <span style="font-size:12px; font-weight:600; color:var(--text);" id="da-base-id">-</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px; color:var(--muted);">Risk Profile Pack</span>
+                  <span style="font-size:12px; font-weight:600; color:var(--text);" id="da-profile-id">-</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px; color:var(--muted);">Daily Plan</span>
+                  <span style="font-size:12px; font-weight:600; color:var(--text);" id="da-plan-id">미생성</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px; color:var(--muted);">배정 종목 수</span>
+                  <span style="font-size:18px; font-weight:700; color:var(--text);" id="da-assignments-n">-개</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px; color:var(--muted);">고정 익절 / 트레일링</span>
+                  <span style="font-size:12px;"><span style="color:#f85149;">OFF</span> / <span style="color:#3fb950;">ON</span></span>
+                </div>
+              </div>
+            </div>
           </div>
 
+          <!-- LLM 공급자 -->
           <div class="card" style="margin-bottom:16px;">
-            <div class="card-title">Data Quality Guard</div>
-            <div class="grid cols-2" style="margin-top:8px;">
-              <div class="card compact">
-                <div class="card-title">전체 상태</div>
-                <div><span class="status ok" id="dq-overall-status">NORMAL</span></div>
-                <div class="muted" id="dq-overall-detail">데이터 이상 없음</div>
-              </div>
-              <div class="card compact">
-                <div class="card-title">오늘 이벤트</div>
-                <div class="metric" id="dq-event-count">0</div>
-                <div class="muted" id="dq-event-detail">이상 이벤트 수</div>
-              </div>
-            </div>
-            <div style="margin-top:8px; font-size:12px; color:var(--muted);" id="dq-event-breakdown">
-              이벤트 유형별 현황 로딩 중...
-            </div>
-          </div>
-
-          <div class="card" style="margin-bottom:16px;">
-            <div class="card-title">System Health <span>엔진 & 연결 상태</span></div>
-            <div class="grid cols-4" style="margin-top:8px;">
-              <div class="card compact">
-                <div class="card-title">Auto Engine</div>
-                <div><span class="status ok" id="kisTokenStatus">확인중</span></div>
-                <div class="muted" id="kisTokenDetail">Auto Engine 상태</div>
-              </div>
-              <div class="card compact">
-                <div class="card-title">Rule Composition</div>
-                <div><span class="status ok" id="rulepackStatus">확인중</span></div>
-                <div class="muted" id="rulepackDetail">오늘 활성 Rule Composition</div>
-              </div>
-              <div class="card compact">
-                <div class="card-title">WebSocket</div>
-                <div><span class="status ok" id="websocketStatus">확인중</span></div>
-                <div class="muted" id="websocketDetail">S4 완료 후 자동 구독</div>
-              </div>
-              <div class="card compact">
-                <div class="card-title">Risk Guard</div>
-                <div><span class="status ok" id="riskStatus">확인중</span></div>
-                <div class="muted" id="riskDetail">긴급정지 상태</div>
-              </div>
-            </div>
-          </div>
-
-          <div class="card">
-            <div class="card-title">LLM Provider 상태 <span>llm_router 우선순위 순서</span></div>
-            <div class="table-wrap">
+            <div class="card-title">LLM 공급자 <span style="font-weight:400; color:var(--muted);">llm_router 우선순위</span></div>
+            <div class="table-wrap" style="margin-top:10px;">
               <table>
                 <thead>
                   <tr><th>Provider</th><th>역할</th><th>모델</th><th>상태</th></tr>
@@ -1826,13 +1872,13 @@
             </div>
           </div>
 
-          <div class="section-gap"></div>
+          <!-- API 호출 로그 -->
           <div class="card">
             <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-              <span>API 호출 로그 <span style="font-size:10px; font-weight:400;">(당일)</span></span>
+              <span>API 호출 로그 <span style="font-size:10px; font-weight:400; color:var(--muted);">당일</span></span>
               <button class="btn" style="font-size:11px;" onclick="loadDataApiLogs()">새로고침</button>
             </div>
-            <div class="table-wrap" style="max-height:300px; overflow-y:auto;">
+            <div class="table-wrap" style="max-height:300px; overflow-y:auto; margin-top:10px;">
               <table>
                 <thead>
                   <tr><th>시간</th><th>메서드</th><th>경로</th><th>상태</th><th>응답시간</th></tr>
@@ -1843,12 +1889,19 @@
               </table>
             </div>
           </div>
+
+          <!-- 사용되지 않는 hidden IDs — JS 호환성 유지 -->
+          <span id="telegram-status" style="display:none;"></span>
+          <span id="dq-event-count" style="display:none;">0</span>
+          <span id="dq-event-detail" style="display:none;"></span>
+          <span id="dq-event-breakdown" style="display:none;"></span>
+          <div id="da-rule-system" style="display:none;"></div>
         </section>
 
         <section class="screen" id="screen-review">
           <div class="page-head">
             <div>
-              <h1 class="page-title">Review & Audit</h1>
+              <h1 class="page-title">Trade Review</h1>
               <p class="page-desc">일별 매매 결과 점검 보고서입니다.</p>
             </div>
             <div style="display:flex; gap:8px; align-items:center;">
@@ -1998,7 +2051,7 @@
         <section class="screen" id="screen-engine-test">
           <div class="page-head">
             <div>
-              <h1 class="page-title">KIS System Test</h1>
+              <h1 class="page-title">System Diagnostics</h1>
               <p class="page-sub">S1~S5 각 단계를 수동으로 실행하고 결과를 확인합니다. 실제 KIS API와 DB에 반영됩니다.</p>
             </div>
             <div class="page-actions">
@@ -2178,7 +2231,7 @@
                 <div>
                   <strong id="et-title-s11">S11 Learning Memory Builder</strong>
                   <div id="et-detail-s11" style="font-size:12px; color:var(--muted); margin-top:2px;">
-                    22:00 KST · Review & Audit → Learning Memory
+                    22:00 KST · Trade Review → Learning Memory
                   </div>
                 </div>
                 <span class="badge" id="et-badge-s11">대기</span>
@@ -2445,7 +2498,7 @@
     { id: 's8', label: 'S8 Position Manager', defaultTime: '실시간', settingKey: 'schedule_s8_time', detail: 'WS tick -> 손절/트레일링/강제청산 감시' },
     { id: 's9', label: 'S9 당일 청산', defaultTime: '15:20', settingKey: 'schedule_s9_time', detail: '전량 시장가 청산' },
     { id: 's10', label: 'S10 일일 요약 + DB 백업', defaultTime: '18:00', settingKey: 'schedule_s10_time', detail: 'trading_orders 집계 -> daily_trade_summary + SQLite 백업' },
-    { id: 's11', label: 'S11 Learning Memory Builder', defaultTime: '22:00', settingKey: 'schedule_s11_time', detail: 'Review & Audit -> Learning Memory' },
+    { id: 's11', label: 'S11 Learning Memory Builder', defaultTime: '22:00', settingKey: 'schedule_s11_time', detail: 'Trade Review -> Learning Memory' },
   ];
   var timeline = OPS_STEPS
     .filter(function(step) { return /^\d{2}:\d{2}$/.test(step.defaultTime); })
@@ -3939,7 +3992,8 @@
       }
 
       setTextForIds(["positions-account-no"], "계좌번호: " + (p.account_no || "-"));
-      setTextForIds(["positions-deposit"], _toManwon(p.deposit));
+      // buyable_cash = 주문가능 예수금 (nxdy_excc_amt 기반)
+      setTextForIds(["positions-deposit"], _toManwon(p.buyable_cash != null ? p.buyable_cash : p.deposit));
       setTextForIds(["positions-total-eval"], _toManwon(p.total_eval));
 
       if (document.getElementById("positions-holdings-tbody")) {
@@ -4033,36 +4087,41 @@
       var accountData = await fetchJson("/api/v1/account/balance");
       if (accountData && accountData.ok && accountData.payload) {
         var acct = accountData.payload;
-        var accountNo = document.getElementById("tm-account-no");
-        var depositEl = document.getElementById("tm-deposit");
-        var buyableEl = document.getElementById("tm-buyable-cash");
-        var totalEl = document.getElementById("tm-total-eval");
-        var countEl = document.getElementById("tm-holdings-count");
-        var pnlEl = document.getElementById("tm-pnl-today");
-        
-        if (accountNo) accountNo.textContent = "계좌번호: " + (acct.account_no || "-");
-        if (depositEl) depositEl.textContent = acct.deposit != null ? Number(acct.deposit).toLocaleString() + "원" : "-";
-        
-        var buyable = acct.buyable_cash ?? acct.available_cash ?? acct.deposit;
-        if (buyableEl) buyableEl.textContent = buyable != null ? Number(buyable).toLocaleString() + "원" : "-";
-        
-        if (totalEl) totalEl.textContent = acct.total_eval != null ? Number(acct.total_eval).toLocaleString() + "원" : "-";
-        var holdings = acct.holdings || acct.positions || [];
-        if (countEl) countEl.textContent = holdings.length + "종목";
+        var setEl = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
+        var fmtWon = function(v) { return v != null ? Number(v).toLocaleString() + '원' : '-'; };
+
+        setEl('tm-account-no', acct.account_no ? '· ' + acct.account_no : '');
+
+        // 주문가능 예수금 (nxdy_excc_amt 기반, buyable_cash)
+        var buyable = acct.buyable_cash != null ? acct.buyable_cash : acct.available_cash;
+        setEl('tm-buyable-cash', fmtWon(buyable));
+        setEl('tm-deposit-limit', '한도 ' + fmtWon(acct.deposit));
+
+        // 주식 평가금액
+        setEl('tm-stock-eval', fmtWon(acct.stock_eval != null ? acct.stock_eval : acct.purchase_total));
+        var holdings = acct.positions || acct.holdings || [];
+        setEl('tm-holdings-count', '보유 ' + holdings.length + '종목');
+
+        // 총평가금액
+        setEl('tm-total-eval', fmtWon(acct.total_eval));
+
+        // 평가손익 / 수익률
+        var pnlEl = document.getElementById('tm-pnl-today');
+        var pnlRateEl = document.getElementById('tm-pnl-rate');
+        var pnlVal = acct.pnl_total;
         if (pnlEl) {
-          var pnl = acct.total_pnl_pct != null ? Number(acct.total_pnl_pct) : null;
-          if (pnl != null && !Number.isNaN(pnl)) {
-            pnlEl.textContent = (pnl >= 0 ? "+" : "") + pnl.toFixed(2) + "%";
-            pnlEl.className = "metric " + (pnl >= 0 ? "good" : "bad");
-          } else if (acct.realized_pnl_today != null || acct.pnl_today != null) {
-            var val = acct.realized_pnl_today != null ? acct.realized_pnl_today : acct.pnl_today;
-            pnlEl.textContent = Number(val).toLocaleString() + "원";
-            pnlEl.className = "metric " + (val >= 0 ? "good" : "bad");
-          } else {
-            pnlEl.textContent = "-";
-            pnlEl.className = "metric";
-          }
+          pnlEl.textContent = fmtWon(pnlVal);
+          pnlEl.style.color = pnlVal > 0 ? 'var(--green)' : pnlVal < 0 ? 'var(--red, #f85149)' : '';
         }
+        if (pnlRateEl && acct.pnl_rate != null) {
+          var rate = Number(acct.pnl_rate);
+          pnlRateEl.textContent = (rate >= 0 ? '+' : '') + rate.toFixed(2) + '%';
+          pnlRateEl.style.color = rate > 0 ? 'var(--green)' : rate < 0 ? 'var(--red, #f85149)' : 'var(--muted)';
+        }
+
+        // 당일 매수/매도
+        setEl('tm-today-buy', fmtWon(acct.today_buy_amt));
+        setEl('tm-today-sell', fmtWon(acct.today_sell_amt));
       }
     } catch(e) { console.warn("loadTradingMonitor account error", e); }
 
@@ -4786,7 +4845,7 @@
       var data = await res.json();
       var report = data.payload || (data.ok ? data : null);
 
-      if (!res.ok || !report || !report.trade_date) {
+      if (!res.ok || !report) {
         _raCurrentReport = null;
         if (emptyEl) emptyEl.style.display = '';
         console.warn('[WARN] ReviewAudit - report empty', dateStr || 'today');
@@ -4794,8 +4853,18 @@
       }
 
       _raCurrentReport = report;
-      renderReviewReport(report);
-      if (reportEl) reportEl.style.display = '';
+      // md_content만 있고 DB 보고서 없는 경우: 카드는 숨기고 팝업 직접 오픈 버튼만 표시
+      if (!report.trade_date && report.md_content) {
+        if (reportEl) {
+          reportEl.style.display = '';
+          // 요약 카드는 데이터 없음으로 처리
+          document.getElementById('ra-report-title') && (document.getElementById('ra-report-title').textContent = dateStr ? new Date(dateStr+'T00:00:00').toLocaleDateString('ko-KR',{month:'long',day:'numeric'}) + ' 시스템 점검 보고서' : '점검 보고서');
+          document.getElementById('ra-report-subtitle') && (document.getElementById('ra-report-subtitle').textContent = '수동 작성 MD 파일 — 자세히 보기를 클릭하세요');
+        }
+      } else {
+        renderReviewReport(report);
+        if (reportEl) reportEl.style.display = '';
+      }
       console.info('[INFO] ReviewAudit - load complete', report.trade_date);
     } catch (e) {
       _raCurrentReport = null;
@@ -4874,7 +4943,8 @@
     }
   }
 
-  /* Open the Review & Audit detail modal and generate a readable full-text report from the current payload. */
+  /* Open the Review & Audit detail modal.
+     MD 파일이 있으면 그 내용을 우선 표시하고, 없으면 DB 기반 요약 텍스트를 생성한다. */
   function openReviewDetailModal() {
     if (!_raCurrentReport) return;
     var modal = document.getElementById('ra-detail-modal');
@@ -4883,12 +4953,22 @@
     if (!modal || !content) return;
 
     var r = _raCurrentReport;
-    var d = new Date(r.trade_date + 'T00:00:00');
-    if (title) title.textContent = (d.getMonth() + 1) + '월 ' + d.getDate() + '일 점검 보고서 전문';
+    var d = new Date((r.trade_date || '') + 'T00:00:00');
+    var dateLabel = r.trade_date ? ((d.getMonth() + 1) + '월 ' + d.getDate() + '일') : '-';
+    if (title) title.textContent = dateLabel + ' 점검 보고서 전문';
 
+    // MD 파일 내용이 있으면 그대로 표시
+    if (r.md_content) {
+      content.textContent = r.md_content;
+      modal.style.display = '';
+      return;
+    }
+
+    // DB 기반 요약 텍스트 생성 (MD 없을 때 fallback)
     var lines = [];
     lines.push('===================================');
-    lines.push('  ' + (d.getMonth() + 1) + '월 ' + d.getDate() + '일 시스템 점검 보고서');
+    lines.push('  ' + dateLabel + ' 시스템 점검 보고서');
+    lines.push('  (DB 자동 생성 — 수동 점검 파일 없음)');
     lines.push('===================================');
     lines.push('');
     lines.push('[기본 정보]');

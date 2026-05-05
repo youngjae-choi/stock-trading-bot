@@ -81,23 +81,36 @@ def _build_balance_payload(data: dict[str, Any]) -> dict[str, Any]:
 
     summary_rows = _as_list(data.get("output2"))
     summary = summary_rows[0] if summary_rows else {}
-    deposit = _to_int(summary.get("dnca_tot_amt"))
-    # ord_psbl_cash is cash available for orders; nass_amt is net assets and must not drive buyable cash.
-    buyable_cash = deposit
-    for key in ("ord_psbl_cash", "dnca_tot_amt"):
+
+    # 주문 가능 예수금 우선순위:
+    #   ord_psbl_cash   — 실계좌에서 제공되는 주문가능금액 (가상계좌에는 없을 수 있음)
+    #   nxdy_excc_amt   — 익일정산금 = 매수 후 차감된 실제 주문 가능 현금 (가상계좌 기준)
+    #   prvs_rcdl_excc_amt — 전일정산금 (nxdy_excc_amt 없을 때 fallback)
+    #   dnca_tot_amt    — 예탁금 총액 (가상계좌 한도 1억 고정 — 최후 수단)
+    buyable_cash = 0
+    for key in ("ord_psbl_cash", "nxdy_excc_amt", "prvs_rcdl_excc_amt", "dnca_tot_amt"):
         candidate = _to_int(summary.get(key))
         if candidate > 0:
             buyable_cash = candidate
             break
+
+    # deposit: 예탁금 총액 (계좌 한도 표시용)
+    deposit = _to_int(summary.get("dnca_tot_amt"))
+
     account_no = f"{settings.KIS_CANO}{settings.KIS_ACNT_PRDT_CD}"
     return {
         "account_no": account_no,
-        "deposit": deposit,
-        "buyable_cash": buyable_cash,
+        "deposit": deposit,                           # 예탁금 총액 (한도)
+        "buyable_cash": buyable_cash,                 # 주문 가능 예수금 (실시간)
         "available_cash": buyable_cash,
         "total_eval": _to_int(summary.get("tot_evlu_amt")),
         "purchase_total": _to_int(summary.get("pchs_amt_smtl_amt")),
         "pnl_total": _to_int(summary.get("evlu_pfls_smtl_amt")),
+        "stock_eval": _to_int(summary.get("scts_evlu_amt")),        # 주식 평가금액
+        "pnl_rate": _to_float(summary.get("asst_icdc_erng_rt")),    # 자산증감수익률
+        "prev_buy_amt": _to_int(summary.get("bfdy_buy_amt")),       # 전일 매수금액
+        "today_buy_amt": _to_int(summary.get("thdt_buy_amt")),      # 당일 매수금액
+        "today_sell_amt": _to_int(summary.get("thdt_sll_amt")),     # 당일 매도금액
         "positions": positions,
     }
 
