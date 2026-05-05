@@ -73,6 +73,18 @@ async def lifespan(app: FastAPI):
     initialize_auth()
     scheduler_instance.start()
     logger.info("SUCCESS: Scheduler started (%d jobs registered)", len(scheduler_instance.get_jobs()))
+    # 서버 재시작 시 오늘 포지션을 복원해 S6 활성화 여부와 무관하게 S9 청산 대상이 유지되도록 한다.
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from .services.engine.decision_engine import _restore_positions_from_db
+
+        today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+        _restore_positions_from_db(today, [])
+        logger.info("SUCCESS: [startup] 오늘 포지션 자동 복원 완료 trade_date=%s", today)
+    except Exception as exc:
+        logger.warning("WARN: [startup] 포지션 복원 실패 error=%s", exc)
     yield
     scheduler_instance.shutdown(wait=False)
     logger.info("SUCCESS: Scheduler stopped")

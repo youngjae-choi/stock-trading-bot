@@ -113,15 +113,21 @@ def _restore_positions_from_db(trade_date: str, candidate_symbols: list[str]) ->
 
     Args:
         trade_date: YYYY-MM-DD 형식의 거래일.
-        candidate_symbols: 현재 DecisionEngine 후보 종목 코드 목록.
+        candidate_symbols: 현재 DecisionEngine 후보 종목 코드 목록. 비어 있으면 오늘 매수 주문 전체를 대상으로 복원한다.
     """
-    if not candidate_symbols:
-        logger.info("INFO: [S6] 포지션 복원 후보 없음")
-        return
-
-    placeholders = ",".join("?" for _ in candidate_symbols)
     try:
         with get_connection() as conn:
+            safe_symbols = [str(symbol).strip() for symbol in candidate_symbols if str(symbol).strip()]
+            if safe_symbols:
+                placeholders = ",".join("?" for _ in safe_symbols)
+                symbol_filter_orders = f"AND symbol IN ({placeholders})"
+                symbol_filter_stops = f"AND symbol_code IN ({placeholders})"
+                params_symbols = safe_symbols
+            else:
+                symbol_filter_orders = ""
+                symbol_filter_stops = ""
+                params_symbols = []
+
             rows = conn.execute(
                 f"""
                 SELECT ps.*, latest.qty
@@ -132,20 +138,21 @@ def _restore_positions_from_db(trade_date: str, candidate_symbols: list[str]) ->
                     WHERE trade_date = ?
                       AND status IN ('submitted', 'filled')
                       AND side = 'buy'
-                      AND symbol IN ({placeholders})
+                      {symbol_filter_orders}
                     GROUP BY symbol
                 ) latest
                   ON latest.symbol = ps.symbol_code
                 JOIN (
                     SELECT symbol_code, MAX(last_updated_at) AS latest_updated_at
                     FROM position_stop_states
-                    WHERE symbol_code IN ({placeholders})
+                    WHERE date(last_updated_at) = ?
+                      {symbol_filter_stops}
                     GROUP BY symbol_code
                 ) latest_stop
                   ON latest_stop.symbol_code = ps.symbol_code
                  AND latest_stop.latest_updated_at = ps.last_updated_at
                 """,
-                [trade_date] + candidate_symbols + candidate_symbols,
+                [trade_date] + params_symbols + [trade_date] + params_symbols,
             ).fetchall()
     except Exception as exc:
         logger.warning("WARN: [S6] 포지션 복원 쿼리 실패 error=%s", exc)
@@ -176,7 +183,7 @@ def _restore_positions_from_db(trade_date: str, candidate_symbols: list[str]) ->
             entry_price,
         )
 
-    logger.info("SUCCESS: [S6] 포지션 복원 완료 count=%d", restored)
+    logger.info("SUCCESS: [S6] 포지션 복원 완료 count=%d trade_date=%s", restored, trade_date)
 
 
 class DecisionEngine:

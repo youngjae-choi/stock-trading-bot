@@ -836,10 +836,9 @@
         <option value="expert-knowledge">Expert Knowledge</option>
         <option value="alerts">Alert Center</option>
         <option value="approval" style="display:none">Approval Queue</option>
-        <option value="shadow-trading">Shadow Trading</option>
-        <option value="missed-opportunity">Missed Opportunity</option>
+        <option value="shadow-trading">미진입 추적</option>
         <option value="false-positive">False Positive</option>
-        <option value="confidence-cal">Confidence Cal.</option>
+        <option value="confidence-cal" style="display:none">Confidence Cal.</option>
         <option value="review">Review & Audit</option>
         <option value="data">Data & API</option>
         <option value="engine-test">KIS System Test</option>
@@ -867,10 +866,9 @@
           <button data-screen="approval" style="display:none">Approval Queue <small>approval</small></button>
 
           <div class="menu-label">판단 검증</div>
-          <button data-screen="shadow-trading">Shadow Trading <small>shadow</small></button>
-          <button data-screen="missed-opportunity">Missed Opportunity <small>missed</small></button>
+          <button data-screen="shadow-trading">미진입 추적 <small>missed</small></button>
           <button data-screen="false-positive">False Positive <small>fp</small></button>
-          <button data-screen="confidence-cal">Confidence Cal. <small>conf-cal</small></button>
+          <button data-screen="confidence-cal" style="display:none">Confidence Cal. <small>conf-cal</small></button>
 
           <button data-screen="review">Review & Audit <small>learn</small></button>
           <button data-screen="data">Data & API <small>health</small></button>
@@ -1454,70 +1452,51 @@
         <section class="screen" id="screen-shadow-trading">
           <div class="page-head">
             <div>
-              <h1 class="page-title">Shadow Trading</h1>
-              <p class="page-desc">미진입 종목을 가상으로 추적해 놓친 수익 기회를 분석합니다.</p>
+              <h1 class="page-title">미진입 추적</h1>
+              <p class="page-desc">오늘 매수하지 않은 종목이 이후 어떻게 움직였는지 추적합니다.</p>
             </div>
-            <button class="btn" onclick="loadShadowTrading()">새로고침</button>
+            <button class="btn" onclick="loadMissedTracking()">새로고침</button>
           </div>
 
           <!-- 요약 카드 -->
-          <div class="grid cols-3" style="margin-bottom:16px">
-            <div class="card compact"><div class="card-title">총 Shadow Trades</div><div class="metric" id="st-total">-</div></div>
-            <div class="card compact"><div class="card-title">평균 가상 손익</div><div class="metric" id="st-avg-pnl">-</div></div>
-            <div class="card compact"><div class="card-title">양성 비율</div><div class="metric" id="st-positive-rate">-</div></div>
+          <div class="grid cols-4" style="margin-bottom:16px;" id="missed-summary-cards">
+            <div class="card compact"><div class="card-title">필터 탈락</div><div class="metric" id="ms-filter-count">-</div><div class="muted">S3/S4 제외</div></div>
+            <div class="card compact"><div class="card-title">미배정</div><div class="metric" id="ms-plan-count">-</div><div class="muted">S5 Daily Plan</div></div>
+            <div class="card compact"><div class="card-title">신호 미발생</div><div class="metric" id="ms-signal-count">-</div><div class="muted">S6 조건 미달</div></div>
+            <div class="card compact"><div class="card-title">개선 후보</div><div class="metric" id="ms-candidate-count" style="color:var(--warn);">-</div><div class="muted">성과 좋았던 미진입</div></div>
           </div>
 
-          <!-- 목록 -->
+          <!-- 종목 목록 -->
           <div class="card">
-            <div class="card-title">오늘 Shadow Trade 목록</div>
+            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+              <span>미진입 종목 목록</span>
+              <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                <button class="btn" id="ms-filter-all" onclick="filterMissedTracking('all')">전체</button>
+                <button class="btn" id="ms-filter-s3s4" onclick="filterMissedTracking('filter')">필터탈락</button>
+                <button class="btn" id="ms-filter-s5" onclick="filterMissedTracking('plan')">미배정</button>
+                <button class="btn" id="ms-filter-s6" onclick="filterMissedTracking('signal')">신호미발생</button>
+                <button class="btn" id="ms-filter-candidate" onclick="filterMissedTracking('candidate')">개선후보</button>
+              </div>
+            </div>
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>종목</th><th>미진입 단계</th><th>진입가</th><th>청산가</th><th>가상 손익(%)</th><th>상태</th></tr>
+                  <tr>
+                    <th>종목코드</th>
+                    <th>종목명</th>
+                    <th>탈락 단계</th>
+                    <th>탈락 사유</th>
+                    <th>진입가</th>
+                    <th>10분 후</th>
+                    <th>30분 후</th>
+                    <th>장마감</th>
+                    <th>개선후보</th>
+                  </tr>
                 </thead>
-                <tbody id="st-list-tbody">
-                  <tr><td colspan="6" class="muted" style="text-align:center">새로고침을 눌러 불러오기</td></tr>
+                <tbody id="missed-tracking-tbody">
+                  <tr><td colspan="9" class="muted" style="text-align:center;">로딩중...</td></tr>
                 </tbody>
               </table>
-            </div>
-          </div>
-        </section>
-
-        <section class="screen" id="screen-missed-opportunity">
-          <div class="page-head">
-            <div>
-              <h1 class="page-title">Missed Opportunity</h1>
-              <p class="page-desc">필터에서 탈락한 종목의 이후 수익을 추적합니다.</p>
-            </div>
-            <button class="btn" onclick="loadMissedOpportunity()">새로고침</button>
-          </div>
-
-          <div class="grid cols-2" style="margin-bottom:16px">
-            <div class="card">
-              <div class="card-title">오늘 Missed Opportunity 목록</div>
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr><th>종목</th><th>탈락 단계</th><th>이유</th><th>탈락 시 가격</th><th>10분 후</th><th>30분 후</th><th>EOD</th></tr>
-                  </thead>
-                  <tbody id="mo-all-tbody">
-                    <tr><td colspan="7" class="muted" style="text-align:center">새로고침을 눌러 불러오기</td></tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            <div class="card">
-              <div class="card-title">개선 후보</div>
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr><th>종목</th><th>탈락 단계</th><th>EOD 수익률</th></tr>
-                  </thead>
-                  <tbody id="mo-candidate-tbody">
-                    <tr><td colspan="3" class="muted" style="text-align:center">새로고침을 눌러 불러오기</td></tr>
-                  </tbody>
-                </table>
-              </div>
             </div>
           </div>
         </section>
@@ -1870,175 +1849,94 @@
           <div class="page-head">
             <div>
               <h1 class="page-title">Review & Audit</h1>
-              <p class="page-desc">당일 매매 결과와 미진입 사유를 구조화하여 Learning Memory로 저장하고, 다음 거래일 S3~S5와 Daily Trading Plan 생성에 반영합니다.</p>
+              <p class="page-desc">일별 매매 결과 점검 보고서입니다.</p>
             </div>
-            <div>
-              <button class="btn primary" onclick="runDailySummary()">일일 요약 생성 (S10)</button>
-              <button class="btn" onclick="loadReviewData()">새로고침</button>
-            </div>
-          </div>
-
-          <div class="grid cols-4">
-            <div class="card compact"><div class="card-title">총 손익</div><div class="metric" id="review-pnl">-</div><div class="muted">실현 기준</div></div>
-            <div class="card compact"><div class="card-title">승률</div><div class="metric" id="review-winrate">-</div><div class="muted" id="review-winrate-detail">-</div></div>
-            <div class="card compact"><div class="card-title">매매일수</div><div class="metric" id="review-trade-days">-</div><div class="muted">데이터 있는 날</div></div>
-            <div class="card compact"><div class="card-title">총 주문수</div><div class="metric" id="review-total-orders">-</div><div class="muted">전체 집계</div></div>
-          </div>
-
-          <div class="section-gap"></div>
-
-          <div class="card">
-            <div class="card-title">Risk Profile별 성과</div>
-            <div class="grid cols-4" id="review-profile-pnl">
-              <div class="card compact">
-                <div class="card-title">LOW_VOL <span style="color:#6cb6ff;">&#9632;</span></div>
-                <div class="metric" id="review-pnl-low">-</div>
-                <div class="muted" id="review-cnt-low">0거래</div>
-              </div>
-              <div class="card compact">
-                <div class="card-title">MID_VOL <span style="color:#3fb950;">&#9632;</span></div>
-                <div class="metric" id="review-pnl-mid">-</div>
-                <div class="muted" id="review-cnt-mid">0거래</div>
-              </div>
-              <div class="card compact">
-                <div class="card-title">HIGH_VOL <span style="color:#d29922;">&#9632;</span></div>
-                <div class="metric" id="review-pnl-high">-</div>
-                <div class="muted" id="review-cnt-high">0거래</div>
-              </div>
-              <div class="card compact">
-                <div class="card-title">THEME_SPIKE <span style="color:#f85149;">&#9632;</span></div>
-                <div class="metric" id="review-pnl-spike">-</div>
-                <div class="muted" id="review-cnt-spike">0거래</div>
-              </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="date" id="ra-date-input" style="padding:5px; border-radius:5px; background:var(--panel-2); color:var(--text); border:1px solid var(--line);" onchange="loadReviewByDate(this.value)">
+              <button class="btn" onclick="loadReviewAuditScreen()">오늘</button>
             </div>
           </div>
 
-          <div class="section-gap"></div>
+          <div id="ra-empty" style="display:none;">
+            <div class="card" style="text-align:center; padding:40px;">
+              <div class="muted">해당 날짜의 점검 보고서가 없습니다.</div>
+              <div class="muted" style="margin-top:8px; font-size:12px;">S10 Review & Audit이 실행되면 보고서가 생성됩니다.</div>
+              <button class="btn" style="margin-top:16px;" onclick="runReviewAudit()">지금 생성</button>
+            </div>
+          </div>
 
-          <div class="split">
-            <div class="card">
-              <div class="card-title">가장 최근 거래일 요약</div>
-              <div class="card compact">
-                <div class="card-title">가장 최근 거래일 요약</div>
-                <div id="review-latest-summary">-</div>
-              </div>
-              <div class="card compact">
-                <div class="card-title">시장 톤</div>
-                <div id="review-latest-tone">-</div>
-              </div>
-              <div class="card compact">
-                <div class="card-title">Daily Plan</div>
-                <div id="review-latest-rulepack">-</div>
+          <div id="ra-report" style="display:none;">
+            <div class="card" style="margin-bottom:16px; background:var(--panel-2);">
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+                <div>
+                  <div style="font-size:18px; font-weight:700;" id="ra-report-title">OO월 OO일 시스템 점검 보고서</div>
+                  <div style="font-size:12px; color:var(--muted); margin-top:4px;" id="ra-report-subtitle">시장톤: - | RulePack: -</div>
+                </div>
+                <button class="btn" onclick="openReviewDetailModal()">자세히 보기 ↗</button>
               </div>
             </div>
 
-            <div class="card">
-              <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-                <span>일별 거래 이력 <span>Statistics 화면에서 상세 확인 가능</span></span>
-                <button class="btn" onclick="showScreen('statistics')">Statistics →</button>
+            <div class="grid cols-4" style="margin-bottom:16px;">
+              <div class="card compact">
+                <div class="card-title">총 주문</div>
+                <div class="metric" id="ra-total-orders">-</div>
+                <div class="muted" id="ra-orders-detail">매수- / 매도- / 실패-</div>
               </div>
+              <div class="card compact">
+                <div class="card-title">실현 손익</div>
+                <div class="metric" id="ra-pnl">-</div>
+                <div class="muted" id="ra-pnl-pct">수익률 -</div>
+              </div>
+              <div class="card compact">
+                <div class="card-title">청산 방식</div>
+                <div class="metric" id="ra-top-exit">-</div>
+                <div class="muted">가장 많은 청산 사유</div>
+              </div>
+              <div class="card compact">
+                <div class="card-title">트레일링 품질</div>
+                <div class="metric" id="ra-trailing">-</div>
+                <div class="muted" id="ra-trailing-detail">조기청산율 -</div>
+              </div>
+            </div>
+
+            <div class="card" style="margin-bottom:16px;">
+              <div class="card-title">Risk Profile별 성과</div>
               <div class="table-wrap">
                 <table>
                   <thead>
-                    <tr><th>날짜</th><th>주문</th><th>매수</th><th>매도</th><th>손익</th><th>시장톤</th></tr>
+                    <tr><th>Profile</th><th>주문수</th><th>체결율</th><th>평균 손익률</th><th>평가</th></tr>
                   </thead>
-                  <tbody id="review-history-tbody">
-                    <tr><td colspan="6" class="muted">로딩중...</td></tr>
+                  <tbody id="ra-profile-tbody">
+                    <tr><td colspan="5" class="muted" style="text-align:center;">데이터 없음</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">청산 사유별 성과</div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>청산 사유</th><th>건수</th><th>평균 손익률</th></tr>
+                  </thead>
+                  <tbody id="ra-exit-tbody">
+                    <tr><td colspan="3" class="muted" style="text-align:center;">데이터 없음</td></tr>
                   </tbody>
                 </table>
               </div>
             </div>
           </div>
 
-          <div class="section-gap"></div>
-
-          <!-- Rule Context -->
-          <section class="card" id="ra-rule-context">
-            <h3>Rule Context</h3>
-            <div class="info-grid">
-              <span class="label">Base RulePack Ver</span><span id="ra-rulepack-ver" class="value">—</span>
-              <span class="label">Risk Profile Pack Ver</span><span id="ra-profile-pack-ver" class="value">—</span>
-              <span class="label">Daily Plan ID</span><span id="ra-daily-plan-id" class="value">—</span>
-            </div>
-          </section>
-
-          <!-- Risk Profile Performance -->
-          <section class="card" id="ra-profile-performance">
-            <h3>Risk Profile Performance</h3>
-            <table class="data-table" id="ra-profile-table">
-              <thead>
-                <tr>
-                  <th>Profile</th><th>거래수</th><th>승률</th><th>평균손익</th>
-                </tr>
-              </thead>
-              <tbody id="ra-profile-tbody">
-                <tr><td colspan="4" class="muted">데이터 없음</td></tr>
-              </tbody>
-            </table>
-          </section>
-
-          <!-- Exit Reason Analysis -->
-          <section class="card" id="ra-exit-reason">
-            <h3>Exit Reason Analysis</h3>
-            <table class="data-table" id="ra-exit-table">
-              <thead>
-                <tr>
-                  <th>청산 사유</th><th>건수</th><th>평균손익</th>
-                </tr>
-              </thead>
-              <tbody id="ra-exit-tbody">
-                <tr><td colspan="3" class="muted">데이터 없음</td></tr>
-              </tbody>
-            </table>
-          </section>
-
-          <!-- Trailing Stop Quality -->
-          <section class="card" id="ra-trailing-quality">
-            <h3>Trailing Stop Quality</h3>
-            <div class="info-grid">
-              <span class="label">평균 수익 회수율</span><span id="ra-trailing-recovery" class="value">—</span>
-              <span class="label">조기 청산 비율</span><span id="ra-trailing-early" class="value">—</span>
-              <span class="label">Trailing Stop 청산 건수</span><span id="ra-trailing-count" class="value">—</span>
-            </div>
-          </section>
-
-          <!-- No Trade Reason -->
-          <section class="card" id="ra-no-trade">
-            <h3>No Trade Reason</h3>
-            <div id="ra-no-trade-list" class="tag-list">
-              <span class="muted">데이터 없음</span>
-            </div>
-          </section>
-
-          <!-- Learning Memory -->
-          <section class="card" id="ra-learning-memory">
-            <h3>Learning Memory</h3>
-            <div class="stat-row">
-              <div class="stat-item">
-                <span class="stat-label">오늘 생성</span>
-                <span class="stat-value" id="ra-mem-total">0</span>
+          <div id="ra-detail-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; overflow:auto; padding:20px;">
+            <div style="max-width:800px; margin:0 auto; background:var(--bg); border-radius:12px; padding:24px; position:relative;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; gap:12px;">
+                <div style="font-size:16px; font-weight:700;" id="ra-modal-title">점검 보고서 전문</div>
+                <button class="btn" onclick="closeReviewDetailModal()">닫기 ✕</button>
               </div>
-              <div class="stat-item">
-                <span class="stat-label">자동 반영 가능</span>
-                <span class="stat-value success" id="ra-mem-auto">0</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">승인 필요</span>
-                <span class="stat-value warn" id="ra-mem-approval">0</span>
-              </div>
+              <pre id="ra-detail-content" style="font-size:12px; line-height:1.6; white-space:pre-wrap; color:var(--text); background:var(--panel-2); padding:16px; border-radius:8px; max-height:70vh; overflow-y:auto;"></pre>
             </div>
-            <div class="scope-tags">
-              <span class="label">반영 예정</span>
-              <span class="tag" id="ra-mem-s3">S3: 0건</span>
-              <span class="tag" id="ra-mem-s4">S4: 0건</span>
-              <span class="tag" id="ra-mem-s5">S5: 0건</span>
-            </div>
-            <div id="ra-mem-list" style="margin-top:12px"></div>
-            <div style="margin-top:12px">
-              <button class="btn secondary" id="ra-build-memory-btn" onclick="buildLearningMemory()">S11 Learning Memory 생성</button>
-            </div>
-          </section>
-
+          </div>
         </section>
 
         <section class="screen" id="screen-statistics">
@@ -2560,6 +2458,9 @@
 
   /* Switch visible console screen and trigger the screen-specific data refresh. */
   function showScreen(name) {
+    if (name === "missed-opportunity") {
+      name = "shadow-trading";
+    }
     sessionStorage.setItem('currentScreen', name);
     if (window._tmRefreshInterval) {
       clearInterval(window._tmRefreshInterval);
@@ -2610,10 +2511,7 @@
     }
 
     if (name === "shadow-trading") {
-      loadShadowTrading();
-    }
-    if (name === "missed-opportunity") {
-      loadMissedOpportunity();
+      loadMissedTracking();
     }
     if (name === "false-positive") {
       loadFalsePositive();
@@ -2649,8 +2547,7 @@
     }
 
     if (name === "review") {
-      loadReviewData();
-      loadReviewAuditData();
+      loadReviewAuditScreen();
     }
 
     if (name === "statistics") {
@@ -4864,6 +4761,203 @@
     }
   }
 
+  var _raCurrentReport = null;
+
+  /* Load today's Review & Audit report and keep the date picker aligned with the selected report date. */
+  async function loadReviewAuditScreen() {
+    var today = new Date();
+    var todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+    var input = document.getElementById('ra-date-input');
+    if (input) input.value = todayStr;
+    await loadReviewByDate(todayStr);
+  }
+
+  /* Fetch a Review & Audit report for a specific YYYY-MM-DD date and route empty/error states to the empty panel. */
+  async function loadReviewByDate(dateStr) {
+    var emptyEl = document.getElementById('ra-empty');
+    var reportEl = document.getElementById('ra-report');
+    if (emptyEl) emptyEl.style.display = 'none';
+    if (reportEl) reportEl.style.display = 'none';
+
+    console.info('[INFO] ReviewAudit - load start', dateStr || 'today');
+    try {
+      var url = dateStr ? '/api/v1/review-audit/' + encodeURIComponent(dateStr) : '/api/v1/review-audit/today';
+      var res = await fetch(url);
+      var data = await res.json();
+      var report = data.payload || (data.ok ? data : null);
+
+      if (!res.ok || !report || !report.trade_date) {
+        _raCurrentReport = null;
+        if (emptyEl) emptyEl.style.display = '';
+        console.warn('[WARN] ReviewAudit - report empty', dateStr || 'today');
+        return;
+      }
+
+      _raCurrentReport = report;
+      renderReviewReport(report);
+      if (reportEl) reportEl.style.display = '';
+      console.info('[INFO] ReviewAudit - load complete', report.trade_date);
+    } catch (e) {
+      _raCurrentReport = null;
+      if (emptyEl) emptyEl.style.display = '';
+      console.error('[ERROR] ReviewAudit - load failed', e.message);
+    }
+  }
+
+  /* Render the selected Review & Audit payload into summary cards and the two performance tables. */
+  function renderReviewReport(r) {
+    var setEl = function(id, val) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = val != null ? val : '-';
+    };
+    var setHtml = function(id, html) {
+      var el = document.getElementById(id);
+      if (el) el.innerHTML = html;
+    };
+
+    var d = new Date(r.trade_date + 'T00:00:00');
+    var title = (d.getMonth() + 1) + '월 ' + d.getDate() + '일 시스템 점검 보고서';
+    setEl('ra-report-title', title);
+    setEl('ra-report-subtitle', '시장톤: ' + (r.market_tone || '-') + ' | RulePack: ' + (r.rulepack_id || '-'));
+
+    setEl('ra-total-orders', (r.total_orders || 0) + '건');
+    setEl('ra-orders-detail', '매수' + (r.buy_orders || 0) + ' / 매도' + (r.sell_orders || 0) + ' / 실패' + (r.failed_orders || 0));
+
+    var pnl = r.realized_pnl;
+    var pnlEl = document.getElementById('ra-pnl');
+    if (pnlEl) {
+      pnlEl.textContent = pnl != null ? Number(pnl).toLocaleString() + '원' : '-';
+      pnlEl.className = 'metric ' + (pnl > 0 ? 'good' : pnl < 0 ? 'bad' : '');
+    }
+    var pct = r.realized_pnl_pct;
+    setEl('ra-pnl-pct', pct != null ? (pct >= 0 ? '+' : '') + Number(pct).toFixed(2) + '%' : '-');
+
+    var exitSummary = r.exit_summary || {};
+    var topExit = Object.entries(exitSummary).sort(function(a, b) { return (b[1] || 0) - (a[1] || 0); })[0];
+    setEl('ra-top-exit', topExit ? topExit[0].replace(/_/g, ' ') + ' (' + topExit[1] + ')' : '-');
+
+    var tq = r.trailing_quality || {};
+    setEl('ra-trailing', tq.quality_grade || '-');
+    setEl('ra-trailing-detail', tq.early_exit_rate != null ? '조기청산 ' + Number(tq.early_exit_rate * 100).toFixed(0) + '%' : '-');
+
+    var profiles = r.profile_performance || [];
+    if (profiles.length) {
+      setHtml('ra-profile-tbody', profiles.map(function(p) {
+        var fillRate = p.total_orders > 0 ? Math.round((p.filled_orders || 0) / p.total_orders * 100) : 0;
+        var pnlPct = p.avg_pnl_pct != null ? (p.avg_pnl_pct >= 0 ? '+' : '') + Number(p.avg_pnl_pct).toFixed(2) + '%' : '-';
+        var color = (p.avg_pnl_pct || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+        return '<tr>'
+          + '<td><strong>' + escapeHtml(p.profile || '') + '</strong></td>'
+          + '<td>' + (p.total_orders || 0) + '건</td>'
+          + '<td>' + fillRate + '%</td>'
+          + '<td style="color:' + color + ';">' + pnlPct + '</td>'
+          + '<td>' + escapeHtml(p.evaluation || '-') + '</td>'
+          + '</tr>';
+      }).join(''));
+    } else {
+      setHtml('ra-profile-tbody', '<tr><td colspan="5" class="muted" style="text-align:center;">데이터 없음</td></tr>');
+    }
+
+    var exits = r.exit_reason_performance || [];
+    if (exits.length) {
+      setHtml('ra-exit-tbody', exits.map(function(e) {
+        var pnlPct = e.avg_pnl_pct != null ? (e.avg_pnl_pct >= 0 ? '+' : '') + Number(e.avg_pnl_pct).toFixed(2) + '%' : '-';
+        var color = (e.avg_pnl_pct || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+        return '<tr>'
+          + '<td>' + escapeHtml((e.exit_reason || '').replace(/_/g, ' ')) + '</td>'
+          + '<td>' + (e.count || 0) + '건</td>'
+          + '<td style="color:' + color + ';">' + pnlPct + '</td>'
+          + '</tr>';
+      }).join(''));
+    } else {
+      setHtml('ra-exit-tbody', '<tr><td colspan="3" class="muted" style="text-align:center;">데이터 없음</td></tr>');
+    }
+  }
+
+  /* Open the Review & Audit detail modal and generate a readable full-text report from the current payload. */
+  function openReviewDetailModal() {
+    if (!_raCurrentReport) return;
+    var modal = document.getElementById('ra-detail-modal');
+    var content = document.getElementById('ra-detail-content');
+    var title = document.getElementById('ra-modal-title');
+    if (!modal || !content) return;
+
+    var r = _raCurrentReport;
+    var d = new Date(r.trade_date + 'T00:00:00');
+    if (title) title.textContent = (d.getMonth() + 1) + '월 ' + d.getDate() + '일 점검 보고서 전문';
+
+    var lines = [];
+    lines.push('===================================');
+    lines.push('  ' + (d.getMonth() + 1) + '월 ' + d.getDate() + '일 시스템 점검 보고서');
+    lines.push('===================================');
+    lines.push('');
+    lines.push('[기본 정보]');
+    lines.push('  거래일     : ' + (r.trade_date || '-'));
+    lines.push('  시장 톤    : ' + (r.market_tone || '-'));
+    lines.push('  RulePack   : ' + (r.rulepack_id || '-'));
+    lines.push('');
+    lines.push('[주문 요약]');
+    lines.push('  총 주문    : ' + (r.total_orders || 0) + '건');
+    lines.push('  매수       : ' + (r.buy_orders || 0) + '건');
+    lines.push('  매도       : ' + (r.sell_orders || 0) + '건');
+    lines.push('  실패       : ' + (r.failed_orders || 0) + '건');
+    lines.push('');
+    lines.push('[손익]');
+    lines.push('  실현 손익  : ' + (r.realized_pnl != null ? Number(r.realized_pnl).toLocaleString() + '원' : '-'));
+    lines.push('  손익률     : ' + (r.realized_pnl_pct != null ? (r.realized_pnl_pct >= 0 ? '+' : '') + Number(r.realized_pnl_pct).toFixed(2) + '%' : '-'));
+    lines.push('');
+    lines.push('[Risk Profile별 성과]');
+    var profiles = r.profile_performance || [];
+    if (profiles.length) {
+      profiles.forEach(function(p) {
+        lines.push('  ' + (p.profile || '-').padEnd(16) + ' | 주문 ' + (p.total_orders || 0) + '건 | 평균 손익 ' + (p.avg_pnl_pct != null ? (p.avg_pnl_pct >= 0 ? '+' : '') + Number(p.avg_pnl_pct).toFixed(2) + '%' : '-'));
+      });
+    } else {
+      lines.push('  데이터 없음');
+    }
+    lines.push('');
+    lines.push('[청산 사유별 성과]');
+    var exits = r.exit_reason_performance || [];
+    if (exits.length) {
+      exits.forEach(function(e) {
+        lines.push('  ' + (e.exit_reason || '-').replace(/_/g, ' ').padEnd(20) + ' | ' + (e.count || 0) + '건 | ' + (e.avg_pnl_pct != null ? (e.avg_pnl_pct >= 0 ? '+' : '') + Number(e.avg_pnl_pct).toFixed(2) + '%' : '-'));
+      });
+    } else {
+      lines.push('  데이터 없음');
+    }
+    lines.push('');
+    lines.push('[트레일링 품질]');
+    var tq = r.trailing_quality || {};
+    lines.push('  등급       : ' + (tq.quality_grade || '-'));
+    lines.push('  조기청산율 : ' + (tq.early_exit_rate != null ? (tq.early_exit_rate * 100).toFixed(0) + '%' : '-'));
+    lines.push('');
+    lines.push('----------------------------------- 끝');
+
+    content.textContent = lines.join('\n');
+    modal.style.display = '';
+  }
+
+  /* Close the Review & Audit detail modal without mutating the loaded report. */
+  function closeReviewDetailModal() {
+    var modal = document.getElementById('ra-detail-modal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  /* Request Review & Audit generation for today, then reload the Review screen state. */
+  async function runReviewAudit() {
+    console.info('[INFO] ReviewAudit - generate start');
+    try {
+      var today = new Date();
+      var todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+      await fetch('/api/v1/review-audit/run', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({date: todayStr})});
+      await loadReviewAuditScreen();
+      console.info('[INFO] ReviewAudit - generate complete', todayStr);
+    } catch (e) {
+      console.error('[ERROR] ReviewAudit - generate failed', e.message);
+      alert('생성 실패: ' + e.message);
+    }
+  }
+
   function renderProfilePerformance(summary) {
     const tbody = document.getElementById('ra-profile-tbody');
     if (!tbody) return;
@@ -5916,86 +6010,169 @@
     if (res.ok) { showToast('보류 처리됨'); await loadApprovalQueue(); }
   }
 
-  // Shadow Trading
-  async function loadShadowTrading() {
-    try {
-      const [sumRes, listRes] = await Promise.all([
-        fetch('/api/v1/shadow-trading/summary'),
-        fetch('/api/v1/shadow-trading/today'),
-      ]);
-      if (sumRes.ok) {
-        const sum = await sumRes.json();
-        const s = sum.payload || {};
-        const setEl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '-'; };
-        setEl('st-total', s.total_count ?? s.total ?? '-');
-        setEl('st-avg-pnl', s.avg_pnl != null ? s.avg_pnl.toFixed(2) + '%' : '-');
-        setEl('st-positive-rate', s.positive_rate != null ? (s.positive_rate * 100).toFixed(1) + '%' : '-');
-      }
-      if (listRes.ok) {
-        const list = await listRes.json();
-        const items = list.payload || [];
-        const tbody = document.getElementById('st-list-tbody');
-        if (!tbody) return;
-        if (!items.length) {
-          tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center">데이터 없음</td></tr>';
-          return;
-        }
-        tbody.innerHTML = items.map(t => `<tr>
-          <td>${t.symbol_name || t.symbol}</td>
-          <td>${t.missed_stage}</td>
-          <td>${t.entry_price?.toLocaleString() ?? '-'}</td>
-          <td>${t.exit_price?.toLocaleString() ?? '-'}</td>
-          <td style="color:${(t.shadow_pnl||0)>=0?'#3fb950':'#f85149'}">${t.shadow_pnl != null ? t.shadow_pnl.toFixed(2)+'%' : '-'}</td>
-          <td><span class="status ${t.status==='active'?'warn':'ok'}">${t.status}</span></td>
-        </tr>`).join('');
-      }
-    } catch (e) { console.warn('loadShadowTrading error', e); }
+  // 미진입 추적 화면의 전체 API 병합 결과와 현재 필터 상태를 보관한다.
+  var _missedTrackingAll = [];
+  var _missedFilter = 'all';
+
+  /* Normalize API responses that may arrive either as an array or as { payload: [...] }. */
+  function getPayloadRows(response) {
+    if (Array.isArray(response)) return response;
+    if (response && Array.isArray(response.payload)) return response.payload;
+    return [];
   }
 
-  // Missed Opportunity
-  async function loadMissedOpportunity() {
+  /* Refresh merged missed-tracking data from Shadow Trading and Missed Opportunity endpoints. */
+  async function loadMissedTracking() {
+    var tbody = document.getElementById('missed-tracking-tbody');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">로딩중...</td></tr>';
+
     try {
-      const [allRes, candRes] = await Promise.all([
-        fetch('/api/v1/missed-opportunity/today'),
-        fetch('/api/v1/missed-opportunity/candidates'),
+      var fetchJson = function(url) {
+        return fetch(url).then(function(r) {
+          if (!r.ok) throw new Error(url + ' ' + r.status);
+          return r.json();
+        });
+      };
+      var results = await Promise.allSettled([
+        fetchJson('/api/v1/shadow-trading/today'),
+        fetchJson('/api/v1/missed-opportunity/today'),
       ]);
-      if (allRes.ok) {
-        const data = await allRes.json();
-        const items = data.payload || [];
-        const tbody = document.getElementById('mo-all-tbody');
-        if (tbody) {
-          if (!items.length) {
-            tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center">데이터 없음</td></tr>';
-          } else {
-            tbody.innerHTML = items.map(m => `<tr>
-              <td>${m.symbol_name || m.symbol}</td>
-              <td>${m.missed_stage}</td>
-              <td class="muted" style="font-size:0.85em">${m.missed_reason}</td>
-              <td>${m.price_at_missed?.toLocaleString() ?? '-'}</td>
-              <td style="color:${(m.max_return_after_10m||0)>=0?'#3fb950':'#f85149'}">${m.max_return_after_10m != null ? m.max_return_after_10m.toFixed(2)+'%' : '-'}</td>
-              <td style="color:${(m.max_return_after_30m||0)>=0?'#3fb950':'#f85149'}">${m.max_return_after_30m != null ? m.max_return_after_30m.toFixed(2)+'%' : '-'}</td>
-              <td style="color:${(m.max_return_until_eod||0)>=0?'#3fb950':'#f85149'}">${m.max_return_until_eod != null ? m.max_return_until_eod.toFixed(2)+'%' : '-'}</td>
-            </tr>`).join('');
-          }
-        }
+      var shadowRes = results[0].status === 'fulfilled' ? results[0].value : { payload: [] };
+      var missedRes = results[1].status === 'fulfilled' ? results[1].value : { payload: [] };
+      if (results[0].status === 'rejected') console.warn('[WARN] loadMissedTracking - shadow endpoint failed', results[0].reason.message);
+      if (results[1].status === 'rejected') console.warn('[WARN] loadMissedTracking - missed endpoint failed', results[1].reason.message);
+      if (results[0].status === 'rejected' && results[1].status === 'rejected') {
+        throw new Error('missed tracking endpoints failed');
       }
-      if (candRes.ok) {
-        const data = await candRes.json();
-        const items = data.payload || [];
-        const tbody = document.getElementById('mo-candidate-tbody');
-        if (tbody) {
-          if (!items.length) {
-            tbody.innerHTML = '<tr><td colspan="3" class="muted" style="text-align:center">후보 없음</td></tr>';
-          } else {
-            tbody.innerHTML = items.map(m => `<tr>
-              <td>${m.symbol_name || m.symbol}</td>
-              <td>${m.missed_stage}</td>
-              <td style="color:${(m.max_return_until_eod||0)>=0?'#3fb950':'#f85149'}">${m.max_return_until_eod != null ? m.max_return_until_eod.toFixed(2)+'%' : '-'}</td>
-            </tr>`).join('');
-          }
-        }
-      }
-    } catch (e) { console.warn('loadMissedOpportunity error', e); }
+
+      // Shadow Trading rows represent S6 candidates that reached monitoring but never emitted a buy signal.
+      var shadowRows = getPayloadRows(shadowRes).map(function(r) {
+        return {
+          symbol: r.symbol || '',
+          symbol_name: r.symbol_name || '',
+          missed_stage: r.missed_stage || 'S6_NO_SIGNAL',
+          missed_reason: r.missed_reason || '신호 조건 미달',
+          entry_price: r.entry_price || 0,
+          ret_10m: r.max_return_10m,
+          ret_30m: r.max_return_30m,
+          ret_eod: r.max_return_eod,
+          improvement_candidate: 0,
+        };
+      });
+
+      // Missed Opportunity rows represent S3/S4/S5 candidates filtered before live signal monitoring.
+      var missedRows = getPayloadRows(missedRes).map(function(r) {
+        return {
+          symbol: r.symbol || '',
+          symbol_name: r.symbol_name || '',
+          missed_stage: r.missed_stage || 'S3_FILTER',
+          missed_reason: r.missed_reason || '-',
+          entry_price: r.price_at_missed || 0,
+          ret_10m: r.max_return_after_10m,
+          ret_30m: r.max_return_after_30m,
+          ret_eod: r.max_return_until_eod,
+          improvement_candidate: r.improvement_candidate || 0,
+        };
+      });
+
+      _missedTrackingAll = shadowRows.concat(missedRows);
+
+      var filterCount = _missedTrackingAll.filter(function(r) {
+        return r.missed_stage.indexOf('S3') !== -1 || r.missed_stage.indexOf('S4') !== -1;
+      }).length;
+      var planCount = _missedTrackingAll.filter(function(r) { return r.missed_stage.indexOf('S5') !== -1; }).length;
+      var signalCount = _missedTrackingAll.filter(function(r) { return r.missed_stage.indexOf('S6') !== -1; }).length;
+      var candidateCount = _missedTrackingAll.filter(function(r) { return r.improvement_candidate; }).length;
+
+      var setEl = function(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; };
+      setEl('ms-filter-count', filterCount);
+      setEl('ms-plan-count', planCount);
+      setEl('ms-signal-count', signalCount);
+      setEl('ms-candidate-count', candidateCount);
+
+      renderMissedTracking();
+    } catch (e) {
+      console.error('[ERROR] loadMissedTracking - render failed', e.message);
+      if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">로드 실패. 새로고침으로 다시 시도해주세요.</td></tr>';
+    }
+  }
+
+  /* Update the active missed-tracking filter and redraw the merged table. */
+  function filterMissedTracking(filter) {
+    _missedFilter = filter;
+    renderMissedTracking();
+  }
+
+  /* Render the merged missed-tracking table using the current filter state. */
+  function renderMissedTracking() {
+    var tbody = document.getElementById('missed-tracking-tbody');
+    if (!tbody) return;
+
+    var rows = _missedTrackingAll;
+    if (_missedFilter === 'filter') {
+      rows = rows.filter(function(r) { return r.missed_stage.indexOf('S3') !== -1 || r.missed_stage.indexOf('S4') !== -1; });
+    } else if (_missedFilter === 'plan') {
+      rows = rows.filter(function(r) { return r.missed_stage.indexOf('S5') !== -1; });
+    } else if (_missedFilter === 'signal') {
+      rows = rows.filter(function(r) { return r.missed_stage.indexOf('S6') !== -1; });
+    } else if (_missedFilter === 'candidate') {
+      rows = rows.filter(function(r) { return r.improvement_candidate; });
+    }
+
+    ['all', 'filter', 's3s4', 's5', 's6', 'candidate'].forEach(function(key) {
+      var button = document.getElementById('ms-filter-' + key);
+      if (button) button.classList.toggle('primary', key === _missedFilter || (key === 's3s4' && _missedFilter === 'filter') || (key === 's5' && _missedFilter === 'plan') || (key === 's6' && _missedFilter === 'signal'));
+    });
+
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">해당 항목 없음</td></tr>';
+      return;
+    }
+
+    var stageLabel = {
+      'S3_FILTER': 'S3 필터탈락', 'S3_UNIVERSE_FILTER': 'S3 필터탈락',
+      'S4_SCREENING': 'S4 스크리닝탈락', 'S4_HYBRID_SCREENING': 'S4 스크리닝탈락',
+      'S5_NOT_ASSIGNED': 'S5 미배정',
+      'S6_NO_SIGNAL': 'S6 신호미발생',
+    };
+
+    var fmtPct = function(v) {
+      if (v == null) return '-';
+      var n = parseFloat(v);
+      if (isNaN(n)) return '-';
+      var color = n > 0 ? 'var(--green)' : n < 0 ? 'var(--red)' : 'var(--muted)';
+      return '<span style="color:' + color + ';">' + (n >= 0 ? '+' : '') + n.toFixed(2) + '%</span>';
+    };
+
+    tbody.innerHTML = rows.map(function(r) {
+      var stage = stageLabel[r.missed_stage] || r.missed_stage;
+      var priceNum = Number(r.entry_price);
+      var price = priceNum ? priceNum.toLocaleString() + '원' : '-';
+      var candiBadge = r.improvement_candidate
+        ? '<span style="color:var(--warn); font-size:11px;">개선후보</span>'
+        : '-';
+      return '<tr>'
+        + '<td>' + escapeHtml(r.symbol) + '</td>'
+        + '<td>' + escapeHtml(r.symbol_name) + '</td>'
+        + '<td><span style="font-size:11px; color:var(--muted);">' + escapeHtml(stage) + '</span></td>'
+        + '<td style="font-size:11px; color:var(--muted);">' + escapeHtml(r.missed_reason || '-') + '</td>'
+        + '<td>' + price + '</td>'
+        + '<td>' + fmtPct(r.ret_10m) + '</td>'
+        + '<td>' + fmtPct(r.ret_30m) + '</td>'
+        + '<td>' + fmtPct(r.ret_eod) + '</td>'
+        + '<td>' + candiBadge + '</td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  /* Preserve legacy callers by routing the old Shadow Trading refresh into the unified screen. */
+  async function loadShadowTrading() {
+    await loadMissedTracking();
+  }
+
+  /* Preserve legacy callers by routing the removed Missed Opportunity screen into the unified screen. */
+  async function loadMissedOpportunity() {
+    await loadMissedTracking();
   }
 
   // False Positive
@@ -6075,6 +6252,9 @@
     loadConsoleData();
 
     var savedScreen = sessionStorage.getItem('currentScreen');
+    if (savedScreen === 'missed-opportunity') {
+      savedScreen = 'shadow-trading';
+    }
     if (savedScreen && document.getElementById('screen-' + savedScreen)) {
       showScreen(savedScreen);
     }
