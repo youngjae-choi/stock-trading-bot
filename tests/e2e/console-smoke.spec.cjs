@@ -31,7 +31,6 @@ test('fastapi console root serves html shell', async ({ request }) => {
   expect(html).toContain('Dantabot Control Console');
   expect(html).toContain('id="loginForm"');
   expect(html).toContain('id="haltBtn"');
-  expect(html).toContain('API Logs');
 });
 
 test('fastapi console page can call halt api', async ({ page }) => {
@@ -43,17 +42,17 @@ test('fastapi console page can call halt api', async ({ page }) => {
 
   await login(page, url);
   const haltButton = page.locator('#haltBtn');
-  await page.getByRole('button', { name: /API Logs/i }).click();
-  await expect(page.getByRole('heading', { name: 'API Logs' })).toBeVisible();
-  await expect(page.locator('#apiLogsTableBody')).toContainText('운영 개요 조회');
-  await expect(page.locator('#apiLogsTableBody')).toContainText('API 로그 조회');
-  await expect(page.locator('#apiLogsTableBody')).toContainText('운영 화면에서 엔진 상태와 리스크 상태를 한 번에 확인');
+  await page.getByRole('button', { name: /Data & API/i }).click();
+  await expect(page.getByRole('heading', { name: 'Data & API' })).toBeVisible();
+  await expect(page.locator('#da-rule-system')).toContainText('Base RulePack');
+  await expect(page.locator('#da-rule-system')).toContainText('Risk Profile Pack');
+  await expect(page.locator('#da-rule-system')).toContainText('Daily Plan');
 
-  if (await haltButton.isDisabled()) {
-    await expect(haltButton).toHaveText('중단됨');
+  // Already halted: button shows "운영재개"
+  if ((await haltButton.textContent())?.trim() === '운영재개') {
     return;
   }
 
   await haltButton.click();
-  await expect(haltButton).toHaveText('중단됨');
+  await expect(haltButton).toHaveText('운영재개');
 });

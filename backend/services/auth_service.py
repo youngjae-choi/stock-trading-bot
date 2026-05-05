@@ -72,13 +72,7 @@ def initialize_auth() -> None:
 
 
 def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
-    """Return an active user row when username and password are valid.
-
-    DEV MODE: password check is fully bypassed.
-    Any non-empty username + any non-empty password is accepted.
-    If the username does not exist in DB, the configured admin user is returned.
-    TODO: restore verify_password() before production deployment.
-    """
+    """Return an active user row when username and password are valid."""
     logger.info("START: auth.authenticate_user username=%s", username)
     if not username or not password:
         logger.warning("WARN: auth.authenticate_user empty credentials username=%s", username)
@@ -90,16 +84,16 @@ def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
             (username,),
         ).fetchone()
 
-    if row is not None and row["is_active"]:
-        # DEV: skip password check — return user directly
-        logger.info("SUCCESS: auth.authenticate_user username=%s (dev bypass)", username)
-        return {"id": row["id"], "username": row["username"], "role": row["role"]}
+    if row is None or not row["is_active"]:
+        logger.warning("WARN: auth.authenticate_user user not found or inactive username=%s", username)
+        return None
 
-    # DEV: fallback — return admin from settings even if username mismatch
-    logger.warning(
-        "WARN: auth.authenticate_user user not found in DB, returning dev admin username=%s", username
-    )
-    return {"id": "dev-admin", "username": username, "role": "admin"}
+    if not verify_password(password, row["password_hash"]):
+        logger.warning("WARN: auth.authenticate_user wrong password username=%s", username)
+        return None
+
+    logger.info("SUCCESS: auth.authenticate_user username=%s", username)
+    return {"id": row["id"], "username": row["username"], "role": row["role"]}
 
 
 def create_session(user_id: str) -> str:

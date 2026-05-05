@@ -247,6 +247,40 @@ async def job_data_backup() -> None:
         logger.error("FAIL: [Job S10] 실패 — reason=%s", exc)
 
 
+async def job_review_audit() -> None:
+    """Job S10 Review & Audit (16:00 KST): 당일 매매 결과를 분석한다."""
+    today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+    logger.info("START: [Job ReviewAudit] S10 Review & Audit (%s KST)", today)
+    try:
+        from .engine.review_audit import run_review_audit
+
+        result = await run_review_audit(today)
+        logger.info(
+            "SUCCESS: [Job ReviewAudit] 완료 trades=%d pnl=%.4f",
+            result.get("total_trades", 0),
+            result.get("total_pnl", 0.0),
+        )
+    except Exception as exc:
+        logger.error("FAIL: [Job ReviewAudit] 실패 — reason=%s", exc)
+
+
+async def job_learning_memory() -> None:
+    """Job S11 Learning Memory Builder (16:30 KST): 리뷰 결과를 학습 메모리로 저장한다."""
+    today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+    logger.info("START: [Job LearningMemory] S11 Learning Memory Builder (%s KST)", today)
+    try:
+        from .engine.learning_memory import run_learning_memory_builder
+
+        result = await run_learning_memory_builder(today)
+        logger.info(
+            "SUCCESS: [Job LearningMemory] 완료 ok=%s memories=%d",
+            result.get("ok"),
+            result.get("memory_count", 0),
+        )
+    except Exception as exc:
+        logger.error("FAIL: [Job LearningMemory] 실패 — reason=%s", exc)
+
+
 async def job_us_market_watch() -> None:
     """Job S11 (22:00 KST): 미국 장중 지표 수집 + DB 저장."""
     logger.info("START: [Job S11] 미국장 관찰 (22:00 KST)")
@@ -282,6 +316,8 @@ def _build_scheduler() -> AsyncIOScheduler:
         "s5": "08:45",
         "s6": "09:00",
         "s9": "15:20",
+        "s10": "18:00",
+        "s11": "22:00",
         "backup": "18:00",
         "us_watch": "22:00",
     }
@@ -321,6 +357,8 @@ def _build_scheduler() -> AsyncIOScheduler:
                 "s5": (8, 45),
                 "s6": (9, 0),
                 "s9": (15, 20),
+                "s10": (18, 0),
+                "s11": (22, 0),
                 "backup": (18, 0),
                 "us_watch": (22, 0),
             }
@@ -390,6 +428,22 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
         id="job_data_backup",
         name="데이터 백업",
+        replace_existing=True,
+    )
+    hour, minute = _parse_time("s10")
+    scheduler.add_job(
+        job_review_audit,
+        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
+        id="job_review_audit",
+        name="S10 Review & Audit",
+        replace_existing=True,
+    )
+    hour, minute = _parse_time("s11")
+    scheduler.add_job(
+        job_learning_memory,
+        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
+        id="job_learning_memory",
+        name="S11 Learning Memory Builder",
         replace_existing=True,
     )
     hour, minute = _parse_time("us_watch")

@@ -52,6 +52,43 @@ async def get_balance() -> Dict[str, Any]:
     )
 
 
+async def get_daily_order_inquiry(date_str: str, side: str = "buy") -> Dict[str, Any]:
+    """당일 주문 체결 내역을 조회한다.
+
+    Args:
+        date_str: YYYYMMDD 형식의 조회 대상 일자.
+        side: buy, sell, all 중 하나. KIS 매도매수구분코드로 변환된다.
+    """
+    side_value = str(side or "buy").lower()
+    if side_value not in {"buy", "sell", "all"}:
+        raise ValueError("side must be 'buy', 'sell', or 'all'")
+
+    sll_buy_dvsn_cd = "02" if side_value == "buy" else "01" if side_value == "sell" else "00"
+    env = _order_env()
+    tr_id = "VTTC8001R" if env == "demo" else "TTTC8001R"
+    return await kis_client.request(
+        method="GET",
+        path="/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+        tr_id=tr_id,
+        params={
+            "CANO": settings.KIS_CANO,
+            "ACNT_PRDT_CD": settings.KIS_ACNT_PRDT_CD,
+            "INQR_STRT_DT": date_str,
+            "INQR_END_DT": date_str,
+            "SLL_BUY_DVSN_CD": sll_buy_dvsn_cd,
+            "INQR_DVSN": "00",
+            "PDNO": "",
+            "CCLD_DVSN": "01",
+            "ORDER_GNO_BRNO": "",
+            "ODNO": "",
+            "INQR_DVSN_3": "00",
+            "INQR_DVSN_1": "",
+            "CTX_AREA_FK200": "",
+            "CTX_AREA_NK200": "",
+        },
+    )
+
+
 async def order_cash(
     *,
     side: Literal["buy", "sell"],

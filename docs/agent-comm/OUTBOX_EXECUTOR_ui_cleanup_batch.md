@@ -1,58 +1,60 @@
 # OUTBOX_EXECUTOR_ui_cleanup_batch
 
-## 처리 상태
+## 결과 요약
 
-완료.
+`backend/static/console.html` 에서 "RulePack 생성" 관련 구시대 문구를 모두 제거하고 Daily Trading Plan 중심으로 UI를 정리 완료.
 
-## 변경 파일
+## 완료 체크리스트
 
-- `backend/static/console.html`
+- [x] 변경 1 — 문구 교체
+  - brand-sub: `AI RulePack 기반 자동매매 운영 관제` → `AI 기반 단타 자동매매 운영 관제`
+  - modeDetail 초기값 + JS 할당: `RulePack 적용 완료` → `Daily Plan 활성`
+  - scheduleItems 배열: `"RulePack 생성"` → `"S5 Daily Plan 자동 생성"`
+  - kisTokenDetail 초기값: `RulePack 적용 상태` → `Auto Engine 상태`
+  - Data&API RulePack h4: `<h4>RulePack</h4>` → `<h4>Rule Composition</h4>`
+  - rulepackDetail 초기값: `오늘 활성 RulePack` → `오늘 활성 Rule Composition`
+  - Review&Audit page-desc: RulePack 반영 문구 → Learning Memory 저장 문구
+  - review h4: `<h4>RulePack</h4>` → `<h4>Daily Plan</h4>`
+  - S5 테스트 카드 설명: `LLM → daily_trading_plan` → `Scheduler → daily_trading_plans (자동 파이프라인)`
+  - Settings 포지션별 청산 안내: `RulePack 값` → `Risk Profile 값`
+  - Settings 리스크 안내: `RulePack의 위험 한도` → `Risk Profile Pack의 위험 한도`
 
-## 구현 내용
+- [x] 변경 2 — 버튼 교체
+  - Daily Plan 화면 상단 버튼을 `새로고침` + `Context 보기` + `고급 작업 ▾` 드롭다운으로 교체
+  - JS 함수 추가: `toggleDpAdvanced`, `showDpContext`, `runDailyPlanDryRun`, `manualRerunS5`, `revalidateDailyPlan`, `deactivateDailyPlan`, `rollbackDailyPlan` (Phase 2 alert 스텁)
+  - 드롭다운 외부 클릭 닫기 이벤트 리스너 추가
 
-### Task 1 — Today Control 화면 정리
+- [x] 변경 3 — Daily Plan 상태 색상 뱃지
+  - `loadDailyPlanScreen()` 내 `dp-plan-status`를 span 뱃지로 변경 (statusColors/statusLabel 맵 포함)
+  - `dp-created-at`을 `생성: {creationMode} · {createdBy}` 형식으로 변경
 
-- 상단 `top-status` 상태 pill 블록을 제거했습니다.
-- Today Control의 `System Health` 카드를 제거했습니다.
-- `Today's Timeline`과 `Recent Operation Logs`를 `오늘 운영 현황` 단일 카드로 병합했습니다.
-- 기존 JS의 `engineDot`, `engineText`, `restDot`, `restStatusText`, `socketDot`, `socketStatusText`, `phaseText` 참조는 null-safe 상태로 유지했습니다.
+- [x] 변경 4 — KIS Test S5-V 카드 추가
+  - S5 카드 이후 S5-V 카드 삽입 (Daily Plan Validation, 08:50 KST)
+  - S5 테스트 버튼 문구: `Daily Plan 생성 실행` → `S5 Daily Plan 생성 테스트`
 
-### Task 2 — Statistics → 거래내역
+- [x] 변경 5 — Settings 스케줄러 확장
+  - `S5 RulePack` → `S5 Daily Plan 자동 생성`
+  - 신규 항목 추가: `schedule_s5v_time` (08:50), `schedule_s5a_time` (08:55), `schedule_s10_time` (16:00), `schedule_s11_time` (16:30)
+  - 기존 `schedule_close_time`, `schedule_backup_time`, `schedule_usmarket_time` 유지
 
-- 화면명을 `거래내역`으로 변경했습니다.
-- 메뉴와 모바일 select에서 `statistics`를 3번째로 이동했습니다.
-- 기간 필터에 `오늘`, `이번주`를 추가하고 기본값을 `today`로 변경했습니다.
-- `filterStItems()`에 `today`, `week` 필터 로직을 추가했습니다.
-- 오늘 체결 내역과 거래중 미체결 주문 테이블을 추가했습니다.
-- `loadTodayTrades()`를 추가하고 `statistics` 화면 진입 시 호출되도록 연결했습니다.
+- [x] 변경 6 — S5 API endpoint 수정
+  - `"/api/v1/rulepack-gen/run"` → `"/api/v1/daily-plan/generate"`
 
-### Task 3 — API Logs 화면 정리
-
-- API Logs 상단 compact 카드 3개를 제거했습니다.
-- 제거된 카드 관련 JS 참조는 기존 null-safe 조건문으로 유지했습니다.
-- 호출시간 표시를 `YY-MM-DD HH:MM:SS` 형식으로 변경했습니다.
-
-### Task 4 — Settings 리스크/청산 통합
-
-- `Risk Settings` 카드와 `포지션 청산 조건 Override` 카드를 `리스크 & 청산 설정` 카드로 통합했습니다.
-- `exitOverrideSettingsTableBody`는 통합 카드 내부로 이동했습니다.
-- Notification 카드는 기존 `.split` 구조 안에 유지했습니다.
-
-### Task 5 — Data & API System Health 이동
-
-- `System Health` 카드를 Data & API 화면의 compact 카드 그리드 아래로 추가했습니다.
-- 기존 health id(`kisTokenStatus`, `rulepackStatus`, `websocketStatus`, `riskStatus`)를 유지해 기존 JS 갱신 경로와 연결되도록 했습니다.
+- [x] 변경 7 — bootstrap 호출 정리
+  - `rulepackBadge` 등 4개 HTML 요소 부재 확인 → bootstrap 호출 블록만 제거
+  - `fetchJson("/api/v1/bot/rulepack/today")` 및 `rulepackResult` 처리 블록 제거
+  - `loadConsoleData()` results 인덱스 조정 (dataHealth: results[2] → results[1])
+  - 사용 안 하는 JS 변수 4개(`rulepackBadge`, `rulepackSummary`, `rulepackChanges`, `rulepackJson`) var 선언 제거
+  - `renderRulepack()` 함수 보존 (rulepackStatus/rulepackDetail 요소는 여전히 존재하여 renderOverview에서 사용)
 
 ## 검증 결과
 
-- INBOX 완료 기준 Python 체크: PASS
-- `node` script block parse 검사: PASS (`PASS parsed 1 script block(s)`)
-- `rg` 확인:
-  - `<div class="top-status">` 제거 확인
-  - `오늘 운영 현황`, `거래내역`, `sf-today`, `sf-week`, `loadTodayTrades`, `rawTime.slice(2, 10)`, `리스크 & 청산 설정`, Data & API `System Health` 확인
-  - `최근 집계`, `포지션 청산 조건 Override` 별도 카드 문자열 제거 확인
+1. `grep -n "RulePack 생성\|rulepack-gen"` → **0건** ✓
+2. `grep -n "schedule_s5_time"` → `"S5 Daily Plan 자동 생성"` 포함 확인 ✓
+3. JS 문법 검사 (`node -e ...`) → **JS syntax OK** ✓
 
-## 잔여 리스크
+## 특이사항
 
-- 브라우저 수동 확인은 수행하지 않았습니다.
-- 작업 시작 전 `backend/static/console.html`을 포함한 다수 파일이 이미 수정된 상태였습니다. 이번 작업은 요청된 `backend/static/console.html`과 OUTBOX 작성만 수행했습니다.
+- `generateDailyPlan()` 함수는 KIS System Test S5 버튼에서 여전히 호출되므로 삭제하지 않음.
+- `renderRulepack()` 내부에서 참조하는 `rulepackBadge` 등은 null-safe 조건문(`if (rulepackBadge)`)으로 감싸져 있으므로 런타임 오류 없음.
+- 고급 작업 드롭다운 함수들은 Phase 2 스텁(alert)으로 구현.

@@ -52,7 +52,22 @@ async def get_positions_api():
     endpoint = "/api/v1/orders/positions"
     logger.info("START: GET %s", endpoint)
     try:
-        positions = position_manager.get_positions()
+        raw_positions = position_manager.get_positions()
+        positions = []
+        for pos in raw_positions:
+            entry = float(pos.get("entry_price") or 0)
+            active_stop = float(pos.get("active_stop_price") or 0)
+            highest = float(pos.get("highest_price_since_entry") or entry)
+            pnl_pct = round((highest - entry) / entry * 100, 2) if entry > 0 else 0.0
+            positions.append(
+                {
+                    **pos,
+                    "stop_loss_price": active_stop,
+                    "take_profit_price": 0,
+                    "pnl_pct": pnl_pct,
+                    "current_price": 0,
+                }
+            )
         logger.info("SUCCESS: GET %s count=%d", endpoint, len(positions))
         return {"ok": True, "payload": {"positions": positions, "count": len(positions)}}
     except Exception as exc:

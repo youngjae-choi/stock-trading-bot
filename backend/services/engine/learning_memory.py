@@ -1,0 +1,327 @@
+"""S11 Learning Memory Builder — Review & Audit 결과를 구조화된 메모리로 변환."""
+
+from __future__ import annotations
+
+import json
+import logging
+import uuid
+from datetime import datetime, timedelta
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from ..db import get_connection
+
+logger = logging.getLogger("LearningMemory")
+
+
+def _now_kst() -> datetime:
+    """Return the current KST datetime for memory timestamps."""
+    return datetime.now(ZoneInfo("Asia/Seoul"))
+
+
+def _json_dumps(value: Any) -> str:
+    """Serialize memory evidence and recommendation payloads."""
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _json_loads(value: str | None, default: Any) -> Any:
+    """Parse JSON text columns with a defensive default for old or malformed data."""
+    if not value:
+        return default
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return default
+
+
+def _auto_apply_flags(trade_count: int, avg_pnl: float) -> tuple[bool, bool]:
+    """Apply S11 auto-apply policy from the approved task brief.
+
+    Args:
+        trade_count: Number of trades backing the memory.
+        avg_pnl: Average PnL used as evidence.
+    """
+    if trade_count >= 3 and abs(avg_pnl) < 0.02:
+        return True, False
+    if trade_count >= 3 and abs(avg_pnl) >= 0.02:
+        return False, True
+    return False, False
+
+
+def _make_memory(
+    *,
+    trade_date: str,
+    scope: str,
+    category: str,
+    summary: str,
+    evidence: dict[str, Any],
+    recommendation: dict[str, Any],
+    auto_apply_allowed: bool,
+    requires_approval: bool,
+    created_at: str,
+    expires_at: str,
+) -> dict[str, Any]:
+    """Build a normalized learning memory row before persistence."""
+    return {
+        "memory_id": str(uuid.uuid4()),
+        "trade_date": trade_date,
+        "scope": scope,
+        "category": category,
+        "summary": summary,
+        "evidence": evidence,
+        "recommendation": recommendation,
+        "auto_apply_allowed": int(auto_apply_allowed),
+        "requires_approval": int(requires_approval),
+        "status": "active",
+        "expires_at": expires_at,
+        "created_at": created_at,
+    }
+
+
+def _load_review_report(trade_date: str) -> dict[str, Any] | None:
+    """Load the S10 report row that S11 depends on.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM daily_review_reports WHERE trade_date = ? ORDER BY created_at DESC LIMIT 1",
+            (trade_date,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+async def run_learning_memory_builder(trade_date: str) -> dict:
+    """Convert the S10 review report into scoped S11 learning memories.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date to process.
+    """
+    logger.info("START: [S11] Learning Memory Builder trade_date=%s", trade_date)
+    report = _load_review_report(trade_date)
+    if not report:
+        logger.warning("WARN: [S11] no review report trade_date=%s", trade_date)
+        return {"ok": False, "reason": "no_review_report"}
+
+    now = _now_kst()
+    created_at = now.isoformat()
+    expires_at = (datetime.fromisoformat(f"{trade_date}T00:00:00") + timedelta(days=7)).date().isoformat()
+    memories: list[dict[str, Any]] = []
+
+    with get_connection() as conn:
+        profile_rows = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT * FROM profile_performance_daily WHERE trade_date = ?",
+                (trade_date,),
+            ).fetchall()
+        ]
+        exit_rows = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT * FROM exit_reason_performance_daily WHERE trade_date = ?",
+                (trade_date,),
+            ).fetchall()
+        ]
+        trailing_row = conn.execute(
+            "SELECT * FROM trailing_quality_daily WHERE trade_date = ? ORDER BY created_at DESC LIMIT 1",
+            (trade_date,),
+        ).fetchone()
+
+    for profile in profile_rows:
+        trade_count = int(profile.get("trade_count") or 0)
+        win_count = int(profile.get("win_count") or 0)
+        avg_pnl = float(profile.get("avg_pnl") or 0.0)
+        win_rate = win_count / trade_count if trade_count else 0.0
+        if win_rate < 0.4 and trade_count >= 3:
+            auto_apply_allowed, requires_approval = _auto_apply_flags(trade_count, avg_pnl)
+            memories.append(
+                _make_memory(
+                    trade_date=trade_date,
+                    scope="S5_DAILY_PLAN",
+                    category="profile_allocation",
+                    summary=f"{profile['profile']} profile underperformed with win_rate={win_rate:.2f}.",
+                    evidence={
+                        "profile": profile["profile"],
+                        "trade_count": trade_count,
+                        "win_count": win_count,
+                        "win_rate": win_rate,
+                        "avg_pnl": avg_pnl,
+                    },
+                    recommendation={
+                        "action": "limit_profile_position_count",
+                        "profile": profile["profile"],
+                        "next_day_max_positions": 1,
+                    },
+                    auto_apply_allowed=auto_apply_allowed,
+                    requires_approval=requires_approval,
+                    created_at=created_at,
+                    expires_at=expires_at,
+                )
+            )
+
+    if trailing_row:
+        trailing = dict(trailing_row)
+        early_exit_rate = float(trailing.get("early_exit_rate") or 0.0)
+        total_trailing_exits = int(trailing.get("total_trailing_exits") or 0)
+        if early_exit_rate > 0.5:
+            auto_apply_allowed, requires_approval = _auto_apply_flags(
+                total_trailing_exits,
+                float(trailing.get("avg_recovery_rate") or 0.0),
+            )
+            memories.append(
+                _make_memory(
+                    trade_date=trade_date,
+                    scope="S3_UNIVERSE_FILTER",
+                    category="universe_filter",
+                    summary=f"Trailing exits were early at rate={early_exit_rate:.2f}.",
+                    evidence={
+                        "early_exit_rate": early_exit_rate,
+                        "avg_recovery_rate": float(trailing.get("avg_recovery_rate") or 0.0),
+                        "total_trailing_exits": total_trailing_exits,
+                    },
+                    recommendation={
+                        "action": "strengthen_screening_filter",
+                        "reason": "early_trailing_exits",
+                    },
+                    auto_apply_allowed=auto_apply_allowed,
+                    requires_approval=requires_approval,
+                    created_at=created_at,
+                    expires_at=expires_at,
+                )
+            )
+
+    total_exit_trades = sum(int(row.get("trade_count") or 0) for row in exit_rows)
+    stop_loss_rows = [row for row in exit_rows if str(row.get("exit_reason") or "").lower() == "stop_loss"]
+    stop_loss_count = sum(int(row.get("trade_count") or 0) for row in stop_loss_rows)
+    if total_exit_trades > 0 and stop_loss_count / total_exit_trades > 0.3:
+        stop_loss_avg_pnl = (
+            sum(float(row.get("avg_pnl") or 0.0) * int(row.get("trade_count") or 0) for row in stop_loss_rows)
+            / stop_loss_count
+            if stop_loss_count
+            else 0.0
+        )
+        auto_apply_allowed, requires_approval = _auto_apply_flags(stop_loss_count, stop_loss_avg_pnl)
+        memories.append(
+            _make_memory(
+                trade_date=trade_date,
+                scope="S4_HYBRID_SCREENING",
+                category="screening_weight",
+                summary=f"Stop-loss exits exceeded threshold at ratio={stop_loss_count / total_exit_trades:.2f}.",
+                evidence={
+                    "stop_loss_count": stop_loss_count,
+                    "total_exit_trades": total_exit_trades,
+                    "stop_loss_ratio": stop_loss_count / total_exit_trades,
+                    "avg_pnl": stop_loss_avg_pnl,
+                },
+                recommendation={
+                    "action": "raise_ai_confidence_min",
+                    "reason": "high_stop_loss_ratio",
+                },
+                auto_apply_allowed=auto_apply_allowed,
+                requires_approval=requires_approval,
+                created_at=created_at,
+                expires_at=expires_at,
+            )
+        )
+
+    with get_connection() as conn:
+        conn.execute("DELETE FROM learning_memories WHERE trade_date = ?", (trade_date,))
+        conn.executemany(
+            """
+            INSERT INTO learning_memories
+                (memory_id, trade_date, scope, category, summary, evidence,
+                 recommendation, auto_apply_allowed, requires_approval, status,
+                 expires_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    memory["memory_id"],
+                    memory["trade_date"],
+                    memory["scope"],
+                    memory["category"],
+                    memory["summary"],
+                    _json_dumps(memory["evidence"]),
+                    _json_dumps(memory["recommendation"]),
+                    memory["auto_apply_allowed"],
+                    memory["requires_approval"],
+                    memory["status"],
+                    memory["expires_at"],
+                    memory["created_at"],
+                )
+                for memory in memories
+            ],
+        )
+        conn.execute(
+            "UPDATE daily_review_reports SET memory_count = ? WHERE trade_date = ?",
+            (len(memories), trade_date),
+        )
+
+    auto_count = sum(1 for memory in memories if memory["auto_apply_allowed"])
+    approval_count = sum(1 for memory in memories if memory["requires_approval"])
+    logger.info(
+        "SUCCESS: [S11] Learning Memory Builder trade_date=%s memories=%d auto=%d approval=%d",
+        trade_date,
+        len(memories),
+        auto_count,
+        approval_count,
+    )
+    return {
+        "ok": True,
+        "trade_date": trade_date,
+        "memory_count": len(memories),
+        "auto_apply_count": auto_count,
+        "approval_required_count": approval_count,
+        "memories": memories,
+    }
+
+
+def _hydrate_memory(row: Any) -> dict[str, Any]:
+    """Convert one learning_memories DB row into API-friendly JSON."""
+    memory = dict(row)
+    memory["evidence"] = _json_loads(memory.get("evidence"), {})
+    memory["recommendation"] = _json_loads(memory.get("recommendation"), {})
+    memory["auto_apply_allowed"] = bool(memory.get("auto_apply_allowed"))
+    memory["requires_approval"] = bool(memory.get("requires_approval"))
+    return memory
+
+
+def get_today_memories(trade_date: str) -> list[dict]:
+    """Return S11 memories generated for one trade date.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date to fetch.
+    """
+    logger.info("START: [S11] get_today_memories trade_date=%s", trade_date)
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM learning_memories WHERE trade_date = ? ORDER BY created_at DESC",
+            (trade_date,),
+        ).fetchall()
+    memories = [_hydrate_memory(row) for row in rows]
+    logger.info("SUCCESS: [S11] get_today_memories trade_date=%s count=%d", trade_date, len(memories))
+    return memories
+
+
+def get_active_memories(scope: str | None = None) -> list[dict]:
+    """Return active learning memories, optionally scoped to a pipeline stage.
+
+    Args:
+        scope: Optional S3/S4/S5 scope filter.
+    """
+    logger.info("START: [S11] get_active_memories scope=%s", scope or "all")
+    with get_connection() as conn:
+        if scope:
+            rows = conn.execute(
+                "SELECT * FROM learning_memories WHERE status = 'active' AND scope = ? ORDER BY created_at DESC",
+                (scope,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM learning_memories WHERE status = 'active' ORDER BY created_at DESC"
+            ).fetchall()
+    memories = [_hydrate_memory(row) for row in rows]
+    logger.info("SUCCESS: [S11] get_active_memories scope=%s count=%d", scope or "all", len(memories))
+    return memories

@@ -58,6 +58,7 @@ def load_daily_rules(trade_date: str, symbol_codes: list[str]) -> int:
             daily_plan=plan,
             symbol_overrides=overrides,
             global_risk=risk,
+            trade_date=trade_date,
         )
 
     _meta = {

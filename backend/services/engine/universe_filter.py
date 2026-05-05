@@ -27,6 +27,8 @@ from typing import Any
 
 from ..db import get_connection
 from ..kis.domestic.universe_service import get_price_rank, get_volume_rank
+from .expert_knowledge import get_active_knowledge
+from .learning_memory import get_active_memories
 
 logger = logging.getLogger("UniverseFilterService")
 
@@ -156,6 +158,28 @@ def _get_tone_weights(trade_date: str) -> tuple[dict[str, float], str]:
         return _DEFAULT_WEIGHTS, "fallback"
 
 
+def _apply_memory_adjustments(weights: dict[str, float], memories: list[dict]) -> dict[str, float]:
+    """S3 learning memories 기반으로 유니버스 필터 점수 가중치를 미세 조정한다.
+
+    Args:
+        weights: 시장 톤으로 산출된 trade/volume/change 가중치.
+        memories: S3_UNIVERSE_FILTER 범위의 활성 Learning Memory 목록.
+    """
+    adjusted = dict(weights)
+    for mem in memories:
+        rec = mem.get("recommendation", {})
+        if rec.get("type") == "weight_adjust":
+            field = rec.get("field", "")
+            delta = float(rec.get("delta", 0.0))
+            if field in adjusted:
+                adjusted[field] = max(0.0, min(1.0, adjusted[field] + delta))
+
+    total = sum(adjusted.values())
+    if total > 0:
+        adjusted = {key: value / total for key, value in adjusted.items()}
+    return adjusted
+
+
 def _score_and_rank(items: list[dict], total: int, weights: dict[str, float]) -> list[dict]:
     """정량 점수를 계산하고 내림차순으로 정렬한다.
 
@@ -202,6 +226,10 @@ async def run_universe_filter() -> dict[str, Any]:
     logger.info("START: UniverseFilter.run trade_date=%s", today)
 
     _ensure_table()
+    memories = get_active_memories(scope="S3_UNIVERSE_FILTER")
+    memory_refs = [m["memory_id"] for m in memories]
+    knowledge_items = get_active_knowledge(scope="S3_UNIVERSE_FILTER")
+    knowledge_refs = [k["id"] for k in knowledge_items]
 
     # KIS 병렬 호출
     try:
@@ -217,6 +245,7 @@ async def run_universe_filter() -> dict[str, Any]:
 
     # 시장 톤 기반 동적 가중치 결정
     weights, tone_used = _get_tone_weights(today)
+    weights = _apply_memory_adjustments(weights, memories)
 
     raw_count = len(volume_items) + len(trade_items)
     merged = _merge_and_deduplicate(volume_items, trade_items)
@@ -252,12 +281,16 @@ async def run_universe_filter() -> dict[str, Any]:
         "result_count": len(top_n),
         "tone_used": tone_used,
         "weights_used": weights,
+        "memory_refs": memory_refs,
+        "memory_count": len(memories),
+        "knowledge_refs": knowledge_refs,
+        "knowledge_count": len(knowledge_items),
         "items": top_n,
         "id": record_id,
     }
     logger.info(
-        "SUCCESS: UniverseFilter trade_date=%s tone=%s raw=%d filtered=%d top_n=%d",
-        today, tone_used, raw_count, len(filtered), len(top_n),
+        "SUCCESS: UniverseFilter trade_date=%s tone=%s raw=%d filtered=%d top_n=%d memories=%d knowledge=%d",
+        today, tone_used, raw_count, len(filtered), len(top_n), len(memories), len(knowledge_items),
     )
     return result
 

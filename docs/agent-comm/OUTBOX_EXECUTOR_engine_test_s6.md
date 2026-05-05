@@ -1,28 +1,40 @@
 # OUTBOX_EXECUTOR_engine_test_s6
 
-## 작업 결과
+## 결과 요약
 
-- `backend/static/console.html`의 `screen-engine-test` 단계별 카드 그리드에 S6 카드를 추가했습니다.
-- S6 버튼은 `engineTestRun('s6')`을 호출하며, `STEP_URLS.s6`는 `/api/v1/decision/activate`로 연결했습니다.
-- `전체 결과 지우기` 동작에서 S6 배지와 결과 영역도 함께 초기화되도록 `engineTestClearAll()` 대상에 `s6`를 추가했습니다.
+Oracle 역할로 Phase 1+2 Playwright 검증 준비 작업을 수행했다.
 
-## 변경 파일
+- `tests/e2e/console-smoke.spec.cjs`에서 제거된 `API Logs` 화면 검증을 삭제하고, `Data & API` 화면 검증으로 교체했다.
+- `tests/e2e/phase1-phase2.spec.cjs`를 신규 작성해 INBOX의 7개 시나리오를 반영했다.
+- 백엔드 서버 헬스 체크 실패로 Playwright E2E 실행은 생략했다.
 
-- `backend/static/console.html`
+## 완료 체크리스트
 
-## 검증 결과
+- [x] 작업 1 — 기존 테스트 수정
+- [x] 작업 2 — phase1-phase2.spec.cjs 작성
+- [x] 작업 3 — 테스트 실행 결과
+
+## 테스트 결과
+
+- PASS: `node --check tests/e2e/console-smoke.spec.cjs`
+- PASS: `node --check tests/e2e/phase1-phase2.spec.cjs`
+- SKIP: `npx playwright test tests/e2e/console-smoke.spec.cjs tests/e2e/phase1-phase2.spec.cjs --reporter=list`
+  - 사유: 서버 미실행 — `curl -s -o /tmp/dantabot_health.out -w '%{http_code}' http://127.0.0.1:8000/health` 결과 `000`
+
+## 발견된 버그
+
+없음.
+
+단, Playwright E2E는 서버 미실행으로 실제 브라우저/API 통합 검증을 완료하지 못했다. 서버 기동 후 아래 명령으로 실행 필요:
 
 ```bash
-$ python3 -c "from html.parser import HTMLParser; p=HTMLParser(); p.feed(open('backend/static/console.html').read()); print('HTML OK')"
-HTML OK
-
-$ grep -n "et-card-s6\|decision/activate" backend/static/console.html
-1618:            <div class="card" id="et-card-s6">
-2526:        s6: "/api/v1/decision/activate"
-2761:      await fetchJson("/api/v1/decision/activate", { method: "POST" });
+npx playwright test tests/e2e/console-smoke.spec.cjs tests/e2e/phase1-phase2.spec.cjs --reporter=list
 ```
 
-## 참고
+## 특이사항
 
-- `decision/activate`의 2761행은 기존 Live Decisions 수동 활성화 버튼용 호출입니다.
-- 브라우저 수동 확인은 실행하지 않았습니다.
+- 기존 작업 트리에 다수의 미커밋 변경이 존재했다. 요청 범위 밖 파일은 수정하지 않았다.
+- 변경 파일:
+  - `tests/e2e/console-smoke.spec.cjs`
+  - `tests/e2e/phase1-phase2.spec.cjs`
+  - `docs/agent-comm/OUTBOX_EXECUTOR_engine_test_s6.md`

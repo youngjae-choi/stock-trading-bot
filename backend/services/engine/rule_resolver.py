@@ -100,6 +100,29 @@ def get_symbol_overrides() -> dict[str, dict[str, Any]]:
     return result
 
 
+def _get_active_rulepack_entry_rules(trade_date: str) -> dict[str, Any]:
+    """활성 RulePack의 machine_rules.entry_rules 반환. 없으면 빈 dict.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date used to select the active RulePack.
+    """
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT machine_rules FROM rulepacks"
+                " WHERE trade_date = ? AND status = 'active'"
+                " ORDER BY created_at DESC LIMIT 1",
+                (trade_date,),
+            ).fetchone()
+        if not row or not row["machine_rules"]:
+            return {}
+        machine_rules = json.loads(row["machine_rules"])
+        return machine_rules.get("entry_rules", {}) or {}
+    except Exception as exc:
+        logger.warning("WARN: [RuleResolver] rulepack entry_rules 조회 실패 — %s", exc)
+        return {}
+
+
 def resolve_symbol_rule(
     symbol_code: str,
     base_rulepack: dict[str, Any],
@@ -107,12 +130,22 @@ def resolve_symbol_rule(
     daily_plan: dict[str, Any] | None,
     symbol_overrides: dict[str, dict[str, Any]],
     global_risk: dict[str, Any],
+    trade_date: str = "",
 ) -> dict[str, Any]:
     """종목별 최종 룰 계산.
 
     레이어 병합 순서 (나중에 덮음 = 높은 우선순위):
-      base_rulepack → profile → symbol_override
+      base_rulepack → active rulepack entry_rules → profile → symbol_override
     그 후 Global Risk Guard 강제 적용.
+
+    Args:
+        symbol_code: Stock symbol to resolve.
+        base_rulepack: Active base RulePack row converted to dict.
+        profile_pack: Active risk profile pack with profile rules.
+        daily_plan: Active daily trading plan for assignment lookup.
+        symbol_overrides: Per-symbol override mapping.
+        global_risk: Global Risk Guard settings from system_settings.
+        trade_date: YYYY-MM-DD date used to read active generated RulePack entry rules.
     """
     # 1. Daily Plan에서 배정 프로필 조회
     assignments: dict[str, dict] = {}
@@ -128,10 +161,12 @@ def resolve_symbol_rule(
 
     profiles = profile_pack.get("profiles", {})
     profile_rule = profiles.get(profile_name, {})
+    rulepack_entry = _get_active_rulepack_entry_rules(trade_date) if trade_date else {}
 
     # 2. 레이어 병합
     final: dict[str, Any] = {}
     final.update({k: v for k, v in base_rulepack.items() if k not in ("id", "version", "created_at", "is_active", "order_execution")})
+    final.update(rulepack_entry)
     final.update(profile_rule)
     final.update(symbol_overrides.get(symbol_code, {}))
 

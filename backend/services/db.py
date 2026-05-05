@@ -44,6 +44,23 @@ def initialize_database() -> None:
         _execute_many(connection, _schema_statements())
         _seed_system_settings(connection)
         _seed_rule_system(connection)
+        _seed_confidence_bins(connection)
+    # 마이그레이션: 기존 테이블에 누락된 컬럼 추가
+    with get_connection() as connection:
+        existing_cols = {
+            row[1] for row in connection.execute("PRAGMA table_info(daily_trading_plans)").fetchall()
+        }
+        for col_name, alter_sql in _migration_statements():
+            if col_name not in existing_cols:
+                connection.execute(alter_sql)
+                logger.info("DB migration: added column %s to daily_trading_plans", col_name)
+        signal_cols = {
+            row[1] for row in connection.execute("PRAGMA table_info(trading_signals)").fetchall()
+        }
+        for col_name, alter_sql in _trading_signal_migration_statements():
+            if col_name not in signal_cols:
+                connection.execute(alter_sql)
+                logger.info("DB migration: added column %s to trading_signals", col_name)
     logger.info("SUCCESS: db.initialize_database path=%s", _db_path())
 
 
@@ -75,6 +92,31 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
         ("risk.max_position_rate_per_stock", 0.10, "number", "종목당 최대 투자 비중"),
         ("kis.rate_limit_profile", settings.KIS_RATE_LIMIT_PROFILE, "string", "KIS 호출 제한 프로필"),
         ("engine.mode", "MONITOR", "string", "자동매매 엔진 기본 운용 모드"),
+        ("engine.min_ai_confidence", "0.60", "number", "S6 매수 신호 최소 AI confidence 임계값 (0.0~1.0)"),
+        (
+            "engine.min_confidence_floor",
+            "0.40",
+            "number",
+            "AI 매수 신호 confidence 절대 하한선 (AI가 이 값 이하로 설정 불가)",
+        ),
+        (
+            "engine.min_price_change_pct",
+            "0.5",
+            "number",
+            "매수 진입 최소 등락률 % (AI가 이 값 이하로 설정 불가)",
+        ),
+        (
+            "engine.max_price_change_pct",
+            "8.0",
+            "number",
+            "매수 진입 최대 등락률 % (AI가 이 값 이상으로 설정 불가)",
+        ),
+        ("schedule_s2_time", "08:00", "string", "S2 시장톤 분석 실행 시간 (HH:MM)"),
+        ("schedule_s9_time", "15:20", "string", "S9 당일 청산 실행 시간 (HH:MM)"),
+        ("schedule_s10_time", "18:00", "string", "S10 데이터 백업 실행 시간 (HH:MM)"),
+        ("schedule_s11_time", "22:00", "string", "S11 Learning Memory Builder 실행 시간 (HH:MM)"),
+        ("risk.force_exit_time", "15:20", "string", "당일 강제청산 시작 시간 (HH:MM)"),
+        ("risk.new_entry_cutoff_time", "15:10", "string", "신규 매수 금지 시작 시간 (HH:MM)"),
     ]
     for key, value, value_type, description in defaults:
         connection.execute(
@@ -149,6 +191,28 @@ def _seed_rule_system(connection: sqlite3.Connection) -> None:
         """,
         ("profile-v1.0", "1.0", _json.dumps(profiles, ensure_ascii=False)),
     )
+
+
+def _seed_confidence_bins(connection: sqlite3.Connection) -> None:
+    """Insert baseline confidence calibration bins when they do not already exist."""
+    now_expr = "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+    bins = [
+        ("ge090", 0.90, 1.01),
+        ("80to90", 0.80, 0.90),
+        ("70to80", 0.70, 0.80),
+        ("60to70", 0.60, 0.70),
+        ("lt060", 0.0, 0.60),
+    ]
+    for bin_label, bin_min, bin_max in bins:
+        connection.execute(
+            f"""
+            INSERT OR IGNORE INTO confidence_calibration_bins
+                (id, bin_label, bin_min, bin_max, cumulative_trades,
+                 cumulative_wins, cumulative_avg_pnl, last_updated)
+            VALUES (?, ?, ?, ?, 0, 0, 0.0, {now_expr})
+            """,
+            (bin_label, bin_label, bin_min, bin_max),
+        )
 
 
 def _schema_statements() -> list[str]:
@@ -363,8 +427,16 @@ CREATE TABLE IF NOT EXISTS daily_trading_plans (
     provider             TEXT NOT NULL DEFAULT '',
     status               TEXT NOT NULL DEFAULT 'draft',
     validation_result    TEXT NOT NULL DEFAULT '{}',
+    creation_mode        TEXT NOT NULL DEFAULT 'auto',
+    created_by           TEXT NOT NULL DEFAULT 'scheduler',
+    s3_result_id         TEXT NOT NULL DEFAULT '',
+    s4_result_id         TEXT NOT NULL DEFAULT '',
+    used_learning_memory_ids TEXT NOT NULL DEFAULT '[]',
+    used_knowledge_ids   TEXT NOT NULL DEFAULT '[]',
     created_at           TEXT NOT NULL,
-    activated_at         TEXT
+    activated_at         TEXT,
+    validated_at         TEXT,
+    superseded_at        TEXT
 )
 """,
         "CREATE INDEX IF NOT EXISTS idx_daily_plan_date ON daily_trading_plans(trade_date)",
@@ -419,9 +491,354 @@ CREATE TABLE IF NOT EXISTS trading_signals (
     confidence    REAL NOT NULL DEFAULT 0.0,
     rule_matched  TEXT NOT NULL DEFAULT '{}',
     profile_assigned TEXT NOT NULL DEFAULT 'MID_VOL',
+    realized_pnl  REAL,
     status        TEXT NOT NULL DEFAULT 'pending',
     created_at    TEXT NOT NULL
 )
 """,
         "CREATE INDEX IF NOT EXISTS idx_trading_signals_trade_date ON trading_signals(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS order_preflight_checks (
+    id            TEXT PRIMARY KEY,
+    signal_id     TEXT NOT NULL DEFAULT '',
+    symbol        TEXT NOT NULL DEFAULT '',
+    checks        TEXT NOT NULL DEFAULT '{}',
+    block_reasons TEXT NOT NULL DEFAULT '',
+    result        TEXT NOT NULL DEFAULT 'ok',
+    created_at    TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_preflight_signal ON order_preflight_checks(signal_id)",
+        "CREATE INDEX IF NOT EXISTS idx_preflight_symbol ON order_preflight_checks(symbol)",
+        """
+CREATE TABLE IF NOT EXISTS daily_review_reports (
+    id               TEXT PRIMARY KEY,
+    trade_date       TEXT NOT NULL,
+    total_trades     INTEGER NOT NULL DEFAULT 0,
+    win_count        INTEGER NOT NULL DEFAULT 0,
+    loss_count       INTEGER NOT NULL DEFAULT 0,
+    total_pnl        REAL NOT NULL DEFAULT 0.0,
+    profile_summary  TEXT NOT NULL DEFAULT '{}',
+    exit_summary     TEXT NOT NULL DEFAULT '{}',
+    trailing_quality TEXT NOT NULL DEFAULT '{}',
+    no_trade_count   INTEGER NOT NULL DEFAULT 0,
+    memory_count     INTEGER NOT NULL DEFAULT 0,
+    created_at       TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_daily_review_trade_date ON daily_review_reports(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS learning_memories (
+    memory_id          TEXT PRIMARY KEY,
+    trade_date         TEXT NOT NULL,
+    scope              TEXT NOT NULL,
+    category           TEXT NOT NULL,
+    summary            TEXT NOT NULL,
+    evidence           TEXT NOT NULL DEFAULT '{}',
+    recommendation     TEXT NOT NULL DEFAULT '{}',
+    auto_apply_allowed INTEGER NOT NULL DEFAULT 0,
+    requires_approval  INTEGER NOT NULL DEFAULT 0,
+    status             TEXT NOT NULL DEFAULT 'active',
+    expires_at         TEXT,
+    created_at         TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_learning_memories_trade_date ON learning_memories(trade_date)",
+        "CREATE INDEX IF NOT EXISTS idx_learning_memories_scope ON learning_memories(scope)",
+        "CREATE INDEX IF NOT EXISTS idx_learning_memories_status ON learning_memories(status)",
+        """
+CREATE TABLE IF NOT EXISTS external_knowledge_sources (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    source_type TEXT NOT NULL DEFAULT 'manual',
+    description TEXT NOT NULL DEFAULT '',
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT NOT NULL
+)
+""",
+        """
+CREATE TABLE IF NOT EXISTS strategy_knowledge_items (
+    id              TEXT PRIMARY KEY,
+    source_id       TEXT,
+    title           TEXT NOT NULL,
+    content         TEXT NOT NULL,
+    scope           TEXT NOT NULL,
+    category        TEXT NOT NULL DEFAULT 'general',
+    status          TEXT NOT NULL DEFAULT 'pending',
+    auto_inject     INTEGER NOT NULL DEFAULT 0,
+    priority        INTEGER NOT NULL DEFAULT 5,
+    created_at      TEXT NOT NULL,
+    approved_at     TEXT,
+    expires_at      TEXT
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_items_scope ON strategy_knowledge_items(scope)",
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_items_status ON strategy_knowledge_items(status)",
+        """
+CREATE TABLE IF NOT EXISTS knowledge_prompt_contexts (
+    id              TEXT PRIMARY KEY,
+    trade_date      TEXT NOT NULL,
+    scope           TEXT NOT NULL,
+    knowledge_ids   TEXT NOT NULL DEFAULT '[]',
+    prompt_snippet  TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_ctx_trade_date ON knowledge_prompt_contexts(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS knowledge_impact_stats (
+    id              TEXT PRIMARY KEY,
+    knowledge_id    TEXT NOT NULL,
+    trade_date      TEXT NOT NULL,
+    scope           TEXT NOT NULL,
+    applied         INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_impact_trade_date ON knowledge_impact_stats(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS knowledge_approval_logs (
+    id              TEXT PRIMARY KEY,
+    knowledge_id    TEXT NOT NULL,
+    action          TEXT NOT NULL,
+    reason          TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL
+)
+""",
+        """
+CREATE TABLE IF NOT EXISTS profile_performance_daily (
+    id          TEXT PRIMARY KEY,
+    trade_date  TEXT NOT NULL,
+    profile     TEXT NOT NULL,
+    trade_count INTEGER NOT NULL DEFAULT 0,
+    win_count   INTEGER NOT NULL DEFAULT 0,
+    total_pnl   REAL NOT NULL DEFAULT 0.0,
+    avg_pnl     REAL NOT NULL DEFAULT 0.0,
+    created_at  TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_profile_perf_trade_date ON profile_performance_daily(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS exit_reason_performance_daily (
+    id          TEXT PRIMARY KEY,
+    trade_date  TEXT NOT NULL,
+    exit_reason TEXT NOT NULL,
+    trade_count INTEGER NOT NULL DEFAULT 0,
+    avg_pnl     REAL NOT NULL DEFAULT 0.0,
+    created_at  TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_exit_reason_trade_date ON exit_reason_performance_daily(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS trailing_quality_daily (
+    id                   TEXT PRIMARY KEY,
+    trade_date           TEXT NOT NULL,
+    avg_recovery_rate    REAL NOT NULL DEFAULT 0.0,
+    early_exit_rate      REAL NOT NULL DEFAULT 0.0,
+    total_trailing_exits INTEGER NOT NULL DEFAULT 0,
+    created_at           TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_trailing_quality_trade_date ON trailing_quality_daily(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS no_trade_daily_reasons (
+    id         TEXT PRIMARY KEY,
+    trade_date TEXT NOT NULL,
+    reason     TEXT NOT NULL,
+    detail     TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_no_trade_trade_date ON no_trade_daily_reasons(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS candidate_no_entry_reasons (
+    id         TEXT PRIMARY KEY,
+    trade_date TEXT NOT NULL,
+    symbol     TEXT NOT NULL,
+    reason     TEXT NOT NULL,
+    detail     TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_candidate_no_entry_trade_date ON candidate_no_entry_reasons(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS data_quality_events (
+    id          TEXT PRIMARY KEY,
+    trade_date  TEXT NOT NULL,
+    event_type  TEXT NOT NULL,
+    severity    TEXT NOT NULL DEFAULT 'WARNING',
+    symbol      TEXT,
+    detail      TEXT NOT NULL DEFAULT '',
+    resolved    INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_dq_events_trade_date ON data_quality_events(trade_date)",
+        "CREATE INDEX IF NOT EXISTS idx_dq_events_severity ON data_quality_events(severity)",
+        """
+CREATE TABLE IF NOT EXISTS data_quality_snapshots (
+    id              TEXT PRIMARY KEY,
+    trade_date      TEXT NOT NULL,
+    overall_status  TEXT NOT NULL DEFAULT 'NORMAL',
+    event_counts    TEXT NOT NULL DEFAULT '{}',
+    worst_severity  TEXT NOT NULL DEFAULT 'INFO',
+    created_at      TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_dq_snapshots_trade_date ON data_quality_snapshots(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS system_alerts (
+    id          TEXT PRIMARY KEY,
+    trade_date  TEXT NOT NULL,
+    alert_type  TEXT NOT NULL,
+    severity    TEXT NOT NULL DEFAULT 'WARNING',
+    title       TEXT NOT NULL,
+    detail      TEXT NOT NULL DEFAULT '',
+    acknowledged INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_alerts_trade_date ON system_alerts(trade_date)",
+        "CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON system_alerts(acknowledged)",
+        """
+CREATE TABLE IF NOT EXISTS human_approval_queue (
+    id           TEXT PRIMARY KEY,
+    change_type  TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    description  TEXT NOT NULL DEFAULT '',
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    status       TEXT NOT NULL DEFAULT 'pending',
+    created_at   TEXT NOT NULL,
+    decided_at   TEXT
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_human_approval_status ON human_approval_queue(status)",
+        "CREATE INDEX IF NOT EXISTS idx_human_approval_created_at ON human_approval_queue(created_at)",
+        """
+CREATE TABLE IF NOT EXISTS approval_decision_logs (
+    id          TEXT PRIMARY KEY,
+    request_id  TEXT NOT NULL,
+    action      TEXT NOT NULL,
+    reason      TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_approval_logs_request_id ON approval_decision_logs(request_id)",
+        """
+CREATE TABLE IF NOT EXISTS shadow_trades (
+    id              TEXT PRIMARY KEY,
+    trade_date      TEXT NOT NULL,
+    symbol          TEXT NOT NULL,
+    symbol_name     TEXT NOT NULL DEFAULT '',
+    missed_stage    TEXT NOT NULL,
+    entry_price     REAL NOT NULL DEFAULT 0.0,
+    entry_time      TEXT NOT NULL,
+    exit_price      REAL,
+    exit_time       TEXT,
+    shadow_pnl      REAL,
+    max_return_10m  REAL,
+    max_return_30m  REAL,
+    max_return_eod  REAL,
+    status          TEXT NOT NULL DEFAULT 'active',
+    created_at      TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_shadow_trades_trade_date ON shadow_trades(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS shadow_trade_events (
+    id              TEXT PRIMARY KEY,
+    shadow_trade_id TEXT NOT NULL,
+    event_type      TEXT NOT NULL,
+    price           REAL,
+    pnl             REAL,
+    created_at      TEXT NOT NULL
+)
+""",
+        """
+CREATE TABLE IF NOT EXISTS missed_opportunities (
+    id                  TEXT PRIMARY KEY,
+    trade_date          TEXT NOT NULL,
+    symbol              TEXT NOT NULL,
+    symbol_name         TEXT NOT NULL DEFAULT '',
+    missed_stage        TEXT NOT NULL,
+    missed_reason       TEXT NOT NULL,
+    price_at_missed     REAL NOT NULL DEFAULT 0.0,
+    max_return_after_10m REAL,
+    max_return_after_30m REAL,
+    max_return_until_eod REAL,
+    improvement_candidate INTEGER NOT NULL DEFAULT 0,
+    created_at          TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_missed_trade_date ON missed_opportunities(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS false_positive_cases (
+    id                  TEXT PRIMARY KEY,
+    trade_date          TEXT NOT NULL,
+    symbol              TEXT NOT NULL,
+    symbol_name         TEXT NOT NULL DEFAULT '',
+    false_positive_type TEXT NOT NULL,
+    original_score      REAL,
+    original_confidence REAL,
+    assigned_profile    TEXT,
+    entry_reason        TEXT NOT NULL DEFAULT '',
+    loss_reason         TEXT NOT NULL DEFAULT '',
+    exit_reason         TEXT NOT NULL DEFAULT '',
+    applied_knowledge_ids TEXT NOT NULL DEFAULT '[]',
+    applied_memory_ids  TEXT NOT NULL DEFAULT '[]',
+    suggested_penalty   REAL,
+    created_at          TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_fp_trade_date ON false_positive_cases(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS confidence_calibration_daily (
+    id              TEXT PRIMARY KEY,
+    trade_date      TEXT NOT NULL,
+    bin_label       TEXT NOT NULL,
+    trade_count     INTEGER NOT NULL DEFAULT 0,
+    win_count       INTEGER NOT NULL DEFAULT 0,
+    avg_pnl         REAL NOT NULL DEFAULT 0.0,
+    expected_win_rate REAL NOT NULL DEFAULT 0.0,
+    actual_win_rate REAL NOT NULL DEFAULT 0.0,
+    created_at      TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_conf_cal_trade_date ON confidence_calibration_daily(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS confidence_calibration_bins (
+    id              TEXT PRIMARY KEY,
+    bin_label       TEXT NOT NULL UNIQUE,
+    bin_min         REAL NOT NULL,
+    bin_max         REAL NOT NULL,
+    cumulative_trades INTEGER NOT NULL DEFAULT 0,
+    cumulative_wins INTEGER NOT NULL DEFAULT 0,
+    cumulative_avg_pnl REAL NOT NULL DEFAULT 0.0,
+    last_updated    TEXT NOT NULL
+)
+""",
+    ]
+
+
+def _migration_statements() -> list[tuple[str, str]]:
+    """기존 테이블에 누락된 컬럼을 추가하는 마이그레이션 목록.
+    각 항목: (컬럼 존재 확인용 컬럼명, ALTER TABLE 구문)
+    """
+    return [
+        ("creation_mode",  "ALTER TABLE daily_trading_plans ADD COLUMN creation_mode TEXT NOT NULL DEFAULT 'auto'"),
+        ("created_by",     "ALTER TABLE daily_trading_plans ADD COLUMN created_by TEXT NOT NULL DEFAULT 'scheduler'"),
+        ("s3_result_id",   "ALTER TABLE daily_trading_plans ADD COLUMN s3_result_id TEXT NOT NULL DEFAULT ''"),
+        ("s4_result_id",   "ALTER TABLE daily_trading_plans ADD COLUMN s4_result_id TEXT NOT NULL DEFAULT ''"),
+        ("used_learning_memory_ids", "ALTER TABLE daily_trading_plans ADD COLUMN used_learning_memory_ids TEXT NOT NULL DEFAULT '[]'"),
+        ("used_knowledge_ids", "ALTER TABLE daily_trading_plans ADD COLUMN used_knowledge_ids TEXT NOT NULL DEFAULT '[]'"),
+        ("validated_at",   "ALTER TABLE daily_trading_plans ADD COLUMN validated_at TEXT"),
+        ("superseded_at",  "ALTER TABLE daily_trading_plans ADD COLUMN superseded_at TEXT"),
+    ]
+
+
+def _trading_signal_migration_statements() -> list[tuple[str, str]]:
+    """Return migrations that keep trading_signals compatible with review/calibration phases."""
+    return [
+        ("profile_assigned", "ALTER TABLE trading_signals ADD COLUMN profile_assigned TEXT NOT NULL DEFAULT 'MID_VOL'"),
+        ("realized_pnl", "ALTER TABLE trading_signals ADD COLUMN realized_pnl REAL"),
     ]

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
+import time
 import uuid
 from datetime import datetime
 from typing import Any
@@ -11,12 +13,13 @@ from zoneinfo import ZoneInfo
 
 from ..db import get_connection
 from ..kis.domestic.service import get_balance, order_cash
-from .rulepack_store import get_active_rulepack_for_date
+from .order_preflight import run_preflight
+from .position_manager import position_manager
+from .rule_cache import get_rule
 
 logger = logging.getLogger("OrderExecutor")
 
 POSITION_SIZE_PCT_DEFAULT = 10.0
-MAX_POSITIONS_DEFAULT = 5
 
 
 def _now_kst() -> datetime:
@@ -53,31 +56,6 @@ def _as_list(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, dict):
         return [value]
     return []
-
-
-def _machine_rules(rulepack: dict[str, Any] | None) -> dict[str, Any]:
-    """Extract the machine_rules object from a RulePack-like dictionary.
-
-    Args:
-        rulepack: Full RulePack row or a machine_rules dictionary.
-    """
-    if not isinstance(rulepack, dict):
-        return {}
-    machine_rules = rulepack.get("machine_rules")
-    if isinstance(machine_rules, dict):
-        return machine_rules
-    return rulepack
-
-
-def _risk_limits(rulepack: dict[str, Any] | None) -> dict[str, Any]:
-    """Extract risk limits from either the current or legacy RulePack shape.
-
-    Args:
-        rulepack: Full RulePack row or a machine_rules dictionary.
-    """
-    machine_rules = _machine_rules(rulepack)
-    risk = machine_rules.get("risk_limits")
-    return risk if isinstance(risk, dict) else {}
 
 
 def _ensure_orders_table() -> None:
@@ -126,7 +104,23 @@ def get_today_orders(trade_date: str) -> list[dict[str, Any]]:
 class OrderExecutor:
     """S7: pending 신호를 주문으로 변환하고 KIS에 발행한다."""
 
+    def __init__(self) -> None:
+        """Initialize KIS rate-limit guards and short-lived balance cache."""
+        self._semaphore = asyncio.Semaphore(1)
+        self._balance_cache: dict[str, Any] = {}
+        self._balance_cache_at: float = 0.0
+        self._BALANCE_TTL = 30.0
+
     async def execute_signal(self, signal: dict[str, Any]) -> dict[str, Any]:
+        """Serialize BUY signal execution to keep KIS calls below per-second limits.
+
+        Args:
+            signal: Signal dictionary containing id, symbol, name, and trigger_price.
+        """
+        async with self._semaphore:
+            return await self._execute_signal_inner(signal)
+
+    async def _execute_signal_inner(self, signal: dict[str, Any]) -> dict[str, Any]:
         """Execute one pending BUY signal through KIS and persist the order.
 
         Args:
@@ -159,37 +153,36 @@ class OrderExecutor:
             logger.warning("WARN: [S7] invalid signal signal_id=%s symbol=%s price=%s", signal_id, symbol, price)
             return {"ok": False, "reason": reason, "symbol": symbol}
 
-        rulepack = get_active_rulepack_for_date(today) or {}
-        risk = _risk_limits(rulepack)
-        current_position_count = self._current_position_count()
-        allowed, reason = self._check_risk_limits(rulepack, current_position_count)
-        if not allowed:
-            self._save_order(
-                trade_date=today,
-                signal_id=signal_id,
-                symbol=symbol,
-                name=name,
-                side="buy",
-                order_type="limit",
-                qty=0,
-                price=price,
-                kis_order_no="",
-                status="failed",
-                reason=reason,
-            )
-            self._update_signal_status(signal_id, "failed")
-            logger.warning("WARN: [S7] risk limit blocked symbol=%s reason=%s", symbol, reason)
-            return {"ok": False, "reason": reason, "symbol": symbol}
+        final_rule = get_rule(symbol) or {}
 
         try:
-            balance = await get_balance()
+            balance = await self._get_cached_balance()
             deposit = self._extract_deposit(balance)
-            position_size_pct = self._position_size_pct(risk)
+            position_size_pct = self._position_size_pct(final_rule)
             qty = self._calc_qty(deposit, position_size_pct, price)
             if qty <= 0:
                 raise ValueError("calculated quantity is zero")
 
-            response = await order_cash(side="buy", symbol=symbol, qty=qty, price=self._price_text(price), ord_dvsn="00")
+            current_pos_count = len(position_manager.get_positions())
+            preflight = run_preflight(signal, final_rule, current_positions_count=current_pos_count)
+            if not preflight["ok"]:
+                logger.warning(
+                    "BLOCK: [S7] Pre-Flight 차단 signal_id=%s symbol=%s reason=%s",
+                    signal_id,
+                    symbol,
+                    preflight.get("block_reason"),
+                )
+                with get_connection() as conn:
+                    conn.execute(
+                        "UPDATE trading_signals SET status = 'preflight_blocked' WHERE id = ?",
+                        (signal_id,),
+                    )
+                return {"ok": False, "reason": "preflight_blocked", "detail": preflight.get("block_reason")}
+
+            try:
+                response = await order_cash(side="buy", symbol=symbol, qty=qty, price=self._price_text(price), ord_dvsn="00")
+            finally:
+                await asyncio.sleep(0.2)
             kis_order_no = self._extract_order_no(response)
             order_id = self._save_order(
                 trade_date=today,
@@ -206,9 +199,7 @@ class OrderExecutor:
             )
             self._update_signal_status(signal_id, "executed")
 
-            from .position_manager import position_manager
-
-            position_manager.add_position(symbol=symbol, name=name, qty=qty, entry_price=price, rulepack=rulepack)
+            position_manager.add_position(symbol=symbol, name=name, qty=qty, entry_price=price, final_rule=final_rule)
             logger.info("SUCCESS: [S7] buy order submitted order_id=%s symbol=%s qty=%d", order_id, symbol, qty)
             return {"ok": True, "order_id": order_id, "symbol": symbol, "qty": qty, "kis_order_no": kis_order_no}
         except Exception as exc:
@@ -228,6 +219,17 @@ class OrderExecutor:
             self._update_signal_status(signal_id, "failed")
             logger.error("FAIL: [S7] buy order failed order_id=%s symbol=%s reason=%s", order_id, symbol, exc)
             return {"ok": False, "order_id": order_id, "symbol": symbol, "reason": str(exc)}
+
+    async def _get_cached_balance(self) -> dict[str, Any]:
+        """Return KIS balance data using a 30-second cache to reduce API pressure."""
+        now = time.monotonic()
+        if now - self._balance_cache_at > self._BALANCE_TTL or not self._balance_cache:
+            self._balance_cache = await get_balance()
+            self._balance_cache_at = now
+            logger.info("SUCCESS: [S7] balance cache refreshed")
+        else:
+            logger.info("INFO: [S7] balance cache reused")
+        return self._balance_cache
 
     async def execute_sell(self, symbol: str, qty: int, price: float = 0, reason: str = "manual") -> dict[str, Any]:
         """Submit a SELL order for stop-loss, take-profit, manual, or EOD liquidation.
@@ -287,8 +289,6 @@ class OrderExecutor:
                 status="submitted",
                 reason=reason,
             )
-            from .position_manager import position_manager
-
             position_manager.remove_position(safe_symbol)
             logger.info("SUCCESS: [S8/S9] sell order submitted order_id=%s symbol=%s qty=%d", order_id, safe_symbol, safe_qty)
             return {"ok": True, "order_id": order_id, "symbol": safe_symbol, "qty": safe_qty, "kis_order_no": kis_order_no}
@@ -309,19 +309,6 @@ class OrderExecutor:
             logger.error("FAIL: [S8/S9] sell order failed order_id=%s symbol=%s reason=%s", order_id, safe_symbol, exc)
             return {"ok": False, "order_id": order_id, "symbol": safe_symbol, "reason": str(exc)}
 
-    def _check_risk_limits(self, rulepack: dict[str, Any], current_position_count: int) -> tuple[bool, str]:
-        """Check max position count from RulePack risk limits.
-
-        Args:
-            rulepack: Active RulePack row or machine_rules dictionary.
-            current_position_count: Current in-memory position count.
-        """
-        risk = _risk_limits(rulepack)
-        max_positions = int(_to_float(risk.get("max_positions"), float(MAX_POSITIONS_DEFAULT)))
-        if max_positions > 0 and current_position_count >= max_positions:
-            return False, "max_positions_exceeded"
-        return True, ""
-
     def _calc_qty(self, deposit: float, position_size_pct: float, price: float) -> int:
         """Calculate order quantity as floor(deposit * pct / 100 / price), minimum 1.
 
@@ -333,16 +320,6 @@ class OrderExecutor:
         if deposit <= 0 or position_size_pct <= 0 or price <= 0:
             return 0
         return max(1, math.floor(deposit * position_size_pct / 100 / price))
-
-    def _current_position_count(self) -> int:
-        """Return current in-memory position count while avoiding import-time cycles."""
-        try:
-            from .position_manager import position_manager
-
-            return len(position_manager.get_positions())
-        except Exception as exc:
-            logger.warning("WARN: [S7] current position count unavailable reason=%s", exc)
-            return 0
 
     def _extract_deposit(self, data: dict[str, Any]) -> float:
         """Extract available cash from a KIS balance response.
@@ -358,15 +335,20 @@ class OrderExecutor:
                 return value
         return 0.0
 
-    def _position_size_pct(self, risk: dict[str, Any]) -> float:
-        """Return position size percent from current or legacy RulePack keys.
+    def _position_size_pct(self, final_rule: dict[str, Any]) -> float:
+        """Return position size percent from flat final_rule keys.
 
         Args:
-            risk: RulePack risk_limits dictionary.
+            final_rule: Resolved symbol rule from rule_cache.get_rule().
         """
-        if "position_size_pct" in risk:
-            return _to_float(risk.get("position_size_pct"), POSITION_SIZE_PCT_DEFAULT)
-        legacy_rate = _to_float(risk.get("max_position_size_rate"), 0.0)
+        if "position_size_pct" in final_rule:
+            return _to_float(final_rule.get("position_size_pct"), POSITION_SIZE_PCT_DEFAULT)
+        max_position_rate = _to_float(final_rule.get("max_position_rate"), 0.0)
+        if 0 < max_position_rate <= 1:
+            return max_position_rate * 100
+        if max_position_rate > 1:
+            return max_position_rate
+        legacy_rate = _to_float(final_rule.get("max_position_size_rate"), 0.0)
         if 0 < legacy_rate <= 1:
             return legacy_rate * 100
         if legacy_rate > 1:

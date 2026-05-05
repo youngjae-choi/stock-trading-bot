@@ -16,6 +16,7 @@ from .api.routes.auth import router as auth_router
 from .api.routes.scheduler import router as scheduler_router
 from .api.routes.market_tone import router as market_tone_router
 from .api.routes.orders import router as orders_router
+from .api.routes.pipeline import router as pipeline_router
 from .api.routes.autotrade import router as autotrade_router
 from .api.routes.bot import router as bot_router
 from .api.routes.rulepack import router as rulepack_router
@@ -37,6 +38,17 @@ from .api.routes.trading_data import router as trading_data_router
 from .api.routes.screening import router as screening_router
 from .api.routes.rule import router as rule_router
 from .api.routes.daily_plan import router as daily_plan_router
+from .api.routes.data_quality import router as data_quality_router
+from .api.routes.alert_center import router as alert_center_router
+from .api.routes.human_approval import router as human_approval_router
+from .api.routes.expert_knowledge import router as expert_knowledge_router
+from .api.routes.learning_memory import router as learning_memory_router
+from .api.routes.review_audit import router as review_audit_router
+from .api.routes.shadow_trading import router as shadow_trading_router
+from .api.routes.missed_opportunity import router as missed_opportunity_router
+from .api.routes.false_positive import router as false_positive_router
+from .api.routes.confidence_calibration import router as confidence_calibration_router
+from .api.routes.funnel import router as funnel_router
 from .api.routes.symbol_override import router as symbol_override_router
 from .api.routes.trading_monitor import router as trading_monitor_router
 from .api.routes.universe import router as universe_router, filter_router as universe_filter_router
@@ -105,8 +117,20 @@ app.include_router(scheduler_router)
 app.include_router(market_tone_router)
 app.include_router(decision_router)
 app.include_router(orders_router)
+app.include_router(pipeline_router)
 app.include_router(rule_router)
 app.include_router(daily_plan_router)
+app.include_router(data_quality_router)
+app.include_router(alert_center_router)
+app.include_router(human_approval_router)
+app.include_router(expert_knowledge_router)
+app.include_router(review_audit_router)
+app.include_router(learning_memory_router)
+app.include_router(shadow_trading_router)
+app.include_router(missed_opportunity_router)
+app.include_router(false_positive_router)
+app.include_router(confidence_calibration_router)
+app.include_router(funnel_router)
 app.include_router(symbol_override_router)
 app.include_router(trading_monitor_router)
 

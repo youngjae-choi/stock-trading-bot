@@ -132,5 +132,6 @@ def get_rule_composition_symbol(symbol_code: str):
         daily_plan=plan,
         symbol_overrides=overrides,
         global_risk=risk,
+        trade_date=today,
     )
     return {"ok": True, "payload": final_rule}
