@@ -61,23 +61,40 @@ def _build_balance_payload(data: dict[str, Any]) -> dict[str, Any]:
     positions = []
     for item in _as_list(data.get("output1")):
         qty = _to_int(item.get("hldg_qty"))
+        avg_price = _to_float(item.get("pchs_avg_pric"))
+        purchase_amount = _to_float(item.get("pchs_amt"))
+        if purchase_amount <= 0:
+            purchase_amount = _to_float(item.get("evlu_amt"))
+        if purchase_amount <= 0:
+            purchase_amount = avg_price * qty
         positions.append(
             {
                 "symbol": str(item.get("pdno") or ""),
                 "name": str(item.get("prdt_name") or ""),
                 "qty": qty,
-                "avg_price": _to_float(item.get("pchs_avg_pric")),
+                "avg_price": avg_price,
                 "current_price": _to_float(item.get("prpr")),
+                "purchase_amount": purchase_amount,
                 "pnl_pct": _to_float(item.get("evlu_pfls_rt")),
             }
         )
 
     summary_rows = _as_list(data.get("output2"))
     summary = summary_rows[0] if summary_rows else {}
+    deposit = _to_int(summary.get("dnca_tot_amt"))
+    # ord_psbl_cash is cash available for orders; nass_amt is net assets and must not drive buyable cash.
+    buyable_cash = deposit
+    for key in ("ord_psbl_cash", "dnca_tot_amt"):
+        candidate = _to_int(summary.get(key))
+        if candidate > 0:
+            buyable_cash = candidate
+            break
     account_no = f"{settings.KIS_CANO}{settings.KIS_ACNT_PRDT_CD}"
     return {
         "account_no": account_no,
-        "deposit": _to_int(summary.get("dnca_tot_amt")),
+        "deposit": deposit,
+        "buyable_cash": buyable_cash,
+        "available_cash": buyable_cash,
         "total_eval": _to_int(summary.get("tot_evlu_amt")),
         "purchase_total": _to_int(summary.get("pchs_amt_smtl_amt")),
         "pnl_total": _to_int(summary.get("evlu_pfls_smtl_amt")),

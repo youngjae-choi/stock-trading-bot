@@ -569,30 +569,6 @@
       gap: 14px;
     }
 
-    .natural-card {
-      border: 1px solid var(--line);
-      background: var(--panel-2);
-      border-radius: 12px;
-      padding: 14px;
-      margin-bottom: 10px;
-    }
-
-    .natural-card h4 {
-      margin: 0 0 8px;
-      font-size: 14px;
-    }
-
-    .natural-card p {
-      margin: 0;
-      color: var(--text);
-    }
-
-    .natural-card ul {
-      margin: 8px 0 0;
-      padding-left: 18px;
-      color: var(--text);
-    }
-
     .codebox {
       background: #0b1017;
       color: #d9e2ef;
@@ -859,7 +835,7 @@
         <option value="funnel">Funnel Monitor</option>
         <option value="expert-knowledge">Expert Knowledge</option>
         <option value="alerts">Alert Center</option>
-        <option value="approval">Approval Queue</option>
+        <option value="approval" style="display:none">Approval Queue</option>
         <option value="shadow-trading">Shadow Trading</option>
         <option value="missed-opportunity">Missed Opportunity</option>
         <option value="false-positive">False Positive</option>
@@ -888,7 +864,7 @@
           <button data-screen="funnel">Funnel Monitor <small>screening</small></button>
           <button data-screen="expert-knowledge">Expert Knowledge <small>knowledge</small></button>
           <button data-screen="alerts">Alert Center <small>alerts</small></button>
-          <button data-screen="approval">Approval Queue <small>approval</small></button>
+          <button data-screen="approval" style="display:none">Approval Queue <small>approval</small></button>
 
           <div class="menu-label">판단 검증</div>
           <button data-screen="shadow-trading">Shadow Trading <small>shadow</small></button>
@@ -915,7 +891,7 @@
               <h1 class="page-title">Today Control</h1>
               <p class="page-desc">오늘 자동매매 사이클, RulePack 적용 상태, Funnel 진행, 리스크 상태를 한 화면에서 확인합니다.</p>
             </div>
-            <button class="btn" onclick="loadConsoleData()">새로고침</button>
+            <button class="btn" onclick="refreshTodayControl()">새로고침</button>
           </div>
 
           <div class="grid cols-4">
@@ -983,15 +959,17 @@
                 </div>
               </div>
             </div>
+            <div style="text-align:right; margin-top:8px;">
+              <button class="btn" style="font-size:11px;" onclick="showScreen('funnel')">
+                자세히보기 (Funnel Monitor) →
+              </button>
+            </div>
           </div>
 
           <div class="section-gap"></div>
 
           <div class="card">
-            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-              <span>오늘 운영 현황</span>
-              <button class="btn" style="font-size:11px; padding:2px 8px;" onclick="loadConsoleData()">새로고침</button>
-            </div>
+            <div class="card-title">오늘 운영 현황</div>
             <div id="today-ops-feed" style="display:flex; gap:8px; overflow-x:auto; padding-bottom:8px;"></div>
             <div style="text-align:right; margin-top:8px;">
               <button class="btn" style="font-size:11px;" onclick="showScreen('engine-test')">
@@ -1001,10 +979,26 @@
           </div>
 
           <div class="section-gap"></div>
+
+          <!-- Alert Center Summary -->
+          <div class="card" id="tc-alert-summary-card">
+            <div class="card-title">Alert Center 요약</div>
+            <div style="display:flex; gap:20px; align-items:center;">
+              <div id="tc-alert-count" style="font-size:24px; font-weight:800;">0</div>
+              <div style="flex:1; display:flex; gap:12px;">
+                <span class="status bad" id="tc-alert-critical" style="font-size:11px;">CRITICAL 0</span>
+                <span class="status warn" id="tc-alert-warning" style="font-size:11px;">WARNING 0</span>
+                <span class="status info" id="tc-alert-unack" style="font-size:11px;">미확인 0</span>
+              </div>
+              <button class="btn" style="font-size:11px;" onclick="showScreen('alerts')">자세히보기 →</button>
+            </div>
+          </div>
+
+          <div class="section-gap"></div>
           <div class="card" id="today-orders-card">
             <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-              <span>오늘 주문내역</span>
-              <button class="btn" onclick="loadTodayOrders()">새로고침</button>
+              <span>최근 주문내역 (최신 5건)</span>
+              <button class="btn" style="font-size:11px;" onclick="showScreen('statistics')">자세히보기 →</button>
             </div>
             <div class="table-wrap">
               <table>
@@ -1033,9 +1027,29 @@
             </div>
           </div>
 
-          <!-- 상단: 계좌정보 + RulePack 조건 -->
+          <!-- 상단: 오늘 적용 정책 + 계좌정보 (위치 스왑) -->
           <div style="display:flex; gap:16px; margin-bottom:16px; flex-wrap:wrap;">
 
+            <!-- 오늘 적용 정책 (왼쪽) -->
+            <div class="card" style="flex:1; min-width:240px;">
+              <div class="card-title">오늘 적용 정책</div>
+              <div style="display:flex; flex-direction:column; gap:8px; font-size:12px;" id="tm-policy-list">
+                <div style="background:var(--bg2); border-radius:6px; padding:8px 10px;">
+                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">매수 정책</div>
+                  <div id="tm-policy-buy-desc">오늘의 매수 전략 로딩 중...</div>
+                </div>
+                <div style="background:var(--bg2); border-radius:6px; padding:8px 10px;">
+                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">매도 정책</div>
+                  <div id="tm-policy-sell-desc">트레일링/손절/장마감 기준 적용</div>
+                </div>
+                <div style="background:var(--bg2); border-radius:6px; padding:8px 10px;">
+                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">현금 및 리스크</div>
+                  <div id="tm-policy-risk-desc">시장톤 분석 중...</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 계좌 정보 (오른쪽) -->
             <div class="card" style="flex:1; min-width:240px;">
               <div class="card-title" style="display:flex; justify-content:space-between;">
                 <span>계좌 정보</span>
@@ -1048,50 +1062,20 @@
                   <div style="font-size:14px; font-weight:700;" id="tm-deposit">-</div>
                 </div>
                 <div style="background:var(--bg2); border-radius:6px; padding:8px 10px;">
+                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">주식매수 가능금액</div>
+                  <div style="font-size:14px; font-weight:700;" id="tm-buyable-cash">-</div>
+                </div>
+                <div style="background:var(--bg2); border-radius:6px; padding:8px 10px;">
                   <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">총평가금액</div>
                   <div style="font-size:14px; font-weight:700;" id="tm-total-eval">-</div>
                 </div>
                 <div style="background:var(--bg2); border-radius:6px; padding:8px 10px;">
-                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">보유종목</div>
-                  <div style="font-size:14px; font-weight:700;" id="tm-holdings-count">-</div>
-                </div>
-                <div style="background:var(--bg2); border-radius:6px; padding:8px 10px;">
-                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">오늘 실현손익</div>
+                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">오늘 P&L</div>
                   <div style="font-size:14px; font-weight:700;" id="tm-pnl-today">-</div>
                 </div>
-              </div>
-            </div>
-
-            <div class="card" style="flex:1; min-width:240px;">
-              <div class="card-title">오늘 적용 정책</div>
-              <div style="display:flex; flex-direction:column; gap:5px; font-size:12px;" id="tm-policy-list">
-                <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid var(--border);">
-                  <span style="color:var(--muted);">Base RulePack</span>
-                  <span id="tm-policy-base">-</span>
-                </div>
-                <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid var(--border);">
-                  <span style="color:var(--muted);">Risk Profile Pack</span>
-                  <span id="tm-policy-pack">-</span>
-                </div>
-                <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid var(--border);">
-                  <span style="color:var(--muted);">Daily Plan</span>
-                  <span id="tm-policy-plan">-</span>
-                </div>
-                <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid var(--border);">
-                  <span style="color:var(--muted);">고정 익절</span>
-                  <span style="color:#f85149; font-weight:600;">OFF</span>
-                </div>
-                <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid var(--border);">
-                  <span style="color:var(--muted);">청산 방식</span>
-                  <span>Trailing Stop + 장마감</span>
-                </div>
-                <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid var(--border);">
-                  <span style="color:var(--muted);">신규매수 컷오프</span>
-                  <span id="tm-policy-cutoff">15:10</span>
-                </div>
-                <div style="display:flex; justify-content:space-between; padding:3px 0;">
-                  <span style="color:var(--muted);">강제청산 시작</span>
-                  <span id="tm-policy-force-exit">15:20</span>
+                <div style="background:var(--bg2); border-radius:6px; padding:8px 10px; grid-column: span 2;">
+                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">보유종목</div>
+                  <div style="font-size:14px; font-weight:700;" id="tm-holdings-count">-</div>
                 </div>
               </div>
             </div>
@@ -1325,15 +1309,15 @@
 
             <div class="card">
               <div class="card-title">Funnel Quality</div>
-              <div class="natural-card">
-                <h4>필터 강도</h4>
-                <p><span class="status ok">적정</span></p>
-                <p class="muted">최근 20거래일 평균 유니버스 188개 대비 오늘 200개입니다.</p>
+              <div class="card compact">
+                <div class="card-title">필터 강도</div>
+                <div><span class="status ok">적정</span></div>
+                <div class="muted">최근 20거래일 평균 유니버스 188개 대비 오늘 200개입니다.</div>
               </div>
-              <div class="natural-card">
-                <h4>이상 징후</h4>
-                <p><span class="status ok">없음</span></p>
-                <p class="muted">후보 수 과다/과소, 종목코드 오류, 데이터 누락 없음.</p>
+              <div class="card compact">
+                <div class="card-title">이상 징후</div>
+                <div><span class="status ok">없음</span></div>
+                <div class="muted">후보 수 과다/과소, 종목코드 오류, 데이터 누락 없음.</div>
               </div>
             </div>
           </div>
@@ -1361,70 +1345,52 @@
           <div class="page-head">
             <div>
               <h1 class="page-title">Expert Knowledge</h1>
-              <p class="page-desc">운영자가 등록한 정성적 전략 지식을 관리합니다. 승인된 항목만 S3/S4/S5에 자동 주입됩니다.</p>
-            </div>
-            <button class="btn" onclick="loadExpertKnowledge()">새로고침</button>
-          </div>
-
-          <!-- 등록 폼 -->
-          <div class="card" id="ek-form-card">
-            <div class="card-title">새 지식 등록</div>
-            <div class="form-grid">
-              <div class="form-row">
-                <label>제목</label>
-                <input type="text" id="ek-title" placeholder="예: THEME_SPIKE 오전 집중 효과" style="width:100%">
-              </div>
-              <div class="form-row">
-                <label>내용</label>
-                <textarea id="ek-content" rows="3" placeholder="구체적인 전략 지식을 입력하세요" style="width:100%"></textarea>
-              </div>
-              <div class="form-row cols-3">
-                <div>
-                  <label>적용 범위</label>
-                  <select id="ek-scope">
-                    <option value="ALL">ALL (전체)</option>
-                    <option value="S3_UNIVERSE_FILTER">S3 Universe Filter</option>
-                    <option value="S4_HYBRID_SCREENING">S4 Hybrid Screening</option>
-                    <option value="S5_DAILY_PLAN">S5 Daily Plan</option>
-                  </select>
-                </div>
-                <div>
-                  <label>카테고리</label>
-                  <select id="ek-category">
-                    <option value="general">general</option>
-                    <option value="timing">timing</option>
-                    <option value="sector">sector</option>
-                    <option value="profile">profile</option>
-                    <option value="risk">risk</option>
-                  </select>
-                </div>
-                <div>
-                  <label>우선순위 (1=높음)</label>
-                  <input type="number" id="ek-priority" value="5" min="1" max="10">
-                </div>
-              </div>
-              <div class="form-row">
-                <button class="btn primary" onclick="submitKnowledge()">등록</button>
-              </div>
+              <p class="page-desc">PDF 전략 문서를 업로드하면 AI가 매매 조건을 추출해 Settings에 반영합니다.</p>
             </div>
           </div>
 
-          <!-- 목록 -->
-          <div class="section-gap"></div>
-          <div class="card">
-            <div class="card-title">지식 목록</div>
+          <div class="card" style="margin-bottom:16px;">
+            <div class="card-title">PDF 전략 문서 업로드</div>
+            <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:8px;">
+              <input type="file" id="ek-pdf-input" accept=".pdf" style="flex:1; padding:8px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; color:var(--text);">
+              <button class="btn primary" id="ek-upload-btn" onclick="ekUploadPdf()">업로드 및 분석</button>
+            </div>
+            <div id="ek-upload-status" style="margin-top:8px; font-size:12px; color:var(--muted);"></div>
+          </div>
+
+          <div class="card" id="ek-result-card" style="display:none; margin-bottom:16px;">
+            <div class="card-title">AI 분석 결과</div>
+            <div id="ek-summary" style="font-size:13px; color:var(--muted); margin-bottom:12px;"></div>
             <div class="table-wrap">
-              <table>
+              <table style="width:100%; border-collapse:collapse; font-size:13px;">
                 <thead>
-                  <tr>
-                    <th>제목</th><th>범위</th><th>카테고리</th><th>우선순위</th><th>상태</th><th>등록일</th><th>액션</th>
+                  <tr style="border-bottom:1px solid var(--border);">
+                    <th style="padding:6px 8px; text-align:left;">적용</th>
+                    <th style="padding:6px 8px; text-align:left;">항목</th>
+                    <th style="padding:6px 8px; text-align:left;">추출값</th>
+                    <th style="padding:6px 8px; text-align:left;">Settings 키</th>
+                    <th style="padding:6px 8px; text-align:left;">근거</th>
                   </tr>
                 </thead>
-                <tbody id="ek-list-tbody">
-                  <tr><td colspan="7" class="muted" style="text-align:center;">새로고침을 눌러 불러오기</td></tr>
-                </tbody>
+                <tbody id="ek-candidates-tbody"></tbody>
               </table>
             </div>
+
+            <div id="ek-unmappable" style="margin-top:12px; display:none;">
+              <div style="font-size:12px; color:var(--muted); margin-bottom:4px;">아래 항목은 현재 Settings에 키가 없어 적용 불가:</div>
+              <div id="ek-unmappable-list" style="font-size:12px; color:var(--yellow);"></div>
+            </div>
+
+            <div style="margin-top:16px; display:flex; gap:8px;">
+              <button class="btn primary" id="ek-apply-btn" onclick="ekApplyStrategy()">승인 및 Settings 적용</button>
+              <button class="btn" onclick="ekReset()">취소</button>
+            </div>
+            <div id="ek-apply-result" style="margin-top:8px; font-size:12px;"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">분석 이력</div>
+            <div id="ek-history-list" style="font-size:13px; color:var(--muted);">로딩중...</div>
           </div>
         </section>
 
@@ -1718,7 +1684,6 @@
           <div class="card">
             <div class="card-title">
               <span>오늘 주문내역</span>
-              <button class="btn" onclick="loadTodayOrders()">새로고침</button>
             </div>
             <div class="table-wrap">
               <table>
@@ -1805,55 +1770,36 @@
 
           <div class="card" style="margin-bottom:16px;">
             <div class="card-title">Rule System</div>
-            <div style="display:flex; flex-direction:column; gap:4px; font-size:12px;" id="da-rule-system">
-              <div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--line);">
-                <span style="color:var(--muted);">Base RulePack</span>
-                <span id="da-base-id">-</span>
-              </div>
-              <div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--line);">
-                <span style="color:var(--muted);">Risk Profile Pack</span>
-                <span id="da-profile-id">-</span>
-              </div>
-              <div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--line);">
-                <span style="color:var(--muted);">Daily Plan</span>
-                <span id="da-plan-id">-</span>
-              </div>
-              <div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--line);">
-                <span style="color:var(--muted);">Symbol Assignments</span>
-                <span id="da-assignments-n">-개</span>
-              </div>
-              <div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--line);">
-                <span style="color:var(--muted);">고정 익절</span>
-                <span style="color:#f85149; font-weight:600;">OFF</span>
-              </div>
-              <div style="display:flex; justify-content:space-between; padding:4px 0;">
-                <span style="color:var(--muted);">트레일링 청산</span>
-                <span style="color:#3fb950; font-weight:600;">ON</span>
-              </div>
+            <div class="grid" style="grid-template-columns:repeat(3, 1fr); gap:10px; margin-top:8px;" id="da-rule-system">
+              <div class="card compact"><div class="card-title">Base RulePack</div><div class="metric" id="da-base-id" style="font-size:13px;">-</div></div>
+              <div class="card compact"><div class="card-title">Risk Profile Pack</div><div class="metric" id="da-profile-id" style="font-size:13px;">-</div></div>
+              <div class="card compact"><div class="card-title">Daily Plan</div><div class="metric" id="da-plan-id" style="font-size:13px;">-</div></div>
+              <div class="card compact"><div class="card-title">배정 종목 수</div><div class="metric" id="da-assignments-n" style="font-size:13px;">-개</div></div>
+              <div class="card compact"><div class="card-title">고정 익절</div><div class="metric" style="font-size:13px; color:#f85149;">OFF</div></div>
+              <div class="card compact"><div class="card-title">트레일링 청산</div><div class="metric" style="font-size:13px; color:#3fb950;">ON</div></div>
             </div>
           </div>
 
-          <div class="grid cols-4">
+          <div class="grid" style="grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:16px;">
             <div class="card compact"><div class="card-title">KIS REST</div><div class="metric" id="dh-kisRest">-</div><div class="muted" id="dh-kisRestDetail">확인중</div></div>
             <div class="card compact"><div class="card-title">KIS WebSocket</div><div class="metric" id="dh-kisWs">-</div><div class="muted" id="dh-kisWsDetail">확인중</div></div>
             <div class="card compact"><div class="card-title">LLM Router</div><div class="metric" id="dh-llm">-</div><div class="muted" id="dh-llmDetail">provider 확인중</div></div>
             <div class="card compact"><div class="card-title">SQLite DB</div><div class="metric good" id="dh-db">로컬</div><div class="muted" id="dh-dbDetail">data/ 디렉토리</div></div>
+            <div class="card compact" id="telegram-status"><div class="card-title">Telegram</div><div class="metric" id="da-telegram-status">-</div><div class="muted" id="da-telegram-detail">상태 확인 중</div></div>
           </div>
-
-          <div class="section-gap"></div>
 
           <div class="card" style="margin-bottom:16px;">
             <div class="card-title">Data Quality Guard</div>
-            <div class="grid cols-2">
-              <div class="natural-card">
-                <h4>전체 상태</h4>
-                <p><span class="status ok" id="dq-overall-status">NORMAL</span></p>
-                <p class="muted" id="dq-overall-detail">데이터 이상 없음</p>
+            <div class="grid cols-2" style="margin-top:8px;">
+              <div class="card compact">
+                <div class="card-title">전체 상태</div>
+                <div><span class="status ok" id="dq-overall-status">NORMAL</span></div>
+                <div class="muted" id="dq-overall-detail">데이터 이상 없음</div>
               </div>
-              <div class="natural-card">
-                <h4>오늘 이벤트</h4>
-                <p><span class="metric" id="dq-event-count" style="font-size:1.5rem">0</span></p>
-                <p class="muted" id="dq-event-detail">이상 이벤트 수</p>
+              <div class="card compact">
+                <div class="card-title">오늘 이벤트</div>
+                <div class="metric" id="dq-event-count">0</div>
+                <div class="muted" id="dq-event-detail">이상 이벤트 수</div>
               </div>
             </div>
             <div style="margin-top:8px; font-size:12px; color:var(--muted);" id="dq-event-breakdown">
@@ -1863,26 +1809,26 @@
 
           <div class="card" style="margin-bottom:16px;">
             <div class="card-title">System Health <span>엔진 & 연결 상태</span></div>
-            <div class="grid cols-2">
-              <div class="natural-card">
-                <h4>Auto Engine</h4>
-                <p><span class="status ok" id="kisTokenStatus">확인중</span></p>
-                <p class="muted" id="kisTokenDetail">Auto Engine 상태</p>
+            <div class="grid cols-4" style="margin-top:8px;">
+              <div class="card compact">
+                <div class="card-title">Auto Engine</div>
+                <div><span class="status ok" id="kisTokenStatus">확인중</span></div>
+                <div class="muted" id="kisTokenDetail">Auto Engine 상태</div>
               </div>
-              <div class="natural-card">
-                <h4>Rule Composition</h4>
-                <p><span class="status ok" id="rulepackStatus">확인중</span></p>
-                <p class="muted" id="rulepackDetail">오늘 활성 Rule Composition</p>
+              <div class="card compact">
+                <div class="card-title">Rule Composition</div>
+                <div><span class="status ok" id="rulepackStatus">확인중</span></div>
+                <div class="muted" id="rulepackDetail">오늘 활성 Rule Composition</div>
               </div>
-              <div class="natural-card">
-                <h4>WebSocket</h4>
-                <p><span class="status ok" id="websocketStatus">확인중</span></p>
-                <p class="muted" id="websocketDetail">S4 완료 후 자동 구독</p>
+              <div class="card compact">
+                <div class="card-title">WebSocket</div>
+                <div><span class="status ok" id="websocketStatus">확인중</span></div>
+                <div class="muted" id="websocketDetail">S4 완료 후 자동 구독</div>
               </div>
-              <div class="natural-card">
-                <h4>Risk Guard</h4>
-                <p><span class="status ok" id="riskStatus">확인중</span></p>
-                <p class="muted" id="riskDetail">긴급정지 상태</p>
+              <div class="card compact">
+                <div class="card-title">Risk Guard</div>
+                <div><span class="status ok" id="riskStatus">확인중</span></div>
+                <div class="muted" id="riskDetail">긴급정지 상태</div>
               </div>
             </div>
           </div>
@@ -1898,16 +1844,6 @@
                   <tr><td colspan="4" class="muted">불러오는 중...</td></tr>
                 </tbody>
               </table>
-            </div>
-          </div>
-
-          <div class="section-gap"></div>
-
-          <div class="grid cols-4">
-            <div class="card compact" id="telegram-status">
-              <div class="card-title">Telegram 알림 연동</div>
-              <div class="metric" id="da-telegram-status" style="font-size:14px;">-</div>
-              <div class="muted" id="da-telegram-detail">상태 확인 중</div>
             </div>
           </div>
 
@@ -1982,17 +1918,17 @@
           <div class="split">
             <div class="card">
               <div class="card-title">가장 최근 거래일 요약</div>
-              <div class="natural-card">
-                <h4>가장 최근 거래일 요약</h4>
-                <p id="review-latest-summary">-</p>
+              <div class="card compact">
+                <div class="card-title">가장 최근 거래일 요약</div>
+                <div id="review-latest-summary">-</div>
               </div>
-              <div class="natural-card">
-                <h4>시장 톤</h4>
-                <p id="review-latest-tone">-</p>
+              <div class="card compact">
+                <div class="card-title">시장 톤</div>
+                <div id="review-latest-tone">-</div>
               </div>
-              <div class="natural-card">
-                <h4>Daily Plan</h4>
-                <p id="review-latest-rulepack">-</p>
+              <div class="card compact">
+                <div class="card-title">Daily Plan</div>
+                <div id="review-latest-rulepack">-</div>
               </div>
             </div>
 
@@ -2124,7 +2060,7 @@
             <input type="date" id="sf-date" style="padding:5px; border-radius:5px; background:var(--panel-2); color:var(--text); border:1px solid var(--line);" onchange="loadStatisticsDetail(this.value)">
           </div>
 
-          <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:16px;">
+          <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:16px; display:none;">
             <div class="card compact"><div class="card-title">매매일수</div><div class="metric" id="st-days">-</div><div class="muted">S10 집계 기준</div></div>
             <div class="card compact"><div class="card-title">총 주문수</div><div class="metric" id="st-orders">-</div><div class="muted">전체 기간</div></div>
             <div class="card compact"><div class="card-title">수익일 비율</div><div class="metric" id="st-winrate">-</div><div class="muted" id="st-winrate-detail">-</div></div>
@@ -2695,7 +2631,7 @@
     }
 
     if (name === "expert-knowledge") {
-      loadExpertKnowledge();
+      ekLoadHistory();
     }
 
     if (name === "trading") {
@@ -3983,9 +3919,39 @@
     }
   }
 
-  async function loadTodayOrders() {
+  async function refreshTodayControl() {
+    await Promise.allSettled([
+      loadConsoleData(),
+      loadTodayAlertSummary(),
+      loadTodayOrders(5)
+    ]);
+  }
+
+  async function loadTodayAlertSummary() {
     try {
-      var data = await fetchJson("/api/v1/orders/today");
+      const res = await fetch('/api/v1/alerts/summary');
+      if (!res.ok) return;
+      const data = await res.json();
+      const s = data.payload || {};
+      
+      // 실제 API 필드명 기준: total_count, severity_counts.CRITICAL, severity_counts.WARNING, unacknowledged_count
+      const total = s.total_count ?? 0;
+      const critical = s.severity_counts?.CRITICAL ?? 0;
+      const warning = s.severity_counts?.WARNING ?? 0;
+      const unack = s.unacknowledged_count ?? 0;
+
+      const setEl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+      setEl('tc-alert-count', total);
+      setEl('tc-alert-critical', 'CRITICAL ' + critical);
+      setEl('tc-alert-warning', 'WARNING ' + warning);
+      setEl('tc-alert-unack', '미확인 ' + unack);
+    } catch (e) { console.warn('loadTodayAlertSummary error', e); }
+  }
+
+  async function loadTodayOrders(limit) {
+    try {
+      var url = limit ? "/api/v1/orders/recent?limit=" + limit : "/api/v1/orders/today";
+      var data = await fetchJson(url);
       var hasLegacyTbody = Boolean(document.getElementById("orders-today-tbody"));
       var hasTradingTbody = Boolean(document.getElementById("tm-orders-tbody"));
       if (!hasLegacyTbody && !hasTradingTbody) return;
@@ -4172,11 +4138,17 @@
         var acct = accountData.payload;
         var accountNo = document.getElementById("tm-account-no");
         var depositEl = document.getElementById("tm-deposit");
+        var buyableEl = document.getElementById("tm-buyable-cash");
         var totalEl = document.getElementById("tm-total-eval");
         var countEl = document.getElementById("tm-holdings-count");
         var pnlEl = document.getElementById("tm-pnl-today");
+        
         if (accountNo) accountNo.textContent = "계좌번호: " + (acct.account_no || "-");
         if (depositEl) depositEl.textContent = acct.deposit != null ? Number(acct.deposit).toLocaleString() + "원" : "-";
+        
+        var buyable = acct.buyable_cash ?? acct.available_cash ?? acct.deposit;
+        if (buyableEl) buyableEl.textContent = buyable != null ? Number(buyable).toLocaleString() + "원" : "-";
+        
         if (totalEl) totalEl.textContent = acct.total_eval != null ? Number(acct.total_eval).toLocaleString() + "원" : "-";
         var holdings = acct.holdings || acct.positions || [];
         if (countEl) countEl.textContent = holdings.length + "종목";
@@ -4184,10 +4156,14 @@
           var pnl = acct.total_pnl_pct != null ? Number(acct.total_pnl_pct) : null;
           if (pnl != null && !Number.isNaN(pnl)) {
             pnlEl.textContent = (pnl >= 0 ? "+" : "") + pnl.toFixed(2) + "%";
+            pnlEl.className = "metric " + (pnl >= 0 ? "good" : "bad");
           } else if (acct.realized_pnl_today != null || acct.pnl_today != null) {
-            pnlEl.textContent = Number(acct.realized_pnl_today != null ? acct.realized_pnl_today : acct.pnl_today).toLocaleString() + "원";
+            var val = acct.realized_pnl_today != null ? acct.realized_pnl_today : acct.pnl_today;
+            pnlEl.textContent = Number(val).toLocaleString() + "원";
+            pnlEl.className = "metric " + (val >= 0 ? "good" : "bad");
           } else {
             pnlEl.textContent = "-";
+            pnlEl.className = "metric";
           }
         }
       }
@@ -4195,23 +4171,25 @@
 
     // 오늘 적용 정책 로드
     try {
-      var rb = await fetch('/api/v1/rule/base');
-      var db = await rb.json();
-      var el = document.getElementById('tm-policy-base');
-      if (el) el.textContent = db.payload && db.payload.id ? db.payload.id : '-';
-    } catch(e) {}
-    try {
-      var rp = await fetch('/api/v1/rule/profiles');
-      var dp = await rp.json();
-      var el2 = document.getElementById('tm-policy-pack');
-      if (el2) el2.textContent = dp.payload && dp.payload.id ? dp.payload.id : '-';
-    } catch(e) {}
-    try {
-      var rdp = await fetch('/api/v1/daily-plan/today');
-      var ddp = await rdp.json();
-      var el3 = document.getElementById('tm-policy-plan');
-      if (el3) el3.textContent = ddp.payload && ddp.payload.id ? ddp.payload.id : '미생성';
-    } catch(e) {}
+      var res = await fetch('/api/v1/trading-monitor/policy-summary');
+      if (res.ok) {
+        var data = await res.json();
+        var p = data.payload || {};
+        var dp = p.daily_plan || {};
+        var setEl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v || '데이터 확인 필요'; };
+        setEl('tm-policy-buy-desc', dp.buy_condition_text);
+        setEl('tm-policy-sell-desc', dp.sell_condition_text);
+        setEl('tm-policy-risk-desc', dp.cash_usage_text);
+      } else {
+        // Fallback
+        var rb = await fetch('/api/v1/rule/base').catch(() => null);
+        if (rb && rb.ok) {
+           var db = await rb.json();
+           var el = document.getElementById('tm-policy-buy-desc');
+           if (el) el.textContent = 'Base RulePack: ' + (db.payload?.id || '-');
+        }
+      }
+    } catch(e) { console.warn("loadPolicySummary error", e); }
 
     // 매수 대기 후보 로드
     await loadTradingCandidates();
@@ -4226,13 +4204,41 @@
       var r = await fetch('/api/v1/trading-monitor/candidates');
       var d = await r.json();
       var candidates = d.payload && d.payload.candidates ? d.payload.candidates : [];
+      
       if (!candidates.length) {
         container.innerHTML = '<div style="color:var(--muted); text-align:center; padding:20px 0; font-size:13px;">매수 대기 종목 없음</div>';
         return;
       }
-      container.innerHTML = candidates.map(function(c) { return renderCandidateRow(c); }).join('');
+
+      // Flicker reduction: row-by-row update
+      var currentCodes = Array.from(container.querySelectorAll('[data-code]')).map(el => el.getAttribute('data-code'));
+      var newCodes = candidates.map(c => c.code);
+
+      // Remove gone
+      currentCodes.forEach(code => {
+        if (!newCodes.includes(code)) {
+          var el = container.querySelector('[data-code="' + code + '"]');
+          if (el) el.remove();
+        }
+      });
+
+      // Update or Add
+      candidates.forEach(c => {
+        var html = renderCandidateRow(c);
+        var existing = container.querySelector('[data-code="' + c.code + '"]');
+        if (existing) {
+          if (existing.innerHTML !== html) {
+             existing.innerHTML = html;
+          }
+        } else {
+          var div = document.createElement('div');
+          div.setAttribute('data-code', c.code);
+          div.innerHTML = html;
+          container.appendChild(div);
+        }
+      });
     } catch(e) {
-      container.innerHTML = '<div style="color:var(--muted); text-align:center; padding:20px 0; font-size:13px;">데이터 로딩 실패</div>';
+      console.warn("loadTradingCandidates error", e);
     }
   }
 
@@ -4377,13 +4383,45 @@
       var r = await fetch('/api/v1/trading-monitor/positions');
       var d = await r.json();
       var positions = d.payload && d.payload.positions ? d.payload.positions : [];
+
       if (!positions.length) {
         container.innerHTML = '<div style="color:var(--muted); text-align:center; padding:20px 0; font-size:13px;">보유 포지션 없음</div>';
         return;
       }
-      container.innerHTML = positions.map(function(p) { return renderPositionRow(p); }).join('');
+
+      // Flicker reduction: row-by-row update
+      Array.from(container.children).forEach(el => {
+        if (!el.hasAttribute('data-symbol')) el.remove();
+      });
+      var currentSymbols = Array.from(container.querySelectorAll('[data-symbol]')).map(el => el.getAttribute('data-symbol'));
+      var newSymbols = positions.map(p => p.symbol);
+
+      // Remove gone
+      currentSymbols.forEach(symbol => {
+        if (!newSymbols.includes(symbol)) {
+          var el = container.querySelector('[data-symbol="' + symbol + '"]');
+          if (el) el.remove();
+        }
+      });
+
+      // Update or Add
+      positions.forEach(p => {
+        var html = renderPositionRow(p);
+        var existing = container.querySelector('[data-symbol="' + p.symbol + '"]');
+        if (existing) {
+          if (existing.innerHTML !== html) {
+             existing.innerHTML = html;
+          }
+        } else {
+          var div = document.createElement('div');
+          div.setAttribute('data-symbol', p.symbol);
+          div.style.marginBottom = "6px";
+          div.innerHTML = html;
+          container.appendChild(div);
+        }
+      });
     } catch(e) {
-      container.innerHTML = '<div style="color:var(--muted); text-align:center; padding:20px 0; font-size:13px;">데이터 로딩 실패</div>';
+      console.warn("loadTradingPositions error", e);
     }
   }
 
@@ -4396,6 +4434,8 @@
     var highSince = p.highest_price_since_entry || entry;
     var trailingActive = p.trailing_active;
     var profile = p.profile_assigned || 'MID_VOL';
+    var qty = p.qty || 0;
+    var purchaseAmount = entry * qty;
 
     var pnlColor = pnlPct >= 0 ? '#3fb950' : '#f85149';
     var stopColor = stopDistPct < 1.0 ? '#f85149' : stopDistPct < 2.0 ? '#d29922' : '#3fb950';
@@ -4410,20 +4450,20 @@
       + '<span style="font-size:10px; color:' + profileColor + '; font-weight:600; margin-left:6px;">' + escapeHtml(profile) + '</span>'
       + (trailingActive ? '<span style="font-size:10px; background:#1c3a1c; color:#3fb950; border-radius:3px; padding:1px 5px; margin-left:4px;">Trailing ON</span>' : '')
       + '</div>'
-      + '<div style="font-size:13px; font-weight:700; color:' + pnlColor + ';">' + (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%</div>'
+      + '<div style="font-size:13px; font-weight:700; color:' + pnlColor + ';">' + (pnlPct >= 0 ? '+' : '') + Math.round(pnlPct) + '%</div>'
       + '</div>'
       + '<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:4px; font-size:11px; margin-bottom:8px;">'
-      + '<div><span style="color:var(--muted);">진입가</span> ' + entry.toLocaleString() + '</div>'
-      + '<div><span style="color:var(--muted);">현재가</span> ' + current.toLocaleString() + '</div>'
-      + '<div><span style="color:var(--muted);">최고가</span> ' + highSince.toLocaleString() + '</div>'
-      + '<div><span style="color:var(--muted);">손절선</span> <span style="color:' + stopColor + '; font-weight:600;">' + activeStop.toLocaleString() + '</span></div>'
-      + '<div><span style="color:var(--muted);">수량</span> ' + (p.qty || 0) + '주</div>'
-      + '<div><span style="color:var(--muted);">수익</span> ' + ((current - entry) * (p.qty || 0)).toLocaleString() + '원</div>'
+      + '<div><span style="color:var(--muted);">진입가</span> ' + Math.round(entry).toLocaleString() + '</div>'
+      + '<div><span style="color:var(--muted);">현재가</span> ' + Math.round(current).toLocaleString() + '</div>'
+      + '<div><span style="color:var(--muted);">최고가</span> ' + Math.round(highSince).toLocaleString() + '</div>'
+      + '<div><span style="color:var(--muted);">손절선</span> <span style="color:' + stopColor + '; font-weight:600;">' + Math.round(activeStop).toLocaleString() + '</span></div>'
+      + '<div><span style="color:var(--muted);">수량</span> ' + qty.toLocaleString() + '주</div>'
+      + '<div><span style="color:var(--muted);">매수금액</span> ' + Math.round(purchaseAmount).toLocaleString() + '원</div>'
       + '</div>'
       + '<div>'
       + '<div style="display:flex; justify-content:space-between; font-size:10px; color:var(--muted); margin-bottom:2px;">'
       + '<span>손절선까지 여유</span>'
-      + '<span style="color:' + stopColor + '; font-weight:700;">' + stopDistPct.toFixed(2) + '%</span>'
+      + '<span style="color:' + stopColor + '; font-weight:700;">' + stopDistPct.toFixed(1) + '%</span>'
       + '</div>'
       + '<div style="background:var(--panel-3); border-radius:4px; height:6px; overflow:hidden;">'
       + '<div style="background:' + stopColor + '; height:100%; width:' + stopBarW.toFixed(0) + '%; transition:width 0.5s;"></div>'
@@ -5019,33 +5059,32 @@
         var todayResponse = await fetchJson("/api/v1/orders/today");
         orders = (todayResponse && todayResponse.payload && todayResponse.payload.orders) || [];
       } else {
-        var limit = stFilter === "all" ? 500 : 120;
-        await fetchJson("/api/v1/trades/history?limit=" + limit);
-        var signalsResponse = await fetchJson("/api/v1/decision/signals/today");
-        orders = (signalsResponse && signalsResponse.payload && signalsResponse.payload.signals) || [];
+        var now = new Date();
+        var todayStr = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
+        var startStr = todayStr;
+        if (stFilter === "week") {
+          var day = now.getDay();
+          var monday = new Date(now);
+          monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
+          startStr = monday.getFullYear() + "-" + String(monday.getMonth() + 1).padStart(2, "0") + "-" + String(monday.getDate()).padStart(2, "0");
+        } else if (stFilter === "month") {
+          startStr = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-01";
+        } else if (stFilter === "lastmonth") {
+          var lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          var lmEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+          startStr = lm.getFullYear() + "-" + String(lm.getMonth() + 1).padStart(2, "0") + "-01";
+          todayStr = lmEnd.getFullYear() + "-" + String(lmEnd.getMonth() + 1).padStart(2, "0") + "-" + String(lmEnd.getDate()).padStart(2, "0");
+        } else if (stFilter === "all") {
+          startStr = "2020-01-01";
+        }
+        var rangeResponse = await fetchJson("/api/v1/orders/range?start=" + startStr + "&end=" + todayStr + "&limit=500");
+        orders = (rangeResponse && rangeResponse.payload && rangeResponse.payload.orders) || [];
       }
 
-      var now = new Date();
-      var todayStr = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
       if (stFilter === "today") {
+        var now = new Date();
+        var todayStr = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
         orders = orders.filter(function(o) { return (o.trade_date || (o.created_at || "").slice(0, 10) || todayStr) === todayStr; });
-      }
-      if (stFilter === "week") {
-        var day = now.getDay();
-        var monday = new Date(now);
-        monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
-        var mondayStr = monday.getFullYear() + "-" + String(monday.getMonth() + 1).padStart(2, "0") + "-" + String(monday.getDate()).padStart(2, "0");
-        orders = orders.filter(function(o) { return (o.trade_date || (o.created_at || "").slice(0, 10)) >= mondayStr; });
-      }
-      if (stFilter === "month") {
-        var monthPrefix = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
-        orders = orders.filter(function(o) { return (o.trade_date || (o.created_at || "").slice(0, 10)).indexOf(monthPrefix) === 0; });
-      }
-      if (stFilter === "lastmonth") {
-        var lastMonth = now.getMonth() === 0 ? 12 : now.getMonth();
-        var lastYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
-        var lastMonthPrefix = lastYear + "-" + String(lastMonth).padStart(2, "0");
-        orders = orders.filter(function(o) { return (o.trade_date || (o.created_at || "").slice(0, 10)).indexOf(lastMonthPrefix) === 0; });
       }
 
       var filterLabel = { today: "오늘", week: "이번주", month: "이번달", lastmonth: "지난달", all: "전체" };
@@ -5485,6 +5524,174 @@
   }
 
   /* ── Expert Knowledge ── */
+  var _ekCurrentAnalysisId = null;
+
+  /* Upload a selected PDF and render the LLM strategy analysis result. */
+  async function ekUploadPdf() {
+    var input = document.getElementById('ek-pdf-input');
+    var statusEl = document.getElementById('ek-upload-status');
+    var resultCard = document.getElementById('ek-result-card');
+    var uploadBtn = document.getElementById('ek-upload-btn');
+    if (!input.files || !input.files[0]) {
+      statusEl.textContent = 'PDF 파일을 선택해주세요.';
+      return;
+    }
+    var file = input.files[0];
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      statusEl.textContent = 'PDF 파일만 업로드 가능합니다.';
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      statusEl.textContent = 'PDF 파일 크기는 10MB를 초과할 수 없습니다.';
+      return;
+    }
+    statusEl.textContent = '업로드 중... (LLM 분석에 30~60초 소요될 수 있습니다)';
+    resultCard.style.display = 'none';
+    _ekCurrentAnalysisId = null;
+    if (uploadBtn) uploadBtn.disabled = true;
+
+    try {
+      var formData = new FormData();
+      formData.append('file', file);
+      var res = await fetch('/api/v1/expert-knowledge/upload-pdf', {
+        method: 'POST',
+        body: formData
+      });
+      var data = await res.json();
+      if (!data.ok) {
+        statusEl.textContent = '분석 실패: ' + (data.error || data.detail || '알 수 없는 오류');
+        return;
+      }
+      _ekCurrentAnalysisId = data.payload.analysis_id;
+      statusEl.textContent = data.payload.error
+        ? '분석 저장 완료. LLM 설정 확인 필요: ' + data.payload.error
+        : '분석 완료. 아래 결과를 확인하세요.';
+      ekRenderResult(data.payload);
+      ekLoadHistory();
+    } catch(e) {
+      console.error('[ERROR]', 'ekUploadPdf', '-', e.message);
+      statusEl.textContent = '오류: ' + e.message;
+    } finally {
+      if (uploadBtn) uploadBtn.disabled = false;
+    }
+  }
+
+  /* Render the current PDF analysis candidates, unmappable items, and summary. */
+  function ekRenderResult(payload) {
+    var resultCard = document.getElementById('ek-result-card');
+    var summaryEl = document.getElementById('ek-summary');
+    var tbody = document.getElementById('ek-candidates-tbody');
+    var unmappableEl = document.getElementById('ek-unmappable');
+    var unmappableList = document.getElementById('ek-unmappable-list');
+    var applyResult = document.getElementById('ek-apply-result');
+
+    resultCard.style.display = '';
+    summaryEl.textContent = payload.summary || '';
+    applyResult.style.color = '';
+    applyResult.textContent = '';
+
+    var candidates = payload.candidates || [];
+    tbody.innerHTML = candidates.length === 0
+      ? '<tr><td colspan="5" class="muted" style="padding:12px; text-align:center;">추출된 전략 항목 없음</td></tr>'
+      : candidates.map(function(c, i) {
+          return '<tr style="border-bottom:1px solid var(--border);">'
+            + '<td style="padding:6px 8px; text-align:center;"><input type="checkbox" id="ek-chk-' + i + '" data-key="' + escapeHtml(c.setting_key || '') + '" checked' + (c.setting_key ? '' : ' disabled') + '></td>'
+            + '<td style="padding:6px 8px;">' + escapeHtml(c.label || '') + '</td>'
+            + '<td style="padding:6px 8px; font-weight:600; color:var(--blue);">' + escapeHtml(String(c.value || '')) + '</td>'
+            + '<td style="padding:6px 8px; font-size:11px; color:var(--muted);">' + escapeHtml(c.setting_key || '매핑 불가') + '</td>'
+            + '<td style="padding:6px 8px; font-size:11px; color:var(--muted);">' + escapeHtml(c.reason || '') + '</td>'
+            + '</tr>';
+        }).join('');
+
+    var unmappable = payload.unmappable || [];
+    if (unmappable.length > 0) {
+      unmappableEl.style.display = '';
+      unmappableList.innerHTML = unmappable.map(function(u) {
+        return '<div style="margin-bottom:4px;">- <strong>' + escapeHtml(u.label || '') + '</strong>: '
+          + escapeHtml(u.description || '') + ' - '
+          + '<em>OOO 기능을 Setting 화면에 추가하여야 합니다. 개발 후 재 요청해주세요.</em></div>';
+      }).join('');
+    } else {
+      unmappableEl.style.display = 'none';
+    }
+  }
+
+  /* Apply checked strategy candidates from the active analysis to Settings. */
+  async function ekApplyStrategy() {
+    if (!_ekCurrentAnalysisId) return;
+    var applyResult = document.getElementById('ek-apply-result');
+    var applyBtn = document.getElementById('ek-apply-btn');
+    var checkboxes = document.querySelectorAll('#ek-candidates-tbody input[type=checkbox]:checked');
+    var approvedKeys = Array.from(checkboxes).map(function(cb) { return cb.getAttribute('data-key'); }).filter(Boolean);
+    if (!approvedKeys.length) {
+      applyResult.style.color = 'var(--yellow)';
+      applyResult.textContent = '적용할 항목을 선택해주세요.';
+      return;
+    }
+    if (applyBtn) applyBtn.disabled = true;
+    applyResult.style.color = 'var(--muted)';
+    applyResult.textContent = 'Settings 적용 중...';
+    try {
+      var res = await fetch('/api/v1/expert-knowledge/apply-strategy/' + encodeURIComponent(_ekCurrentAnalysisId), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({approved_keys: approvedKeys})
+      });
+      var data = await res.json();
+      if (!data.ok) {
+        applyResult.style.color = 'var(--yellow)';
+        applyResult.textContent = '적용 실패: ' + (data.error || data.detail || '');
+        return;
+      }
+      var msgs = (data.payload.messages || []).join('\n');
+      applyResult.style.color = 'var(--green)';
+      applyResult.textContent = msgs || '적용 완료';
+      ekLoadHistory();
+    } catch(e) {
+      console.error('[ERROR]', 'ekApplyStrategy', '-', e.message);
+      applyResult.style.color = 'var(--yellow)';
+      applyResult.textContent = '오류: ' + e.message;
+    } finally {
+      if (applyBtn) applyBtn.disabled = false;
+    }
+  }
+
+  /* Reset the PDF upload form and hide the current analysis result. */
+  function ekReset() {
+    _ekCurrentAnalysisId = null;
+    document.getElementById('ek-result-card').style.display = 'none';
+    document.getElementById('ek-pdf-input').value = '';
+    document.getElementById('ek-upload-status').textContent = '';
+  }
+
+  /* Load the latest PDF analysis history for the Expert Knowledge screen. */
+  async function ekLoadHistory() {
+    var el = document.getElementById('ek-history-list');
+    if (!el) return;
+    try {
+      var res = await fetch('/api/v1/expert-knowledge/analyses');
+      var data = await res.json();
+      if (!data.ok) {
+        el.textContent = '이력 로드 실패: ' + (data.error || data.detail || '알 수 없는 오류');
+        return;
+      }
+      var items = data.payload || [];
+      if (!items.length) { el.textContent = '분석 이력 없음'; return; }
+      el.innerHTML = items.map(function(item) {
+        var ts = item.created_at ? item.created_at.substring(0, 16).replace('T', ' ') : '-';
+        var status = item.status === 'applied' ? '<span style="color:var(--green);">적용됨</span>' : '대기';
+        return '<div style="padding:6px 0; border-bottom:1px solid var(--border); display:flex; gap:8px; align-items:center;">'
+          + '<span style="color:var(--muted); font-size:11px;">' + ts + '</span>'
+          + '<span>' + escapeHtml(item.filename || '') + '</span>'
+          + '<span>' + status + '</span>'
+          + '</div>';
+      }).join('');
+    } catch(e) {
+      console.error('[ERROR]', 'ekLoadHistory', '-', e.message);
+      el.textContent = '이력 로드 실패: ' + e.message;
+    }
+  }
+
   async function loadExpertKnowledge() {
     try {
       const res = await fetch('/api/v1/expert-knowledge/');

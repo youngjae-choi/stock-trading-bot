@@ -25,6 +25,7 @@ logger = logging.getLogger("TradingMonitorAPI")
 
 
 def _today_kst() -> str:
+    """Return today's Asia/Seoul date as YYYY-MM-DD."""
     return datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
 
 
@@ -123,6 +124,205 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _table_exists(conn: Any, table_name: str) -> bool:
+    """Return whether a SQLite table exists.
+
+    Args:
+        conn: Open SQLite connection.
+        table_name: Table name to check.
+    """
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _safe_json_loads(value: Any, default: Any) -> Any:
+    """Parse JSON text with a caller-provided fallback.
+
+    Args:
+        value: JSON string or already-decoded object.
+        default: Value returned when parsing fails.
+    """
+    if isinstance(value, (dict, list)):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return default
+    try:
+        return json.loads(value)
+    except Exception:
+        return default
+
+
+def _to_bool(value: Any, default: bool = True) -> bool:
+    """Convert DB and JSON boolean-like values to bool.
+
+    Args:
+        value: Raw boolean-like value.
+        default: Fallback value when conversion is ambiguous.
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "y", "on"):
+        return True
+    if text in ("0", "false", "no", "n", "off"):
+        return False
+    return default
+
+
+def _latest_market_tone(trade_date: str) -> dict[str, Any] | None:
+    """Return today's newest market tone result without raising on missing tables.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date.
+    """
+    try:
+        with get_connection() as conn:
+            if not _table_exists(conn, "market_tone_results"):
+                return None
+            row = conn.execute(
+                "SELECT * FROM market_tone_results WHERE trade_date = ? ORDER BY created_at DESC LIMIT 1",
+                (trade_date,),
+            ).fetchone()
+        return dict(row) if row else None
+    except Exception as exc:
+        logger.warning("WARN: TradingMonitor policy-summary market tone lookup failed reason=%s", exc)
+        return None
+
+
+def _latest_screening(trade_date: str) -> dict[str, Any] | None:
+    """Return today's newest hybrid screening result without raising on missing tables.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date.
+    """
+    try:
+        with get_connection() as conn:
+            if not _table_exists(conn, "hybrid_screening_results"):
+                return None
+            row = conn.execute(
+                "SELECT * FROM hybrid_screening_results WHERE trade_date = ? ORDER BY created_at DESC LIMIT 1",
+                (trade_date,),
+            ).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["candidates"] = _safe_json_loads(data.get("candidates"), [])
+        data["skipped"] = _safe_json_loads(data.get("skipped"), [])
+        return data
+    except Exception as exc:
+        logger.warning("WARN: TradingMonitor policy-summary screening lookup failed reason=%s", exc)
+        return None
+
+
+def _latest_rulepack_rules(trade_date: str) -> dict[str, Any]:
+    """Return active RulePack machine rules generated for the trade date.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date.
+    """
+    try:
+        with get_connection() as conn:
+            if not _table_exists(conn, "rulepacks"):
+                return {}
+            row = conn.execute(
+                "SELECT machine_rules FROM rulepacks WHERE trade_date = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1",
+                (trade_date,),
+            ).fetchone()
+        if not row:
+            return {}
+        rules = _safe_json_loads(row["machine_rules"], {})
+        return rules if isinstance(rules, dict) else {}
+    except Exception as exc:
+        logger.warning("WARN: TradingMonitor policy-summary rulepack lookup failed reason=%s", exc)
+        return {}
+
+
+def _build_entry_rules(plan: dict[str, Any] | None, screening: dict[str, Any] | None, rulepack: dict[str, Any]) -> dict[str, float]:
+    """Build display-ready entry rule values from today's AI outputs.
+
+    Args:
+        plan: Daily trading plan row decoded by get_today_daily_plan().
+        screening: Hybrid screening result row.
+        rulepack: Active RulePack machine_rules generated from screening.
+    """
+    overrides = (plan or {}).get("daily_overrides") or {}
+    rulepack_entry = rulepack.get("entry_rules") if isinstance(rulepack.get("entry_rules"), dict) else {}
+    candidates = screening.get("candidates", []) if screening else []
+    change_rates = [_to_float(c.get("change_rate") or c.get("chg_rate")) for c in candidates if isinstance(c, dict)]
+    return {
+        "min_ai_confidence": _to_float(
+            rulepack_entry.get("min_ai_confidence") or overrides.get("min_ai_confidence"),
+            0.60,
+        ),
+        "min_price_change_pct": _to_float(
+            rulepack_entry.get("min_price_change_pct"),
+            min(change_rates) if change_rates else 0.5,
+        ),
+        "max_price_change_pct": _to_float(
+            rulepack_entry.get("max_price_change_pct"),
+            max(change_rates) if change_rates else 8.0,
+        ),
+    }
+
+
+def _cash_usage_hint(tone: str, confidence: float, trading_intensity: str, new_entry_allowed: bool) -> str:
+    """Create a Korean cash-usage hint from today's market and plan state.
+
+    Args:
+        tone: Market tone label.
+        confidence: Market tone confidence score.
+        trading_intensity: Daily plan trading intensity.
+        new_entry_allowed: Whether new entries are allowed today.
+    """
+    if not new_entry_allowed:
+        return "신규 진입이 차단되어 현금 보존을 우선합니다."
+    if trading_intensity == "aggressive" and confidence >= 0.65 and tone in ("bullish", "positive", "risk_on"):
+        return "시장톤 신뢰도가 높아 평소보다 적극적인 현금 사용이 가능합니다."
+    if trading_intensity == "defensive" or confidence < 0.55 or tone in ("bearish", "negative", "risk_off"):
+        return "시장 확신이 낮거나 방어 모드라 보수적 현금 사용을 권장합니다."
+    return "선별된 후보 중심으로 중립적인 현금 사용을 권장합니다."
+
+
+def _build_policy_texts(
+    entry_rules: dict[str, float],
+    rulepack: dict[str, Any],
+    trading_intensity: str,
+    new_entry_allowed: bool,
+    cash_usage_text: str,
+) -> dict[str, str]:
+    """Build human-readable Korean buy, sell, and cash usage texts.
+
+    Args:
+        entry_rules: Entry rule thresholds selected for today.
+        rulepack: Active RulePack machine_rules generated from AI outputs.
+        trading_intensity: Daily plan trading intensity.
+        new_entry_allowed: Whether new entries are allowed today.
+        cash_usage_text: Precomputed cash-usage sentence.
+    """
+    buy_prefix = "신규 진입 허용" if new_entry_allowed else "신규 진입 차단"
+    buy_condition_text = (
+        f"{buy_prefix}. AI confidence {entry_rules['min_ai_confidence']:.2f} 이상이고 "
+        f"등락률 {entry_rules['min_price_change_pct']:.1f}%~{entry_rules['max_price_change_pct']:.1f}% 범위의 후보만 검토합니다."
+    )
+    exit_rules = rulepack.get("exit_rules") if isinstance(rulepack.get("exit_rules"), dict) else {}
+    force_close = exit_rules.get("force_close_at") or "15:20"
+    stop_loss = exit_rules.get("stop_loss_trigger") or "손절 기준"
+    trailing = exit_rules.get("take_profit_trigger") or "트레일링 스탑"
+    sell_condition_text = f"매도는 {stop_loss}, {trailing}, {force_close} 전후 당일 청산 조건을 우선 적용합니다."
+    return {
+        "buy_condition_text": buy_condition_text,
+        "sell_condition_text": sell_condition_text,
+        "cash_usage_text": f"{cash_usage_text} 오늘 매매 강도는 {trading_intensity}입니다.",
+    }
+
+
 def _latest_stop_states() -> dict[str, dict[str, Any]]:
     """Return the newest persisted stop state by symbol code."""
     states: dict[str, dict[str, Any]] = {}
@@ -147,6 +347,8 @@ def _latest_submitted_orders() -> dict[str, dict[str, Any]]:
     today = _today_kst()
     orders: dict[str, dict[str, Any]] = {}
     with get_connection() as conn:
+        if not _table_exists(conn, "trading_orders"):
+            return orders
         rows = conn.execute(
             """
             SELECT *
@@ -257,6 +459,8 @@ def get_candidates():
 @router.get("/positions")
 async def get_positions():
     """Return actual KIS holdings with persisted trailing-stop state."""
+    endpoint = "/api/v1/trading-monitor/positions"
+    logger.info("START: GET %s", endpoint)
     try:
         account_payload = _build_balance_payload(await get_kis_balance())
         account_positions = account_payload.get("positions", [])
@@ -279,6 +483,7 @@ async def get_positions():
 
         entry_price = _to_float(holding.get("avg_price"))
         current_price = _to_float(holding.get("current_price"), entry_price)
+        purchase_amount = _to_float(holding.get("purchase_amount"), entry_price * qty)
         memory_pos = memory_positions.get(symbol, {})
         order = submitted_orders.get(symbol, {})
         stop_state = stop_states.get(symbol) or _fallback_stop_state(symbol, entry_price)
@@ -289,6 +494,7 @@ async def get_positions():
             "name": holding.get("name") or memory_pos.get("name") or order.get("name") or "",
             "qty": qty,
             "entry_price": entry_price,
+            "purchase_amount": purchase_amount,
             "entry_time": memory_pos.get("entry_time") or order.get("created_at") or "",
             "market_price": current_price,
             "pnl_pct": holding.get("pnl_pct"),
@@ -305,7 +511,82 @@ async def get_positions():
             "source": "kis_account",
         })
 
+    logger.info("SUCCESS: GET %s count=%d", endpoint, len(positions))
     return {"ok": True, "payload": {"positions": positions, "count": len(positions)}}
+
+
+@router.get("/policy-summary")
+def get_policy_summary():
+    """Return today's AI-generated policy summary for operator display."""
+    endpoint = "/api/v1/trading-monitor/policy-summary"
+    trade_date = _today_kst()
+    logger.info("START: GET %s trade_date=%s", endpoint, trade_date)
+    try:
+        market = _latest_market_tone(trade_date) or {}
+        screening = _latest_screening(trade_date) or {}
+        plan = get_today_daily_plan(trade_date) or {}
+        rulepack = _latest_rulepack_rules(trade_date)
+
+        tone = str(market.get("tone") or plan.get("market_tone") or "mixed")
+        confidence = _to_float(market.get("confidence"), _to_float(screening.get("overall_confidence"), 0.0))
+        trading_intensity = str(plan.get("trading_intensity") or "defensive")
+        new_entry_allowed = _to_bool(plan.get("new_entry_allowed"), True)
+        entry_rules = _build_entry_rules(plan, screening, rulepack)
+        cash_usage_text = _cash_usage_hint(tone, confidence, trading_intensity, new_entry_allowed)
+        policy_texts = _build_policy_texts(
+            entry_rules=entry_rules,
+            rulepack=rulepack,
+            trading_intensity=trading_intensity,
+            new_entry_allowed=new_entry_allowed,
+            cash_usage_text=cash_usage_text,
+        )
+
+        payload = {
+            "trade_date": trade_date,
+            "market_tone": {
+                "tone": tone,
+                "confidence": confidence,
+                "summary": str(market.get("summary") or "오늘 시장톤 AI 결과가 없어 보수적 기준으로 표시합니다."),
+                "cash_usage_hint": cash_usage_text,
+            },
+            "entry_rules": entry_rules,
+            "daily_plan": {
+                "id": plan.get("id") or "",
+                "status": plan.get("status") or "none",
+                "trading_intensity": trading_intensity,
+                "new_entry_allowed": new_entry_allowed,
+                "buy_condition_text": policy_texts["buy_condition_text"],
+                "sell_condition_text": policy_texts["sell_condition_text"],
+                "cash_usage_text": policy_texts["cash_usage_text"],
+            },
+        }
+        logger.info("SUCCESS: GET %s trade_date=%s status=%s", endpoint, trade_date, payload["daily_plan"]["status"])
+        return {"ok": True, "payload": payload}
+    except Exception as exc:
+        logger.error("FAIL: GET %s — %s", endpoint, exc)
+        fallback_rules = {"min_ai_confidence": 0.60, "min_price_change_pct": 0.5, "max_price_change_pct": 8.0}
+        return {
+            "ok": True,
+            "payload": {
+                "trade_date": trade_date,
+                "market_tone": {
+                    "tone": "mixed",
+                    "confidence": 0.0,
+                    "summary": "정책 요약 데이터를 읽지 못해 보수적 기준으로 표시합니다.",
+                    "cash_usage_hint": "데이터 확인 전까지 보수적 현금 사용을 권장합니다.",
+                },
+                "entry_rules": fallback_rules,
+                "daily_plan": {
+                    "id": "",
+                    "status": "fallback",
+                    "trading_intensity": "defensive",
+                    "new_entry_allowed": False,
+                    "buy_condition_text": "정책 데이터 확인 전까지 신규 진입을 보류합니다.",
+                    "sell_condition_text": "보유 포지션은 손절, 트레일링, 당일 청산 기준을 우선 확인합니다.",
+                    "cash_usage_text": "데이터 확인 전까지 현금 보존을 우선합니다.",
+                },
+            },
+        }
 
 
 @router.get("/stream")

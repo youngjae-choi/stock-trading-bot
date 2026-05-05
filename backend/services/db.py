@@ -584,6 +584,20 @@ CREATE TABLE IF NOT EXISTS strategy_knowledge_items (
         "CREATE INDEX IF NOT EXISTS idx_knowledge_items_scope ON strategy_knowledge_items(scope)",
         "CREATE INDEX IF NOT EXISTS idx_knowledge_items_status ON strategy_knowledge_items(status)",
         """
+CREATE TABLE IF NOT EXISTS pdf_analyses (
+    analysis_id    TEXT PRIMARY KEY,
+    filename       TEXT NOT NULL,
+    extracted_text TEXT NOT NULL,
+    candidates     TEXT NOT NULL DEFAULT '[]',
+    unmappable     TEXT NOT NULL DEFAULT '[]',
+    summary        TEXT NOT NULL DEFAULT '',
+    status         TEXT NOT NULL DEFAULT 'pending',
+    created_at     TEXT NOT NULL,
+    applied_at     TEXT
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_pdf_analyses_created ON pdf_analyses(created_at DESC)",
+        """
 CREATE TABLE IF NOT EXISTS knowledge_prompt_contexts (
     id              TEXT PRIMARY KEY,
     trade_date      TEXT NOT NULL,

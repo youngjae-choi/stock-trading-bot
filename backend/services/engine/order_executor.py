@@ -84,6 +84,7 @@ def _ensure_orders_table() -> None:
             "CREATE INDEX IF NOT EXISTS idx_trading_orders_trade_date ON trading_orders(trade_date)"
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_trading_orders_symbol ON trading_orders(symbol)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trading_orders_created_at ON trading_orders(created_at)")
 
 
 def get_today_orders(trade_date: str) -> list[dict[str, Any]]:
@@ -97,6 +98,40 @@ def get_today_orders(trade_date: str) -> list[dict[str, Any]]:
         rows = conn.execute(
             "SELECT * FROM trading_orders WHERE trade_date = ? ORDER BY created_at DESC",
             (trade_date,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_recent_orders(limit: int = 5) -> list[dict[str, Any]]:
+    """Return the newest trading orders across trade dates.
+
+    Args:
+        limit: Maximum number of rows to return. Values are clamped to 1..100.
+    """
+    safe_limit = max(1, min(int(limit or 5), 100))
+    _ensure_orders_table()
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM trading_orders ORDER BY created_at DESC LIMIT ?",
+            (safe_limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_orders_by_range(start_date: str, end_date: str, limit: int = 500) -> list[dict[str, Any]]:
+    """Return orders between start_date and end_date inclusive.
+
+    Args:
+        start_date: Start trade date in YYYY-MM-DD format.
+        end_date: End trade date in YYYY-MM-DD format.
+        limit: Maximum number of rows to return. Values are clamped to 1..1000.
+    """
+    safe_limit = max(1, min(int(limit or 500), 1000))
+    _ensure_orders_table()
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM trading_orders WHERE trade_date >= ? AND trade_date <= ? ORDER BY created_at DESC LIMIT ?",
+            (start_date, end_date, safe_limit),
         ).fetchall()
     return [dict(row) for row in rows]
 
