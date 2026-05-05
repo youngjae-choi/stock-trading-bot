@@ -18,6 +18,8 @@ from .expert_knowledge import build_knowledge_prompt_snippet, get_active_knowled
 from .hybrid_screening import get_today_screening
 from .learning_memory import get_active_memories
 from .market_tone import get_today_market_tone
+from .pipeline_audit import finish_pipeline_run, normalize_trigger_source, start_pipeline_run
+from .prompt_loader import render_prompt
 
 logger = logging.getLogger("DailyPlanService")
 
@@ -81,7 +83,7 @@ def _build_prompt(
                 f"(권고: {rec.get('field', '?')} = {rec.get('value', '?')})"
             )
         memory_section = (
-            "\n## 📌 Learning Memory (어제 복기 결과 — daily_overrides 결정 시 반드시 반영)\n"
+            "\n## 운영 메모리/RAG 참고사항 (전일 복기에서 구조화됨 — daily_overrides 결정 시 참고)\n"
             + "\n".join(memory_lines)
             + "\n"
         )
@@ -92,43 +94,16 @@ def _build_prompt(
     else:
         knowledge_section = ""
 
-    return f"""# 08:45 Daily Trading Plan 생성
-
-## 역할
-오늘 매매 후보 종목에 Risk Profile을 배정한다.
-Risk Profile은 LOW_VOL / MID_VOL / HIGH_VOL / THEME_SPIKE 4종이다.
-
-## 배정 기준
-- LOW_VOL: 대형주, 저변동성, 안정적 거래대금
-- MID_VOL: 일반 중형주, 보통 변동성
-- HIGH_VOL: 고변동성, 최근 급등락, 변동성 큰 섹터
-- THEME_SPIKE: 당일 급등 테마주, 뉴스/테마 기반, 거래량 급증, 고위험
-
-## 오늘 시장 톤
-tone: {tone}
-요약: {tone_summary}
-{memory_section}
-{knowledge_section}
-
-## 후보 종목 (S4 스크리닝 결과)
-{json.dumps(cand_rows, ensure_ascii=False, indent=2)}
-
-## 출력 형식 (JSON만, 다른 텍스트 없이)
-{{
-  "trading_intensity": "aggressive|normal|defensive",
-  "new_entry_allowed": true,
-  "daily_overrides": {{
-    "volume_filter_multiplier": 2.0,
-    "min_ai_confidence": 0.65,
-    "max_theme_spike_positions": 1
-  }},
-  "symbol_assignments": [
-    {{"code": "005930", "name": "삼성전자", "profile": "LOW_VOL", "reason": "대형주 저변동성"}}
-  ],
-  "excluded_symbols": [],
-  "llm_summary": "오늘 시장 톤과 종목 배정에 대한 간략한 요약"
-}}
-"""
+    return render_prompt(
+        "0845_daily_plan.md",
+        {
+            "tone": tone,
+            "tone_summary": tone_summary,
+            "memory_section": memory_section,
+            "knowledge_section": knowledge_section,
+            "candidates_json": json.dumps(cand_rows, ensure_ascii=False, indent=2),
+        },
+    )
 
 
 def _validate_plan(plan_data: dict[str, Any]) -> dict[str, str]:
@@ -189,6 +164,7 @@ def get_today_daily_plan(trade_date: str | None = None) -> dict[str, Any] | None
                    risk_profile_pack_id, new_entry_allowed, daily_overrides,
                    symbol_assignments, excluded_symbols, llm_summary, provider,
                    status, validation_result, creation_mode, created_by,
+                   trigger_source, run_audit_id,
                    s3_result_id, s4_result_id, created_at, activated_at,
                    validated_at, superseded_at, used_learning_memory_ids,
                    used_knowledge_ids
@@ -254,33 +230,140 @@ async def _auto_validate_and_activate(plan_id: str, trade_date: str, plan_data: 
         return plan_id, "validation_failed"
 
 
+def _save_plan_run_history(
+    *,
+    plan_id: str,
+    trade_date: str,
+    status: str,
+    trigger_source: str,
+    run_audit_id: str,
+    creation_mode: str,
+    created_by: str,
+    provider: str,
+    plan_data: dict[str, Any],
+    validation: dict[str, str],
+    s3_result_id: str,
+    s4_result_id: str,
+    created_at: str,
+) -> str:
+    """Persist an immutable Daily Plan generation snapshot for same-date reruns.
+
+    Args:
+        plan_id: Current row id in daily_trading_plans.
+        trade_date: YYYY-MM-DD trade date.
+        status: Final status for this generation attempt.
+        trigger_source: Scheduler/API/console source recorded for this run.
+        run_audit_id: pipeline_run_audit id linked to this generation.
+        creation_mode: auto, manual, or dry_run mode.
+        created_by: Actor label stored on the plan row.
+        provider: LLM provider or fallback provider.
+        plan_data: Full plan payload generated for this run.
+        validation: Validation result for this payload.
+        s3_result_id: Optional S3 upstream result id.
+        s4_result_id: Optional S4 upstream result id.
+        created_at: UTC timestamp used by the main plan row.
+    """
+    history_id = str(uuid.uuid4())
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO daily_plan_run_history
+                (id, plan_id, trade_date, status, trigger_source, run_audit_id,
+                 creation_mode, created_by, provider, plan_payload,
+                 validation_result, s3_result_id, s4_result_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                history_id,
+                plan_id,
+                trade_date,
+                status,
+                trigger_source,
+                run_audit_id,
+                creation_mode,
+                created_by,
+                provider,
+                json.dumps(plan_data, ensure_ascii=False),
+                json.dumps(validation, ensure_ascii=False),
+                s3_result_id,
+                s4_result_id,
+                created_at,
+            ),
+        )
+    logger.info("SUCCESS: [S5] Daily Plan history saved history_id=%s plan_id=%s status=%s", history_id, plan_id, status)
+    return history_id
+
+
 async def run_daily_plan_generation(
     trade_date: str | None = None,
     creation_mode: str = "auto",
     created_by: str = "scheduler",
+    trigger_source: str = "api_manual",
     s3_result_id: str = "",
     s4_result_id: str = "",
 ) -> dict[str, Any]:
     """S5: Daily Trading Plan 생성 메인 함수."""
     if not trade_date:
         trade_date = _today_kst()
-    logger.info("START: [S5] Daily Plan generation date=%s mode=%s", trade_date, creation_mode)
+    safe_source = normalize_trigger_source(trigger_source)
+    run_audit_id = start_pipeline_run(
+        trade_date=trade_date,
+        step="S5",
+        trigger_source=safe_source,
+        display_source="manual-like-console" if safe_source == "console_manual" else safe_source,
+        metadata={"creation_mode": creation_mode, "created_by": created_by},
+    )
+    logger.info(
+        "START: [S5] Daily Plan generation date=%s mode=%s source=%s created_by=%s",
+        trade_date,
+        creation_mode,
+        safe_source,
+        created_by,
+    )
 
-    # S4 스크리닝 결과 조회
-    screening = get_today_screening(trade_date)
-    candidates = screening.get("candidates", []) if screening else []
-    if not candidates:
-        logger.warning("WARN: [S5] S4 스크리닝 결과 없음 — MID_VOL 기본 배정으로 진행")
+    try:
+        # S4 스크리닝 결과 조회
+        screening = get_today_screening(trade_date)
+        candidates = screening.get("candidates", []) if screening else []
+        if not candidates:
+            logger.warning("WARN: [S5] S4 스크리닝 결과 없음 — MID_VOL 기본 배정으로 진행")
 
-    # 시장 톤 조회
-    market_tone = get_today_market_tone(trade_date) if callable(get_today_market_tone) else None
+        # 시장 톤 조회
+        market_tone = get_today_market_tone(trade_date) if callable(get_today_market_tone) else None
 
-    # LLM 프롬프트 생성 및 호출
-    memories = get_active_memories(scope="S5_DAILY_PLAN")
-    used_memory_ids = [m["memory_id"] for m in memories]
-    knowledge_items = get_active_knowledge(scope="S5_DAILY_PLAN")
-    used_knowledge_ids = [k["id"] for k in knowledge_items]
-    prompt = _build_prompt(candidates, market_tone, memories=memories, knowledge_items=knowledge_items)
+        # LLM 프롬프트 생성 및 호출
+        memories = get_active_memories(scope="S5_DAILY_PLAN")
+        used_memory_ids = [m["memory_id"] for m in memories]
+        knowledge_items = get_active_knowledge(scope="S5_DAILY_PLAN")
+        used_knowledge_ids = [k["id"] for k in knowledge_items]
+    except Exception as exc:
+        finish_pipeline_run(
+            run_id=run_audit_id,
+            status="failed",
+            message=f"startup_load_failed: {exc}",
+            metadata={
+                "creation_mode": creation_mode,
+                "created_by": created_by,
+                "trigger_source": safe_source,
+            },
+        )
+        logger.error("FAIL: [S5] Daily Plan startup load failed trade_date=%s reason=%s", trade_date, exc)
+        raise
+    try:
+        prompt = _build_prompt(candidates, market_tone, memories=memories, knowledge_items=knowledge_items)
+    except Exception as exc:
+        finish_pipeline_run(
+            run_id=run_audit_id,
+            status="failed",
+            message=f"prompt_render_failed: {exc}",
+            metadata={
+                "creation_mode": creation_mode,
+                "created_by": created_by,
+                "trigger_source": safe_source,
+            },
+        )
+        logger.error("FAIL: [S5] Daily Plan prompt render failed trade_date=%s reason=%s", trade_date, exc)
+        raise
     plan_data: dict[str, Any] = {}
     provider = "none"
 
@@ -323,52 +406,120 @@ async def run_daily_plan_generation(
     plan_id = f"daily-{trade_date}"
     now = _now_utc()
 
-    with get_connection() as conn:
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO daily_trading_plans
-                (id, trade_date, market_tone, trading_intensity, base_rulepack_id,
-                 risk_profile_pack_id, new_entry_allowed, daily_overrides,
-                 symbol_assignments, excluded_symbols, llm_summary, provider,
-                 status, validation_result, creation_mode, created_by,
-                 s3_result_id, s4_result_id, used_learning_memory_ids, used_knowledge_ids,
-                 created_at, activated_at, validated_at, superseded_at)
-            VALUES (?, ?, ?, ?, 'base-v1.0', 'profile-v1.0', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
-            """,
-            (
-                plan_id,
-                trade_date,
-                market_tone.get("tone", "neutral") if market_tone else "neutral",
-                plan_data.get("trading_intensity", "normal"),
-                1 if plan_data.get("new_entry_allowed", True) else 0,
-                json.dumps(plan_data.get("daily_overrides", {}), ensure_ascii=False),
-                json.dumps(plan_data.get("symbol_assignments", []), ensure_ascii=False),
-                json.dumps(plan_data.get("excluded_symbols", []), ensure_ascii=False),
-                plan_data.get("llm_summary", ""),
-                provider,
-                status,
-                json.dumps(validation, ensure_ascii=False),
-                creation_mode,
-                created_by,
-                s3_result_id,
-                s4_result_id,
-                json.dumps(used_memory_ids, ensure_ascii=False),
-                json.dumps(used_knowledge_ids, ensure_ascii=False),
-                now,
-            ),
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO daily_trading_plans
+                    (id, trade_date, market_tone, trading_intensity, base_rulepack_id,
+                     risk_profile_pack_id, new_entry_allowed, daily_overrides,
+                     symbol_assignments, excluded_symbols, llm_summary, provider,
+                     status, validation_result, creation_mode, created_by,
+                     trigger_source, run_audit_id, s3_result_id, s4_result_id,
+                     used_learning_memory_ids, used_knowledge_ids,
+                     created_at, activated_at, validated_at, superseded_at)
+                VALUES (?, ?, ?, ?, 'base-v1.0', 'profile-v1.0', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
+                """,
+                (
+                    plan_id,
+                    trade_date,
+                    market_tone.get("tone", "neutral") if market_tone else "neutral",
+                    plan_data.get("trading_intensity", "normal"),
+                    1 if plan_data.get("new_entry_allowed", True) else 0,
+                    json.dumps(plan_data.get("daily_overrides", {}), ensure_ascii=False),
+                    json.dumps(plan_data.get("symbol_assignments", []), ensure_ascii=False),
+                    json.dumps(plan_data.get("excluded_symbols", []), ensure_ascii=False),
+                    plan_data.get("llm_summary", ""),
+                    provider,
+                    status,
+                    json.dumps(validation, ensure_ascii=False),
+                    creation_mode,
+                    created_by,
+                    safe_source,
+                    run_audit_id,
+                    s3_result_id,
+                    s4_result_id,
+                    json.dumps(used_memory_ids, ensure_ascii=False),
+                    json.dumps(used_knowledge_ids, ensure_ascii=False),
+                    now,
+                ),
+            )
+    except Exception as exc:
+        finish_pipeline_run(
+            run_id=run_audit_id,
+            status="failed",
+            message=f"plan_save_failed: {exc}",
+            metadata={"trigger_source": safe_source},
         )
+        logger.error("FAIL: [S5] Daily Plan save failed trade_date=%s reason=%s", trade_date, exc)
+        raise
 
     # dry_run 외 생성은 저장 직후 validated 또는 validation_failed/active 상태로 전환한다.
     if creation_mode != "dry_run":
-        plan_id, status = await _auto_validate_and_activate(plan_id, trade_date, plan_data)
+        try:
+            plan_id, status = await _auto_validate_and_activate(plan_id, trade_date, plan_data)
+        except Exception as exc:
+            finish_pipeline_run(
+                run_id=run_audit_id,
+                status="failed",
+                result_ref_id=plan_id,
+                message=f"auto_validate_failed: {exc}",
+                metadata={"trigger_source": safe_source},
+            )
+            logger.error("FAIL: [S5] Daily Plan auto validation failed plan_id=%s reason=%s", plan_id, exc)
+            raise
+
+    try:
+        history_id = _save_plan_run_history(
+            plan_id=plan_id,
+            trade_date=trade_date,
+            status=status,
+            trigger_source=safe_source,
+            run_audit_id=run_audit_id,
+            creation_mode=creation_mode,
+            created_by=created_by,
+            provider=provider,
+            plan_data=plan_data,
+            validation=validation,
+            s3_result_id=s3_result_id,
+            s4_result_id=s4_result_id,
+            created_at=now,
+        )
+    except Exception as exc:
+        finish_pipeline_run(
+            run_id=run_audit_id,
+            status="failed",
+            result_ref_id=plan_id,
+            message=f"history_save_failed: {exc}",
+            metadata={"trigger_source": safe_source},
+        )
+        logger.error("FAIL: [S5] Daily Plan history save failed plan_id=%s reason=%s", plan_id, exc)
+        raise
 
     logger.info("SUCCESS: [S5] Daily Plan saved id=%s status=%s provider=%s", plan_id, status, provider)
+    finish_pipeline_run(
+        run_id=run_audit_id,
+        status="success",
+        result_ref_id=plan_id,
+        message=f"status={status} provider={provider}",
+        metadata={
+            "provider": provider,
+            "creation_mode": creation_mode,
+            "created_by": created_by,
+            "trigger_source": safe_source,
+            "assignments_count": len(plan_data.get("symbol_assignments", [])),
+            "history_id": history_id,
+        },
+    )
     return {
         "ok": True,
         "plan_id": plan_id,
         "trade_date": trade_date,
         "status": status,
         "provider": provider,
+        "trigger_source": safe_source,
+        "run_audit_id": run_audit_id,
+        "history_id": history_id,
         "validation": validation,
         "used_learning_memory_ids": used_memory_ids,
         "memory_count": len(memories),

@@ -29,6 +29,7 @@ from ..db import get_connection
 from ..kis.domestic.universe_service import get_price_rank, get_volume_rank
 from .expert_knowledge import get_active_knowledge
 from .learning_memory import get_active_memories
+from .pipeline_audit import finish_pipeline_run, normalize_trigger_source, start_pipeline_run
 
 logger = logging.getLogger("UniverseFilterService")
 
@@ -219,11 +220,18 @@ def _score_and_rank(items: list[dict], total: int, weights: dict[str, float]) ->
 # 공개 인터페이스
 # ---------------------------------------------------------------------------
 
-async def run_universe_filter() -> dict[str, Any]:
+async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, Any]:
     """유니버스 필터를 실행하고 결과를 DB에 저장한 뒤 반환한다."""
     from zoneinfo import ZoneInfo
     today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
-    logger.info("START: UniverseFilter.run trade_date=%s", today)
+    safe_source = normalize_trigger_source(trigger_source)
+    run_audit_id = start_pipeline_run(
+        trade_date=today,
+        step="S3",
+        trigger_source=safe_source,
+        display_source="manual-like-console" if safe_source == "console_manual" else safe_source,
+    )
+    logger.info("START: UniverseFilter.run trade_date=%s source=%s", today, safe_source)
 
     _ensure_table()
     memories = get_active_memories(scope="S3_UNIVERSE_FILTER")
@@ -240,6 +248,12 @@ async def run_universe_filter() -> dict[str, Any]:
         volume_items = volume_result.get("items", [])
         trade_items = trade_result.get("items", [])
     except Exception as exc:
+        finish_pipeline_run(
+            run_id=run_audit_id,
+            status="failed",
+            message=str(exc),
+            metadata={"trigger_source": safe_source},
+        )
         logger.error("FAIL: UniverseFilter KIS 호출 실패 — %s", exc)
         raise
 
@@ -291,6 +305,13 @@ async def run_universe_filter() -> dict[str, Any]:
     logger.info(
         "SUCCESS: UniverseFilter trade_date=%s tone=%s raw=%d filtered=%d top_n=%d memories=%d knowledge=%d",
         today, tone_used, raw_count, len(filtered), len(top_n), len(memories), len(knowledge_items),
+    )
+    finish_pipeline_run(
+        run_id=run_audit_id,
+        status="success",
+        result_ref_id=record_id,
+        message=f"raw={raw_count} filtered={len(filtered)} top_n={len(top_n)}",
+        metadata={"tone_used": tone_used, "trigger_source": safe_source},
     )
     return result
 

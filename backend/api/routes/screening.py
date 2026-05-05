@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 from ...api.dependencies import require_console_user
@@ -37,15 +37,15 @@ async def get_screening_today():
 
 
 @router.post("/run", summary="하이브리드 스크리닝 즉시 실행")
-async def run_screening_now():
+async def run_screening_now(trigger_source: str = Query(default="api_manual")):
     if not validate_config():
         return JSONResponse(
             status_code=503,
             content={"ok": False, "error": "KIS config not set", "source": "backend", "live": True},
         )
-    logger.info("START: POST /api/v1/screening/run (manual trigger)")
+    logger.info("START: POST /api/v1/screening/run trigger_source=%s", trigger_source)
     try:
-        result = await screening_svc.run_hybrid_screening()
+        result = await screening_svc.run_hybrid_screening(trigger_source=trigger_source)
         logger.info(
             "SUCCESS: POST /api/v1/screening/run output_count=%d provider=%s",
             result.get("output_count", 0),

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 from ...api.dependencies import require_console_user
@@ -37,14 +37,14 @@ async def get_market_tone_today():
 
 
 @router.post("/analyze", summary="시장 톤 즉시 분석 실행")
-async def run_market_tone_now():
+async def run_market_tone_now(trigger_source: str = Query(default="api_manual")):
     """LLM을 즉시 호출해 시장 톤 분석을 실행하고 결과를 저장한다.
 
     스케줄러 자동 실행(08:00 KST) 외에 수동으로도 트리거할 수 있다.
     """
-    logger.info("START: POST /api/v1/market-tone/analyze (manual trigger)")
+    logger.info("START: POST /api/v1/market-tone/analyze trigger_source=%s", trigger_source)
     try:
-        result = await market_tone.run_market_tone_analysis()
+        result = await market_tone.run_market_tone_analysis(trigger_source=trigger_source)
         logger.info("SUCCESS: POST /api/v1/market-tone/analyze provider=%s tone=%s", result.get("provider"), result.get("tone"))
         return {"ok": True, "source": "backend", "live": True, "payload": result}
     except Exception as exc:

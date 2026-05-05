@@ -22,6 +22,7 @@ from ..db import get_connection
 from ..settings_store import list_settings
 from . import llm_router
 from .hybrid_screening import get_today_screening
+from .prompt_loader import render_prompt
 from .rulepack_store import (
     activate_rulepack,
     create_rulepack,
@@ -209,55 +210,13 @@ def _build_prompt(
     else:
         yesterday_str = "{}"
 
-    template = """너는 JSON 변환기다. Opus의 정성 판단 결과를 시스템이 실행 가능한 RulePack JSON으로 변환한다.
-새로운 매매 전략을 발명하지 않는다. 입력된 분석 결과를 정해진 스키마에 채워넣기만 한다.
-
-## 절대 규칙
-- 출력은 순수 JSON 한 덩어리만 (마크다운 코드블록 금지, 설명 텍스트 금지)
-- 아래 스키마의 필드명/타입을 정확히 지킨다
-- 시스템 한도를 절대 초과하지 않는다 (초과해도 자동 덮어쓰기되지만 reject 카운트가 올라감)
-- Top 10 종목은 Opus 산출물의 suitability_score 상위에서만 선택
-- 입력에 없는 종목 추가 금지
-
-## 시스템 한도 (절대 변경 불가)
-- daily_loss_limit_rate: -0.10보다 큰 음수 금지
-- max_positions: 30 초과 금지
-- stop_loss_rate: -0.05보다 느슨한 값 금지
-- max_position_size_rate: 0.30 초과 금지
-- take_profit_rate: 0.30 초과 금지
-
-## 출력 스키마 (이 구조 그대로)
-{"schema_version":"1.0","rulepack_id":"RP_YYYYMMDD_HHMM","generated_at":"YYYY-MM-DDTHH:MM:SS+09:00","valid_for_date":"YYYY-MM-DD","ai_source":{"global_brief":"gemini","market_tone":"llm","screening":"llm","rulepack_structuring":"llm","validation":"system"},"market_context":{"tone_score":0.0,"tone_label":"neutral","confidence":0.0},"risk_limits":{"daily_loss_limit_rate":-0.03,"max_positions":7,"stop_loss_rate":-0.02,"take_profit_rate":0.05,"max_position_size_rate":0.10,"max_holding_minutes":360},"entry_rules":{"buy_signal_priority":["volume_surge","price_breakout","news_match"],"min_volume_multiple_5d":1.5,"min_price_change_pct":1.0,"max_price_change_pct":5.0,"exclude_market_open_minutes":5,"exclude_market_close_minutes":30},"exit_rules":{"stop_loss_trigger":"rate_based","take_profit_trigger":"rate_based","force_close_at":"15:20","max_concurrent_trades_per_ticker":1},"candidates":[{"ticker":"000000","name":"종목명","rank":1,"suitability_score":0.7,"max_buy_amount_krw":0,"reason_short":"한 줄 사유"}],"fallback_policy":{"if_market_data_unavailable":"skip_trading_today","if_loss_limit_hit":"close_all_block_new","if_api_error_count_exceeds":5},"notes":""}
-
-## 변환 규칙
-- tone_score >= 0.5 (risk_on): max_positions = 10
-- tone_score >= 0.0 (neutral): max_positions = 7
-- tone_score < 0.0 (risk_off): max_positions = 5
-- candidates: suitability_score >= 0.5인 것만, 상위 10개, max_buy_amount_krw=0 (시스템이 채움)
-- 어제 RulePack 대비 candidates 70% 이상 교체 시 notes에 "후보 대폭 교체" 명시
-
-## 절대 출력 금지
-- 마크다운 코드블록 (```json)
-- 설명 텍스트
-- 주석 (//)
-첫 글자는 반드시 '{', 마지막 글자는 '}' 이어야 한다.
-
-## 입력 자료
-
-### 시장 톤
-{market_tone}
-
-### Opus 스크리닝 결과 (candidates)
-{screening_output}
-
-### 어제 RulePack
-{yesterday_rulepack}
-"""
-    return (
-        template
-        .replace("{market_tone}", market_tone_str)
-        .replace("{screening_output}", screening_str)
-        .replace("{yesterday_rulepack}", yesterday_str)
+    return render_prompt(
+        "0845_gpt_rulepack_generation.md",
+        {
+            "market_tone": market_tone_str,
+            "screening_output": screening_str,
+            "yesterday_rulepack": yesterday_str,
+        },
     )
 
 

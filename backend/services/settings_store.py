@@ -50,6 +50,33 @@ def get_setting(key: str, default: Any = None) -> Any:
     return json.loads(row["value_json"])
 
 
+def get_setting_record(key: str) -> dict[str, Any] | None:
+    """Return one setting with value metadata for schedule and safety checks.
+
+    Args:
+        key: system_settings key to fetch.
+    """
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT key, value_json, value_type, description, updated_at, updated_by
+            FROM system_settings
+            WHERE key = ?
+            """,
+            (key,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "key": row["key"],
+        "value": json.loads(row["value_json"]),
+        "value_type": row["value_type"],
+        "description": row["description"],
+        "updated_at": row["updated_at"],
+        "updated_by": row["updated_by"],
+    }
+
+
 def upsert_setting(key: str, value: Any, value_type: str, description: str, actor: str) -> dict[str, Any]:
     """Create or update one system setting by key."""
     logger.info("START: settings_store.upsert_setting key=%s", key)

@@ -1,4 +1,8 @@
-"""S10 Review & Audit — 당일 매매 결과 분석 서비스."""
+"""S10 Review & Audit — deterministic 당일 매매 결과 분석 서비스.
+
+1600_opus_review.md는 향후/수동 LLM 복기 템플릿이며, 이 서비스는 배포 안전을
+우선해 외부 LLM을 새로 호출하지 않고 DB 집계 기반 리포트를 생성한다.
+"""
 
 from __future__ import annotations
 
@@ -41,6 +45,20 @@ def _table_columns(table_name: str) -> set[str]:
     with get_connection() as conn:
         rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
     return {str(row["name"]) for row in rows}
+
+
+def _table_exists(table_name: str) -> bool:
+    """Return whether a SQLite table exists before optional review queries.
+
+    Args:
+        table_name: Table name to inspect.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,),
+        ).fetchone()
+    return row is not None
 
 
 def _signal_value(row: dict[str, Any], column: str, default: Any) -> Any:
@@ -152,6 +170,75 @@ def _signal_status_counts(signals: list[dict[str, Any]]) -> dict[str, int]:
     return dict(counts)
 
 
+def _load_missed_entries(trade_date: str) -> list[dict[str, Any]]:
+    """Load Missed Entries and shadow missed-entry evidence for S10 review.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date to analyze.
+    """
+    missed: list[dict[str, Any]] = []
+    with get_connection() as conn:
+        if _table_exists("missed_opportunities"):
+            rows = conn.execute(
+                """
+                SELECT id, symbol, symbol_name, missed_stage, missed_reason,
+                       price_at_missed, max_return_after_10m, max_return_after_30m,
+                       max_return_until_eod, improvement_candidate, created_at
+                FROM missed_opportunities
+                WHERE trade_date = ?
+                ORDER BY created_at DESC
+                """,
+                (trade_date,),
+            ).fetchall()
+            for row in rows:
+                item = dict(row)
+                item["source"] = "missed_opportunities"
+                missed.append(item)
+        if _table_exists("shadow_trades"):
+            rows = conn.execute(
+                """
+                SELECT id, symbol, symbol_name, missed_stage, entry_price,
+                       max_return_10m, max_return_30m, max_return_eod,
+                       shadow_pnl, status, created_at
+                FROM shadow_trades
+                WHERE trade_date = ?
+                ORDER BY created_at DESC
+                """,
+                (trade_date,),
+            ).fetchall()
+            for row in rows:
+                item = dict(row)
+                item["source"] = "shadow_trades"
+                item["missed_reason"] = item.get("status") or "shadow_tracking"
+                item["price_at_missed"] = item.get("entry_price")
+                item["max_return_until_eod"] = item.get("max_return_eod")
+                missed.append(item)
+    return missed
+
+
+def _load_false_positives(trade_date: str) -> list[dict[str, Any]]:
+    """Load False Positive validation cases for S10 review.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date to analyze.
+    """
+    if not _table_exists("false_positive_cases"):
+        return []
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, symbol, symbol_name, false_positive_type, original_score,
+                   original_confidence, assigned_profile, entry_reason, loss_reason,
+                   exit_reason, suggested_penalty, created_at
+            FROM false_positive_cases
+            WHERE trade_date = ?
+            ORDER BY created_at DESC
+            """,
+            (trade_date,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def _fallback_exit_reason(signal: dict[str, Any]) -> str:
     """Derive an actionable exit bucket when exit_reason is absent from the signal schema."""
     explicit = str(_signal_value(signal, "exit_reason", "")).strip().lower()
@@ -192,10 +279,15 @@ async def run_review_audit(trade_date: str) -> dict:
     Args:
         trade_date: YYYY-MM-DD trade date to analyze.
     """
-    logger.info("START: [S10] Review & Audit trade_date=%s", trade_date)
+    logger.info(
+        "START: [S10] deterministic Review & Audit trade_date=%s prompt_template=1600_opus_review.md",
+        trade_date,
+    )
     now_iso = _now_kst_iso()
     signals = _load_review_signals(trade_date)
     orders = _order_summary(trade_date)
+    missed_entries = _load_missed_entries(trade_date)
+    false_positives = _load_false_positives(trade_date)
     status_counts = _signal_status_counts(signals)
 
     total_trades = len(signals)
@@ -336,9 +428,10 @@ async def run_review_audit(trade_date: str) -> dict:
             """
             INSERT INTO daily_review_reports
                 (id, trade_date, total_trades, win_count, loss_count, total_pnl,
-                 profile_summary, exit_summary, trailing_quality, no_trade_count,
-                 memory_count, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                 profile_summary, exit_summary, trailing_quality, missed_entries,
+                 false_positives, missed_entries_count, false_positive_count,
+                 no_trade_count, memory_count, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
             """,
             (
                 str(uuid.uuid4()),
@@ -350,6 +443,10 @@ async def run_review_audit(trade_date: str) -> dict:
                 _json_dumps(profile_summary),
                 _json_dumps(exit_summary),
                 _json_dumps(trailing_quality),
+                _json_dumps(missed_entries),
+                _json_dumps(false_positives),
+                len(missed_entries),
+                len(false_positives),
                 no_trade_count,
                 now_iso,
             ),
@@ -375,13 +472,19 @@ async def run_review_audit(trade_date: str) -> dict:
         "profile_summary": profile_summary,
         "exit_summary": exit_summary,
         "trailing_quality": trailing_quality,
+        "missed_entries": missed_entries,
+        "false_positives": false_positives,
+        "missed_entries_count": len(missed_entries),
+        "false_positive_count": len(false_positives),
         "no_trade_count": no_trade_count,
     }
     logger.info(
-        "SUCCESS: [S10] Review & Audit trade_date=%s trades=%d orders=%d pnl=%.4f",
+        "SUCCESS: [S10] Review & Audit trade_date=%s trades=%d orders=%d missed=%d fp=%d pnl=%.4f",
         trade_date,
         total_trades,
         orders["total_orders"],
+        len(missed_entries),
+        len(false_positives),
         total_pnl,
     )
     return result
@@ -422,6 +525,8 @@ def get_review_report(trade_date: str) -> dict | None:
     payload["profile_summary"] = _json_loads(payload.get("profile_summary"), {})
     payload["exit_summary"] = _json_loads(payload.get("exit_summary"), {})
     payload["trailing_quality"] = _json_loads(payload.get("trailing_quality"), {})
+    payload["missed_entries"] = _json_loads(payload.get("missed_entries"), [])
+    payload["false_positives"] = _json_loads(payload.get("false_positives"), [])
     payload["total_orders"] = _safe_int(daily_summary.get("total_orders") or orders.get("total_orders"))
     payload["buy_orders"] = _safe_int(daily_summary.get("buy_orders") or orders.get("buy_orders"))
     payload["sell_orders"] = _safe_int(daily_summary.get("sell_orders") or orders.get("sell_orders"))

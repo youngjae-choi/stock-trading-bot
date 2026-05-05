@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from ..db import get_connection
 from ..kis.domestic.service import get_balance, order_cash
-from .order_preflight import run_preflight
+from .order_preflight import is_new_buy_blocked_by_emergency_halt, run_preflight
 from .position_manager import position_manager
 from .rule_cache import get_rule
 
@@ -187,6 +187,32 @@ class OrderExecutor:
             self._update_signal_status(signal_id, "failed")
             logger.warning("WARN: [S7] invalid signal signal_id=%s symbol=%s price=%s", signal_id, symbol, price)
             return {"ok": False, "reason": reason, "symbol": symbol}
+
+        emergency_halt_blocked, emergency_halt_reason = is_new_buy_blocked_by_emergency_halt()
+        if emergency_halt_blocked:
+            reason = emergency_halt_reason or "emergency_halt_active"
+            order_id = self._save_order(
+                trade_date=today,
+                signal_id=signal_id,
+                symbol=symbol,
+                name=name,
+                side="buy",
+                order_type="limit",
+                qty=0,
+                price=price,
+                kis_order_no="",
+                status="blocked",
+                reason=reason,
+            )
+            self._update_signal_status(signal_id, "preflight_blocked")
+            logger.warning(
+                "BLOCK: [S7] emergency halt guard blocks BUY order_id=%s signal_id=%s symbol=%s reason=%s",
+                order_id,
+                signal_id,
+                symbol,
+                reason,
+            )
+            return {"ok": False, "order_id": order_id, "reason": reason, "symbol": symbol}
 
         final_rule = get_rule(symbol) or {}
 

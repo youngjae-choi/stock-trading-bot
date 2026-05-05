@@ -231,6 +231,24 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def is_emergency_halt_enabled() -> bool:
+    """Return whether emergency halt is active from persistent Settings or console memory."""
+    try:
+        from .settings_store import get_setting
+
+        value = get_setting("risk.emergency_halt_enabled", False)
+        if value is True or str(value).lower() == "true":
+            return True
+    except Exception as exc:
+        logger.warning("WARN: console_state.is_emergency_halt_enabled setting read failed - %s", exc)
+    return bool(_CONSOLE_STATE["emergency_halt"])
+
+
+def get_cached_emergency_halt_state() -> bool:
+    """Return only the in-memory console emergency halt fallback state."""
+    return bool(_CONSOLE_STATE["emergency_halt"])
+
+
 def _clone_state() -> dict[str, Any]:
     """Return a deep copy so callers cannot mutate shared state directly."""
     return copy.deepcopy(_CONSOLE_STATE)
@@ -533,7 +551,7 @@ def get_console_overview() -> dict[str, Any]:
     except Exception as exc:
         logger.warning("WARN: console_state.get_console_overview risk limits failed - %s", exc)
 
-    emergency_halt = _CONSOLE_STATE["emergency_halt"]
+    emergency_halt = is_emergency_halt_enabled()
     payload = {
         "trade_date": today,
         "pnl_percent": pnl_pct,
@@ -641,14 +659,38 @@ def get_data_health() -> dict[str, Any]:
         ws_status = "warn"
         ws_detail = "상태 확인 불가"
 
+    try:
+        from .scheduler import get_schedule_skip_today_status
+
+        schedule_skip = get_schedule_skip_today_status()
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_data_health scheduler skip check failed - %s", exc)
+        schedule_skip = {"skip": False, "reason": "status_unavailable", "error": str(exc)}
+
+    try:
+        from .engine.pipeline_audit import get_recent_pipeline_runs
+        from zoneinfo import ZoneInfo
+
+        today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+        pipeline_runs = get_recent_pipeline_runs(today, limit=20)
+    except Exception as exc:
+        logger.warning("WARN: console_state.get_data_health pipeline audit failed - %s", exc)
+        pipeline_runs = []
+
     payload = {
-        "emergency_halt": _CONSOLE_STATE["emergency_halt"],
+        "emergency_halt": is_emergency_halt_enabled(),
+        "schedule_skip_today": schedule_skip,
+        "pipeline_runs": pipeline_runs,
         "updated_at": _utc_now_iso(),
         "metrics": {
             "kis_rest": {"status": kis_status, "detail": kis_detail},
             "kis_ws": {"status": ws_status, "detail": ws_detail},
             "llm_router": {"status": "ok", "detail": "LLM Router 활성화 (/api/v1/market-tone/providers 참조)"},
             "db": {"status": db_status, "detail": db_detail},
+            "schedule_skip": {
+                "status": "warn" if schedule_skip.get("skip") else "ok",
+                "detail": str(schedule_skip.get("reason") or "schedule_skip_today=false"),
+            },
         },
         "note": "KIS REST 토큰은 백엔드 singleton 캐시 기준이며, KIS WebSocket은 S4 스크리닝 완료 후 자동 구독됩니다.",
     }
@@ -659,6 +701,19 @@ def get_data_health() -> dict[str, Any]:
 def trigger_emergency_halt() -> dict[str, Any]:
     """Set the console to halted mode and append an audit log entry."""
     logger.info("START: console_state.trigger_emergency_halt")
+    try:
+        from .settings_store import upsert_setting
+
+        upsert_setting(
+            key="risk.emergency_halt_enabled",
+            value=True,
+            value_type="boolean",
+            description="긴급정지 신규 주문 차단 상태",
+            actor="console_halt",
+        )
+    except Exception as exc:
+        logger.error("FAIL: console_state.trigger_emergency_halt setting update failed - %s", exc)
+        raise
     _CONSOLE_STATE["mode"] = "HALT"
     _CONSOLE_STATE["engine_status"] = "halted"
     _CONSOLE_STATE["emergency_halt"] = True
@@ -680,15 +735,28 @@ def trigger_emergency_halt() -> dict[str, Any]:
         "mode": _CONSOLE_STATE["mode"],
         "engine_status": _CONSOLE_STATE["engine_status"],
         "updated_at": _utc_now_iso(),
-        "live": False,
+        "live": True,
         "source": "backend",
-        "message": "Emergency halt applied. Automated live trading remains unimplemented; console is now mock-halted.",
+        "message": "Emergency halt applied. New BUY orders are blocked by preflight and order executor.",
     }
 
 
 def trigger_resume() -> dict[str, Any]:
     """Clear the halted state and return to running mode."""
     logger.info("START: console_state.trigger_resume")
+    try:
+        from .settings_store import upsert_setting
+
+        upsert_setting(
+            key="risk.emergency_halt_enabled",
+            value=False,
+            value_type="boolean",
+            description="긴급정지 신규 주문 차단 상태",
+            actor="console_resume",
+        )
+    except Exception as exc:
+        logger.error("FAIL: console_state.trigger_resume setting update failed - %s", exc)
+        raise
     _CONSOLE_STATE["mode"] = "AUTO"
     _CONSOLE_STATE["engine_status"] = "running"
     _CONSOLE_STATE["emergency_halt"] = False
@@ -710,7 +778,7 @@ def trigger_resume() -> dict[str, Any]:
         "mode": _CONSOLE_STATE["mode"],
         "engine_status": _CONSOLE_STATE["engine_status"],
         "updated_at": _utc_now_iso(),
-        "live": False,
+        "live": True,
         "source": "backend",
         "message": "Resume applied. Console state returned to running.",
     }

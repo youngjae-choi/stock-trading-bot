@@ -96,7 +96,7 @@ default_rulepack = {
 
 ---
 
-## 운영 콘솔 표시 (Data & API 화면)
+## 운영 콘솔 표시 (System Status 화면)
 
 폴백 모드 진입 시 운영 콘솔에 명확히 표시:
 

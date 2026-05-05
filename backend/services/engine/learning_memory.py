@@ -89,7 +89,114 @@ def _load_review_report(trade_date: str) -> dict[str, Any] | None:
             "SELECT * FROM daily_review_reports WHERE trade_date = ? ORDER BY created_at DESC LIMIT 1",
             (trade_date,),
         ).fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    report = dict(row)
+    report["missed_entries"] = _json_loads(report.get("missed_entries"), [])
+    report["false_positives"] = _json_loads(report.get("false_positives"), [])
+    return report
+
+
+def _scope_from_missed_stage(missed_stage: str) -> str:
+    """Map a missed-entry stage to the next-day RAG scope that can use it.
+
+    Args:
+        missed_stage: Stage label such as S3_FILTER, S4_SCREENING, or S5_PLAN.
+    """
+    upper = str(missed_stage or "").upper()
+    if "S3" in upper:
+        return "S3_UNIVERSE_FILTER"
+    if "S4" in upper:
+        return "S4_HYBRID_SCREENING"
+    return "S5_DAILY_PLAN"
+
+
+def _build_missed_entry_memory(
+    *,
+    trade_date: str,
+    entry: dict[str, Any],
+    created_at: str,
+    expires_at: str,
+) -> dict[str, Any]:
+    """Build one operating-memory row from a missed-entry case.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date.
+        entry: Missed Entries row from S10 review output.
+        created_at: KST timestamp for the memory row.
+        expires_at: Expiration date for short-lived operational memory.
+    """
+    stage = str(entry.get("missed_stage") or "UNKNOWN")
+    symbol = str(entry.get("symbol") or "")
+    max_return = entry.get("max_return_until_eod") or entry.get("max_return_eod") or entry.get("max_return_after_30m")
+    return _make_memory(
+        trade_date=trade_date,
+        scope=_scope_from_missed_stage(stage),
+        category="missed_entry",
+        summary=f"Missed entry {symbol or 'unknown'} at {stage}: {entry.get('missed_reason') or 'reason unavailable'}.",
+        evidence={
+            "symbol": symbol,
+            "symbol_name": entry.get("symbol_name", ""),
+            "missed_stage": stage,
+            "missed_reason": entry.get("missed_reason", ""),
+            "price_at_missed": entry.get("price_at_missed"),
+            "max_return_until_eod": max_return,
+            "source": entry.get("source", "review_audit"),
+        },
+        recommendation={
+            "action": "review_next_day_candidate_context",
+            "rag_usage": "참고 메모리로만 사용하며 모델 자체 학습이나 자동 룰 변경이 아님",
+            "target_stage": _scope_from_missed_stage(stage),
+        },
+        auto_apply_allowed=False,
+        requires_approval=False,
+        created_at=created_at,
+        expires_at=expires_at,
+    )
+
+
+def _build_false_positive_memory(
+    *,
+    trade_date: str,
+    case: dict[str, Any],
+    created_at: str,
+    expires_at: str,
+) -> dict[str, Any]:
+    """Build one operating-memory row from a false-positive case.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date.
+        case: False Positive row from S10 review output.
+        created_at: KST timestamp for the memory row.
+        expires_at: Expiration date for short-lived operational memory.
+    """
+    symbol = str(case.get("symbol") or "")
+    return _make_memory(
+        trade_date=trade_date,
+        scope="S4_HYBRID_SCREENING",
+        category="false_positive",
+        summary=f"False positive {symbol or 'unknown'} type={case.get('false_positive_type') or 'unknown'}.",
+        evidence={
+            "symbol": symbol,
+            "symbol_name": case.get("symbol_name", ""),
+            "false_positive_type": case.get("false_positive_type", ""),
+            "original_score": case.get("original_score"),
+            "original_confidence": case.get("original_confidence"),
+            "assigned_profile": case.get("assigned_profile"),
+            "loss_reason": case.get("loss_reason", ""),
+            "exit_reason": case.get("exit_reason", ""),
+            "suggested_penalty": case.get("suggested_penalty"),
+        },
+        recommendation={
+            "action": "penalize_similar_context_in_review",
+            "rag_usage": "다음 S4/S5 판단의 참고 컨텍스트이며 모델 자체 학습이 아님",
+            "target_stage": "S4_HYBRID_SCREENING",
+        },
+        auto_apply_allowed=False,
+        requires_approval=False,
+        created_at=created_at,
+        expires_at=expires_at,
+    )
 
 
 async def run_learning_memory_builder(trade_date: str) -> dict:
@@ -228,6 +335,30 @@ async def run_learning_memory_builder(trade_date: str) -> dict:
                 },
                 auto_apply_allowed=auto_apply_allowed,
                 requires_approval=requires_approval,
+                created_at=created_at,
+                expires_at=expires_at,
+            )
+        )
+
+    for entry in report.get("missed_entries", []):
+        if not isinstance(entry, dict):
+            continue
+        memories.append(
+            _build_missed_entry_memory(
+                trade_date=trade_date,
+                entry=entry,
+                created_at=created_at,
+                expires_at=expires_at,
+            )
+        )
+
+    for case in report.get("false_positives", []):
+        if not isinstance(case, dict):
+            continue
+        memories.append(
+            _build_false_positive_memory(
+                trade_date=trade_date,
+                case=case,
                 created_at=created_at,
                 expires_at=expires_at,
             )

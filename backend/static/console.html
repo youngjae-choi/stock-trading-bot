@@ -862,7 +862,7 @@
         <option value="false-positive">False Positive</option>
         <option value="confidence-cal" style="display:none">CALIBRATION</option>
         <option value="review">Trade Review</option>
-        <option value="data">Data & API</option>
+        <option value="data">System Status</option>
         <option value="engine-test">System Diagnostics</option>
         <option value="settings">Settings</option>
       </select>
@@ -893,7 +893,7 @@
           <button data-screen="confidence-cal" style="display:none">CALIBRATION <small>cal</small></button>
 
           <button data-screen="review">Trade Review <small>review</small></button>
-          <button data-screen="data">Data & API <small>health</small></button>
+          <button data-screen="data">System Status <small>health</small></button>
           <button data-screen="engine-test">System Diagnostics <small>diag</small></button>
           <button data-screen="settings">Settings <small>admin</small></button>
         </nav>
@@ -1769,7 +1769,7 @@
         <section class="screen" id="screen-data">
           <div class="page-head">
             <div>
-              <h1 class="page-title">Data & API</h1>
+              <h1 class="page-title">System Status</h1>
               <p class="page-desc">연결 상태 · 시스템 구성 · LLM 공급자를 확인합니다.</p>
             </div>
             <button class="btn" onclick="loadDataAndApi()">새로고침</button>
@@ -1839,6 +1839,13 @@
                   <div style="text-align:right;">
                     <span class="status ok" id="riskStatus">확인중</span>
                     <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="riskDetail">긴급정지 상태</div>
+                  </div>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px;">Schedule Skip</span>
+                  <div style="text-align:right;">
+                    <span class="status ok" id="scheduleSkipStatus">확인중</span>
+                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="scheduleSkipDetail">S2~S6 자동 스킵 여부</div>
                   </div>
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
@@ -2238,12 +2245,12 @@
             <div class="card" id="et-card-s10">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
-                  <strong id="et-title-s10">S10 일일 요약 + DB 백업</strong>
-                  <div id="et-detail-s10" style="font-size:12px; color:var(--muted); margin-top:2px;">18:00 KST · trading_orders 집계 → daily_trade_summary + SQLite 백업</div>
+                  <strong id="et-title-s10">S10 Review & Audit</strong>
+                  <div id="et-detail-s10" style="font-size:12px; color:var(--muted); margin-top:2px;">16:00 KST · 매매 결과 분석 → daily_review_reports</div>
                 </div>
                 <span class="badge" id="et-badge-s10">대기</span>
               </div>
-              <button class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s10')">▶ 일일 요약 생성</button>
+              <button class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s10')">▶ Review Audit 실행</button>
               <pre class="et-result" id="et-result-s10" style="display:none;"></pre>
             </div>
 
@@ -2532,7 +2539,7 @@
     { id: 's7', label: 'S7 주문 실행', defaultTime: '실시간', settingKey: 'schedule_s7_time', detail: '오늘 발행된 주문 내역 조회' },
     { id: 's8', label: 'S8 Position Manager', defaultTime: '실시간', settingKey: 'schedule_s8_time', detail: 'WS tick -> 손절/트레일링/강제청산 감시' },
     { id: 's9', label: 'S9 당일 청산', defaultTime: '15:20', settingKey: 'schedule_s9_time', detail: '전량 시장가 청산' },
-    { id: 's10', label: 'S10 일일 요약 + DB 백업', defaultTime: '18:00', settingKey: 'schedule_s10_time', detail: 'trading_orders 집계 -> daily_trade_summary + SQLite 백업' },
+    { id: 's10', label: 'S10 Review & Audit', defaultTime: '16:00', settingKey: 'schedule_s10_time', detail: 'review_audit -> daily_review_reports' },
     { id: 's11', label: 'S11 Learning Memory Builder', defaultTime: '22:00', settingKey: 'schedule_s11_time', detail: 'Trade Review -> Learning Memory' },
   ];
   var timeline = OPS_STEPS
@@ -3680,14 +3687,14 @@
       { id: 's3', call: () => fetchJson('/api/v1/universe-filter/today') },
       { id: 's4', call: () => fetchJson('/api/v1/screening/today') },
       { id: 's5', call: () => fetchJson('/api/v1/daily-plan/today') },
-      { id: 's5v', call: () => fetchJson('/api/v1/daily-plan/today').then(r => ['validated', 'active'].indexOf(r.payload?.plan?.status) >= 0 ? r : {ok:false}) },
-      { id: 's5a', call: () => fetchJson('/api/v1/daily-plan/today').then(r => r.payload?.plan?.status === 'active' ? r : {ok:false}) },
+      { id: 's5v', call: () => fetchJson('/api/v1/daily-plan/today').then(r => ['validated', 'active'].indexOf(r.payload?.status) >= 0 ? r : {ok:false}) },
+      { id: 's5a', call: () => fetchJson('/api/v1/daily-plan/today').then(r => r.payload?.status === 'active' ? r : {ok:false}) },
       { id: 's6', call: () => fetchJson('/api/v1/decision/status').then(r => r.payload?.active ? r : {ok:false}) },
       { id: 's7', call: () => fetchJson('/api/v1/orders/today').then(r => (r.payload?.orders?.length > 0) ? r : {ok:false}) },
       { id: 's8', call: () => fetchJson('/api/v1/orders/positions').then(r => (r.payload?.positions?.length > 0) ? r : {ok:false}) },
       { id: 's9', call: () => fetchJson('/api/v1/orders/today').then(r => ({ ok: false, payload: r.payload })) },
-      { id: 's10', call: () => fetchJson('/api/v1/trades/summary/today').catch(() => ({ok:false})) },
-      { id: 's11', call: () => fetchJson('/api/v1/review/memories').then(r => (r.payload?.length > 0) ? r : {ok:false}).catch(() => ({ok:false})) },
+      { id: 's10', call: () => fetchJson('/api/v1/review-audit/today').then(r => r.payload ? r : {ok:false}).catch(() => ({ok:false})) },
+      { id: 's11', call: () => fetchJson('/api/v1/learning-memory/today').then(r => (r.payload?.length > 0) ? r : {ok:false}).catch(() => ({ok:false})) },
     ];
 
     for (var step of steps) {
@@ -3736,18 +3743,18 @@
     try {
       var STEP_URLS = {
         s1: "/api/v1/engine/token-refresh",
-        s2: "/api/v1/market-tone/analyze",
-        s3: "/api/v1/universe-filter/run",
-        s4: "/api/v1/screening/run",
-        s5: "/api/v1/daily-plan/generate",
-        s5v: "/api/v1/daily-plan/validate",
-        s5a: "/api/v1/daily-plan/activate",
+        s2: "/api/v1/market-tone/analyze?trigger_source=console_manual",
+        s3: "/api/v1/universe-filter/run?trigger_source=console_manual",
+        s4: "/api/v1/screening/run?trigger_source=console_manual",
+        s5: "/api/v1/daily-plan/generate?trigger_source=console_manual",
+        s5v: "/api/v1/daily-plan/validate?trigger_source=console_manual",
+        s5a: "/api/v1/daily-plan/activate?trigger_source=console_manual",
         s6: "/api/v1/decision/activate",
         s7: "/api/v1/orders/today",
         s8: "/api/v1/orders/positions",
         s9: "/api/v1/orders/liquidate-all",
-        s10: "/api/v1/trades/run-summary",
-        s11: "/api/v1/review/build-memory"
+        s10: "/api/v1/review-audit/run",
+        s11: "/api/v1/learning-memory/build"
       };
       var stepUrl = STEP_URLS[step];
       if (!stepUrl) {
@@ -4867,7 +4874,7 @@
     }
   }
 
-  /* ── Data & API Health ── */
+  /* ── System Status Health ── */
   async function loadDataHealth() {
     try {
       var r = await fetchJson("/api/v1/bot/data-health");
@@ -4891,6 +4898,15 @@
       applyMetricCard("dh-kisWs", "dh-kisWsDetail", "kis_ws");
       applyMetricCard("dh-llm", "dh-llmDetail", "llm_router");
       applyMetricCard("dh-db", "dh-dbDetail", "db");
+      var skipMetric = m.schedule_skip || {};
+      var skipStatus = document.getElementById("scheduleSkipStatus");
+      var skipDetail = document.getElementById("scheduleSkipDetail");
+      if (skipStatus) {
+        var skipWarn = skipMetric.status === "warn";
+        skipStatus.textContent = skipWarn ? "스킵 가능" : "정상";
+        skipStatus.className = "status " + (skipWarn ? "warn" : "ok");
+      }
+      if (skipDetail) skipDetail.textContent = skipMetric.detail || "schedule_skip_today=false";
     } catch(e) {
       console.warn("loadDataHealth error", e);
     }
@@ -5923,7 +5939,7 @@
     el.style.display = el.style.display === 'none' ? 'block' : 'none';
   }
 
-  /* ── Data & API ── */
+  /* ── System Status ── */
   async function loadDataAndApi() {
     await loadDataHealth();
     try {

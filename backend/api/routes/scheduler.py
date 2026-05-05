@@ -13,7 +13,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from ...api.dependencies import require_console_user
-from ...services.scheduler import scheduler_instance
+from ...services.scheduler import get_schedule_skip_today_status, scheduler_instance
 
 logger = logging.getLogger("SchedulerAPI")
 router = APIRouter(prefix="/api/v1/scheduler", tags=["scheduler"])
@@ -42,10 +42,12 @@ async def get_scheduler_status(
                     "id": job.id,
                     "name": job.name,
                     "next_run_time": next_run.isoformat() if next_run else None,
+                    "timezone": "Asia/Seoul",
                 }
             )
 
-        payload = {"jobs": jobs, "running": running}
+        skip_today = get_schedule_skip_today_status()
+        payload = {"jobs": jobs, "running": running, "timezone": "Asia/Seoul", "schedule_skip_today": skip_today}
         logger.info("SUCCESS: GET /api/v1/scheduler/status — running=%s, jobs=%d", running, len(jobs))
         return {
             "ok": True,

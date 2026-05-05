@@ -17,6 +17,8 @@
 3. 오늘의 시장 데이터 (코스피 종가, 섹터별 등락률)
 4. 오늘의 뉴스 요약 (`news_summary_*.json`)
 5. Gemini가 정리한 오늘 시장 맥락 (선택)
+6. Missed Entries / Shadow Tracking 결과
+7. False Positive 검증 케이스
 
 ## 출력 포맷 (반드시 이대로)
 ```json
@@ -51,8 +53,18 @@
   "missed_opportunities": [
     {
       "ticker": "XXXXXX",
+      "missed_stage": "S3|S4|S5|S6",
       "reason": "유니버스에 없었음",
-      "would_have_pnl_pct": 0.0
+      "would_have_pnl_pct": 0.0,
+      "next_context_note": "다음 S3~S5 운영 메모리/RAG에서 참고할 관찰"
+    }
+  ],
+  "false_positive_cases": [
+    {
+      "ticker": "XXXXXX",
+      "false_positive_type": "entry_fail|early_exit|wrong_profile",
+      "reason": "오탐으로 본 근거",
+      "next_context_note": "다음 S4/S5 판단에서 참고할 관찰"
     }
   ],
   "rulepack_evaluation": {
@@ -74,7 +86,9 @@
 - ❌ "다음 주부터 max_positions를 15로 늘려야 합니다"
 - ❌ "내일 시장이 좋을 것이니 공격적으로"
 - ❌ 결과론적 미화: "사실 이 손실은 학습 비용이었다"
+- ❌ 전날 `.md`를 모델이 자체 학습했다고 표현
 - ✅ "갭상승 추격매수 패턴에서 손실이 반복됨, PM 검토 권고"
+- ✅ "전일 복기 파일은 다음 판단에 참고되는 운영 메모리/RAG 컨텍스트로 사용됨"
 
 ## patterns_for_pm_review 작성 가이드
 - "이런 가설이 있다, PM이 데이터 더 쌓아서 판단해보면 좋겠다" 형식
@@ -83,10 +97,10 @@
 
 ## 시스템 후속 동작
 - 너의 출력은 `review_YYYYMMDD.md`로 저장됨
-- GPT가 이를 받아 `review_patterns.json`으로 구조화
-- 시스템은 통계 DB에 누적 (`review_stats.db`)
+- S11이 이를 받아 운영 메모리/RAG row로 구조화
+- 시스템은 통계 DB와 `learning_memories`에 누적
 - **자동으로 RulePack을 변경하지 않음**
-- 주 1회 PM이 직접 검토하여 settings.json 수동 업데이트
+- 주 1회 PM이 직접 검토하여 승인된 항목만 수동 반영
 
 ## 실패 시
 - 매매 로그가 비어있으면 (오늘 거래 없음) summary만 채우고 patterns는 빈 배열
@@ -97,3 +111,5 @@
 {trade_logs}
 {market_data}
 {news_summary}
+{missed_entries}
+{false_positives}

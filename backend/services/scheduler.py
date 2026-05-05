@@ -29,6 +29,98 @@ def _today_kst() -> str:
     return datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
 
 
+def get_schedule_skip_today_status() -> dict:
+    """Return schedule_skip_today visibility with stale-flag protection.
+
+    The flag is honored only when it was updated for today's Asia/Seoul date.
+    Stale true values are reset to false so a previous non-trading-day check does
+    not block the next market open.
+    """
+    today = _today_kst()
+    try:
+        from .settings_store import get_setting_record, upsert_setting
+
+        record = get_setting_record("schedule_skip_today")
+        if not record:
+            return {"skip": False, "reason": "missing", "trade_date": today, "updated_at": None, "updated_by": None}
+        raw_value = record.get("value")
+        skip = raw_value is True or str(raw_value).lower() == "true"
+        updated_at = str(record.get("updated_at") or "")
+        updated_date = ""
+        try:
+            parsed = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+            updated_date = parsed.astimezone(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+        except Exception:
+            updated_date = ""
+        if skip and updated_date != today:
+            logger.warning(
+                "WARN: schedule_skip_today stale true detected updated_at=%s updated_date=%s today=%s — reset false",
+                updated_at,
+                updated_date,
+                today,
+            )
+            upsert_setting(
+                key="schedule_skip_today",
+                value=False,
+                value_type="boolean",
+                description="오늘 S2~S6 자동 스케줄 스킵 여부 (KST 당일 값만 유효)",
+                actor="scheduler_stale_skip_reset",
+            )
+            return {
+                "skip": False,
+                "reason": "stale_true_reset",
+                "trade_date": today,
+                "updated_at": updated_at,
+                "updated_by": record.get("updated_by"),
+            }
+        return {
+            "skip": skip,
+            "reason": "schedule_skip_today=true" if skip else "schedule_skip_today=false",
+            "trade_date": today,
+            "updated_at": updated_at,
+            "updated_by": record.get("updated_by"),
+        }
+    except Exception as exc:
+        logger.error("FAIL: schedule_skip_today status read failed — auto jobs continue reason=%s", exc)
+        return {"skip": False, "reason": "read_failed_continue", "trade_date": today, "error": str(exc)}
+
+
+def _should_skip_auto_job(step: str) -> bool:
+    """Return whether an automatic S2~S6 scheduler job should skip today.
+
+    Args:
+        step: Pipeline step label used in logs and audit metadata.
+    """
+    status = get_schedule_skip_today_status()
+    if status.get("skip"):
+        try:
+            from .engine.pipeline_audit import finish_pipeline_run, start_pipeline_run
+
+            run_id = start_pipeline_run(
+                trade_date=str(status.get("trade_date") or _today_kst()),
+                step=step,
+                trigger_source="auto_scheduler",
+                display_source="auto_scheduler",
+                metadata=status,
+            )
+            finish_pipeline_run(
+                run_id=run_id,
+                status="skipped",
+                message=str(status.get("reason") or "schedule_skip_today=true"),
+                metadata=status,
+            )
+        except Exception as exc:
+            logger.warning("WARN: schedule skip audit failed step=%s reason=%s", step, exc)
+        logger.warning(
+            "SKIP: [%s] schedule_skip_today=true — 오늘 S2~S6 자동 스케줄 스킵 가능 status=%s",
+            step,
+            status,
+        )
+        return True
+    logger.info("INFO: [%s] schedule_skip_today=false — auto job allowed status=%s", step, status)
+    return False
+
+
 async def job_refresh_kis_token() -> None:
     """Job 1 (07:45 KST): KIS 액세스 토큰 선제 갱신.
 
@@ -58,18 +150,30 @@ async def job_refresh_kis_token() -> None:
 
         upsert_setting(
             key="schedule_skip_today",
-            value=str(not is_trading).lower(),
-            value_type="string",
-            description="오늘 비거래일 여부 (S1이 매일 갱신)",
+            value=not is_trading,
+            value_type="boolean",
+            description="오늘 S2~S6 자동 스케줄 스킵 여부 (KST 당일 값만 유효)",
             actor="scheduler_s1",
         )
         if not is_trading:
-            logger.info("INFO: [Job1] 오늘(%s)은 비거래일 — S2~S5 스킵 플래그 세팅", today_yyyymmdd)
+            logger.info("INFO: [Job1] 오늘(%s)은 비거래일 — S2~S6 스킵 플래그 세팅", today_yyyymmdd)
         else:
             logger.info("INFO: [Job1] 오늘(%s)은 거래일 — 정상 진행", today_yyyymmdd)
     except Exception as exc:
-        logger.error("FAIL: [Job1] 거래일 확인 실패 — S2~S5는 정상 실행 reason=%s", exc)
-        # 실패 시 플래그 세팅 안 함 → 나머지 job은 정상 실행
+        logger.error("FAIL: [Job1] 거래일 확인 실패 — 안전상 S2~S6는 정상 실행 reason=%s", exc)
+        try:
+            from .settings_store import upsert_setting
+
+            upsert_setting(
+                key="schedule_skip_today",
+                value=False,
+                value_type="boolean",
+                description="거래일 확인 실패 시 자동 프로세스 차단 방지를 위해 false로 리셋",
+                actor="scheduler_s1_check_failed_continue",
+            )
+            logger.warning("WARN: [Job1] schedule_skip_today=false 리셋 — 거래일 확인 실패로 자동 실행 허용")
+        except Exception as reset_exc:
+            logger.error("FAIL: [Job1] schedule_skip_today reset failed reason=%s", reset_exc)
 
 
 async def job_market_tone_analysis() -> None:
@@ -79,17 +183,12 @@ async def job_market_tone_analysis() -> None:
     분석 실패 시 neutral 기본값을 저장하고 서버는 계속 실행된다.
     """
     logger.info("START: [Job2] 시장 톤 분석 (08:00 KST)")
-    try:
-        from .settings_store import get_setting
-        if get_setting("schedule_skip_today") == "true":
-            logger.info("SKIP: [Job2] 비거래일 — 시장 톤 분석 스킵")
-            return
-    except Exception:
-        pass
+    if _should_skip_auto_job("S2"):
+        return
 
     try:
         from .engine.market_tone import run_market_tone_analysis
-        result = await run_market_tone_analysis()
+        result = await run_market_tone_analysis(trigger_source="auto_scheduler")
         logger.info(
             "SUCCESS: [Job2] 시장 톤 분석 완료 tone=%s provider=%s confidence=%.2f",
             result.get("tone"), result.get("provider"), result.get("confidence", 0.0),
@@ -105,17 +204,12 @@ async def job_universe_filter() -> None:
     """
     today = _today_kst()
     logger.info("START: [Job3] 유니버스 필터 (%s KST)", today)
-    try:
-        from .settings_store import get_setting
-        if get_setting("schedule_skip_today") == "true":
-            logger.info("SKIP: [Job3] 비거래일 — 유니버스 필터 스킵")
-            return
-    except Exception:
-        pass
+    if _should_skip_auto_job("S3"):
+        return
 
     try:
         from .engine.universe_filter import run_universe_filter
-        result = await run_universe_filter()
+        result = await run_universe_filter(trigger_source="auto_scheduler")
         logger.info(
             "SUCCESS: [Job3] 유니버스 필터 완료 raw=%d filtered=%d top_n=%d",
             result.get("raw_count", 0),
@@ -133,17 +227,12 @@ async def job_hybrid_screening() -> None:
     """
     today = _today_kst()
     logger.info("START: [Job4] 하이브리드 스크리닝 (%s KST)", today)
-    try:
-        from .settings_store import get_setting
-        if get_setting("schedule_skip_today") == "true":
-            logger.info("SKIP: [Job4] 비거래일 — 하이브리드 스크리닝 스킵")
-            return
-    except Exception:
-        pass
+    if _should_skip_auto_job("S4"):
+        return
 
     try:
         from .engine.hybrid_screening import run_hybrid_screening
-        result = await run_hybrid_screening()
+        result = await run_hybrid_screening(trigger_source="auto_scheduler")
         logger.info(
             "SUCCESS: [Job4] 하이브리드 스크리닝 완료 output=%d provider=%s confidence=%.2f",
             result.get("output_count", 0),
@@ -161,17 +250,12 @@ async def job_daily_plan() -> None:
     """
     today = _today_kst()
     logger.info("START: [Job5] Daily Plan 자동 생성 (%s KST)", today)
-    try:
-        from .settings_store import get_setting
-        if get_setting("schedule_skip_today") == "true":
-            logger.info("SKIP: [Job5] 비거래일 — Daily Plan 생성 스킵")
-            return
-    except Exception:
-        pass
+    if _should_skip_auto_job("S5"):
+        return
 
     try:
         from .engine.daily_plan import run_daily_plan_generation
-        result = await run_daily_plan_generation()
+        result = await run_daily_plan_generation(trigger_source="auto_scheduler")
         logger.info("SUCCESS: [Scheduler] S5 Daily Plan result=%s", result)
     except Exception as exc:
         logger.error("FAIL: [Scheduler] S5 Daily Plan error=%s", exc)
@@ -180,13 +264,8 @@ async def job_daily_plan() -> None:
 async def job_decision_engine_start() -> None:
     """Job 6 (09:00 KST): S6 Decision Engine 활성화 + WS 연결."""
     logger.info("START: [Job6] Decision Engine 활성화 (09:00 KST)")
-    try:
-        from .settings_store import get_setting
-        if get_setting("schedule_skip_today") == "true":
-            logger.info("SKIP: [Job6] 비거래일 — Decision Engine 활성화 스킵")
-            return
-    except Exception:
-        pass
+    if _should_skip_auto_job("S6"):
+        return
 
     try:
         from .engine.decision_engine import decision_engine
@@ -316,7 +395,7 @@ def _build_scheduler() -> AsyncIOScheduler:
         "s5": "08:40",
         "s6": "09:45",
         "s9": "15:20",
-        "s10": "18:00",
+        "s10": "16:00",
         "s11": "22:00",
         "backup": "18:00",
         "us_watch": "22:00",
@@ -357,7 +436,7 @@ def _build_scheduler() -> AsyncIOScheduler:
                 "s5": (8, 40),
                 "s6": (9, 45),
                 "s9": (15, 20),
-                "s10": (18, 0),
+                "s10": (16, 0),
                 "s11": (22, 0),
                 "backup": (18, 0),
                 "us_watch": (22, 0),

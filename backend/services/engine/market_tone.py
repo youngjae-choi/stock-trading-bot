@@ -18,38 +18,10 @@ from typing import Any
 
 from ..db import get_connection
 from . import llm_router
+from .pipeline_audit import finish_pipeline_run, normalize_trigger_source, start_pipeline_run
+from .prompt_loader import render_prompt
 
 logger = logging.getLogger("MarketToneService")
-
-_TONE_PROMPT = """
-너는 자동매매 시스템의 시장 분위기 분석 AI다.
-
-주의사항:
-- 투자 조언이 아니라 시장 분위기 분류 결과만 작성한다.
-- 매수/매도 지시는 절대 하지 않는다.
-- 입력 데이터에 없는 사실을 만들지 않는다.
-- 결과는 반드시 아래 JSON 형식으로만 작성한다 (다른 텍스트 없이).
-
-오늘 날짜: {date}
-분석 시각: 장 시작 전
-
-{market_data}
-
-분석 작업:
-위 해외 시장 데이터를 기반으로 한국 주식시장 오늘의 시장 톤을 종합 판단해줘.
-S&P500/NASDAQ 방향, 달러 환율 강약, 국채금리 방향, 원유 흐름을 종합한다.
-(데이터가 "없음"으로 표시된 항목은 무시하고 가용한 데이터만 활용한다.)
-
-출력 JSON:
-{{
-  "tone": "positive|neutral|negative|mixed",
-  "confidence": 0.0,
-  "summary": "한 줄 요약 (50자 이내)",
-  "key_factors": ["요인1", "요인2"],
-  "risk_factors": ["리스크1"],
-  "data_note": "활용한 데이터 출처 메모"
-}}
-"""
 
 
 def _ensure_table() -> None:
@@ -111,8 +83,11 @@ def _parse_tone_response(raw: str) -> dict[str, Any]:
     }
 
 
-async def run_market_tone_analysis() -> dict[str, Any]:
+async def run_market_tone_analysis(trigger_source: str = "api_manual") -> dict[str, Any]:
     """시장 톤 분석을 실행하고 결과를 DB에 저장한 뒤 반환한다.
+
+    Args:
+        trigger_source: Actual execution source for audit, e.g. auto_scheduler or console_manual.
 
     Returns:
         {
@@ -127,9 +102,26 @@ async def run_market_tone_analysis() -> dict[str, Any]:
     """
     from zoneinfo import ZoneInfo
     today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
-    logger.info("START: MarketToneService.run trade_date=%s", today)
+    safe_source = normalize_trigger_source(trigger_source)
+    run_audit_id = start_pipeline_run(
+        trade_date=today,
+        step="S2",
+        trigger_source=safe_source,
+        display_source="manual-like-console" if safe_source == "console_manual" else safe_source,
+    )
+    logger.info("START: MarketToneService.run trade_date=%s source=%s", today, safe_source)
 
-    _ensure_table()
+    try:
+        _ensure_table()
+    except Exception as exc:
+        finish_pipeline_run(
+            run_id=run_audit_id,
+            status="failed",
+            message=f"ensure_table_failed: {exc}",
+            metadata={"trigger_source": safe_source},
+        )
+        logger.error("FAIL: MarketToneService ensure table failed trade_date=%s reason=%s", today, exc)
+        raise
 
     # 해외 시장 데이터를 먼저 수집하고 실패 시에도 LLM 분석 자체는 계속 진행한다.
     try:
@@ -162,8 +154,31 @@ async def run_market_tone_analysis() -> dict[str, Any]:
             market_data_text = "[전날 밤 해외 시장 현황]\n  데이터 수집 실패 — 가용한 정보만 기준으로 판단"
 
     # LLM 호출
-    prompt = _TONE_PROMPT.replace("{date}", today).replace("{market_data}", market_data_text)
-    llm_result = await llm_router.call_llm(prompt, task_name="시장 톤 분석")
+    try:
+        prompt = render_prompt(
+            "0805_opus_market_tone.md",
+            {"date": today, "market_data": market_data_text},
+        )
+    except Exception as exc:
+        finish_pipeline_run(
+            run_id=run_audit_id,
+            status="failed",
+            message=f"prompt_render_failed: {exc}",
+            metadata={"trigger_source": safe_source},
+        )
+        logger.error("FAIL: MarketToneService prompt render failed trade_date=%s reason=%s", today, exc)
+        raise
+    try:
+        llm_result = await llm_router.call_llm(prompt, task_name="시장 톤 분석")
+    except Exception as exc:
+        finish_pipeline_run(
+            run_id=run_audit_id,
+            status="failed",
+            message=str(exc),
+            metadata={"trigger_source": safe_source},
+        )
+        logger.error("FAIL: MarketToneService LLM call exception trade_date=%s reason=%s", today, exc)
+        raise
 
     # 파싱
     if llm_result["ok"]:
@@ -192,27 +207,38 @@ async def run_market_tone_analysis() -> dict[str, Any]:
     # DB 저장
     record_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-    with get_connection() as conn:
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO market_tone_results
-                (id, trade_date, tone, confidence, summary,
-                 key_factors, risk_factors, raw_response, provider, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                record_id,
-                today,
-                parsed["tone"],
-                parsed["confidence"],
-                parsed["summary"],
-                json.dumps(parsed["key_factors"], ensure_ascii=False),
-                json.dumps(parsed["risk_factors"], ensure_ascii=False),
-                llm_result.get("raw", ""),
-                llm_result.get("provider", "none"),
-                now,
-            ),
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO market_tone_results
+                    (id, trade_date, tone, confidence, summary,
+                     key_factors, risk_factors, raw_response, provider, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record_id,
+                    today,
+                    parsed["tone"],
+                    parsed["confidence"],
+                    parsed["summary"],
+                    json.dumps(parsed["key_factors"], ensure_ascii=False),
+                    json.dumps(parsed["risk_factors"], ensure_ascii=False),
+                    llm_result.get("raw", ""),
+                    llm_result.get("provider", "none"),
+                    now,
+                ),
+            )
+    except Exception as exc:
+        finish_pipeline_run(
+            run_id=run_audit_id,
+            status="failed",
+            result_ref_id=record_id,
+            message=f"save_failed: {exc}",
+            metadata={"trigger_source": safe_source},
         )
+        logger.error("FAIL: MarketToneService save failed trade_date=%s reason=%s", today, exc)
+        raise
 
     result = {
         "ok": True,
@@ -228,6 +254,13 @@ async def run_market_tone_analysis() -> dict[str, Any]:
     logger.info(
         "SUCCESS: MarketToneService trade_date=%s tone=%s provider=%s",
         today, parsed["tone"], llm_result.get("provider", "none"),
+    )
+    finish_pipeline_run(
+        run_id=run_audit_id,
+        status="success",
+        result_ref_id=record_id,
+        message=f"tone={parsed['tone']} provider={llm_result.get('provider', 'none')}",
+        metadata={"provider": llm_result.get("provider", "none"), "trigger_source": safe_source},
     )
     return result
 

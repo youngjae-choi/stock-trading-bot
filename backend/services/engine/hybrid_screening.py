@@ -20,89 +20,10 @@ from .universe_filter import get_today_universe
 from . import llm_router
 from .expert_knowledge import build_knowledge_prompt_snippet, get_active_knowledge
 from .learning_memory import get_active_memories
+from .pipeline_audit import finish_pipeline_run, normalize_trigger_source, start_pipeline_run
+from .prompt_loader import render_prompt
 
 logger = logging.getLogger("HybridScreeningService")
-
-_SCREENING_PROMPT_TEMPLATE = """# 08:30 Opus — 하이브리드 스크리닝 (정성 점수 부여)
-
-## 역할
-시스템이 정량 점수로 좁힌 30종목 후보를 받아, 각 종목의 **정성 적합도 점수**만 매긴다.
-"매수해라"가 아니라 "이 종목은 OO 이유로 적합도 X점"이라고만 응답한다.
-
-## 절대 규칙
-- 출력은 반드시 아래 JSON 포맷
-- 종목별로 매수/매도 지시 금지 (suitability_score만 부여)
-- 입력에 없는 종목을 추가하지 않는다
-- 점수 근거는 입력 데이터에서만 끌어온다
-- 모르는 종목은 suitability_score를 0.3 이하로
-
-## 입력 데이터
-
-### 30종목 후보
-{candidates_json}
-
-### 시장 톤
-{market_tone_json}
-
-{memory_section}
-{knowledge_section}
-### 뉴스 요약
-{news_summary}
-
-## 출력 포맷 (반드시 이대로, 다른 텍스트 없이 JSON만)
-{
-  "schema_version": "1.0",
-  "generated_at": "YYYY-MM-DDTHH:MM:SS+09:00",
-  "model": "llm",
-  "entry_rules": {
-    "min_ai_confidence": 0.65,
-    "min_price_change_pct": 1.0,
-    "max_price_change_pct": 5.0,
-    "entry_rule_reason": "한 문장 근거"
-  },
-  "candidates": [
-    {
-      "ticker": "005930",
-      "name": "삼성전자",
-      "sector": "기타",
-      "suitability_score": 0.72,
-      "reason": "한 문장 핵심 근거",
-      "matched_themes": ["테마1"],
-      "risk_factors": ["리스크1"],
-      "data_source": "macro"
-    }
-  ],
-  "skipped": [
-    {"ticker": "XXXXXX", "reason": "정보 부족"}
-  ],
-  "overall_confidence": 0.7
-}
-
-## entry_rules 설정 기준
-
-오늘 시장 톤을 보고 아래 기준으로 매수 진입 조건을 설정한다:
-
-| 시장톤 | min_ai_confidence | min_price_change_pct | max_price_change_pct |
-|--------|-------------------|----------------------|----------------------|
-| positive | 0.60 | 0.8 | 6.0 |
-| neutral  | 0.65 | 1.0 | 5.0 |
-| negative | 0.72 | 1.5 | 4.0 |
-| mixed    | 0.65 | 1.0 | 5.0 |
-
-- 시장 톤 confidence < 0.4이면 모든 임계값을 보수적으로 +10% 조정
-- 위 표는 참고값이며, 오늘 시장 상황에 맞게 조정 가능
-- 절대 한도: min_ai_confidence는 0.40~0.85 사이만 허용
-- entry_rule_reason: 왜 이 임계값을 설정했는지 한 문장
-
-## suitability_score 기준
-- 0.8~1.0: 오늘 톤/테마와 강하게 부합, 명확한 재료 있음
-- 0.5~0.8: 부분적으로 부합, 일반적 매력
-- 0.3~0.5: 약한 근거, 큰 매력 없음
-- 0.0~0.3: 부합하지 않거나 정보 부족
-
-시장 톤 confidence < 0.4이면 모든 suitability_score를 0.5 이하로 보수적으로 평가한다.
-"""
-
 
 def _ensure_table() -> None:
     """hybrid_screening_results 테이블이 없으면 생성한다."""
@@ -164,7 +85,7 @@ def _build_prompt(
         memory_lines = []
         for memory in memories:
             memory_lines.append(f"- [{memory.get('category', '?')}] {memory.get('summary', '')}")
-        memory_section = "## 📌 Learning Memory (어제 복기 결과 — 반드시 반영)\n" + "\n".join(memory_lines) + "\n"
+        memory_section = "## 운영 메모리/RAG 참고사항 (전일 복기에서 구조화됨)\n" + "\n".join(memory_lines) + "\n"
     else:
         memory_section = ""
     if knowledge_items:
@@ -172,13 +93,15 @@ def _build_prompt(
     else:
         knowledge_section = ""
 
-    prompt = (
-        _SCREENING_PROMPT_TEMPLATE
-        .replace("{candidates_json}", candidates_json)
-        .replace("{market_tone_json}", market_tone_json)
-        .replace("{memory_section}", memory_section)
-        .replace("{knowledge_section}", knowledge_section)
-        .replace("{news_summary}", news_summary)
+    prompt = render_prompt(
+        "0830_opus_screening.md",
+        {
+            "candidates_json": candidates_json,
+            "market_tone_json": market_tone_json,
+            "memory_section": memory_section,
+            "knowledge_section": knowledge_section,
+            "news_summary": news_summary,
+        },
     )
     return prompt
 
@@ -299,17 +222,34 @@ def _save_daily_rulepack_from_screening(
             )
 
 
-async def run_hybrid_screening() -> dict[str, Any]:
+async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, Any]:
     """하이브리드 스크리닝을 실행하고 DB에 저장한 뒤 결과를 반환한다."""
     from zoneinfo import ZoneInfo
     today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
-    logger.info("START: HybridScreeningService.run trade_date=%s", today)
+    safe_source = normalize_trigger_source(trigger_source)
+    run_audit_id = start_pipeline_run(
+        trade_date=today,
+        step="S4",
+        trigger_source=safe_source,
+        display_source="manual-like-console" if safe_source == "console_manual" else safe_source,
+    )
+    logger.info("START: HybridScreeningService.run trade_date=%s source=%s", today, safe_source)
 
-    _ensure_table()
-    memories = get_active_memories(scope="S4_HYBRID_SCREENING")
-    memory_refs = [m["memory_id"] for m in memories]
-    knowledge_items = get_active_knowledge(scope="S4_HYBRID_SCREENING")
-    knowledge_refs = [k["id"] for k in knowledge_items]
+    try:
+        _ensure_table()
+        memories = get_active_memories(scope="S4_HYBRID_SCREENING")
+        memory_refs = [m["memory_id"] for m in memories]
+        knowledge_items = get_active_knowledge(scope="S4_HYBRID_SCREENING")
+        knowledge_refs = [k["id"] for k in knowledge_items]
+    except Exception as exc:
+        finish_pipeline_run(
+            run_id=run_audit_id,
+            status="failed",
+            message=f"startup_load_failed: {exc}",
+            metadata={"trigger_source": safe_source},
+        )
+        logger.error("FAIL: HybridScreeningService startup load failed trade_date=%s reason=%s", today, exc)
+        raise
 
     # S3 유니버스 필터 결과 조회
     universe = get_today_universe(today)
@@ -317,16 +257,27 @@ async def run_hybrid_screening() -> dict[str, Any]:
         logger.warning("WARN: HybridScreening S3 결과 없음 — 스크리닝 생략 trade_date=%s", today)
         record_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-        with get_connection() as conn:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO hybrid_screening_results
-                    (id, trade_date, candidates, skipped, overall_confidence,
-                     provider, raw_input_count, output_count, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (record_id, today, "[]", "[]", 0.0, "none", 0, 0, now),
+        try:
+            with get_connection() as conn:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO hybrid_screening_results
+                        (id, trade_date, candidates, skipped, overall_confidence,
+                         provider, raw_input_count, output_count, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (record_id, today, "[]", "[]", 0.0, "none", 0, 0, now),
+                )
+        except Exception as exc:
+            finish_pipeline_run(
+                run_id=run_audit_id,
+                status="failed",
+                result_ref_id=record_id,
+                message=f"save_failed: {exc}",
+                metadata={"trigger_source": safe_source},
             )
+            logger.error("FAIL: HybridScreeningService no-universe save failed trade_date=%s reason=%s", today, exc)
+            raise
         # S3 결과가 없으면 이전 후보 종목 기반 실시간 구독도 함께 정리한다.
         try:
             from ..kis.realtime_ws import realtime_ws_manager
@@ -335,6 +286,13 @@ async def run_hybrid_screening() -> dict[str, Any]:
             logger.info("INFO: HybridScreening S3 결과 없음 — KIS WebSocket 구독 중지")
         except Exception as ws_exc:
             logger.warning("WARN: HybridScreening KIS WebSocket 중지 실패 — %s", ws_exc)
+        finish_pipeline_run(
+            run_id=run_audit_id,
+            status="skipped",
+            result_ref_id=record_id,
+            message="no_universe",
+            metadata={"trigger_source": safe_source},
+        )
         return {
             "ok": True,
             "trade_date": today,
@@ -368,8 +326,28 @@ async def run_hybrid_screening() -> dict[str, Any]:
         logger.warning("WARN: HybridScreening 시장 톤 조회 실패 — %s", exc)
 
     # 프롬프트 빌드 및 LLM 호출
-    prompt = _build_prompt(items, market_tone, memories=memories, knowledge_items=knowledge_items)
-    llm_result = await llm_router.call_llm(prompt, task_name="하이브리드 스크리닝")
+    try:
+        prompt = _build_prompt(items, market_tone, memories=memories, knowledge_items=knowledge_items)
+    except Exception as exc:
+        finish_pipeline_run(
+            run_id=run_audit_id,
+            status="failed",
+            message=f"prompt_render_failed: {exc}",
+            metadata={"trigger_source": safe_source},
+        )
+        logger.error("FAIL: HybridScreeningService prompt render failed trade_date=%s reason=%s", today, exc)
+        raise
+    try:
+        llm_result = await llm_router.call_llm(prompt, task_name="하이브리드 스크리닝")
+    except Exception as exc:
+        finish_pipeline_run(
+            run_id=run_audit_id,
+            status="failed",
+            message=str(exc),
+            metadata={"trigger_source": safe_source},
+        )
+        logger.error("FAIL: HybridScreeningService LLM call exception trade_date=%s reason=%s", today, exc)
+        raise
 
     # LLM 응답 파싱
     candidates: list = []
@@ -398,26 +376,37 @@ async def run_hybrid_screening() -> dict[str, Any]:
     # DB 저장
     record_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-    with get_connection() as conn:
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO hybrid_screening_results
-                (id, trade_date, candidates, skipped, overall_confidence,
-                 provider, raw_input_count, output_count, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                record_id,
-                today,
-                json.dumps(candidates, ensure_ascii=False),
-                json.dumps(skipped, ensure_ascii=False),
-                overall_confidence,
-                provider,
-                len(items),
-                len(candidates),
-                now,
-            ),
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO hybrid_screening_results
+                    (id, trade_date, candidates, skipped, overall_confidence,
+                     provider, raw_input_count, output_count, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record_id,
+                    today,
+                    json.dumps(candidates, ensure_ascii=False),
+                    json.dumps(skipped, ensure_ascii=False),
+                    overall_confidence,
+                    provider,
+                    len(items),
+                    len(candidates),
+                    now,
+                ),
+            )
+    except Exception as exc:
+        finish_pipeline_run(
+            run_id=run_audit_id,
+            status="failed",
+            result_ref_id=record_id,
+            message=f"save_failed: {exc}",
+            metadata={"trigger_source": safe_source},
         )
+        logger.error("FAIL: HybridScreeningService save failed trade_date=%s reason=%s", today, exc)
+        raise
 
     if entry_rules:
         _save_daily_rulepack_from_screening(
@@ -446,6 +435,13 @@ async def run_hybrid_screening() -> dict[str, Any]:
     logger.info(
         "SUCCESS: HybridScreeningService trade_date=%s output=%d provider=%s confidence=%.2f memories=%d knowledge=%d",
         today, len(candidates), provider, overall_confidence, len(memories), len(knowledge_items),
+    )
+    finish_pipeline_run(
+        run_id=run_audit_id,
+        status="success",
+        result_ref_id=record_id,
+        message=f"output={len(candidates)} provider={provider}",
+        metadata={"provider": provider, "trigger_source": safe_source},
     )
 
     # S4 완료 후 후보 종목을 KIS WebSocket에 자동 구독해 실시간 체결 데이터를 수집한다.

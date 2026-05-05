@@ -43,6 +43,7 @@ def initialize_database() -> None:
     with get_connection() as connection:
         _execute_many(connection, _schema_statements())
         _seed_system_settings(connection)
+        _migrate_s10_review_schedule_setting(connection)
         _seed_rule_system(connection)
         _seed_confidence_bins(connection)
     # 마이그레이션: 기존 테이블에 누락된 컬럼 추가
@@ -61,6 +62,13 @@ def initialize_database() -> None:
             if col_name not in signal_cols:
                 connection.execute(alter_sql)
                 logger.info("DB migration: added column %s to trading_signals", col_name)
+        review_cols = {
+            row[1] for row in connection.execute("PRAGMA table_info(daily_review_reports)").fetchall()
+        }
+        for col_name, alter_sql in _daily_review_migration_statements():
+            if col_name not in review_cols:
+                connection.execute(alter_sql)
+                logger.info("DB migration: added column %s to daily_review_reports", col_name)
     logger.info("SUCCESS: db.initialize_database path=%s", _db_path())
 
 
@@ -111,6 +119,7 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
             "number",
             "매수 진입 최대 등락률 % (AI가 이 값 이상으로 설정 불가)",
         ),
+        ("risk.emergency_halt_enabled", False, "boolean", "긴급정지 신규 주문 차단 상태"),
         ("schedule_s1_time", "07:45", "string", "S1 토큰 갱신 실행 시간 (HH:MM)"),
         ("schedule_s2_time", "08:00", "string", "S2 시장톤 분석 실행 시간 (HH:MM)"),
         ("schedule_s3_time", "08:15", "string", "S3 유니버스 필터 실행 시간 (HH:MM)"),
@@ -122,7 +131,7 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
         ("schedule_s7_time", "실시간", "string", "S7 주문 실행 표시 시간"),
         ("schedule_s8_time", "실시간", "string", "S8 포지션 관리 표시 시간"),
         ("schedule_s9_time", "15:20", "string", "S9 당일 청산 실행 시간 (HH:MM)"),
-        ("schedule_s10_time", "18:00", "string", "S10 일일 요약 및 DB 백업 실행 시간 (HH:MM)"),
+        ("schedule_s10_time", "16:00", "string", "S10 Review & Audit 실행 시간 (HH:MM)"),
         ("schedule_s11_time", "22:00", "string", "S11 Learning Memory Builder 실행 시간 (HH:MM)"),
         ("risk.force_exit_time", "15:20", "string", "당일 강제청산 시작 시간 (HH:MM)"),
         ("risk.new_entry_cutoff_time", "15:10", "string", "신규 매수 금지 시작 시간 (HH:MM)"),
@@ -136,6 +145,25 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
             """,
             (key, _json_dumps(value), value_type, description, "system"),
         )
+
+
+def _migrate_s10_review_schedule_setting(connection: sqlite3.Connection) -> None:
+    """Move only the old S10 daily-summary default setting to Review Audit semantics."""
+    now_expr = "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+    old_description = "S10 일일 요약 및 DB 백업 실행 시간 (HH:MM)"
+    row = connection.execute(
+        "SELECT value_json, description FROM system_settings WHERE key = 'schedule_s10_time'",
+    ).fetchone()
+    if row and row["value_json"] == _json_dumps("18:00") and row["description"] == old_description:
+        connection.execute(
+            f"""
+            UPDATE system_settings
+            SET value_json = ?, description = ?, updated_at = {now_expr}, updated_by = ?
+            WHERE key = 'schedule_s10_time'
+            """,
+            (_json_dumps("16:00"), "S10 Review & Audit 실행 시간 (HH:MM)", "migration_s10_review_audit"),
+        )
+        logger.info("DB migration: updated schedule_s10_time from daily summary default to Review Audit default")
 
 
 def _seed_rule_system(connection: sqlite3.Connection) -> None:
@@ -464,6 +492,8 @@ CREATE TABLE IF NOT EXISTS daily_trading_plans (
     validation_result    TEXT NOT NULL DEFAULT '{}',
     creation_mode        TEXT NOT NULL DEFAULT 'auto',
     created_by           TEXT NOT NULL DEFAULT 'scheduler',
+    trigger_source       TEXT NOT NULL DEFAULT 'auto_scheduler',
+    run_audit_id         TEXT NOT NULL DEFAULT '',
     s3_result_id         TEXT NOT NULL DEFAULT '',
     s4_result_id         TEXT NOT NULL DEFAULT '',
     used_learning_memory_ids TEXT NOT NULL DEFAULT '[]',
@@ -475,6 +505,43 @@ CREATE TABLE IF NOT EXISTS daily_trading_plans (
 )
 """,
         "CREATE INDEX IF NOT EXISTS idx_daily_plan_date ON daily_trading_plans(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS daily_plan_run_history (
+    id                   TEXT PRIMARY KEY,
+    plan_id              TEXT NOT NULL,
+    trade_date           TEXT NOT NULL,
+    status               TEXT NOT NULL DEFAULT 'generated',
+    trigger_source       TEXT NOT NULL DEFAULT 'api_manual',
+    run_audit_id         TEXT NOT NULL DEFAULT '',
+    creation_mode        TEXT NOT NULL DEFAULT 'auto',
+    created_by           TEXT NOT NULL DEFAULT 'scheduler',
+    provider             TEXT NOT NULL DEFAULT '',
+    plan_payload         TEXT NOT NULL DEFAULT '{}',
+    validation_result    TEXT NOT NULL DEFAULT '{}',
+    s3_result_id         TEXT NOT NULL DEFAULT '',
+    s4_result_id         TEXT NOT NULL DEFAULT '',
+    created_at           TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_daily_plan_history_date ON daily_plan_run_history(trade_date, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_daily_plan_history_audit ON daily_plan_run_history(run_audit_id)",
+        """
+CREATE TABLE IF NOT EXISTS pipeline_run_audit (
+    id             TEXT PRIMARY KEY,
+    trade_date     TEXT NOT NULL,
+    step           TEXT NOT NULL,
+    trigger_source TEXT NOT NULL DEFAULT 'api_manual',
+    display_source TEXT NOT NULL DEFAULT '',
+    status         TEXT NOT NULL DEFAULT 'started',
+    result_ref_id  TEXT NOT NULL DEFAULT '',
+    message        TEXT NOT NULL DEFAULT '',
+    metadata_json  TEXT NOT NULL DEFAULT '{}',
+    started_at     TEXT NOT NULL,
+    finished_at    TEXT
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_pipeline_audit_date_step ON pipeline_run_audit(trade_date, step, started_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_pipeline_audit_source ON pipeline_run_audit(trigger_source, started_at DESC)",
         """
 CREATE TABLE IF NOT EXISTS symbol_overrides (
     id              TEXT PRIMARY KEY,
@@ -556,6 +623,10 @@ CREATE TABLE IF NOT EXISTS daily_review_reports (
     profile_summary  TEXT NOT NULL DEFAULT '{}',
     exit_summary     TEXT NOT NULL DEFAULT '{}',
     trailing_quality TEXT NOT NULL DEFAULT '{}',
+    missed_entries   TEXT NOT NULL DEFAULT '[]',
+    false_positives  TEXT NOT NULL DEFAULT '[]',
+    missed_entries_count INTEGER NOT NULL DEFAULT 0,
+    false_positive_count INTEGER NOT NULL DEFAULT 0,
     no_trade_count   INTEGER NOT NULL DEFAULT 0,
     memory_count     INTEGER NOT NULL DEFAULT 0,
     created_at       TEXT NOT NULL
@@ -876,12 +947,24 @@ def _migration_statements() -> list[tuple[str, str]]:
     return [
         ("creation_mode",  "ALTER TABLE daily_trading_plans ADD COLUMN creation_mode TEXT NOT NULL DEFAULT 'auto'"),
         ("created_by",     "ALTER TABLE daily_trading_plans ADD COLUMN created_by TEXT NOT NULL DEFAULT 'scheduler'"),
+        ("trigger_source", "ALTER TABLE daily_trading_plans ADD COLUMN trigger_source TEXT NOT NULL DEFAULT 'auto_scheduler'"),
+        ("run_audit_id",   "ALTER TABLE daily_trading_plans ADD COLUMN run_audit_id TEXT NOT NULL DEFAULT ''"),
         ("s3_result_id",   "ALTER TABLE daily_trading_plans ADD COLUMN s3_result_id TEXT NOT NULL DEFAULT ''"),
         ("s4_result_id",   "ALTER TABLE daily_trading_plans ADD COLUMN s4_result_id TEXT NOT NULL DEFAULT ''"),
         ("used_learning_memory_ids", "ALTER TABLE daily_trading_plans ADD COLUMN used_learning_memory_ids TEXT NOT NULL DEFAULT '[]'"),
         ("used_knowledge_ids", "ALTER TABLE daily_trading_plans ADD COLUMN used_knowledge_ids TEXT NOT NULL DEFAULT '[]'"),
         ("validated_at",   "ALTER TABLE daily_trading_plans ADD COLUMN validated_at TEXT"),
         ("superseded_at",  "ALTER TABLE daily_trading_plans ADD COLUMN superseded_at TEXT"),
+    ]
+
+
+def _daily_review_migration_statements() -> list[tuple[str, str]]:
+    """Return migrations for S10 review report fields added after Phase 3."""
+    return [
+        ("missed_entries", "ALTER TABLE daily_review_reports ADD COLUMN missed_entries TEXT NOT NULL DEFAULT '[]'"),
+        ("false_positives", "ALTER TABLE daily_review_reports ADD COLUMN false_positives TEXT NOT NULL DEFAULT '[]'"),
+        ("missed_entries_count", "ALTER TABLE daily_review_reports ADD COLUMN missed_entries_count INTEGER NOT NULL DEFAULT 0"),
+        ("false_positive_count", "ALTER TABLE daily_review_reports ADD COLUMN false_positive_count INTEGER NOT NULL DEFAULT 0"),
     ]
 
 

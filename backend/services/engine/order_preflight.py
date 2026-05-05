@@ -299,6 +299,45 @@ def _time_from_rule(value: Any, fallback: tuple[int, int]) -> tuple[int, int]:
     return fallback
 
 
+def is_new_buy_blocked_by_emergency_halt() -> tuple[bool, str]:
+    """Return whether emergency halt state must block a new BUY order.
+
+    The guard is fail-closed for new entries: persistent Settings and the
+    console cached fallback are both checked, and any lookup uncertainty blocks
+    only new BUY orders while leaving SELL/liquidation paths outside this guard.
+    """
+    setting_enabled = False
+    setting_error: Exception | None = None
+    cached_enabled = False
+    cached_error: Exception | None = None
+
+    try:
+        emergency_halt = get_setting("risk.emergency_halt_enabled", False)
+        setting_enabled = emergency_halt is True or str(emergency_halt).lower() == "true"
+    except Exception as exc:
+        setting_error = exc
+        logger.error("FAIL: [S6-P] emergency halt persistent setting read failed reason=%s", exc)
+
+    try:
+        from ..console_state import get_cached_emergency_halt_state
+
+        cached_enabled = get_cached_emergency_halt_state()
+    except Exception as exc:
+        cached_error = exc
+        logger.error("FAIL: [S6-P] emergency halt console fallback read failed reason=%s", exc)
+
+    if setting_enabled or cached_enabled:
+        return True, "emergency_halt_active"
+    if setting_error is not None or cached_error is not None:
+        logger.warning(
+            "BLOCK: [S6-P] emergency halt status uncertain; fail-closed for new BUY setting_error=%s cached_error=%s",
+            bool(setting_error),
+            bool(cached_error),
+        )
+        return True, "emergency_halt_status_uncertain"
+    return False, ""
+
+
 def run_preflight(
     signal: dict[str, Any],
     final_rule: dict[str, Any],
@@ -311,7 +350,18 @@ def run_preflight(
 
     now = _now_kst()
 
-    # 1. 장 운영 시간 및 설정된 신규매수 금지 시간 확인
+    # 1. 긴급정지 상태 확인. 활성화 시 신규 BUY 주문은 무조건 차단한다.
+    emergency_halt_blocked, emergency_halt_reason = is_new_buy_blocked_by_emergency_halt()
+    if emergency_halt_blocked:
+        checks["emergency_halt"] = PREFLIGHT_BLOCK
+        if emergency_halt_reason == "emergency_halt_status_uncertain":
+            block_reasons.append("긴급정지 상태 확인 불가 — 신규 주문 안전 차단")
+        else:
+            block_reasons.append("긴급정지 활성화 — 신규 주문 차단")
+    else:
+        checks["emergency_halt"] = PREFLIGHT_OK
+
+    # 2. 장 운영 시간 및 설정된 신규매수 금지 시간 확인
     market_open = now.replace(hour=9, minute=0, second=0, microsecond=0)
     cutoff_hour, cutoff_minute = _time_from_rule(final_rule.get("new_entry_cutoff_time"), (15, 20))
     entry_cutoff = now.replace(hour=cutoff_hour, minute=cutoff_minute, second=0, microsecond=0)
@@ -321,7 +371,7 @@ def run_preflight(
     else:
         checks["market_hours"] = PREFLIGHT_OK
 
-    # 2. 종목당 최대 비중 (final_rule에서 position_size_pct 한도 확인)
+    # 3. 종목당 최대 비중 (final_rule에서 position_size_pct 한도 확인)
     position_size_pct = _position_size_pct(final_rule)
     if position_size_pct > 30.0:
         checks["position_size"] = PREFLIGHT_BLOCK
@@ -329,7 +379,7 @@ def run_preflight(
     else:
         checks["position_size"] = PREFLIGHT_OK
 
-    # 3. 최대 보유 종목 수 초과
+    # 4. 최대 보유 종목 수 초과
     max_positions = int(_to_float(final_rule.get("max_positions"), 10.0) or 10)
     if current_positions_count >= max_positions:
         checks["max_positions"] = PREFLIGHT_BLOCK
@@ -337,7 +387,7 @@ def run_preflight(
     else:
         checks["max_positions"] = PREFLIGHT_OK
 
-    # 4. 트리거 가격 유효성
+    # 5. 트리거 가격 유효성
     trigger_price = _to_float(signal.get("trigger_price"))
     if trigger_price <= 0:
         checks["price_valid"] = PREFLIGHT_BLOCK
@@ -345,7 +395,7 @@ def run_preflight(
     else:
         checks["price_valid"] = PREFLIGHT_OK
 
-    # 5. 신뢰도 최소값 (final_rule)
+    # 6. 신뢰도 최소값 (final_rule)
     ai_conf_min = _to_float(final_rule.get("ai_confidence_min"), 0.0)
     confidence = _to_float(signal.get("confidence"), 0.0)
     if confidence < ai_conf_min:
@@ -354,7 +404,7 @@ def run_preflight(
     else:
         checks["ai_confidence"] = PREFLIGHT_OK
 
-    # 6. 당일 실현손실 한도. 증명 가능한 percent breach가 있을 때만 신규 BUY를 차단한다.
+    # 7. 당일 실현손실 한도. 증명 가능한 percent breach가 있을 때만 신규 BUY를 차단한다.
     daily_loss = evaluate_daily_loss_limit(final_rule)
     if daily_loss["breached"]:
         checks["daily_loss_limit"] = PREFLIGHT_BLOCK

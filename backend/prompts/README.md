@@ -14,8 +14,9 @@ prompts/
 ├── 0800_gemini_news_summary.md        ← 장 시작 전 뉴스/공시 요약
 ├── 0805_opus_market_tone.md           ← 시장 톤 최종 판단
 ├── 0830_opus_screening.md             ← 하이브리드 스크리닝 (정성 점수)
+├── 0845_daily_plan.md                 ← S5 Daily Trading Plan 생성
 ├── 0845_gpt_rulepack_generation.md    ← RulePack JSON 생성 (가장 중요)
-├── 1600_opus_review.md                ← 장마감 후 복기
+├── 1600_opus_review.md                ← 장마감 후 복기 템플릿 (현재 S10은 deterministic DB audit, 외부 LLM 미호출)
 ├── 1630_gpt_daily_report.md           ← 일일 리포트 (콘솔 표시)
 ├── 2200_gemini_us_market_brief.md     ← 야간 미국장 관찰
 │

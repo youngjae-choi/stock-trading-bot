@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 from ...api.dependencies import require_console_user
@@ -41,16 +41,16 @@ async def get_universe_filter_today():
 
 
 @_filter_router.post("/run", summary="유니버스 필터 즉시 실행")
-async def run_universe_filter_now():
+async def run_universe_filter_now(trigger_source: str = Query(default="api_manual")):
     """KIS API를 즉시 호출해 유니버스 필터를 실행하고 결과를 저장한다."""
     if not validate_config():
         return JSONResponse(
             status_code=503,
             content={"ok": False, "error": "KIS config not set", "source": "backend", "live": True},
         )
-    logger.info("START: POST /api/v1/universe-filter/run (manual trigger)")
+    logger.info("START: POST /api/v1/universe-filter/run trigger_source=%s", trigger_source)
     try:
-        result = await universe_filter_svc.run_universe_filter()
+        result = await universe_filter_svc.run_universe_filter(trigger_source=trigger_source)
         logger.info(
             "SUCCESS: POST /api/v1/universe-filter/run result_count=%d",
             result.get("result_count", 0),

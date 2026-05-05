@@ -146,12 +146,12 @@ async def get_bot_data_health():
             endpoint=endpoint,
             method="GET",
             payload=payload,
-            source="mock",
-            message="Data health served without live KIS dependency.",
+            source="backend",
+            message="System status served from backend runtime, scheduler, and DB state.",
             feature_name="데이터 상태 점검",
             purpose="KIS, WebSocket, 런타임 연결 상태와 품질 점검 결과를 확인",
-            result_summary="성공 mock 데이터 상태와 품질 점검 결과를 반환",
-            mock=True,
+            result_summary="성공 backend 시스템 상태와 스케줄 스킵 상태 반환",
+            mock=False,
         )
     except Exception as exc:
         return _build_logged_error_response(endpoint=endpoint, method="GET", error_message=f"Failed to load data health: {str(exc)}")
