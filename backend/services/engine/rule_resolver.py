@@ -101,14 +101,16 @@ def get_symbol_overrides() -> dict[str, dict[str, Any]]:
 
 
 def _get_active_rulepack_entry_rules(trade_date: str) -> dict[str, Any]:
-    """활성 RulePack의 진입 조건을 하위 호환 방식으로 병합해 반환한다.
+    """활성 RulePack의 실행 룰을 하위 호환 방식으로 병합해 반환한다.
 
     Args:
         trade_date: YYYY-MM-DD trade date used to select the active RulePack.
 
     Returns:
-        `machine_rules.layer3_entry`와 legacy `machine_rules.entry_rules`를 병합한 dict.
-        같은 키가 있으면 기존 S4 생성 경로 호환을 위해 `entry_rules` 값을 우선한다.
+        `machine_rules.layer3_entry`, legacy `machine_rules.entry_rules`, and
+        `machine_rules.risk_limits`를 flat final_rule 레이어로 병합한 dict.
+        같은 키가 있으면 기존 S4 생성 경로 호환을 위해 `entry_rules`가
+        `layer3_entry`를 덮고, 안전 한도인 `risk_limits`가 마지막에 덮는다.
     """
     try:
         with get_connection() as conn:
@@ -127,21 +129,29 @@ def _get_active_rulepack_entry_rules(trade_date: str) -> dict[str, Any]:
 
         layer3_entry = machine_rules.get("layer3_entry", {}) or {}
         entry_rules = machine_rules.get("entry_rules", {}) or {}
+        risk_limits = machine_rules.get("risk_limits", {}) or {}
         if not isinstance(layer3_entry, dict):
             logger.warning("WARN: [RuleResolver] layer3_entry 형식 오류 — dict 아님")
             layer3_entry = {}
         if not isinstance(entry_rules, dict):
             logger.warning("WARN: [RuleResolver] entry_rules 형식 오류 — dict 아님")
             entry_rules = {}
+        if not isinstance(risk_limits, dict):
+            logger.warning("WARN: [RuleResolver] risk_limits 형식 오류 — dict 아님")
+            risk_limits = {}
 
+        # 기존 layer3_entry/entry_rules 동작을 유지한 뒤 risk_limits를 flat하게 얹어
+        # order_preflight/order_executor가 final_rule의 위험 한도 alias를 직접 읽게 한다.
         merged = dict(layer3_entry)
         merged.update(entry_rules)
+        merged.update(risk_limits)
         if merged:
             logger.info(
-                "SUCCESS: [RuleResolver] active RulePack entry merged trade_date=%s layer3_keys=%d entry_keys=%d",
+                "SUCCESS: [RuleResolver] active RulePack rules merged trade_date=%s layer3_keys=%d entry_keys=%d risk_keys=%d",
                 trade_date,
                 len(layer3_entry),
                 len(entry_rules),
+                len(risk_limits),
             )
         return merged
     except Exception as exc:
@@ -161,7 +171,7 @@ def resolve_symbol_rule(
     """종목별 최종 룰 계산.
 
     레이어 병합 순서 (나중에 덮음 = 높은 우선순위):
-      base_rulepack → active rulepack entry_rules → profile → symbol_override
+      base_rulepack → active rulepack machine_rules → profile → symbol_override
     그 후 Global Risk Guard 강제 적용.
 
     Args:
@@ -171,7 +181,7 @@ def resolve_symbol_rule(
         daily_plan: Active daily trading plan for assignment lookup.
         symbol_overrides: Per-symbol override mapping.
         global_risk: Global Risk Guard settings from system_settings.
-        trade_date: YYYY-MM-DD date used to read active generated RulePack entry rules.
+        trade_date: YYYY-MM-DD date used to read active generated RulePack machine rules.
     """
     # 1. Daily Plan에서 배정 프로필 조회
     assignments: dict[str, dict] = {}

@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from ..db import get_connection
+from ..settings_store import get_setting
 
 logger = logging.getLogger("ConfidenceCalibration")
 
@@ -21,6 +23,9 @@ EXPECTED_WIN_RATES = {
     "60to70": 0.60,
     "lt060": 0.50,
 }
+MIN_RECOMMENDATION_TRADES = 3
+UNDERPERFORMANCE_GAP = 0.15
+OVERPERFORMANCE_GAP = 0.10
 
 
 def _now_kst_iso() -> str:
@@ -34,6 +39,11 @@ def _safe_float(value: Any) -> float:
         return float(value or 0.0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _json_dumps(value: Any) -> str:
+    """Serialize confidence learning evidence for S11 memory rows."""
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def _table_columns(table_name: str) -> set[str]:
@@ -82,6 +92,172 @@ def _load_signal_results(trade_date: str) -> list[dict[str, Any]]:
             (trade_date,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def build_confidence_learning_recommendations(
+    trade_date: str,
+    calibration_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build recommendation-only S11 memories from confidence calibration rows.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date.
+        calibration_rows: Daily calibration result rows with bin-level outcomes.
+    """
+    logger.info("START: ConfidenceCalibration learning recommendation build trade_date=%s", trade_date)
+    current_min_confidence = _safe_float(get_setting("engine.min_ai_confidence", 0.60))
+    current_floor = _safe_float(get_setting("engine.min_confidence_floor", 0.40))
+    created_at = _now_kst_iso()
+    expires_at = (datetime.fromisoformat(f"{trade_date}T00:00:00") + timedelta(days=7)).date().isoformat()
+    recommendations: list[dict[str, Any]] = []
+
+    for row in calibration_rows:
+        bin_label = str(row.get("bin_label") or "")
+        trade_count = int(row.get("trade_count") or 0)
+        if trade_count < MIN_RECOMMENDATION_TRADES:
+            continue
+
+        expected_win_rate = _safe_float(row.get("expected_win_rate"))
+        actual_win_rate = _safe_float(row.get("actual_win_rate"))
+        avg_pnl = _safe_float(row.get("avg_pnl"))
+        win_rate_gap = expected_win_rate - actual_win_rate
+        target_setting = "engine.min_ai_confidence"
+        action = "hold_confidence_threshold"
+        proposed_value = current_min_confidence
+        rationale = "sample_not_extreme_enough"
+
+        if win_rate_gap >= UNDERPERFORMANCE_GAP or avg_pnl < 0:
+            action = "raise_confidence_threshold"
+            rationale = "confidence_bin_underperformed"
+            if bin_label == "lt060":
+                target_setting = "engine.min_confidence_floor"
+                proposed_value = max(current_floor, 0.60)
+            elif bin_label == "60to70":
+                proposed_value = max(current_min_confidence, 0.70)
+            elif bin_label == "70to80":
+                proposed_value = max(current_min_confidence, 0.80)
+            elif bin_label == "80to90":
+                proposed_value = max(current_min_confidence, 0.90)
+            else:
+                action = "hold_confidence_threshold"
+                proposed_value = current_min_confidence
+                rationale = "highest_bin_underperformed_review_required"
+        elif actual_win_rate - expected_win_rate >= OVERPERFORMANCE_GAP and avg_pnl > 0:
+            if bin_label in ("60to70", "70to80"):
+                action = "lower_confidence_threshold"
+                rationale = "confidence_bin_overperformed"
+                proposed_value = min(current_min_confidence, 0.60 if bin_label == "60to70" else 0.70)
+            elif bin_label == "lt060":
+                action = "lower_confidence_threshold"
+                rationale = "confidence_bin_overperformed"
+                target_setting = "engine.min_confidence_floor"
+                proposed_value = min(current_floor, 0.50)
+
+        if action == "hold_confidence_threshold" and rationale == "sample_not_extreme_enough":
+            continue
+
+        recommendations.append(
+            {
+                "memory_id": str(uuid.uuid4()),
+                "trade_date": trade_date,
+                "scope": "S6_DECISION_ENGINE",
+                "category": "confidence_calibration",
+                "summary": (
+                    f"Confidence bin {bin_label} recommends {action} "
+                    f"(actual={actual_win_rate:.2f}, expected={expected_win_rate:.2f}, avg_pnl={avg_pnl:.4f})."
+                ),
+                "evidence": {
+                    "bin_label": bin_label,
+                    "trade_count": trade_count,
+                    "win_count": int(row.get("win_count") or 0),
+                    "avg_pnl": avg_pnl,
+                    "expected_win_rate": expected_win_rate,
+                    "actual_win_rate": actual_win_rate,
+                    "win_rate_gap": win_rate_gap,
+                    "current_min_ai_confidence": current_min_confidence,
+                    "current_min_confidence_floor": current_floor,
+                    "source": "confidence_calibration_daily",
+                },
+                "recommendation": {
+                    "action": action,
+                    "target_setting": target_setting,
+                    "current_value": current_floor if target_setting.endswith("floor") else current_min_confidence,
+                    "proposed_value": proposed_value,
+                    "reason": rationale,
+                    "application_mode": "recommendation_only",
+                },
+                "auto_apply_allowed": 0,
+                "requires_approval": 1,
+                "status": "active",
+                "expires_at": expires_at,
+                "created_at": created_at,
+            }
+        )
+
+    logger.info(
+        "SUCCESS: ConfidenceCalibration learning recommendation build trade_date=%s count=%d",
+        trade_date,
+        len(recommendations),
+    )
+    return recommendations
+
+
+def persist_confidence_learning_recommendations(
+    trade_date: str,
+    recommendations: list[dict[str, Any]],
+) -> None:
+    """Persist confidence calibration recommendations as S11 learning memories.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date.
+        recommendations: Memory rows from `build_confidence_learning_recommendations`.
+    """
+    logger.info(
+        "START: ConfidenceCalibration learning recommendation persist trade_date=%s count=%d",
+        trade_date,
+        len(recommendations),
+    )
+    with get_connection() as conn:
+        conn.execute(
+            """
+            DELETE FROM learning_memories
+            WHERE trade_date = ?
+              AND scope = 'S6_DECISION_ENGINE'
+              AND category = 'confidence_calibration'
+            """,
+            (trade_date,),
+        )
+        conn.executemany(
+            """
+            INSERT INTO learning_memories
+                (memory_id, trade_date, scope, category, summary, evidence,
+                 recommendation, auto_apply_allowed, requires_approval, status,
+                 expires_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    item["memory_id"],
+                    item["trade_date"],
+                    item["scope"],
+                    item["category"],
+                    item["summary"],
+                    _json_dumps(item["evidence"]),
+                    _json_dumps(item["recommendation"]),
+                    item["auto_apply_allowed"],
+                    item["requires_approval"],
+                    item["status"],
+                    item["expires_at"],
+                    item["created_at"],
+                )
+                for item in recommendations
+            ],
+        )
+    logger.info(
+        "SUCCESS: ConfidenceCalibration learning recommendation persist trade_date=%s count=%d",
+        trade_date,
+        len(recommendations),
+    )
 
 
 def _update_cumulative_bin(
@@ -193,8 +369,11 @@ def run_confidence_calibration(trade_date: str) -> dict:
                 now_iso,
             )
 
+    recommendations = build_confidence_learning_recommendations(trade_date, results)
+    persist_confidence_learning_recommendations(trade_date, recommendations)
+
     logger.info("SUCCESS: ConfidenceCalibration run trade_date=%s signals=%d", trade_date, len(rows))
-    return {"ok": True, "trade_date": trade_date, "bins": results}
+    return {"ok": True, "trade_date": trade_date, "bins": results, "recommendations": recommendations}
 
 
 def get_calibration_summary(trade_date: str) -> list[dict]:

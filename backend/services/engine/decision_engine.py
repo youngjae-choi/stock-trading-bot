@@ -87,7 +87,7 @@ def _to_float_or_none(value: Any) -> float | None:
     if value in (None, ""):
         return None
     try:
-        return float(value)
+        return float(str(value).replace(",", "").strip())
     except (TypeError, ValueError):
         return None
 
@@ -105,16 +105,237 @@ def _first_float(*values: Any) -> float | None:
     return None
 
 
+def _first_float_from_sources(
+    candidate: dict[str, Any],
+    tick: dict[str, Any],
+    keys: tuple[str, ...],
+) -> tuple[float | None, str | None]:
+    """Return the first numeric indicator found in candidate or tick payloads.
+
+    Args:
+        candidate: S4/S5 candidate metadata.
+        tick: Realtime tick payload.
+        keys: Common indicator key names to inspect in priority order.
+    """
+    for source_name, payload in (("candidate", candidate), ("tick", tick)):
+        for key in keys:
+            parsed = _to_float_or_none(payload.get(key))
+            if parsed is not None:
+                return parsed, f"{source_name}.{key}"
+    return None, None
+
+
+def _first_value_from_sources(
+    candidate: dict[str, Any],
+    tick: dict[str, Any],
+    keys: tuple[str, ...],
+) -> tuple[Any, str | None]:
+    """Return the first present indicator value found in candidate or tick payloads.
+
+    Args:
+        candidate: S4/S5 candidate metadata.
+        tick: Realtime tick payload.
+        keys: Common indicator key names to inspect in priority order.
+    """
+    for source_name, payload in (("candidate", candidate), ("tick", tick)):
+        for key in keys:
+            if key in payload and payload.get(key) not in (None, ""):
+                return payload.get(key), f"{source_name}.{key}"
+    return None, None
+
+
+def _parse_bool(value: Any) -> bool | None:
+    """Parse bool-like payload values without guessing from missing data.
+
+    Args:
+        value: Raw indicator value from candidate or tick payloads.
+    """
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("true", "1", "yes", "y", "above", "상단", "위"):
+        return True
+    if text in ("false", "0", "no", "n", "below", "하단", "아래"):
+        return False
+    return None
+
+
+def _parse_rsi_range(value: Any) -> tuple[float, float] | None:
+    """Parse RSI range rules expressed as [min, max] or 'min-max'.
+
+    Args:
+        value: RulePack rsi_range field.
+    """
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        low = _to_float_or_none(value[0])
+        high = _to_float_or_none(value[1])
+        if low is not None and high is not None and low < high:
+            return low, high
+    text = str(value or "").replace("~", "-").strip()
+    if "-" in text:
+        left, right = text.split("-", 1)
+        low = _to_float_or_none(left)
+        high = _to_float_or_none(right)
+        if low is not None and high is not None and low < high:
+            return low, high
+    return None
+
+
+def _normalize_vwap_position(value: Any) -> str | None:
+    """Normalize VWAP position payloads into 'above' or 'below'.
+
+    Args:
+        value: Raw VWAP position value.
+    """
+    parsed_bool = _parse_bool(value)
+    if parsed_bool is True:
+        return "above"
+    if parsed_bool is False:
+        return "below"
+    return None
+
+
+def _spread_percent_from_source(
+    value: float | None,
+    source: str | None,
+    price: float | None,
+) -> tuple[float | None, str | None]:
+    """Normalize explicit spread fields or raw KRW spread to percent.
+
+    Args:
+        value: Raw spread value from candidate or tick.
+        source: Source key path returned by `_first_float_from_sources`.
+        price: Current price used to convert raw KRW spread.
+    """
+    if value is None:
+        return None, "spread_missing"
+    if source and "rate" in source and abs(value) <= 1:
+        return value * 100.0, None
+    if source and source.endswith(".spread"):
+        if price is None or price <= 0:
+            return None, "spread_price_missing_for_raw_krw"
+        return value / price * 100.0, None
+    return value, None
+
+
+def _add_layer3_evaluation(
+    *,
+    matched: dict[str, Any],
+    observed_values: dict[str, Any],
+    unavailable_conditions: dict[str, Any],
+    candidate: dict[str, Any],
+    final_rule: dict[str, Any],
+    tick: dict[str, Any],
+    price: float | None,
+) -> None:
+    """Evaluate Layer3 indicators only when raw payload fields are present.
+
+    Args:
+        matched: Mutable rule result map returned from `_evaluate_rules`.
+        observed_values: Mutable observed indicator map persisted with the signal.
+        unavailable_conditions: Mutable map of rule keys that could not be evaluated.
+        candidate: S4/S5 candidate metadata.
+        final_rule: Resolved final rule from rule_cache.
+        tick: Parsed realtime tick payload.
+        price: Current tick price used only for VWAP comparison when VWAP is numeric.
+    """
+    vwap_rule = str(final_rule.get("vwap_position") or "any").strip().lower()
+    if vwap_rule not in ("", "any"):
+        raw_position, position_source = _first_value_from_sources(
+            candidate,
+            tick,
+            ("vwap_position", "vwap_pos", "price_vs_vwap", "above_vwap", "is_above_vwap"),
+        )
+        observed_position = _normalize_vwap_position(raw_position)
+        vwap_value, vwap_source = _first_float_from_sources(candidate, tick, ("vwap", "vwap_price"))
+        if observed_position is None and vwap_value is not None and price is not None:
+            observed_position = "above" if price >= vwap_value else "below"
+            position_source = vwap_source
+        if observed_position is None:
+            unavailable_conditions["vwap_position"] = {"reason": "vwap_missing", "required": vwap_rule}
+        else:
+            matched["vwap_position"] = observed_position == vwap_rule
+            observed_values["vwap_position"] = observed_position
+            observed_values["vwap_required"] = vwap_rule
+            observed_values["vwap_source"] = position_source
+            if vwap_value is not None:
+                observed_values["vwap"] = vwap_value
+
+    if final_rule.get("ma5_above_ma20") not in (None, "", "any"):
+        required_ma = _parse_bool(final_rule.get("ma5_above_ma20"))
+        raw_ma, ma_source = _first_value_from_sources(
+            candidate,
+            tick,
+            ("ma5_above_ma20", "ma_5_above_ma_20", "above_ma20"),
+        )
+        observed_ma = _parse_bool(raw_ma)
+        ma5, ma5_source = _first_float_from_sources(candidate, tick, ("ma5", "ma_5", "moving_average_5"))
+        ma20, ma20_source = _first_float_from_sources(candidate, tick, ("ma20", "ma_20", "moving_average_20"))
+        if observed_ma is None and ma5 is not None and ma20 is not None:
+            observed_ma = ma5 > ma20
+            ma_source = f"{ma5_source}>{ma20_source}"
+        if required_ma is None or observed_ma is None:
+            unavailable_conditions["ma5_above_ma20"] = {
+                "reason": "moving_average_missing",
+                "required": final_rule.get("ma5_above_ma20"),
+            }
+        else:
+            matched["ma5_above_ma20"] = observed_ma == required_ma
+            observed_values["ma5_above_ma20"] = observed_ma
+            observed_values["ma5_above_ma20_required"] = required_ma
+            observed_values["ma_source"] = ma_source
+            if ma5 is not None:
+                observed_values["ma5"] = ma5
+            if ma20 is not None:
+                observed_values["ma20"] = ma20
+
+    if final_rule.get("rsi_range") not in (None, "", "any"):
+        required_rsi = _parse_rsi_range(final_rule.get("rsi_range"))
+        rsi, rsi_source = _first_float_from_sources(
+            candidate,
+            tick,
+            ("rsi", "rsi14", "rsi_14", "relative_strength_index"),
+        )
+        if required_rsi is None or rsi is None:
+            unavailable_conditions["rsi_range"] = {"reason": "rsi_missing", "required": final_rule.get("rsi_range")}
+        else:
+            matched["rsi_range"] = required_rsi[0] <= rsi <= required_rsi[1]
+            observed_values["rsi"] = rsi
+            observed_values["rsi_range_required"] = list(required_rsi)
+            observed_values["rsi_source"] = rsi_source
+
+    spread_limit = _to_float_or_none(final_rule.get("spread_max_pct"))
+    if spread_limit is not None:
+        spread_raw, spread_source = _first_float_from_sources(
+            candidate,
+            tick,
+            ("spread_pct", "spread_percent", "bid_ask_spread_pct", "spread_rate"),
+        )
+        if spread_raw is None:
+            spread_raw, spread_source = _first_float_from_sources(candidate, tick, ("spread",))
+        spread_pct, spread_reason = _spread_percent_from_source(spread_raw, spread_source, price)
+        if spread_pct is None:
+            unavailable_conditions["spread_max_pct"] = {"reason": spread_reason, "required": spread_limit}
+        else:
+            matched["spread_max_pct"] = spread_pct <= spread_limit
+            observed_values["spread_pct"] = spread_pct
+            observed_values["spread_max_pct_required"] = spread_limit
+            observed_values["spread_source"] = spread_source
+
+
 def _rules_allow_signal(matched: dict[str, Any]) -> bool:
     """현재 S6 매수 신호 발행에 필요한 게이트 조건 통과 여부를 반환한다.
 
     Args:
         matched: Rule evaluation payload from `_evaluate_rules`.
     """
-    return all(
-        bool(matched.get(key))
-        for key in ("volume_ratio", "ai_confidence", "price_change")
+    required_keys = ["volume_ratio", "ai_confidence", "price_change"]
+    required_keys.extend(
+        key
+        for key in ("vwap_position", "ma5_above_ma20", "rsi_range", "spread_max_pct")
+        if key in matched
     )
+    return all(bool(matched.get(key)) for key in required_keys)
 
 
 def _get_setting_float(key: str, default: float) -> float:
@@ -399,21 +620,29 @@ class DecisionEngine:
                 "required": {"min": volume_ratio_min},
             }
 
-        # 현재 tick/candidate에는 아래 Layer3 지표가 없으므로 임의 계산하지 않고 상태만 남긴다.
-        layer3_unavailable = {
-            "vwap_position": "vwap_missing",
-            "ma5_above_ma20": "moving_average_missing",
-            "rsi_range": "rsi_missing",
-            "spread_max_pct": "spread_missing",
+        matched: dict[str, Any] = {
+            "volume_ratio": volume_ok,
+            "ai_confidence": ai_conf >= ai_conf_min,
+            "price_change": price_ok,
         }
-        for key, reason in layer3_unavailable.items():
-            if key in final_rule:
-                value = final_rule.get(key)
-                if value not in (None, "", "any"):
-                    unavailable_conditions[key] = {
-                        "reason": reason,
-                        "required": value,
-                    }
+        observed_values: dict[str, Any] = {
+            "ai_confidence": ai_conf,
+            "ai_confidence_min": ai_conf_min,
+            "change_rate": change_rate,
+            "price_change_min_pct": price_min_pct,
+            "price_change_max_pct": price_max_pct,
+            "volume_ratio": volume_ratio,
+            "volume_ratio_min": volume_ratio_min,
+        }
+        _add_layer3_evaluation(
+            matched=matched,
+            observed_values=observed_values,
+            unavailable_conditions=unavailable_conditions,
+            candidate=candidate,
+            final_rule=final_rule,
+            tick=tick,
+            price=_to_float_or_none(tick.get("price")),
+        )
 
         if unavailable_conditions:
             logger.warning(
@@ -422,21 +651,9 @@ class DecisionEngine:
                 sorted(unavailable_conditions.keys()),
             )
 
-        return {
-            "volume_ratio": volume_ok,
-            "ai_confidence": ai_conf >= ai_conf_min,
-            "price_change": price_ok,
-            "observed_values": {
-                "ai_confidence": ai_conf,
-                "ai_confidence_min": ai_conf_min,
-                "change_rate": change_rate,
-                "price_change_min_pct": price_min_pct,
-                "price_change_max_pct": price_max_pct,
-                "volume_ratio": volume_ratio,
-                "volume_ratio_min": volume_ratio_min,
-            },
-            "unavailable_conditions": unavailable_conditions,
-        }
+        matched["observed_values"] = observed_values
+        matched["unavailable_conditions"] = unavailable_conditions
+        return matched
 
     async def _emit_signal(
         self,

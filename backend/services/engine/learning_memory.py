@@ -128,6 +128,13 @@ async def run_learning_memory_builder(trade_date: str) -> dict:
             "SELECT * FROM trailing_quality_daily WHERE trade_date = ? ORDER BY created_at DESC LIMIT 1",
             (trade_date,),
         ).fetchone()
+        confidence_rows = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT * FROM confidence_calibration_daily WHERE trade_date = ?",
+                (trade_date,),
+            ).fetchall()
+        ]
 
     for profile in profile_rows:
         trade_count = int(profile.get("trade_count") or 0)
@@ -225,6 +232,13 @@ async def run_learning_memory_builder(trade_date: str) -> dict:
                 expires_at=expires_at,
             )
         )
+
+    try:
+        from .confidence_calibration import build_confidence_learning_recommendations
+
+        memories.extend(build_confidence_learning_recommendations(trade_date, confidence_rows))
+    except Exception as exc:
+        logger.error("FAIL: [S11] confidence calibration memory build failed trade_date=%s reason=%s", trade_date, exc)
 
     with get_connection() as conn:
         conn.execute("DELETE FROM learning_memories WHERE trade_date = ?", (trade_date,))

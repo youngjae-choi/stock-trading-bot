@@ -10,6 +10,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from ..db import get_connection
+from ..settings_store import get_setting
 
 logger = logging.getLogger("OrderPreflight")
 
@@ -33,6 +34,248 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return float(str(value).replace(",", "").strip() or default)
     except (TypeError, ValueError):
         return default
+
+
+def _to_float_or_none(value: Any) -> float | None:
+    """Convert DB values to float only when the source contains a real number.
+
+    Args:
+        value: Raw SQLite or KIS-derived numeric value.
+    """
+    if value in (None, ""):
+        return None
+    try:
+        return float(str(value).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _today_kst() -> str:
+    """Return today's Asia/Seoul date for daily risk lookups."""
+    return _now_kst().strftime("%Y-%m-%d")
+
+
+def _table_exists(conn: Any, table_name: str) -> bool:
+    """Return whether a SQLite table exists before optional source queries.
+
+    Args:
+        conn: Open SQLite connection.
+        table_name: Table name to check.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _table_columns(conn: Any, table_name: str) -> set[str]:
+    """Return a table's column names for compatibility with older schemas.
+
+    Args:
+        conn: Open SQLite connection.
+        table_name: Table name to inspect.
+    """
+    return {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+
+
+def _daily_loss_limit_percent(final_rule: dict[str, Any]) -> float:
+    """Read the active daily-loss percent from final_rule or Settings.
+
+    Args:
+        final_rule: Resolved symbol rule from S5/S6.
+    """
+    for key in ("daily_loss_limit", "daily_loss_limit_rate", "daily_loss_limit_pct"):
+        rule_value = _to_float_or_none(final_rule.get(key))
+        if rule_value is not None:
+            return _normalize_loss_limit_percent(rule_value, positive_is_loss=key == "daily_loss_limit_pct")
+    try:
+        setting_value = _to_float_or_none(get_setting("risk.daily_loss_limit_percent", -2.0))
+    except Exception as exc:
+        logger.warning("WARN: [S6-P] daily loss setting read failed; using default reason=%s", exc)
+        setting_value = None
+    return _normalize_loss_limit_percent(setting_value) if setting_value is not None else -2.0
+
+
+def _normalize_loss_limit_percent(value: float, positive_is_loss: bool = False) -> float:
+    """Normalize daily loss limit rates and percent values to signed percent.
+
+    Args:
+        value: Daily loss limit from RulePack or Settings. Values like -0.02 are
+            rates, while values like -2 are already percent.
+        positive_is_loss: Whether positive percent inputs represent max loss
+            magnitude from an explicit pct schema.
+    """
+    if -1.0 < value < 1.0 and value != 0:
+        normalized = value * 100.0
+    else:
+        normalized = value
+    if positive_is_loss and normalized > 0:
+        return -normalized
+    return normalized
+
+
+def _percent_from_krw(realized_pnl_krw: float | None, equity_krw: float | None) -> float | None:
+    """Convert realized KRW PnL to percent only when equity is known.
+
+    Args:
+        realized_pnl_krw: Realized profit/loss in KRW.
+        equity_krw: Account equity or total evaluated amount in KRW.
+    """
+    if realized_pnl_krw is None or equity_krw is None or equity_krw <= 0:
+        return None
+    return realized_pnl_krw / equity_krw * 100.0
+
+
+def _latest_account_snapshot_loss(
+    conn: Any,
+    trade_date: str,
+) -> tuple[float | None, float | None, float | None, str, str]:
+    """Return account-level daily PnL percent from the latest account snapshot.
+
+    Args:
+        conn: Open SQLite connection.
+        trade_date: YYYY-MM-DD date used for account snapshot lookup.
+    """
+    if not _table_exists(conn, "account_snapshots"):
+        return None, None, None, "account_snapshots.missing", "account_snapshot_table_missing"
+
+    columns = _table_columns(conn, "account_snapshots")
+    row = conn.execute(
+        """
+        SELECT * FROM account_snapshots
+        WHERE date(captured_at) = ?
+        ORDER BY captured_at DESC
+        LIMIT 1
+        """,
+        (trade_date,),
+    ).fetchone()
+    if not row:
+        return None, None, None, "account_snapshots.empty", "account_snapshot_missing_for_date"
+
+    observed_krw = _to_float_or_none(row["day_pnl"]) if "day_pnl" in columns else None
+    equity_krw = _to_float_or_none(row["equity"]) if "equity" in columns else None
+    observed_percent = _percent_from_krw(observed_krw, equity_krw)
+    reason = "account_day_pnl_equity_available" if observed_percent is not None else "account_equity_or_day_pnl_missing"
+    return observed_percent, observed_krw, equity_krw, "account_snapshots.day_pnl/equity", reason
+
+
+def evaluate_daily_loss_limit(final_rule: dict[str, Any], trade_date: str | None = None) -> dict[str, Any]:
+    """Evaluate whether today's realized PnL has breached the configured loss limit.
+
+    Args:
+        final_rule: Resolved symbol rule containing risk settings.
+        trade_date: Optional YYYY-MM-DD date used by tests and historical checks.
+    """
+    logger.info("START: [S6-P] daily loss guard evaluation")
+    safe_trade_date = trade_date or _today_kst()
+    limit_percent = _daily_loss_limit_percent(final_rule)
+    if limit_percent >= 0:
+        logger.warning(
+            "WARN: [S6-P] daily loss limit is non-negative; guard will not block limit=%.4f",
+            limit_percent,
+        )
+        return {
+            "breached": False,
+            "limit_percent": limit_percent,
+            "observed_percent": None,
+            "source": "settings_invalid_non_negative",
+            "reason": "daily_loss_limit_percent_non_negative",
+        }
+
+    observed_percent: float | None = None
+    observed_krw: float | None = None
+    equity_krw: float | None = None
+    source = "missing"
+    reason = "no_realized_pnl_source"
+
+    try:
+        with get_connection() as conn:
+            observed_percent, observed_krw, equity_krw, source, reason = _latest_account_snapshot_loss(
+                conn,
+                safe_trade_date,
+            )
+
+            if observed_percent is None and equity_krw is not None and _table_exists(conn, "daily_trade_summary"):
+                columns = _table_columns(conn, "daily_trade_summary")
+                order_column = "updated_at" if "updated_at" in columns else "trade_date"
+                row = conn.execute(
+                    f"SELECT * FROM daily_trade_summary WHERE trade_date = ? ORDER BY {order_column} DESC LIMIT 1",
+                    (safe_trade_date,),
+                ).fetchone()
+                if row and "realized_pnl" in columns:
+                    observed_krw = _to_float_or_none(row["realized_pnl"])
+                    observed_percent = _percent_from_krw(observed_krw, equity_krw)
+                    source = "daily_trade_summary.realized_pnl/equity"
+                    reason = (
+                        "summary_krw_equity_source_available"
+                        if observed_percent is not None
+                        else "summary_krw_missing"
+                    )
+
+            if observed_percent is None and _table_exists(conn, "trading_signals"):
+                columns = _table_columns(conn, "trading_signals")
+                if "realized_pnl" in columns and equity_krw is not None:
+                    row = conn.execute(
+                        """
+                        SELECT SUM(realized_pnl) AS realized_pnl
+                        FROM trading_signals
+                        WHERE trade_date = ?
+                          AND realized_pnl IS NOT NULL
+                        """,
+                        (safe_trade_date,),
+                    ).fetchone()
+                    observed_krw = _to_float_or_none(row["realized_pnl"] if row else None)
+                    observed_percent = _percent_from_krw(observed_krw, equity_krw)
+                    source = "trading_signals.realized_pnl/equity"
+                    reason = "signal_krw_equity_source_available" if observed_percent is not None else "signal_equity_missing"
+                elif "realized_pnl" in columns:
+                    source = "trading_signals.realized_pnl"
+                    reason = "signal_krw_available_but_equity_missing"
+    except Exception as exc:
+        logger.error("FAIL: [S6-P] daily loss guard source query failed reason=%s", exc)
+        return {
+            "breached": False,
+            "limit_percent": limit_percent,
+            "observed_percent": None,
+            "observed_krw": observed_krw,
+            "equity_krw": equity_krw,
+            "source": "query_failed",
+            "reason": str(exc),
+        }
+
+    breached = observed_percent is not None and observed_percent <= limit_percent
+    if breached:
+        logger.warning(
+            "BLOCK: [S6-P] daily loss limit breached source=%s observed=%.4f limit=%.4f",
+            source,
+            observed_percent,
+            limit_percent,
+        )
+    elif observed_percent is None:
+        logger.warning(
+            "WARN: [S6-P] daily loss guard non-blocking missing percent source=%s reason=%s limit=%.4f",
+            source,
+            reason,
+            limit_percent,
+        )
+    else:
+        logger.info(
+            "SUCCESS: [S6-P] daily loss guard ok source=%s observed=%.4f limit=%.4f",
+            source,
+            observed_percent,
+            limit_percent,
+        )
+
+    return {
+        "breached": breached,
+        "limit_percent": limit_percent,
+        "observed_percent": observed_percent,
+        "observed_krw": observed_krw,
+        "equity_krw": equity_krw,
+        "source": source,
+        "reason": reason,
+    }
 
 
 def _position_size_pct(final_rule: dict[str, Any]) -> float:
@@ -110,6 +353,17 @@ def run_preflight(
         block_reasons.append(f"confidence={confidence:.2f} < 최소 {ai_conf_min:.2f}")
     else:
         checks["ai_confidence"] = PREFLIGHT_OK
+
+    # 6. 당일 실현손실 한도. 증명 가능한 percent breach가 있을 때만 신규 BUY를 차단한다.
+    daily_loss = evaluate_daily_loss_limit(final_rule)
+    if daily_loss["breached"]:
+        checks["daily_loss_limit"] = PREFLIGHT_BLOCK
+        block_reasons.append(
+            "일일 손실한도 도달 "
+            f"({daily_loss['observed_percent']:.2f}% <= {daily_loss['limit_percent']:.2f}%)"
+        )
+    else:
+        checks["daily_loss_limit"] = PREFLIGHT_OK
 
     passed = len(block_reasons) == 0
     preflight_id = str(uuid.uuid4())
