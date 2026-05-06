@@ -53,6 +53,17 @@ test.beforeEach(async ({ page }) => {
             },
           },
         },
+        '/api/v1/engine/audit/today': { ok: true, payload: { trade_date: today, runs: [], by_step: {} } },
+        '/api/v1/engine/logs': {
+          ok: true,
+          payload: {
+            log_path: '/tmp/mock-server.log',
+            exists: true,
+            total: 1,
+            lines: ['mock backend log line'],
+            message: '서버 로그 1줄을 불러왔습니다.',
+          },
+        },
         '/api/v1/funnel/summary': { ok: true, payload: {} },
         '/api/v1/decision/status': { ok: true, payload: { active: false } },
         '/api/v1/orders/today': { ok: true, payload: { orders: [] } },
@@ -80,6 +91,113 @@ test.beforeEach(async ({ page }) => {
         skip ? 'skipped' : 'pending',
       );
       responses['/api/v1/daily-plan/today'] = envelope(null, null, skip ? 'skipped' : 'pending');
+
+      if (scenario === 'funnel-empty') {
+        responses['/api/v1/funnel/summary'] = {
+          ok: true,
+          payload: {
+            trade_date: today,
+            total_universe: 2500,
+            total_universe_source: 'KRX 기준 universe 값(DB 집계 아님)',
+            layer1_raw: 30,
+            layer1_count: 0,
+            layer1_rejected: 30,
+            layer1_rejection_breakdown: [],
+            layer2_count: 0,
+            signals_count: 0,
+            positions_count: 0,
+            profile_counts: {},
+            has_s3: true,
+            has_s4: false,
+            has_s5: false,
+            empty_reason: 'S3는 실행됐으나 통과 종목 0개라 S4/S5 미생성',
+            last_updated_at: `${today}T08:15:32+09:00`,
+          },
+        };
+      }
+
+      if (scenario === 'funnel-candidates') {
+        responses['/api/v1/funnel/summary'] = {
+          ok: true,
+          payload: {
+            trade_date: today,
+            total_universe: 2500,
+            total_universe_source: 'KRX 기준 universe 값(DB 집계 아님)',
+            layer1_raw: 30,
+            layer1_count: 2,
+            layer1_rejected: 28,
+            layer1_rejection_breakdown: [],
+            layer2_count: 2,
+            signals_count: 0,
+            positions_count: 0,
+            profile_counts: { MID_VOL: 2 },
+            has_s3: true,
+            has_s4: true,
+            has_s5: true,
+            empty_reason: '',
+            last_updated_at: `${today}T08:40:00+09:00`,
+          },
+        };
+        responses['/api/v1/screening/today'] = envelope(
+          {
+            screening: {
+              output_count: 2,
+              candidates: [
+                { ticker: 'AAA001', name: 'Ticker Corp', suitability_score: 0.91, confidence: 0.82, reason: 'ticker key', memory_refs: [] },
+                { code: 'BBB002', name: 'Code Corp', suitability_score: 0.73, confidence: 0.66, reason: 'code key', memory_refs: ['m1'] },
+              ],
+            },
+            trade_date: today,
+          },
+          { id: 'screening-1' },
+          'success',
+        );
+        responses['/api/v1/daily-plan/today'] = {
+          ok: true,
+          payload: {
+            symbol_assignments: [
+              { ticker: 'AAA001', profile: 'LOW_VOL', reason: 'ticker matched' },
+              { code: 'BBB002', profile: 'HIGH_VOL', reason: 'code matched' },
+            ],
+          },
+        };
+      }
+
+      if (scenario === 'logs-empty') {
+        responses['/api/v1/engine/logs'] = {
+          ok: true,
+          payload: {
+            log_path: '/tmp/mock-empty-server.log',
+            exists: true,
+            total: 0,
+            lines: [],
+            message: '서버 로그 파일은 비어 있습니다: /tmp/mock-empty-server.log',
+          },
+        };
+      }
+
+      if (scenario === 'audit-visible') {
+        responses['/api/v1/engine/audit/today'] = {
+          ok: true,
+          payload: {
+            trade_date: today,
+            runs: [],
+            by_step: {
+              s3: {
+                step: 'S3',
+                step_id: 's3',
+                trigger_source: 'auto_scheduler',
+                display_source: 'auto_scheduler',
+                status: 'success',
+                message: 'raw=30 filtered=0',
+                result_ref_id: 'uf-1',
+                started_at_kst: `${today} 08:15:00 KST`,
+                finished_at_kst: `${today} 08:15:32 KST`,
+              },
+            },
+          },
+        };
+      }
 
       const body = responses[pathName] || { ok: true, payload: {} };
       return new Response(JSON.stringify(body), {
@@ -128,4 +246,43 @@ test('schedule skip is shown as skipped instead of complete', async ({ page }) =
   for (const step of ['s2', 's3', 's4', 's5', 's5v', 's5a', 's6']) {
     await expect(page.locator(`#et-badge-${step}`)).toHaveText('비거래일 스킵');
   }
+});
+
+test('Funnel Monitor explains S3 zero pass-through without static rejection numbers', async ({ page }) => {
+  await page.evaluate(() => { window.__statusTruthScenario = 'funnel-empty'; });
+  await page.evaluate(() => loadFunnelData());
+
+  await expect(page.locator('#funnel-total-source')).toContainText('DB 집계 아님');
+  await expect(page.locator('#funnel-layer1-detail')).toContainText('raw 30 / 탈락 30');
+  await expect(page.locator('#funnel-empty-reason')).toContainText('S3는 실행됐으나 통과 종목 0개라 S4/S5 미생성');
+  await expect(page.locator('#funnel-layer1-reasons-tbody')).toContainText('S3 breakdown 미수집');
+  await expect(page.locator('#funnel-layer1-reasons-tbody')).not.toContainText('1,120');
+  await expect(page.locator('#funnel-quality-strength-detail')).toContainText('후보 없음: S3 통과 0');
+});
+
+test('Funnel candidate table maps ticker and code keys to assignments', async ({ page }) => {
+  await page.evaluate(() => { window.__statusTruthScenario = 'funnel-candidates'; });
+  await page.evaluate(() => loadFunnelData());
+
+  await expect(page.locator('#funnel-candidates-tbody')).toContainText('AAA001');
+  await expect(page.locator('#funnel-candidates-tbody')).toContainText('BBB002');
+  await expect(page.locator('#funnel-candidates-tbody')).toContainText('LOW_VOL');
+  await expect(page.locator('#funnel-candidates-tbody')).toContainText('HIGH_VOL');
+});
+
+test('Diagnostics log panel shows empty log file reason', async ({ page }) => {
+  await page.evaluate(() => { window.__statusTruthScenario = 'logs-empty'; });
+  await page.evaluate(() => engineTestLoadLogs(''));
+
+  await expect(page.locator('#et-server-log')).toContainText('서버 로그 파일은 비어 있습니다: /tmp/mock-empty-server.log');
+});
+
+test('Diagnostics cards display pipeline_run_audit source time and status', async ({ page }) => {
+  await page.evaluate(() => { window.__statusTruthScenario = 'audit-visible'; });
+  await page.evaluate(() => engineTestLoadTodayResults());
+
+  await expect(page.locator('#et-audit-s3')).toContainText('08:15:32 KST');
+  await expect(page.locator('#et-audit-s3')).toContainText('자동 실행 결과를 카드에 표시 중');
+  await expect(page.locator('#et-audit-s3')).toContainText('success');
+  await expect(page.locator('#et-audit-s3')).toContainText('raw=30 filtered=0');
 });

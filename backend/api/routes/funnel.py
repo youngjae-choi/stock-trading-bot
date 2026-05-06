@@ -45,6 +45,36 @@ def _empty_profile_counts() -> dict[str, int]:
     return {"LOW_VOL": 0, "MID_VOL": 0, "HIGH_VOL": 0, "THEME_SPIKE": 0}
 
 
+def _build_empty_reason(
+    *,
+    has_s3: bool,
+    has_s4: bool,
+    has_s5: bool,
+    layer1_count: int,
+    layer2_count: int,
+) -> str:
+    """Return a PM-facing reason for missing downstream Funnel stages.
+
+    Args:
+        has_s3: Whether today's S3 universe filter result exists.
+        has_s4: Whether today's S4 screening result exists.
+        has_s5: Whether today's S5 daily plan result exists.
+        layer1_count: S3 filtered_count for the latest S3 row.
+        layer2_count: S4 output_count for the latest S4 row.
+    """
+    if not has_s3:
+        return "오늘 S3 유니버스 필터 결과가 아직 없습니다."
+    if layer1_count == 0:
+        return "S3는 실행됐으나 통과 종목 0개라 S4/S5 미생성"
+    if not has_s4:
+        return "S3 통과 종목은 있으나 오늘 S4 스크리닝 결과가 아직 없습니다."
+    if layer2_count == 0:
+        return "S4는 실행됐으나 후보 종목 0개라 S5 미생성"
+    if not has_s5:
+        return "S4 후보 종목은 있으나 오늘 S5 Daily Plan 결과가 아직 없습니다."
+    return ""
+
+
 @router.get("/summary")
 async def get_funnel_summary():
     """Return today's Funnel stage counts from persisted DB data."""
@@ -57,7 +87,7 @@ async def get_funnel_summary():
             uf_row = None
             if _table_exists(conn, "universe_filter_results"):
                 uf_row = conn.execute(
-                    "SELECT raw_count, filtered_count FROM universe_filter_results"
+                    "SELECT id, raw_count, filtered_count, created_at FROM universe_filter_results"
                     " WHERE trade_date = ? ORDER BY created_at DESC LIMIT 1",
                     (today,),
                 ).fetchone()
@@ -66,7 +96,7 @@ async def get_funnel_summary():
             sc_row = None
             if _table_exists(conn, "hybrid_screening_results"):
                 sc_row = conn.execute(
-                    "SELECT raw_input_count, output_count FROM hybrid_screening_results"
+                    "SELECT id, raw_input_count, output_count, created_at FROM hybrid_screening_results"
                     " WHERE trade_date = ? ORDER BY created_at DESC LIMIT 1",
                     (today,),
                 ).fetchone()
@@ -83,7 +113,7 @@ async def get_funnel_summary():
 
             # Step 4: Read the active or validated daily plan for profile distribution.
             plan_row = conn.execute(
-                "SELECT symbol_assignments FROM daily_trading_plans"
+                "SELECT id, symbol_assignments, created_at FROM daily_trading_plans"
                 " WHERE trade_date = ? AND status IN ('active', 'validated')"
                 " ORDER BY created_at DESC LIMIT 1",
                 (today,),
@@ -103,16 +133,37 @@ async def get_funnel_summary():
         layer1_raw = int(uf_row["raw_count"]) if uf_row else 0
         layer1_count = int(uf_row["filtered_count"]) if uf_row else 0
         layer2_count = int(sc_row["output_count"]) if sc_row else 0
+        has_s3 = uf_row is not None
+        has_s4 = sc_row is not None
+        has_s5 = plan_row is not None
+        updated_candidates = [
+            row["created_at"]
+            for row in (uf_row, sc_row, plan_row)
+            if row is not None and row["created_at"]
+        ]
         payload = {
             "trade_date": today,
             "total_universe": 2500,
+            "total_universe_source": "KRX 기준 universe 값(DB 집계 아님)",
             "layer1_raw": layer1_raw,
             "layer1_count": layer1_count,
             "layer1_rejected": max(0, layer1_raw - layer1_count),
+            "layer1_rejection_breakdown": [],
             "layer2_count": layer2_count,
             "signals_count": int(sig_count),
             "positions_count": int(pos_count),
             "profile_counts": profile_counts,
+            "has_s3": has_s3,
+            "has_s4": has_s4,
+            "has_s5": has_s5,
+            "empty_reason": _build_empty_reason(
+                has_s3=has_s3,
+                has_s4=has_s4,
+                has_s5=has_s5,
+                layer1_count=layer1_count,
+                layer2_count=layer2_count,
+            ),
+            "last_updated_at": max(updated_candidates) if updated_candidates else "",
         }
         logger.info("SUCCESS: GET %s payload=%s", endpoint, payload)
         return {"ok": True, "payload": payload}

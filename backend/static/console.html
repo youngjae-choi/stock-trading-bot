@@ -1291,9 +1291,9 @@
           </div>
 
           <div class="grid cols-4">
-            <div class="card compact"><div class="card-title">전체 종목</div><div class="metric" id="funnel-total">-</div><div class="muted">KRX 기준</div></div>
-            <div class="card compact"><div class="card-title">Layer 1 통과</div><div class="metric" id="funnel-layer1">-</div><div class="muted">유니버스</div></div>
-            <div class="card compact"><div class="card-title">Layer 2 통과</div><div class="metric" id="funnel-layer2">-</div><div class="muted">후보 종목</div></div>
+            <div class="card compact"><div class="card-title">기준 universe</div><div class="metric" id="funnel-total">-</div><div class="muted" id="funnel-total-source">출처 확인 전</div></div>
+            <div class="card compact"><div class="card-title">Layer 1 통과</div><div class="metric" id="funnel-layer1">-</div><div class="muted" id="funnel-layer1-detail">S3 결과 확인 전</div></div>
+            <div class="card compact"><div class="card-title">Layer 2 통과</div><div class="metric" id="funnel-layer2">-</div><div class="muted" id="funnel-layer2-detail">S4 결과 확인 전</div></div>
             <div class="card compact"><div class="card-title">현재 매수대기</div><div class="metric" id="funnel-candidates">-</div><div class="muted">조건 접근중</div></div>
             <div class="card compact">
               <div class="card-title">Profile 배정 현황</div>
@@ -1325,6 +1325,10 @@
           </div>
 
           <div class="section-gap"></div>
+          <div class="card compact" id="funnel-empty-reason" style="display:none;"></div>
+          <div class="muted" id="funnel-last-updated" style="font-size:12px; margin-top:8px;"></div>
+
+          <div class="section-gap"></div>
 
           <div class="split">
             <div class="card">
@@ -1334,11 +1338,8 @@
                   <thead>
                     <tr><th>조건</th><th>탈락 수</th><th>비중</th><th>판단</th></tr>
                   </thead>
-                  <tbody>
-                    <tr><td>시가총액 500억 미만</td><td>1,120</td><td>44.8%</td><td><span class="status info">정상</span></td></tr>
-                    <tr><td>20일 평균 거래대금 10억 미만</td><td>830</td><td>33.2%</td><td><span class="status info">정상</span></td></tr>
-                    <tr><td>상장 60일 미만</td><td>72</td><td>2.9%</td><td><span class="status info">정상</span></td></tr>
-                    <tr><td>관리/투자경고</td><td>28</td><td>1.1%</td><td><span class="status ok">제외</span></td></tr>
+                  <tbody id="funnel-layer1-reasons-tbody">
+                    <tr><td colspan="4" class="muted" style="text-align:center;">새로고침을 눌러 불러오기</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -1348,13 +1349,13 @@
               <div class="card-title">Funnel Quality</div>
               <div class="card compact">
                 <div class="card-title">필터 강도</div>
-                <div><span class="status ok">적정</span></div>
-                <div class="muted">최근 20거래일 평균 유니버스 188개 대비 오늘 200개입니다.</div>
+                <div><span class="status info" id="funnel-quality-strength-status">확인 전</span></div>
+                <div class="muted" id="funnel-quality-strength-detail">실제 S3/S4 결과를 불러온 뒤 표시합니다.</div>
               </div>
               <div class="card compact">
                 <div class="card-title">이상 징후</div>
-                <div><span class="status ok">없음</span></div>
-                <div class="muted">후보 수 과다/과소, 종목코드 오류, 데이터 누락 없음.</div>
+                <div><span class="status info" id="funnel-quality-anomaly-status">확인 전</span></div>
+                <div class="muted" id="funnel-quality-anomaly-detail">품질 집계 미구현: 저장된 단계 결과만 표시합니다.</div>
               </div>
             </div>
           </div>
@@ -3815,6 +3816,7 @@
   async function engineTestLoadTodayResults() {
     applyOperationMetadata(await loadSettingsMap());
     var schedulerResponse = await fetchJson('/api/v1/scheduler/status').catch(() => null);
+    var auditResponse = await fetchJson('/api/v1/engine/audit/today').catch(() => null);
     var scheduleSkipped = isScheduleSkipActive(schedulerResponse);
     var steps = [
       { id: 's1', call: () => Promise.resolve(schedulerResponse && schedulerResponse.payload?.last_run ? schedulerResponse : {ok:false, payload: schedulerResponse ? schedulerResponse.payload : null}) },
@@ -3853,6 +3855,7 @@
         etSetBadge(step.id, 'pending', '대기');
       }
     }
+    applyDiagnosticsAudit(auditResponse && auditResponse.payload ? auditResponse.payload.by_step : {});
   }
 
   /* Update a Diagnostics badge while keeping pending, skipped, and success visually distinct. */
@@ -3869,6 +3872,49 @@
     if (!pre) return;
     pre.textContent = JSON.stringify(data, null, 2);
     pre.style.display = 'block';
+  }
+
+  /* Return a PM-friendly source label for a pipeline audit trigger source. */
+  function diagnosticsAuditSourceLabel(source) {
+    var labels = {
+      auto_scheduler: '자동 실행 결과를 카드에 표시 중',
+      console_manual: '수동 확인 실행 결과',
+      api_manual: 'API 수동 실행 결과'
+    };
+    return labels[source] || (source || 'source 미기록');
+  }
+
+  /* Render pipeline_run_audit metadata inside a Diagnostics step card. */
+  function etSetAudit(stepId, audit) {
+    var card = document.getElementById('et-card-' + stepId);
+    if (!card) return;
+    var auditEl = document.getElementById('et-audit-' + stepId);
+    if (!auditEl) {
+      auditEl = document.createElement('div');
+      auditEl.id = 'et-audit-' + stepId;
+      auditEl.className = 'muted';
+      auditEl.style.fontSize = '12px';
+      auditEl.style.lineHeight = '1.5';
+      auditEl.style.margin = '0 0 10px 0';
+      var resultEl = document.getElementById('et-result-' + stepId);
+      card.insertBefore(auditEl, resultEl || null);
+    }
+    if (!audit) {
+      auditEl.textContent = '오늘 pipeline_run_audit 없음';
+      return;
+    }
+    var when = audit.finished_at_kst || audit.started_at_kst || audit.started_at || '-';
+    var sourceLabel = diagnosticsAuditSourceLabel(audit.trigger_source);
+    var status = audit.status || 'status 미기록';
+    var message = audit.message || audit.result_ref_id || 'summary 없음';
+    auditEl.textContent = when + ' · ' + sourceLabel + ' · ' + status + ' · ' + message;
+  }
+
+  /* Apply latest pipeline_run_audit rows to all Diagnostics cards. */
+  function applyDiagnosticsAudit(byStep) {
+    OPS_STEPS.forEach(function(step) {
+      etSetAudit(step.id, byStep ? byStep[step.id] : null);
+    });
   }
 
   async function engineTestRun(step) {
@@ -3953,8 +3999,13 @@
       var res = await fetch(url);
       var data = await res.json();
       if (data.ok) {
-        var logs = data.payload.logs || (Array.isArray(data.payload.lines) ? data.payload.lines.join("\n") : "");
-        logEl.textContent = logs || "로그가 없습니다.";
+        var payload = data.payload || {};
+        var logs = payload.logs || (Array.isArray(payload.lines) ? payload.lines.join("\n") : "");
+        if (logs) {
+          logEl.textContent = "[log_path: " + (payload.log_path || "-") + " | total: " + (payload.total || 0) + "]\n" + logs;
+        } else {
+          logEl.textContent = payload.message || "서버 로그 파일은 비어 있습니다: " + (payload.log_path || "경로 미확인");
+        }
         logEl.scrollTop = logEl.scrollHeight;
       }
     } catch (e) {
@@ -5108,6 +5159,55 @@
     }
   }
 
+  /* Return the canonical stock code used by Funnel candidate and assignment payloads. */
+  function funnelSymbolKey(item) {
+    return item ? (item.symbol || item.ticker || item.code || '') : '';
+  }
+
+  /* Update Layer 1 rejection details without inventing unavailable breakdowns. */
+  function renderFunnelLayer1Breakdown(summary) {
+    var tbody = document.getElementById('funnel-layer1-reasons-tbody');
+    if (!tbody) return;
+    var breakdown = summary.layer1_rejection_breakdown || [];
+    if (Array.isArray(breakdown) && breakdown.length > 0) {
+      tbody.innerHTML = breakdown.map(function(row) {
+        return '<tr>'
+          + '<td>' + escapeHtml(row.condition || '-') + '</td>'
+          + '<td>' + escapeHtml(String(row.count != null ? row.count : '-')) + '</td>'
+          + '<td>' + escapeHtml(row.ratio || '-') + '</td>'
+          + '<td><span class="status info">' + escapeHtml(row.status || '집계') + '</span></td>'
+          + '</tr>';
+      }).join('');
+      return;
+    }
+    var rejected = summary.layer1_rejected != null ? summary.layer1_rejected.toLocaleString() : '-';
+    tbody.innerHTML = '<tr>'
+      + '<td>탈락 사유 상세 집계 없음</td>'
+      + '<td>' + rejected + '</td>'
+      + '<td>-</td>'
+      + '<td><span class="status info">S3 breakdown 미수집</span></td>'
+      + '</tr>';
+  }
+
+  /* Render Funnel quality from known persisted state only. */
+  function renderFunnelQuality(summary) {
+    var strengthStatus = document.getElementById('funnel-quality-strength-status');
+    var strengthDetail = document.getElementById('funnel-quality-strength-detail');
+    var anomalyStatus = document.getElementById('funnel-quality-anomaly-status');
+    var anomalyDetail = document.getElementById('funnel-quality-anomaly-detail');
+    if (summary.has_s3 && summary.layer1_count === 0) {
+      if (strengthStatus) strengthStatus.textContent = '후보 없음';
+      if (strengthDetail) strengthDetail.textContent = '후보 없음: S3 통과 0';
+      if (anomalyStatus) anomalyStatus.textContent = '후속 미생성';
+      if (anomalyDetail) anomalyDetail.textContent = summary.empty_reason || 'S3 통과 종목이 없어 S4/S5가 생성되지 않았습니다.';
+      return;
+    }
+    if (strengthStatus) strengthStatus.textContent = summary.has_s3 ? 'DB 기준 표시' : 'S3 없음';
+    if (strengthDetail) strengthDetail.textContent = '최근 N거래일 품질 집계 미구현: 오늘 저장된 Funnel 결과만 표시합니다.';
+    if (anomalyStatus) anomalyStatus.textContent = summary.empty_reason ? '확인 필요' : '저장 결과 기준';
+    if (anomalyDetail) anomalyDetail.textContent = summary.empty_reason || '정적 품질 문구를 제거하고 DB 결과만 표시 중입니다.';
+  }
+
   async function loadFunnelData() {
     loadFunnelMemoryCounts();
     // Load Daily Plan profile assignments
@@ -5133,10 +5233,25 @@
         var l1El = document.getElementById("funnel-layer1");
         var l2El2 = document.getElementById("funnel-layer2");
         var candEl2 = document.getElementById("funnel-candidates");
-        if (totalEl) totalEl.textContent = (fp.total_universe || 2500).toLocaleString();
+        var totalSourceEl = document.getElementById("funnel-total-source");
+        var l1DetailEl = document.getElementById("funnel-layer1-detail");
+        var l2DetailEl = document.getElementById("funnel-layer2-detail");
+        var emptyReasonEl = document.getElementById("funnel-empty-reason");
+        var lastUpdatedEl = document.getElementById("funnel-last-updated");
+        if (totalEl) totalEl.textContent = fp.total_universe != null ? fp.total_universe.toLocaleString() : "-";
+        if (totalSourceEl) totalSourceEl.textContent = fp.total_universe_source || "출처 미확인";
         if (l1El) l1El.textContent = fp.layer1_count != null ? fp.layer1_count.toLocaleString() : "-";
+        if (l1DetailEl) l1DetailEl.textContent = "raw " + (fp.layer1_raw != null ? fp.layer1_raw.toLocaleString() : "-") + " / 탈락 " + (fp.layer1_rejected != null ? fp.layer1_rejected.toLocaleString() : "-");
         if (l2El2 && fp.layer2_count != null) l2El2.textContent = fp.layer2_count.toLocaleString();
+        if (l2DetailEl) l2DetailEl.textContent = (fp.has_s4 ? "S4 결과 있음" : "S4 결과 없음") + " / " + (fp.has_s5 ? "S5 결과 있음" : "S5 결과 없음");
         if (candEl2 && fp.signals_count != null) candEl2.textContent = fp.signals_count;
+        if (emptyReasonEl) {
+          emptyReasonEl.textContent = fp.empty_reason || "";
+          emptyReasonEl.style.display = fp.empty_reason ? "block" : "none";
+        }
+        if (lastUpdatedEl) lastUpdatedEl.textContent = fp.last_updated_at ? "마지막 Funnel 결과 시각: " + fp.last_updated_at : "오늘 저장된 Funnel 결과 시각 없음";
+        renderFunnelLayer1Breakdown(fp);
+        renderFunnelQuality(fp);
         // Risk Profile별 배정 수
         var pc = fp.profile_counts || {};
         var setPC = function(id, key) { var el = document.getElementById(id); if (el) el.textContent = pc[key] || 0; };
@@ -5162,13 +5277,14 @@
           tbody.innerHTML = candidates.map(function(c) {
             var score = c.suitability_score != null ? c.suitability_score.toFixed(2) : "-";
             var conf = c.confidence != null ? c.confidence.toFixed(2) : "-";
-            var asgn = assignments.find(function(a) { return a.symbol === c.symbol; });
+            var candidateSymbol = funnelSymbolKey(c);
+            var asgn = assignments.find(function(a) { return funnelSymbolKey(a) === candidateSymbol; });
             var profileName = asgn ? asgn.profile : "-";
             var profileReason = asgn ? asgn.reason : "-";
             var memRefs = (c.memory_refs || []).join(', ') || '-';
 
             return '<tr>'
-              + '<td>' + escapeHtml(c.symbol || "") + '</td>'
+              + '<td>' + escapeHtml(candidateSymbol) + '</td>'
               + '<td>' + escapeHtml(c.name || "") + '</td>'
               + '<td>' + score + '</td>'
               + '<td>-</td><td>-</td>'
@@ -5182,7 +5298,7 @@
               + '</tr>';
           }).join("");
         } else if (tbody && sc.output_count === 0) {
-          tbody.innerHTML = '<tr><td colspan="12" class="muted" style="text-align:center;">오늘 스크리닝 결과 없음 (S4 미실행)</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="12" class="muted" style="text-align:center;">오늘 스크리닝 후보 없음</td></tr>';
         }
       }
     } catch (e) {

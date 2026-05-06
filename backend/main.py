@@ -63,6 +63,38 @@ logging.basicConfig(
 )
 logger = logging.getLogger("BackendServer")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+SERVER_LOG_FILE = Path(__file__).resolve().parents[1] / "logs" / "server.log"
+
+
+def _logger_has_file_handler(target_logger: logging.Logger, log_file: Path) -> bool:
+    """Return whether a logger already writes to the requested server log file.
+
+    Args:
+        target_logger: Logger to inspect.
+        log_file: Expected log file path.
+    """
+    target_path = str(log_file.resolve())
+    for handler in target_logger.handlers:
+        if isinstance(handler, logging.FileHandler) and Path(handler.baseFilename).resolve().as_posix() == Path(target_path).as_posix():
+            return True
+    return False
+
+
+def _configure_server_file_logging() -> None:
+    """Attach the root logs/server.log handler used by the Diagnostics log panel."""
+    SERVER_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    root_logger = logging.getLogger()
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    root_logger.setLevel(settings.LOG_LEVEL)
+    if _logger_has_file_handler(root_logger, SERVER_LOG_FILE):
+        return
+    file_handler = logging.FileHandler(SERVER_LOG_FILE, encoding="utf-8")
+    file_handler.setLevel(settings.LOG_LEVEL)
+    file_handler.setFormatter(formatter)
+    root_logger.addHandler(file_handler)
+
+
+_configure_server_file_logging()
 
 
 @asynccontextmanager
