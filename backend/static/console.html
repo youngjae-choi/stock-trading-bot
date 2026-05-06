@@ -802,8 +802,19 @@
     #et-server-log {
       font-family: monospace;
     }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-size: 12px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      white-space: nowrap;
+    }
     .badge.ok { background: var(--green-soft, rgba(53,183,121,0.15)); color: var(--green, #3fb950); border: 1px solid var(--green, #3fb950); }
     .badge.running { background: var(--blue-soft, rgba(88,166,255,0.15)); color: var(--blue, #58a6ff); border: 1px solid; animation: pulse 1.5s infinite; }
+    .badge.skipped { background: var(--yellow-soft, rgba(217,164,65,0.15)); color: var(--yellow, #d9a441); border: 1px solid var(--yellow, #d9a441); }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
   </style>
 </head>
@@ -2738,6 +2749,119 @@
     };
   }
 
+  /* Return today's date in the exchange-facing KST calendar. */
+  function getKstDateString(date) {
+    var parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Seoul",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).formatToParts(date || new Date());
+    var byType = {};
+    parts.forEach(function(part) {
+      byType[part.type] = part.value;
+    });
+    return byType.year + "-" + byType.month + "-" + byType.day;
+  }
+
+  /* Check whether a pipeline trade_date belongs to the current KST day. */
+  function isTodayTradeDate(value) {
+    return String(value || "") === getKstDateString();
+  }
+
+  /* Read the scheduler skip flag from the Scheduler status envelope. */
+  function isScheduleSkipActive(response) {
+    var skipValue = response && response.payload ? response.payload.schedule_skip_today : null;
+    if (skipValue && typeof skipValue === "object") {
+      return skipValue.skip === true;
+    }
+    return skipValue === true || String(skipValue).toLowerCase() === "true";
+  }
+
+  /* Decide whether a step belongs to the S2~S6 auto-skip window. */
+  function isScheduleSkippedStep(stepId) {
+    return ["s2", "s3", "s4", "s5", "s5v", "s5a", "s6"].indexOf(stepId) >= 0;
+  }
+
+  /* Extract the persisted result object from old and new GET response shapes. */
+  function getPipelineResult(stepId, response) {
+    if (!response || response.ok !== true) return null;
+    if (response.result) return response.result;
+    var payload = response.payload;
+    if (!payload) return null;
+    if (stepId === "s2") return payload.market_tone || null;
+    if (stepId === "s3") return payload.universe || payload.filter_result || null;
+    if (stepId === "s4") return payload.screening || payload.screening_result || null;
+    if (stepId === "s5" || stepId === "s5v" || stepId === "s5a") return payload.plan || payload;
+    return payload;
+  }
+
+  /* Extract the trade date attached to a pipeline GET response. */
+  function getPipelineTradeDate(stepId, response) {
+    var result = getPipelineResult(stepId, response);
+    return (result && result.trade_date) || (response && response.trade_date) || (response && response.payload && response.payload.trade_date);
+  }
+
+  /* Determine if a persisted S2~S5 result really exists for today. */
+  function hasTodayPipelineResult(stepId, response) {
+    if (!response || response.ok !== true || response.has_result === false) return false;
+    var result = getPipelineResult(stepId, response);
+    if (!result || typeof result !== "object") return false;
+    if (!isTodayTradeDate(getPipelineTradeDate(stepId, response))) return false;
+    if (stepId === "s5") {
+      return Boolean(result.id && result.status);
+    }
+    return true;
+  }
+
+  /* Map a read-only response to the UI state used by the Today timeline. */
+  function getPipelineReadState(stepId, response, scheduleSkipped) {
+    if (scheduleSkipped && isScheduleSkippedStep(stepId)) return "skipped";
+    if (response && response.status === "skipped" && !hasTodayPipelineResult(stepId, response)) return "skipped";
+    if (hasTodayPipelineResult(stepId, response)) return "completed";
+    return stepId === "s5" ? "missing" : "pending";
+  }
+
+  /* Check Daily Plan validation/activation state without assuming payload nesting. */
+  function hasDailyPlanStatus(response, allowedStatuses) {
+    var plan = getPipelineResult("s5", response);
+    return Boolean(
+      plan &&
+      plan.id &&
+      isTodayTradeDate(plan.trade_date || (response && response.trade_date)) &&
+      allowedStatuses.indexOf(plan.status) >= 0
+    );
+  }
+
+  /* Build a Diagnostics badge from a read-only GET response. */
+  function getDiagnosticsReadBadge(stepId, response, scheduleSkipped) {
+    if (scheduleSkipped && isScheduleSkippedStep(stepId)) {
+      return { status: "skipped", text: "비거래일 스킵" };
+    }
+    if (["s2", "s3", "s4", "s5"].indexOf(stepId) >= 0) {
+      var readState = getPipelineReadState(stepId, response, false);
+      if (readState === "completed") return { status: "ok", text: "완료" };
+      if (readState === "skipped") return { status: "skipped", text: "스킵" };
+      return { status: "pending", text: stepId === "s5" ? "미생성" : "대기" };
+    }
+    if (stepId === "s5v") {
+      return hasDailyPlanStatus(response, ["validated", "active"])
+        ? { status: "ok", text: "완료" }
+        : { status: "pending", text: "대기" };
+    }
+    if (stepId === "s5a") {
+      return hasDailyPlanStatus(response, ["active"])
+        ? { status: "ok", text: "완료" }
+        : { status: "pending", text: "대기" };
+    }
+    return response && response.ok ? { status: "ok", text: "완료" } : { status: "pending", text: "대기" };
+  }
+
+  /* Ensure manual POST success is based on a real response body, not ok alone. */
+  function hasManualRunPayload(payload) {
+    return payload !== null && payload !== undefined;
+  }
+
   /* Render today's operations as a horizontal timeline with dynamic status logic. */
   async function renderTodayFeed() {
     var feed = todayOpsFeed || document.getElementById("today-ops-feed");
@@ -2782,16 +2906,19 @@
       }
 
       function isOk(idx) { return statusResults[idx].status === 'fulfilled' && statusResults[idx].value.ok; }
+      function getValue(idx) { return statusResults[idx].status === 'fulfilled' ? statusResults[idx].value : null; }
+
+      var scheduleSkipped = isScheduleSkipActive(getValue(0));
 
       var stepStates = {
         s1: isOk(0) && statusResults[0].value.payload.last_run ? 'completed' : 'pending',
-        s2: isOk(1) ? 'completed' : 'pending',
-        s3: isOk(2) ? 'completed' : 'pending',
-        s4: isOk(3) ? 'completed' : 'pending',
-        s5: isOk(4) ? 'completed' : 'pending',
-        s5v: isOk(4) && ['validated', 'active'].indexOf(statusResults[4].value.payload?.plan?.status) >= 0 ? 'completed' : 'pending',
-        s5a: isOk(4) && statusResults[4].value.payload?.plan?.status === 'active' ? 'completed' : 'pending',
-        s6: isOk(5) && statusResults[5].value.payload.active ? 'running' : 'pending',
+        s2: getPipelineReadState('s2', getValue(1), scheduleSkipped),
+        s3: getPipelineReadState('s3', getValue(2), scheduleSkipped),
+        s4: getPipelineReadState('s4', getValue(3), scheduleSkipped),
+        s5: getPipelineReadState('s5', getValue(4), scheduleSkipped),
+        s5v: scheduleSkipped ? 'skipped' : (hasDailyPlanStatus(getValue(4), ['validated', 'active']) ? 'completed' : 'pending'),
+        s5a: scheduleSkipped ? 'skipped' : (hasDailyPlanStatus(getValue(4), ['active']) ? 'completed' : 'pending'),
+        s6: scheduleSkipped ? 'skipped' : (isOk(5) && statusResults[5].value.payload.active ? 'running' : 'pending'),
         s7: isOk(6) && statusResults[6].value.payload.orders && statusResults[6].value.payload.orders.length > 0 ? 'completed' : 'pending',
         s8: isOk(7) && statusResults[7].value.payload.positions && statusResults[7].value.payload.positions.length > 0 ? 'completed' : 'pending',
         s9: 'pending',
@@ -2803,7 +2930,7 @@
       if (stepStates.s6 !== 'running') {
         var nowMin = phase.currentMinutes;
         OPS_STEPS.forEach(step => {
-          if (stepStates[step.id] === 'pending') {
+          if (stepStates[step.id] === 'pending' && ["s2", "s3", "s4", "s5", "s5v", "s5a", "s6"].indexOf(step.id) < 0) {
             var sTime = stepDisplayTime(step, settingsMap);
             if (isClockTime(sTime) && nowMin >= minutesOf(sTime) && nowMin < minutesOf(sTime) + 15) {
               stepStates[step.id] = 'running';
@@ -2829,6 +2956,12 @@
           bgColor = 'var(--blue-soft)';
           borderColor = 'var(--blue)';
           statusText = '실행중';
+        } else if (state === 'skipped') {
+          bgColor = 'var(--yellow-soft)';
+          borderColor = 'var(--yellow)';
+          statusText = '스킵';
+        } else if (state === 'missing') {
+          statusText = '미생성';
         }
 
         html += '<div style="flex:0 0 90px; text-align:center;">'
@@ -3681,14 +3814,16 @@
 
   async function engineTestLoadTodayResults() {
     applyOperationMetadata(await loadSettingsMap());
+    var schedulerResponse = await fetchJson('/api/v1/scheduler/status').catch(() => null);
+    var scheduleSkipped = isScheduleSkipActive(schedulerResponse);
     var steps = [
-      { id: 's1', call: () => fetchJson('/api/v1/scheduler/status').then(r => r.payload?.last_run ? r : {ok:false}) },
+      { id: 's1', call: () => Promise.resolve(schedulerResponse && schedulerResponse.payload?.last_run ? schedulerResponse : {ok:false, payload: schedulerResponse ? schedulerResponse.payload : null}) },
       { id: 's2', call: () => fetchJson('/api/v1/market-tone/today') },
       { id: 's3', call: () => fetchJson('/api/v1/universe-filter/today') },
       { id: 's4', call: () => fetchJson('/api/v1/screening/today') },
       { id: 's5', call: () => fetchJson('/api/v1/daily-plan/today') },
-      { id: 's5v', call: () => fetchJson('/api/v1/daily-plan/today').then(r => ['validated', 'active'].indexOf(r.payload?.status) >= 0 ? r : {ok:false}) },
-      { id: 's5a', call: () => fetchJson('/api/v1/daily-plan/today').then(r => r.payload?.status === 'active' ? r : {ok:false}) },
+      { id: 's5v', call: () => fetchJson('/api/v1/daily-plan/today') },
+      { id: 's5a', call: () => fetchJson('/api/v1/daily-plan/today') },
       { id: 's6', call: () => fetchJson('/api/v1/decision/status').then(r => r.payload?.active ? r : {ok:false}) },
       { id: 's7', call: () => fetchJson('/api/v1/orders/today').then(r => (r.payload?.orders?.length > 0) ? r : {ok:false}) },
       { id: 's8', call: () => fetchJson('/api/v1/orders/positions').then(r => (r.payload?.positions?.length > 0) ? r : {ok:false}) },
@@ -3700,8 +3835,16 @@
     for (var step of steps) {
       try {
         var res = await step.call();
+        if (scheduleSkipped && isScheduleSkippedStep(step.id)) {
+          etSetBadge(step.id, 'skipped', '비거래일 스킵');
+          if (res && Object.prototype.hasOwnProperty.call(res, 'payload')) {
+            etSetResult(step.id, res.payload);
+          }
+          continue;
+        }
         if (res && res.ok) {
-          etSetBadge(step.id, 'ok', '완료');
+          var badge = getDiagnosticsReadBadge(step.id, res, scheduleSkipped);
+          etSetBadge(step.id, badge.status, badge.text);
           etSetResult(step.id, res.payload);
         } else {
           etSetBadge(step.id, 'pending', '대기');
@@ -3712,13 +3855,15 @@
     }
   }
 
+  /* Update a Diagnostics badge while keeping pending, skipped, and success visually distinct. */
   function etSetBadge(stepId, status, text) {
     var badge = document.getElementById('et-badge-' + stepId);
     if (!badge) return;
     badge.textContent = text;
-    badge.className = 'badge ' + (status === 'ok' ? 'ok' : status === 'running' ? 'running' : '');
+    badge.className = 'badge ' + (status === 'ok' ? 'ok' : status === 'running' ? 'running' : status === 'skipped' ? 'skipped' : '');
   }
 
+  /* Render raw Diagnostics JSON so null payloads remain visible to operators. */
   function etSetResult(stepId, data) {
     var pre = document.getElementById('et-result-' + stepId);
     if (!pre) return;
@@ -3774,7 +3919,7 @@
       var res = await fetch(stepUrl, { method: method });
       var data = await res.json();
 
-      if (data.ok) {
+      if (data.ok && hasManualRunPayload(data.payload)) {
         if (badge) {
           badge.textContent = "성공";
           badge.className = "badge ok";

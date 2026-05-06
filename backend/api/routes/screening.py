@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from ...api.dependencies import require_console_user
 from ...config import validate_config
 from ...services.engine import hybrid_screening as screening_svc
+from .status_envelope import build_pipeline_read_envelope
 
 logger = logging.getLogger("BackendScreeningAPI")
 
@@ -28,12 +29,11 @@ async def get_screening_today():
     logger.info("START: GET /api/v1/screening/today trade_date=%s", today)
     result = screening_svc.get_today_screening(today)
     logger.info("SUCCESS: GET /api/v1/screening/today found=%s", result is not None)
-    return {
-        "ok": True,
-        "source": "backend",
-        "live": True,
-        "payload": {"screening": result, "trade_date": today},
-    }
+    return build_pipeline_read_envelope(
+        payload={"screening": result, "trade_date": today},
+        result=result,
+        trade_date=today,
+    )
 
 
 @router.post("/run", summary="하이브리드 스크리닝 즉시 실행")

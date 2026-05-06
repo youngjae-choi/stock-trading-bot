@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from ...api.dependencies import require_console_user
 from ...services.engine import llm_router, market_tone
+from .status_envelope import build_pipeline_read_envelope
 
 logger = logging.getLogger("BackendMarketToneAPI")
 router = APIRouter(prefix="/api/v1/market-tone", tags=["market-tone"], dependencies=[Depends(require_console_user)])
@@ -28,12 +29,11 @@ async def get_market_tone_today():
 
     result = market_tone.get_today_market_tone(today)
     logger.info("SUCCESS: GET /api/v1/market-tone/today found=%s", result is not None)
-    return {
-        "ok": True,
-        "source": "backend",
-        "live": True,
-        "payload": {"market_tone": result, "trade_date": today},
-    }
+    return build_pipeline_read_envelope(
+        payload={"market_tone": result, "trade_date": today},
+        result=result,
+        trade_date=today,
+    )
 
 
 @router.post("/analyze", summary="시장 톤 즉시 분석 실행")

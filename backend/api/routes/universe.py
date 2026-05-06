@@ -14,6 +14,7 @@ from ...config import validate_config
 from ...services.engine import universe_filter as universe_filter_svc
 from ...services.kis.domestic import universe_service
 from ..dependencies import kis_config_error_response
+from .status_envelope import build_pipeline_read_envelope
 
 logger = logging.getLogger("BackendUniverseAPI")
 router = APIRouter(prefix="/api/v1/kis/universe", tags=["universe"])
@@ -32,12 +33,11 @@ async def get_universe_filter_today():
     logger.info("START: GET /api/v1/universe-filter/today trade_date=%s", today)
     result = universe_filter_svc.get_today_universe(today)
     logger.info("SUCCESS: GET /api/v1/universe-filter/today found=%s", result is not None)
-    return {
-        "ok": True,
-        "source": "backend",
-        "live": True,
-        "payload": {"universe": result, "trade_date": today},
-    }
+    return build_pipeline_read_envelope(
+        payload={"universe": result, "trade_date": today},
+        result=result,
+        trade_date=today,
+    )
 
 
 @_filter_router.post("/run", summary="유니버스 필터 즉시 실행")

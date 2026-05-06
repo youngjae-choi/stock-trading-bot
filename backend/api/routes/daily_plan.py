@@ -15,6 +15,7 @@ from ...services.engine.daily_plan import (
 )
 from ...services.db import get_connection
 from ...services.engine.pipeline_audit import finish_pipeline_run, normalize_trigger_source, start_pipeline_run
+from .status_envelope import build_pipeline_read_envelope
 
 router = APIRouter(prefix="/api/v1/daily-plan", tags=["daily-plan"])
 logger = logging.getLogger("DailyPlanAPI")
@@ -27,16 +28,19 @@ def _today_kst() -> str:
 
 @router.get("/today")
 def get_today():
-    plan = get_today_daily_plan(_today_kst())
-    return {"ok": True, "payload": plan}
+    """Return today's Daily Plan without treating a missing plan as success."""
+    trade_date = _today_kst()
+    plan = get_today_daily_plan(trade_date)
+    return build_pipeline_read_envelope(payload=plan, result=plan, trade_date=trade_date)
 
 
 @router.get("/{date}")
 def get_by_date(date: str):
+    """Return a Daily Plan for a specific date with explicit result state."""
     plan = get_today_daily_plan(date)
     if not plan:
         raise HTTPException(status_code=404, detail="Daily plan not found")
-    return {"ok": True, "payload": plan}
+    return build_pipeline_read_envelope(payload=plan, result=plan, trade_date=date)
 
 
 @router.post("/generate")
