@@ -1,9 +1,89 @@
 const { test, expect } = require('@playwright/test');
+const fs = require('fs');
+const http = require('http');
 const path = require('path');
 
-const consolePath = 'file://' + path.resolve(__dirname, '../../backend/static/console.html');
+const staticRoot = path.resolve(__dirname, '../../backend/static');
+let statusTruthServer;
+let statusTruthBaseUrl;
+
+function contentTypeFor(filePath) {
+  if (filePath.endsWith('.html')) return 'text/html; charset=utf-8';
+  if (filePath.endsWith('.css')) return 'text/css; charset=utf-8';
+  if (filePath.endsWith('.js')) return 'application/javascript; charset=utf-8';
+  return 'application/octet-stream';
+}
+
+function resolveStaticPath(requestPath) {
+  const relativePath = requestPath === '/console'
+    ? 'console.html'
+    : requestPath.replace(/^\/static\//, '');
+  const resolved = path.resolve(staticRoot, relativePath);
+  if (!resolved.startsWith(staticRoot + path.sep) && resolved !== staticRoot) {
+    return null;
+  }
+  return resolved;
+}
+
+test.beforeAll(async () => {
+  statusTruthServer = http.createServer((request, response) => {
+    if (request.method !== 'GET') {
+      response.writeHead(405, { 'content-type': 'text/plain; charset=utf-8' });
+      response.end('Method Not Allowed');
+      return;
+    }
+
+    const requestUrl = new URL(request.url, 'http://status-truth.local');
+    if (requestUrl.pathname !== '/console' && !requestUrl.pathname.startsWith('/static/')) {
+      response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+      response.end('Not Found');
+      return;
+    }
+
+    const filePath = resolveStaticPath(decodeURIComponent(requestUrl.pathname));
+    if (!filePath || !fs.existsSync(filePath)) {
+      response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+      response.end('Not Found');
+      return;
+    }
+
+    response.writeHead(200, { 'content-type': contentTypeFor(filePath) });
+    fs.createReadStream(filePath).pipe(response);
+  });
+
+  await new Promise((resolve) => {
+    statusTruthServer.listen(0, '127.0.0.1', resolve);
+  });
+  const { port } = statusTruthServer.address();
+  statusTruthBaseUrl = `http://127.0.0.1:${port}`;
+});
+
+test.afterAll(async () => {
+  if (!statusTruthServer) return;
+  await new Promise((resolve, reject) => {
+    statusTruthServer.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+});
 
 test.beforeEach(async ({ page }) => {
+  page._statusTruthBrowserErrors = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') {
+      page._statusTruthBrowserErrors.push(message.text());
+    }
+  });
+  page.on('pageerror', (error) => {
+    page._statusTruthBrowserErrors.push(error.message);
+  });
+  page.on('response', (response) => {
+    if (response.url().includes('/static/') && !response.ok()) {
+      page._statusTruthBrowserErrors.push(`Failed to load resource ${response.url()} status=${response.status()}`);
+    }
+  });
+
   await page.addInitScript(() => {
     window.__statusTruthScenario = 'nulls';
 
@@ -206,7 +286,42 @@ test.beforeEach(async ({ page }) => {
       });
     };
   });
-  await page.goto(consolePath);
+  await page.goto(`${statusTruthBaseUrl}/console`, { waitUntil: 'domcontentloaded' });
+});
+
+test('Console shell loads extracted assets without browser runtime errors', async ({ page }) => {
+  await expect(page.getByRole('heading', { name: 'Dantabot Control Console' })).toBeVisible();
+  await expect(page.locator('link[href="/static/css/console.css"]')).toHaveCount(1);
+  await expect(page.locator('script[src="/static/js/console.js"]')).toHaveCount(1);
+  await expect(page.locator('.screen')).toHaveCount(18);
+
+  const appDisplay = await page.locator('.app').evaluate((element) => getComputedStyle(element).display);
+  expect(appDisplay).toBe('none');
+
+  const missingGlobals = await page.evaluate(() => {
+    const expectedFunctions = [
+      'showScreen',
+      'engineTestLoadTodayResults',
+      'engineTestLoadLogs',
+      'loadFunnelData',
+      'liquidateAll',
+      'liveDecisionActivate',
+      'engineTestRun',
+      'saveRiskSettings',
+    ];
+    const missing = expectedFunctions.filter((name) => typeof window[name] !== 'function');
+    if (typeof window._settingsProfileData === 'undefined') {
+      missing.push('_settingsProfileData');
+    }
+    return missing;
+  });
+  expect(missingGlobals).toEqual([]);
+
+  const severeErrors = page._statusTruthBrowserErrors.filter((message) => (
+    /ReferenceError|TypeError/i.test(message)
+    || /Failed to load resource.*\/static\//i.test(message)
+  ));
+  expect(severeErrors).toEqual([]);
 });
 
 test('Diagnostics does not mark null GET payloads as complete', async ({ page }) => {
