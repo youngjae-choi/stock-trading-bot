@@ -42,8 +42,10 @@ def initialize_database() -> None:
     logger.info("START: db.initialize_database")
     with get_connection() as connection:
         _execute_many(connection, _schema_statements())
+        _migrate_scheduler_process_settings(connection)
         _seed_system_settings(connection)
         _migrate_s10_review_schedule_setting(connection)
+        _migrate_scheduler_process_settings(connection)
         _seed_rule_system(connection)
         _seed_confidence_bins(connection)
     # 마이그레이션: 기존 테이블에 누락된 컬럼 추가
@@ -91,6 +93,25 @@ def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+def _json_loads_setting(value_json: str | None) -> Any:
+    """Decode a persisted setting value and return None when legacy data is malformed."""
+    try:
+        return json.loads(value_json or "null")
+    except Exception:
+        return None
+
+
+def _is_valid_hhmm(value: Any) -> bool:
+    """Return whether a scheduler setting is a valid HH:MM clock value."""
+    if not isinstance(value, str):
+        return False
+    parts = value.strip().split(":")
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        return False
+    hour, minute = int(parts[0]), int(parts[1])
+    return 0 <= hour <= 23 and 0 <= minute <= 59
+
+
 def _seed_system_settings(connection: sqlite3.Connection) -> None:
     """Insert baseline settings that make the console useful on first startup."""
     now_expr = "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
@@ -120,18 +141,20 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
             "매수 진입 최대 등락률 % (AI가 이 값 이상으로 설정 불가)",
         ),
         ("risk.emergency_halt_enabled", False, "boolean", "긴급정지 신규 주문 차단 상태"),
-        ("schedule_s1_time", "07:45", "string", "S1 토큰 갱신 실행 시간 (HH:MM)"),
-        ("schedule_s2_time", "08:00", "string", "S2 시장톤 분석 실행 시간 (HH:MM)"),
-        ("schedule_s3_time", "08:15", "string", "S3 유니버스 필터 실행 시간 (HH:MM)"),
-        ("schedule_s4_time", "08:30", "string", "S4 스크리닝 실행 시간 (HH:MM)"),
-        ("schedule_s5_time", "08:40", "string", "S5 Daily Plan 생성 실행 시간 (HH:MM)"),
-        ("schedule_s5v_time", "08:45", "string", "S5-V Daily Plan 검증 실행 시간 (HH:MM)"),
-        ("schedule_s5a_time", "08:55", "string", "S5-A Daily Plan 활성화 확인 시간 (HH:MM)"),
+        ("schedule_trade_prep_time", "07:45", "string", "거래준비 프로세스 시작 시간 (S1~S5-A 순차 실행, HH:MM)"),
+        ("schedule_s1_time", "07:45", "string", "[legacy] S1 개별 실행 시간 - scheduler 등록에는 사용하지 않음"),
+        ("schedule_s2_time", "08:00", "string", "[legacy] S2 개별 실행 시간 - schedule_trade_prep_time 사용"),
+        ("schedule_s3_time", "08:15", "string", "[legacy] S3 개별 실행 시간 - schedule_trade_prep_time 사용"),
+        ("schedule_s4_time", "08:30", "string", "[legacy] S4 개별 실행 시간 - schedule_trade_prep_time 사용"),
+        ("schedule_s5_time", "08:40", "string", "[legacy] S5 개별 실행 시간 - schedule_trade_prep_time 사용"),
+        ("schedule_s5v_time", "08:45", "string", "[legacy] S5-V 개별 실행 시간 - schedule_trade_prep_time 사용"),
+        ("schedule_s5a_time", "08:55", "string", "[legacy] S5-A 개별 실행 시간 - schedule_trade_prep_time 사용"),
         ("schedule_s6_time", "09:45", "string", "S6 Decision Engine 실행 시간 (HH:MM)"),
         ("schedule_s7_time", "실시간", "string", "S7 주문 실행 표시 시간"),
         ("schedule_s8_time", "실시간", "string", "S8 포지션 관리 표시 시간"),
-        ("schedule_s9_time", "15:20", "string", "S9 당일 청산 실행 시간 (HH:MM)"),
-        ("schedule_s10_time", "16:00", "string", "S10 Review & Audit 실행 시간 (HH:MM)"),
+        ("schedule_postprocess_time", "15:20", "string", "후처리 프로세스 시작 시간 (S9~S10 순차 실행, HH:MM)"),
+        ("schedule_s9_time", "15:20", "string", "[legacy] S9 개별 실행 시간 - schedule_postprocess_time 사용"),
+        ("schedule_s10_time", "16:00", "string", "[legacy] S10 개별 실행 시간 - schedule_postprocess_time 사용"),
         ("schedule_s11_time", "22:00", "string", "S11 Learning Memory Builder 실행 시간 (HH:MM)"),
         ("risk.force_exit_time", "15:20", "string", "당일 강제청산 시작 시간 (HH:MM)"),
         ("risk.new_entry_cutoff_time", "15:10", "string", "신규 매수 금지 시작 시간 (HH:MM)"),
@@ -144,6 +167,79 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
             VALUES (?, ?, ?, ?, {now_expr}, ?)
             """,
             (key, _json_dumps(value), value_type, description, "system"),
+        )
+
+
+def _migrate_scheduler_process_settings(connection: sqlite3.Connection) -> None:
+    """Copy legacy custom scheduler times into process keys and refresh descriptions."""
+    now_expr = "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+    process_defaults = {
+        "schedule_trade_prep_time": (
+            "schedule_s1_time",
+            "07:45",
+            "거래준비 프로세스 시작 시간 (S1~S5-A 순차 실행, HH:MM)",
+        ),
+        "schedule_postprocess_time": (
+            "schedule_s9_time",
+            "15:20",
+            "후처리 프로세스 시작 시간 (S9~S10 순차 실행, HH:MM)",
+        ),
+    }
+    for process_key, (legacy_key, default_value, description) in process_defaults.items():
+        existing = connection.execute("SELECT 1 FROM system_settings WHERE key = ?", (process_key,)).fetchone()
+        if existing:
+            continue
+        legacy_row = connection.execute(
+            "SELECT value_json FROM system_settings WHERE key = ?",
+            (legacy_key,),
+        ).fetchone()
+        legacy_value = _json_loads_setting(legacy_row["value_json"]) if legacy_row else None
+        value = legacy_value if _is_valid_hhmm(legacy_value) else default_value
+        actor = "migration_scheduler_process_settings"
+        if legacy_row and not _is_valid_hhmm(legacy_value):
+            logger.warning(
+                "WARN: DB migration invalid legacy schedule ignored legacy_key=%s value=%s process_key=%s default=%s",
+                legacy_key,
+                legacy_value,
+                process_key,
+                default_value,
+            )
+        connection.execute(
+            f"""
+            INSERT INTO system_settings
+                (key, value_json, value_type, description, updated_at, updated_by)
+            VALUES (?, ?, 'string', ?, {now_expr}, ?)
+            """,
+            (process_key, _json_dumps(value), description, actor),
+        )
+        logger.info(
+            "DB migration: seeded %s from %s value=%s",
+            process_key,
+            legacy_key if _is_valid_hhmm(legacy_value) else "default",
+            value,
+        )
+
+    descriptions = {
+        "schedule_trade_prep_time": "거래준비 프로세스 시작 시간 (S1~S5-A 순차 실행, HH:MM)",
+        "schedule_s1_time": "[legacy] S1 개별 실행 시간 - scheduler 등록에는 사용하지 않음",
+        "schedule_s2_time": "[legacy] S2 개별 실행 시간 - schedule_trade_prep_time 사용",
+        "schedule_s3_time": "[legacy] S3 개별 실행 시간 - schedule_trade_prep_time 사용",
+        "schedule_s4_time": "[legacy] S4 개별 실행 시간 - schedule_trade_prep_time 사용",
+        "schedule_s5_time": "[legacy] S5 개별 실행 시간 - schedule_trade_prep_time 사용",
+        "schedule_s5v_time": "[legacy] S5-V 개별 실행 시간 - schedule_trade_prep_time 사용",
+        "schedule_s5a_time": "[legacy] S5-A 개별 실행 시간 - schedule_trade_prep_time 사용",
+        "schedule_postprocess_time": "후처리 프로세스 시작 시간 (S9~S10 순차 실행, HH:MM)",
+        "schedule_s9_time": "[legacy] S9 개별 실행 시간 - schedule_postprocess_time 사용",
+        "schedule_s10_time": "[legacy] S10 개별 실행 시간 - schedule_postprocess_time 사용",
+    }
+    for key, description in descriptions.items():
+        connection.execute(
+            f"""
+            UPDATE system_settings
+            SET description = ?, updated_at = {now_expr}, updated_by = ?
+            WHERE key = ? AND description != ?
+            """,
+            (description, "migration_scheduler_process_settings", key, description),
         )
 
 

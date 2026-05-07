@@ -2093,7 +2093,7 @@
           <div class="page-head">
             <div>
               <h1 class="page-title">System Diagnostics</h1>
-              <p class="page-sub">S1~S5 각 단계를 수동으로 실행하고 결과를 확인합니다. 실제 KIS API와 DB에 반영됩니다.</p>
+              <p class="page-sub">S1~S11 상태를 확인합니다. S1~S5-A는 거래준비 프로세스 하위 단계, S9~S10은 후처리 프로세스 하위 단계입니다.</p>
             </div>
             <div class="page-actions">
               <button class="btn" onclick="engineTestClearAll()">전체 결과 지우기</button>
@@ -2109,7 +2109,7 @@
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
                   <strong id="et-title-s1">S1 토큰 갱신</strong>
-                  <div id="et-detail-s1" style="font-size:12px; color:var(--muted); margin-top:2px;">07:45 KST · KIS token-refresh</div>
+                  <div id="et-detail-s1" style="font-size:12px; color:var(--muted); margin-top:2px;">07:45 KST · 거래준비 프로세스 하위 단계 · KIS token-refresh</div>
                 </div>
                 <span class="badge" id="et-badge-s1">대기</span>
               </div>
@@ -2122,7 +2122,7 @@
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
                   <strong id="et-title-s2">S2 시장톤 분석</strong>
-                  <div id="et-detail-s2" style="font-size:12px; color:var(--muted); margin-top:2px;">08:00 KST · LLM → market_tone_results</div>
+                  <div id="et-detail-s2" style="font-size:12px; color:var(--muted); margin-top:2px;">07:45 KST · 거래준비 프로세스 하위 단계 · LLM → market_tone_results</div>
                 </div>
                 <span class="badge" id="et-badge-s2">대기</span>
               </div>
@@ -2135,7 +2135,7 @@
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
                   <strong id="et-title-s3">S3 유니버스 필터</strong>
-                  <div id="et-detail-s3" style="font-size:12px; color:var(--muted); margin-top:2px;">08:15 KST · KIS → universe_filter_results</div>
+                  <div id="et-detail-s3" style="font-size:12px; color:var(--muted); margin-top:2px;">07:45 KST · 거래준비 프로세스 하위 단계 · KIS → universe_filter_results</div>
                 </div>
                 <span class="badge" id="et-badge-s3">대기</span>
               </div>
@@ -2148,7 +2148,7 @@
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
                   <strong id="et-title-s4">S4 하이브리드 스크리닝</strong>
-                  <div id="et-detail-s4" style="font-size:12px; color:var(--muted); margin-top:2px;">08:30 KST · LLM 정성 평가 → hybrid_screening_results</div>
+                  <div id="et-detail-s4" style="font-size:12px; color:var(--muted); margin-top:2px;">07:45 KST · 거래준비 프로세스 하위 단계 · LLM 정성 평가 → hybrid_screening_results</div>
                 </div>
                 <span class="badge" id="et-badge-s4">대기</span>
               </div>
@@ -2162,7 +2162,7 @@
                 <div>
                   <strong id="et-title-s5">S5 Daily Plan 생성</strong>
                   <div id="et-detail-s5" style="font-size:12px; color:var(--muted); margin-top:2px;">
-                    08:40 KST · Scheduler → daily_trading_plans
+                    07:45 KST · 거래준비 프로세스 하위 단계 · Scheduler → daily_trading_plans
                   </div>
                 </div>
                 <span class="badge" id="et-badge-s5">대기</span>
@@ -2177,7 +2177,7 @@
                 <div>
                   <strong id="et-title-s5v">S5-V Daily Plan 검증</strong>
                   <div id="et-detail-s5v" style="font-size:12px; color:var(--muted); margin-top:2px;">
-                    08:45 KST · Schema/Risk Guard 검증
+                    07:45 KST · 거래준비 프로세스 하위 단계 · Schema/Risk Guard 검증
                   </div>
                 </div>
                 <span class="badge" id="et-badge-s5v">대기</span>
@@ -2192,7 +2192,7 @@
                 <div>
                   <strong id="et-title-s5a">S5-A Daily Plan 활성화 확인</strong>
                   <div id="et-detail-s5a" style="font-size:12px; color:var(--muted); margin-top:2px;">
-                    08:55 KST · active plan 상태 확인
+                    07:45 KST · 거래준비 프로세스 하위 단계 · active plan 상태 확인
                   </div>
                 </div>
                 <span class="badge" id="et-badge-s5a">대기</span>
@@ -2245,7 +2245,7 @@
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
                   <strong id="et-title-s9">S9 당일 청산</strong>
-                  <div id="et-detail-s9" style="font-size:12px; color:var(--muted); margin-top:2px;">15:20 KST · 전량 시장가 청산</div>
+                  <div id="et-detail-s9" style="font-size:12px; color:var(--muted); margin-top:2px;">15:20 KST · 후처리 프로세스 하위 단계 · 전량 시장가 청산</div>
                 </div>
                 <span class="badge" id="et-badge-s9">대기</span>
               </div>
@@ -2258,7 +2258,7 @@
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
                   <strong id="et-title-s10">S10 Review & Audit</strong>
-                  <div id="et-detail-s10" style="font-size:12px; color:var(--muted); margin-top:2px;">16:00 KST · 매매 결과 분석 → daily_review_reports</div>
+                  <div id="et-detail-s10" style="font-size:12px; color:var(--muted); margin-top:2px;">15:20 KST · 후처리 프로세스 하위 단계 · 매매 결과 분석 → daily_review_reports</div>
                 </div>
                 <span class="badge" id="et-badge-s10">대기</span>
               </div>
@@ -2540,21 +2540,27 @@
   var mfaState = null;
   var overviewData = null;
   var OPS_STEPS = [
-    { id: 's1', label: 'S1 토큰 갱신', defaultTime: '07:45', settingKey: 'schedule_s1_time', detail: 'KIS token-refresh' },
-    { id: 's2', label: 'S2 시장톤 분석', defaultTime: '08:00', settingKey: 'schedule_s2_time', detail: 'LLM -> market_tone_results' },
-    { id: 's3', label: 'S3 유니버스 필터', defaultTime: '08:15', settingKey: 'schedule_s3_time', detail: 'KIS -> universe_filter_results' },
-    { id: 's4', label: 'S4 하이브리드 스크리닝', defaultTime: '08:30', settingKey: 'schedule_s4_time', detail: 'LLM 정성 평가 -> hybrid_screening_results' },
-    { id: 's5', label: 'S5 Daily Plan 생성', defaultTime: '08:40', settingKey: 'schedule_s5_time', detail: 'Scheduler -> daily_trading_plans' },
-    { id: 's5v', label: 'S5-V Daily Plan 검증', defaultTime: '08:45', settingKey: 'schedule_s5v_time', detail: 'Schema/Risk Guard 검증' },
-    { id: 's5a', label: 'S5-A Daily Plan 활성화 확인', defaultTime: '08:55', settingKey: 'schedule_s5a_time', detail: 'active plan 상태 확인' },
+    { id: 's1', label: 'S1 토큰 갱신', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 프로세스 하위 단계 · KIS token-refresh' },
+    { id: 's2', label: 'S2 시장톤 분석', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 프로세스 하위 단계 · LLM -> market_tone_results' },
+    { id: 's3', label: 'S3 유니버스 필터', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 프로세스 하위 단계 · KIS -> universe_filter_results' },
+    { id: 's4', label: 'S4 하이브리드 스크리닝', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 프로세스 하위 단계 · LLM 정성 평가 -> hybrid_screening_results' },
+    { id: 's5', label: 'S5 Daily Plan 생성', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 프로세스 하위 단계 · Scheduler -> daily_trading_plans' },
+    { id: 's5v', label: 'S5-V Daily Plan 검증', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 프로세스 하위 단계 · Schema/Risk Guard 검증' },
+    { id: 's5a', label: 'S5-A Daily Plan 활성화 확인', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 프로세스 하위 단계 · active plan 상태 확인' },
     { id: 's6', label: 'S6 Decision Engine 활성화', defaultTime: '09:45', settingKey: 'schedule_s6_time', detail: 'WS 연결 + RulePack + Risk Profile + Daily Plan 조건 감시' },
     { id: 's7', label: 'S7 주문 실행', defaultTime: '실시간', settingKey: 'schedule_s7_time', detail: '오늘 발행된 주문 내역 조회' },
     { id: 's8', label: 'S8 Position Manager', defaultTime: '실시간', settingKey: 'schedule_s8_time', detail: 'WS tick -> 손절/트레일링/강제청산 감시' },
-    { id: 's9', label: 'S9 당일 청산', defaultTime: '15:20', settingKey: 'schedule_s9_time', detail: '전량 시장가 청산' },
-    { id: 's10', label: 'S10 Review & Audit', defaultTime: '16:00', settingKey: 'schedule_s10_time', detail: 'review_audit -> daily_review_reports' },
+    { id: 's9', label: 'S9 당일 청산', defaultTime: '15:20', settingKey: 'schedule_postprocess_time', detail: '후처리 프로세스 하위 단계 · 전량 시장가 청산' },
+    { id: 's10', label: 'S10 Review & Audit', defaultTime: '15:20', settingKey: 'schedule_postprocess_time', detail: '후처리 프로세스 하위 단계 · review_audit -> daily_review_reports' },
     { id: 's11', label: 'S11 Learning Memory Builder', defaultTime: '22:00', settingKey: 'schedule_s11_time', detail: 'Trade Review -> Learning Memory' },
   ];
-  var timeline = OPS_STEPS
+  var SCHEDULED_OPERATIONS = [
+    { id: 'trade-prep', label: '거래준비 프로세스 시작 (S1~S5-A 순차 실행)', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time' },
+    { id: 's6', label: 'S6 Decision Engine 시간', defaultTime: '09:45', settingKey: 'schedule_s6_time' },
+    { id: 'postprocess', label: '후처리 프로세스 시작 (S9~S10 순차 실행)', defaultTime: '15:20', settingKey: 'schedule_postprocess_time' },
+    { id: 's11', label: 'S11 Learning Memory 시간', defaultTime: '22:00', settingKey: 'schedule_s11_time' },
+  ];
+  var timeline = SCHEDULED_OPERATIONS
     .filter(function(step) { return /^\d{2}:\d{2}$/.test(step.defaultTime); })
     .map(function(step) { return { time: step.defaultTime, name: step.label }; });
   var sampleLogs = [
@@ -2721,7 +2727,7 @@
   }
 
   function getScheduledTimeline(settingsMap) {
-    return OPS_STEPS
+    return SCHEDULED_OPERATIONS
       .map(function(step) {
         return { time: stepDisplayTime(step, settingsMap), name: step.label };
       })
@@ -4035,9 +4041,46 @@
   }
 
   /* Settings Handlers */
-  var schedulerKeys = OPS_STEPS.map(function(step) {
-    return { key: step.settingKey, label: step.label, default: step.defaultTime };
-  });
+  var schedulerKeys = [
+    {
+      key: "schedule_trade_prep_time",
+      label: "거래준비 프로세스 시작 시간",
+      default: "07:45",
+      description: "S1 토큰 갱신 -> S2 시장톤 -> S3 유니버스 -> S4 스크리닝 -> S5 Daily Plan -> S5-V 검증 -> S5-A 활성화 확인"
+    },
+    {
+      key: "schedule_s6_time",
+      label: "S6 Decision Engine 시간",
+      default: "09:45",
+      description: "기존 S6 자동 활성화 스케줄 유지"
+    },
+    {
+      key: "schedule_s7_time",
+      label: "S7 실시간 주문 실행",
+      default: "실시간",
+      description: "cron 등록 없음 · 실시간/트리거 기반 구조 유지",
+      readOnly: true
+    },
+    {
+      key: "schedule_s8_time",
+      label: "S8 실시간 Position Manager",
+      default: "실시간",
+      description: "cron 등록 없음 · 실시간/트리거 기반 구조 유지",
+      readOnly: true
+    },
+    {
+      key: "schedule_postprocess_time",
+      label: "후처리 프로세스 시작 시간",
+      default: "15:20",
+      description: "S9 당일 청산 -> S10 Review & Audit 순차 실행"
+    },
+    {
+      key: "schedule_s11_time",
+      label: "S11 Learning Memory 시간",
+      default: "22:00",
+      description: "기존 S11 Learning Memory Builder 스케줄 유지"
+    }
+  ];
 
   var exitOverrideKeys = [
     { key: "override_stop_loss_rate", label: "손절률 (stop_loss)", placeholder: "-0.015", example: "예: -0.015 = -1.5%" },
@@ -4134,13 +4177,19 @@
 
       var html = schedulerKeys.map(function(k) {
         var current = settingsMap[k.key] || k.default;
+        var inputHtml = k.readOnly
+          ? '<span class="muted">' + escapeHtml(current) + '</span>'
+          : '<input type="text" id="input-' + k.key + '" value="' + escapeHtml(current) + '" style="width: 80px; padding: 5px; border-radius: 5px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);">';
+        var buttonHtml = k.readOnly
+          ? '<span class="muted">실시간</span>'
+          : '<button class="btn primary" onclick="saveSchedulerSetting(\'' + k.key + '\')">저장</button>';
         return ''
           + '<tr>'
           + '  <td>' + k.label + '</td>'
-          + '  <td class="muted">' + k.key + '</td>'
+          + '  <td class="muted">' + escapeHtml(k.description || k.key) + '</td>'
           + '  <td>' + escapeHtml(current) + '</td>'
-          + '  <td><input type="text" id="input-' + k.key + '" value="' + escapeHtml(current) + '" style="width: 80px; padding: 5px; border-radius: 5px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);"></td>'
-          + '  <td><button class="btn primary" onclick="saveSchedulerSetting(\'' + k.key + '\')">저장</button></td>'
+          + '  <td>' + inputHtml + '</td>'
+          + '  <td>' + buttonHtml + '</td>'
           + '</tr>';
       }).join("");
       var tbody = document.getElementById("schedulerSettingsTableBody");

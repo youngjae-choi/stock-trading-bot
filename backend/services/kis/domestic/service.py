@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any, Dict, Literal
 
 from ....config import settings
 from ..common.client import kis_client
+
+logger = logging.getLogger("KISDomesticService")
+TradingDayState = Literal["trading", "closed", "unknown"]
 
 
 def _order_env() -> Literal["demo", "real"]:
@@ -289,14 +293,51 @@ async def get_investor_profile(
     )
 
 
-async def check_trading_day(date_str: str) -> bool:
-    """KIS API로 해당 날짜가 주식 거래일인지 확인한다.
+def _extract_trading_day_state(resp: Dict[str, Any]) -> tuple[TradingDayState, str]:
+    """Convert a KIS chk-holiday response into a three-state trading-day result.
 
     Args:
-        date_str: YYYYMMDD 형식
-    Returns:
-        True = 거래일, False = 비거래일/조회실패
+        resp: Raw KIS chk-holiday response.
     """
+
+    if not isinstance(resp, dict):
+        return "unknown", "response_not_dict"
+
+    rt_cd = str(resp.get("rt_cd") or "").strip()
+    msg = str(resp.get("msg1") or resp.get("msg_cd") or "").strip()
+    if rt_cd and rt_cd != "0":
+        return "unknown", f"kis_error rt_cd={rt_cd} msg={msg or '-'}"
+
+    output = resp.get("output")
+    if isinstance(output, dict):
+        output_rows = [output]
+    elif isinstance(output, list):
+        output_rows = output
+    else:
+        return "unknown", "missing_output"
+
+    if not output_rows:
+        return "unknown", "empty_output"
+
+    first = output_rows[0]
+    if not isinstance(first, dict):
+        return "unknown", "output_row_not_dict"
+
+    tr_day_yn = str(first.get("tr_day_yn") or "").strip().upper()
+    if tr_day_yn == "Y":
+        return "trading", "tr_day_yn=Y"
+    if tr_day_yn == "N":
+        return "closed", "tr_day_yn=N"
+    return "unknown", f"unknown_tr_day_yn={tr_day_yn or '-'}"
+
+
+async def get_trading_day_status(date_str: str) -> dict[str, str]:
+    """KIS API로 해당 날짜의 거래일 여부를 trading/closed/unknown으로 확인한다.
+
+    Args:
+        date_str: YYYYMMDD 형식의 확인 대상 일자.
+    """
+
     try:
         resp = await kis_client.request(
             method="GET",
@@ -304,9 +345,25 @@ async def check_trading_day(date_str: str) -> bool:
             tr_id="CTCA0903R",
             params={"BASS_DT": date_str},
         )
-        output = resp.get("output", [])
-        if output and output[0].get("tr_day_yn") == "Y":
-            return True
-        return False
-    except Exception:
-        return False
+        status, reason = _extract_trading_day_state(resp)
+        if status == "unknown":
+            logger.warning("WARN: KIS trading-day status unknown date=%s reason=%s", date_str, reason)
+        else:
+            logger.info("INFO: KIS trading-day status date=%s status=%s reason=%s", date_str, status, reason)
+        return {"status": status, "reason": reason, "date": date_str}
+    except Exception as exc:
+        logger.warning("WARN: KIS trading-day request failed date=%s reason=%s", date_str, exc)
+        return {"status": "unknown", "reason": f"request_failed: {exc}", "date": date_str}
+
+
+async def check_trading_day(date_str: str) -> bool:
+    """KIS API로 해당 날짜가 주식 거래일인지 확인한다.
+
+    Args:
+        date_str: YYYYMMDD 형식.
+    Returns:
+        True = 거래일, False = 명확한 휴장일 또는 unknown.
+    """
+
+    result = await get_trading_day_status(date_str)
+    return result["status"] == "trading"

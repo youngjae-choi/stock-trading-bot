@@ -458,30 +458,50 @@ def get_console_overview() -> dict[str, Any]:
             return "실행중"
         return "대기"
 
+    def _schedule_time(key: str, default: str) -> str:
+        """Read one HH:MM scheduler setting for the process-oriented overview timeline."""
+        try:
+            import json as _json
+
+            with get_connection() as conn:
+                row = conn.execute("SELECT value_json FROM system_settings WHERE key = ?", (key,)).fetchone()
+            value = _json.loads(row["value_json"]) if row else default
+            parts = str(value or "").split(":")
+            if len(parts) == 2 and all(part.isdigit() for part in parts):
+                hour, minute = int(parts[0]), int(parts[1])
+                if 0 <= hour <= 23 and 0 <= minute <= 59:
+                    return f"{hour:02d}:{minute:02d}"
+        except Exception as exc:
+            logger.warning("WARN: console_state schedule setting read failed key=%s reason=%s", key, exc)
+        return default
+
+    trade_prep_time = _schedule_time("schedule_trade_prep_time", "07:45")
+    s6_time = _schedule_time("schedule_s6_time", "09:45")
+    postprocess_time = _schedule_time("schedule_postprocess_time", "15:20")
+    backup_time = _schedule_time("schedule_backup_time", "18:00")
+    s11_time = _schedule_time("schedule_s11_time", "22:00")
+    us_watch_time = _schedule_time("schedule_us_watch_time", "22:00")
+    trade_prep_done = s2_done and s3_done and s4_done and s5_done
+
     timeline = [
-        {"time": "07:45", "name": "KIS 토큰 갱신", "status": "완료" if kis_ok else ("완료" if now_time > "07:50" else "대기")},
-        {"time": "08:00", "name": "AI 시장 톤 분석", "status": _tl_status("08:00", s2_done)},
-        {"time": "08:15", "name": "유니버스 필터", "status": _tl_status("08:15", s3_done)},
-        {"time": "08:30", "name": "AI 스크리닝", "status": _tl_status("08:30", s4_done)},
-        {"time": "08:45", "name": "RulePack 생성", "status": _tl_status("08:45", s5_done)},
-        {"time": "09:00", "name": "실시간 매매 시작", "status": "완료" if engine_active else ("실행중" if now_time >= "09:00" else "대기")},
-        {"time": "11:30", "name": "중간 리포트", "status": _tl_status("11:30", False)},
-        {"time": "15:20", "name": "당일매매 청산", "status": _tl_status("15:20", False)},
-        {"time": "16:00", "name": "AI 복기 리포트", "status": _tl_status("16:00", False)},
-        {"time": "16:30", "name": "일일 리포트", "status": _tl_status("16:30", False)},
-        {"time": "18:00", "name": "데이터 백업", "status": _tl_status("18:00", False)},
+        {"time": trade_prep_time, "name": "거래준비 프로세스(S1~S5-A)", "status": _tl_status(trade_prep_time, trade_prep_done)},
+        {"time": s6_time, "name": "Decision Engine 활성화", "status": "완료" if engine_active else ("실행중" if now_time >= s6_time else "대기")},
+        {"time": postprocess_time, "name": "후처리 프로세스(S9~S10)", "status": _tl_status(postprocess_time, False)},
+        {"time": backup_time, "name": "데이터 백업", "status": _tl_status(backup_time, False)},
+        {"time": s11_time, "name": "S11 Learning Memory", "status": _tl_status(s11_time, False)},
+        {"time": us_watch_time, "name": "미국장 야간 관찰", "status": _tl_status(us_watch_time, False)},
     ]
 
     schedule_order = [
-        ("07:45", "KIS 토큰 갱신"), ("08:00", "AI 시장 톤 분석"),
-        ("08:15", "유니버스 필터"), ("08:30", "AI 스크리닝"),
-        ("08:45", "RulePack 생성"), ("09:00", "실시간 매매 시작"),
-        ("11:30", "중간 리포트"), ("15:20", "당일매매 청산"),
-        ("16:00", "AI 복기 리포트"), ("16:30", "일일 리포트"),
-        ("18:00", "데이터 백업"), ("22:00", "미국장 야간 관찰"),
+        (trade_prep_time, "거래준비 프로세스"),
+        (s6_time, "Decision Engine 활성화"),
+        (postprocess_time, "후처리 프로세스"),
+        (backup_time, "데이터 백업"),
+        (s11_time, "S11 Learning Memory"),
+        (us_watch_time, "미국장 야간 관찰"),
     ]
     next_job = {"time": "-", "name": "-"}
-    for scheduled_time, name in schedule_order:
+    for scheduled_time, name in sorted(schedule_order):
         if now_time < scheduled_time:
             next_job = {"time": scheduled_time, "name": name}
             break

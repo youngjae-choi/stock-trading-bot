@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from typing import Any, Awaitable, Callable
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -18,6 +19,7 @@ from apscheduler.triggers.cron import CronTrigger
 from .kis.common.client import kis_client
 
 logger = logging.getLogger("Scheduler")
+TRADING_DAY_SETTING_DESCRIPTION = "오늘 S2~S6 자동 스케줄 스킵 여부 (KST 당일 값만 유효)"
 
 # ---------------------------------------------------------------------------
 # Job 함수
@@ -27,6 +29,95 @@ logger = logging.getLogger("Scheduler")
 def _today_kst() -> str:
     """Return today's date in Asia/Seoul as YYYY-MM-DD for scheduler decisions."""
     return datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+
+
+def _today_kst_compact() -> str:
+    """Return today's date in Asia/Seoul as YYYYMMDD for KIS trading-day checks."""
+    return datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
+
+
+def _set_schedule_skip_today(*, skip: bool, description: str, actor: str) -> None:
+    """Persist the scheduler skip flag with the standard safety description.
+
+    Args:
+        skip: True only when today is clearly closed.
+        description: Operator-facing reason for this write.
+        actor: Setting actor recorded in system_settings.
+    """
+    from .settings_store import upsert_setting
+
+    upsert_setting(
+        key="schedule_skip_today",
+        value=skip,
+        value_type="boolean",
+        description=description or TRADING_DAY_SETTING_DESCRIPTION,
+        actor=actor,
+    )
+
+
+def _audit_step_start(step: str, metadata: dict[str, Any] | None = None) -> str:
+    """Start a pipeline audit row for scheduler-owned substeps.
+
+    Args:
+        step: S-step label such as S1, S5-V, or S5-A.
+        metadata: Optional JSON metadata to store with the audit row.
+    """
+    from .engine.pipeline_audit import start_pipeline_run
+
+    return start_pipeline_run(
+        trade_date=_today_kst(),
+        step=step,
+        trigger_source="auto_scheduler",
+        display_source="auto_scheduler",
+        metadata=metadata or {"pipeline": "scheduler"},
+    )
+
+
+def _audit_step_finish(
+    *,
+    run_id: str,
+    status: str,
+    message: str,
+    metadata: dict[str, Any] | None = None,
+    result_ref_id: str = "",
+) -> None:
+    """Finish a scheduler-owned pipeline audit row without leaking exceptions.
+
+    Args:
+        run_id: Audit id returned from _audit_step_start.
+        status: Final audit status.
+        message: Human-readable summary.
+        metadata: Optional JSON metadata.
+        result_ref_id: Optional related DB id.
+    """
+    try:
+        from .engine.pipeline_audit import finish_pipeline_run
+
+        finish_pipeline_run(
+            run_id=run_id,
+            status=status,
+            result_ref_id=result_ref_id,
+            message=message,
+            metadata=metadata or {"pipeline": "scheduler"},
+        )
+    except Exception as exc:
+        logger.warning("WARN: scheduler audit finish failed run_id=%s reason=%s", run_id, exc)
+
+
+def _audit_skipped_step(step: str, message: str, metadata: dict[str, Any], status: str = "skipped") -> None:
+    """Record a skipped or blocked downstream step for scheduler diagnostics.
+
+    Args:
+        step: Downstream S-step label.
+        message: Skip reason for operator diagnostics.
+        metadata: Shared skip metadata.
+        status: Final audit status, usually skipped or blocked.
+    """
+    try:
+        run_id = _audit_step_start(step, metadata)
+        _audit_step_finish(run_id=run_id, status=status, message=message, metadata=metadata)
+    except Exception as exc:
+        logger.warning("WARN: scheduler skipped-step audit failed step=%s reason=%s", step, exc)
 
 
 def get_schedule_skip_today_status() -> dict:
@@ -63,7 +154,7 @@ def get_schedule_skip_today_status() -> dict:
                 key="schedule_skip_today",
                 value=False,
                 value_type="boolean",
-                description="오늘 S2~S6 자동 스케줄 스킵 여부 (KST 당일 값만 유효)",
+                description=TRADING_DAY_SETTING_DESCRIPTION,
                 actor="scheduler_stale_skip_reset",
             )
             return {
@@ -121,14 +212,16 @@ def _should_skip_auto_job(step: str) -> bool:
     return False
 
 
-async def job_refresh_kis_token() -> None:
+async def job_refresh_kis_token() -> dict[str, Any]:
     """Job 1 (07:45 KST): KIS 액세스 토큰 선제 갱신.
 
     장 시작 전에 토큰을 미리 발급해 두어 첫 주문 시 지연을 방지한다.
     get_token()은 내부 캐시를 무시하고 강제 재발급하도록
     token 만료 시각을 0으로 초기화한 뒤 호출한다.
     """
-    logger.info("START: [Job1] KIS 토큰 선제 갱신 (07:45 KST)")
+    logger.info("START: [Job1] KIS 토큰 선제 갱신")
+    token_status = "success"
+    token_error = ""
     try:
         # 캐시를 무효화해 강제 재발급
         kis_client.token = None
@@ -136,44 +229,63 @@ async def job_refresh_kis_token() -> None:
         await kis_client.get_token()
         logger.info("SUCCESS: [Job1] KIS 토큰 선제 갱신 완료")
     except Exception as exc:
+        token_status = "failed"
+        token_error = str(exc)
         logger.error("FAIL: [Job1] KIS 토큰 갱신 실패 — reason=%s", exc)
         # 서버는 계속 실행 (job 실패가 서버를 종료하지 않음)
 
-    # 오늘 거래일 여부 확인 → system_settings에 플래그 저장
+    trading_day = await refresh_trading_day_skip_flag(actor="scheduler_s1")
+    return {
+        "token_status": token_status,
+        "token_error": token_error,
+        "trading_day_status": trading_day.get("status", "unknown"),
+        "trading_day": trading_day,
+    }
+
+
+async def refresh_trading_day_skip_flag(actor: str = "scheduler_s1") -> dict[str, str]:
+    """Refresh schedule_skip_today using a three-state KIS trading-day result.
+
+    Args:
+        actor: system_settings updated_by value for the scheduler write.
+    """
     try:
-        from .kis.domestic.service import check_trading_day
-        from .settings_store import upsert_setting
-        from zoneinfo import ZoneInfo
+        from .kis.domestic.service import get_trading_day_status
 
-        today_yyyymmdd = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
-        is_trading = await check_trading_day(today_yyyymmdd)
-
-        upsert_setting(
-            key="schedule_skip_today",
-            value=not is_trading,
-            value_type="boolean",
-            description="오늘 S2~S6 자동 스케줄 스킵 여부 (KST 당일 값만 유효)",
-            actor="scheduler_s1",
+        today_yyyymmdd = _today_kst_compact()
+        result = await get_trading_day_status(today_yyyymmdd)
+        status = result.get("status", "unknown")
+        reason = result.get("reason", "")
+        if status == "closed":
+            _set_schedule_skip_today(
+                skip=True,
+                description=TRADING_DAY_SETTING_DESCRIPTION,
+                actor=actor,
+            )
+            logger.info("INFO: [Job1] 오늘(%s)은 명확한 비거래일 — S2~S6 스킵 플래그 세팅 reason=%s", today_yyyymmdd, reason)
+            return result
+        _set_schedule_skip_today(
+            skip=False,
+            description=TRADING_DAY_SETTING_DESCRIPTION,
+            actor=actor,
         )
-        if not is_trading:
-            logger.info("INFO: [Job1] 오늘(%s)은 비거래일 — S2~S6 스킵 플래그 세팅", today_yyyymmdd)
+        if status == "trading":
+            logger.info("INFO: [Job1] 오늘(%s)은 거래일 — 정상 진행 reason=%s", today_yyyymmdd, reason)
         else:
-            logger.info("INFO: [Job1] 오늘(%s)은 거래일 — 정상 진행", today_yyyymmdd)
+            logger.warning("WARN: [Job1] 거래일 확인 unknown — 자동 프로세스 차단 없이 진행 reason=%s", reason)
+        return result
     except Exception as exc:
-        logger.error("FAIL: [Job1] 거래일 확인 실패 — 안전상 S2~S6는 정상 실행 reason=%s", exc)
+        logger.error("FAIL: [Job1] 거래일 확인 실패 — 자동 프로세스 차단 없이 진행 reason=%s", exc)
         try:
-            from .settings_store import upsert_setting
-
-            upsert_setting(
-                key="schedule_skip_today",
-                value=False,
-                value_type="boolean",
+            _set_schedule_skip_today(
+                skip=False,
                 description="거래일 확인 실패 시 자동 프로세스 차단 방지를 위해 false로 리셋",
-                actor="scheduler_s1_check_failed_continue",
+                actor=f"{actor}_check_failed_continue",
             )
             logger.warning("WARN: [Job1] schedule_skip_today=false 리셋 — 거래일 확인 실패로 자동 실행 허용")
         except Exception as reset_exc:
             logger.error("FAIL: [Job1] schedule_skip_today reset failed reason=%s", reset_exc)
+        return {"status": "unknown", "reason": f"check_failed: {exc}", "date": _today_kst_compact()}
 
 
 async def job_market_tone_analysis() -> None:
@@ -261,6 +373,193 @@ async def job_daily_plan() -> None:
         logger.error("FAIL: [Scheduler] S5 Daily Plan error=%s", exc)
 
 
+async def _run_trade_prep_callable(step: str, label: str, func: Callable[[], Awaitable[Any]]) -> Any:
+    """Run one trade-preparation substep and stop the pipeline on failure.
+
+    Args:
+        step: S-step label for logs.
+        label: Operator-facing step name.
+        func: Awaitable substep implementation.
+    """
+    logger.info("START: [TradePrep] %s %s", step, label)
+    try:
+        result = await func()
+        logger.info("SUCCESS: [TradePrep] %s %s result=%s", step, label, result if result is not None else "ok")
+        return result
+    except Exception as exc:
+        logger.error("FAIL: [TradePrep] %s %s reason=%s", step, label, exc)
+        raise
+
+
+async def _job_validate_daily_plan_for_pipeline() -> dict[str, Any]:
+    """S5-V: validate today's Daily Plan and record an audit row without HTTP calls."""
+    run_id = _audit_step_start("S5-V", {"pipeline": "trade_preparation"})
+    try:
+        from .engine.daily_plan import _validate_plan, get_today_daily_plan
+
+        today = _today_kst()
+        plan = get_today_daily_plan(today)
+        if not plan:
+            message = "No plan found for today"
+            _audit_step_finish(run_id=run_id, status="failed", message=message, metadata={"pipeline": "trade_preparation"})
+            raise RuntimeError(message)
+        validation = _validate_plan(
+            {
+                "trading_intensity": plan.get("trading_intensity"),
+                "new_entry_allowed": plan.get("new_entry_allowed"),
+                "symbol_assignments": plan.get("symbol_assignments", []),
+                "daily_overrides": plan.get("daily_overrides", {}),
+            }
+        )
+        all_pass = all(value == "pass" for value in validation.values())
+        status = "success" if all_pass else "failed"
+        message = "validation_pass" if all_pass else "validation_failed"
+        _audit_step_finish(
+            run_id=run_id,
+            status=status,
+            message=message,
+            result_ref_id=str(plan.get("id") or ""),
+            metadata={"pipeline": "trade_preparation", "validation": validation},
+        )
+        if not all_pass:
+            raise RuntimeError(message)
+        return {"validation": validation, "all_pass": all_pass, "plan_id": str(plan.get("id") or "")}
+    except Exception as exc:
+        logger.error("FAIL: [TradePrep] S5-V Daily Plan validation reason=%s", exc)
+        raise
+
+
+async def _job_confirm_daily_plan_activation_for_pipeline() -> dict[str, Any]:
+    """S5-A: confirm today's Daily Plan is active without calling activation APIs."""
+    run_id = _audit_step_start("S5-A", {"pipeline": "trade_preparation"})
+    try:
+        from .engine.daily_plan import get_today_daily_plan
+
+        today = _today_kst()
+        plan = get_today_daily_plan(today)
+        if not plan:
+            message = "No plan found for today"
+            _audit_step_finish(run_id=run_id, status="failed", message=message, metadata={"pipeline": "trade_preparation"})
+            raise RuntimeError(message)
+        plan_status = str(plan.get("status") or "")
+        if plan_status != "active":
+            message = f"not_active status={plan_status or '-'}"
+            _audit_step_finish(
+                run_id=run_id,
+                status="failed",
+                message=message,
+                result_ref_id=str(plan.get("id") or ""),
+                metadata={"pipeline": "trade_preparation", "plan_status": plan_status},
+            )
+            raise RuntimeError(message)
+        _audit_step_finish(
+            run_id=run_id,
+            status="success",
+            message="active_confirmed",
+            result_ref_id=str(plan.get("id") or ""),
+            metadata={"pipeline": "trade_preparation", "plan_status": plan_status},
+        )
+        return {"plan_id": str(plan.get("id") or ""), "status": plan_status}
+    except Exception as exc:
+        logger.error("FAIL: [TradePrep] S5-A Daily Plan activation check reason=%s", exc)
+        raise
+
+
+def _get_active_daily_plan_for_s6() -> dict[str, Any] | None:
+    """Return today's active Daily Plan, enforcing S5-A as the S6 safety gate."""
+    from .db import get_connection
+
+    today = _today_kst()
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT id, trade_date, status, created_at, activated_at
+            FROM daily_trading_plans
+            WHERE trade_date = ? AND status = 'active'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (today,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+async def job_trade_preparation_pipeline() -> None:
+    """Run S1 through S5-A sequentially from one trade-preparation schedule key."""
+    logger.info("START: [TradePrep] S1~S5-A 거래준비 프로세스")
+    try:
+        run_id = _audit_step_start("S1", {"pipeline": "trade_preparation"})
+        s1_result = await job_refresh_kis_token()
+        token_status = str(s1_result.get("token_status") or "unknown")
+        trading_day = s1_result.get("trading_day") if isinstance(s1_result.get("trading_day"), dict) else {}
+        trading_day_status = str(s1_result.get("trading_day_status") or trading_day.get("status") or "unknown")
+        s1_audit_status = "success"
+        if token_status != "success":
+            s1_audit_status = "failed"
+        elif trading_day_status == "unknown":
+            s1_audit_status = "partial_failed"
+        _audit_step_finish(
+            run_id=run_id,
+            status=s1_audit_status,
+            message=f"token_status={token_status}; trading_day_status={trading_day_status}",
+            metadata={"pipeline": "trade_preparation", "s1": s1_result},
+        )
+
+        if token_status != "success":
+            metadata = {"pipeline": "trade_preparation", "s1": s1_result}
+            message = "S1 token refresh failed; trade prep stopped before downstream KIS-dependent steps"
+            for step in ("S2", "S3", "S4", "S5", "S5-V", "S5-A", "S6"):
+                _audit_skipped_step(step, message, metadata, status="blocked")
+            logger.warning("WARN: [TradePrep] S1 token refresh failed — S2~S6 자동 단계 중단 s1=%s", s1_result)
+            return
+
+        if trading_day_status == "closed":
+            metadata = {"pipeline": "trade_preparation", "s1": s1_result}
+            message = "S1 confirmed closed trading day"
+            for step in ("S2", "S3", "S4", "S5", "S5-V", "S5-A", "S6"):
+                _audit_skipped_step(step, message, metadata)
+            logger.warning("SKIP: [TradePrep] 명확한 비거래일 — S2~S6 자동 단계 스킵 trading_day=%s", trading_day)
+            return
+        if trading_day_status == "unknown":
+            logger.warning("WARN: [TradePrep] 거래일 상태 unknown — token은 정상이나 자동 프로세스는 S2~S5-A 진행 s1=%s", s1_result)
+
+        from .engine.daily_plan import run_daily_plan_generation
+        from .engine.hybrid_screening import run_hybrid_screening
+        from .engine.market_tone import run_market_tone_analysis
+        from .engine.universe_filter import run_universe_filter
+
+        await _run_trade_prep_callable(
+            "S2",
+            "시장 톤 분석",
+            lambda: run_market_tone_analysis(trigger_source="auto_scheduler"),
+        )
+        await _run_trade_prep_callable(
+            "S3",
+            "유니버스 필터",
+            lambda: run_universe_filter(trigger_source="auto_scheduler"),
+        )
+        await _run_trade_prep_callable(
+            "S4",
+            "하이브리드 스크리닝",
+            lambda: run_hybrid_screening(trigger_source="auto_scheduler"),
+        )
+        await _run_trade_prep_callable(
+            "S5",
+            "Daily Plan 생성",
+            lambda: run_daily_plan_generation(
+                trade_date=_today_kst(),
+                creation_mode="auto",
+                created_by="scheduler",
+                trigger_source="auto_scheduler",
+            ),
+        )
+        await _run_trade_prep_callable("S5-V", "Daily Plan 검증", _job_validate_daily_plan_for_pipeline)
+        await _run_trade_prep_callable("S5-A", "Daily Plan 활성화 확인", _job_confirm_daily_plan_activation_for_pipeline)
+        logger.info("SUCCESS: [TradePrep] S1~S5-A 거래준비 프로세스 완료")
+    except Exception as exc:
+        logger.error("FAIL: [TradePrep] 거래준비 프로세스 중단 reason=%s", exc)
+
+
 async def job_decision_engine_start() -> None:
     """Job 6 (09:00 KST): S6 Decision Engine 활성화 + WS 연결."""
     logger.info("START: [Job6] Decision Engine 활성화 (09:00 KST)")
@@ -268,6 +567,14 @@ async def job_decision_engine_start() -> None:
         return
 
     try:
+        active_plan = _get_active_daily_plan_for_s6()
+        if not active_plan:
+            metadata = {"pipeline": "decision_engine_start", "trade_date": _today_kst(), "required_status": "active"}
+            message = "S6 activation blocked: no active Daily Plan for today"
+            _audit_skipped_step("S6", message, metadata, status="blocked")
+            logger.warning("WARN: [Job6] %s", message)
+            return
+
         from .engine.decision_engine import decision_engine
         result = await decision_engine.activate()
         logger.info(
@@ -290,15 +597,19 @@ async def job_decision_engine_stop() -> None:
         logger.error("FAIL: [Job9] 비활성화 실패 — reason=%s", exc)
 
 
-async def job_eod_liquidation() -> None:
+async def job_eod_liquidation() -> dict[str, Any]:
     """Job S9 (15:20 KST): 당일 포지션 전량 청산 후 Decision Engine을 종료한다."""
     logger.info("START: [Job S9] 당일 청산 (15:20 KST)")
+    liquidation_result: dict[str, Any] = {}
+    liquidation_error: Exception | None = None
+    deactivate_error = ""
     try:
         from .engine.eod_liquidation import run_eod_liquidation
 
-        result = await run_eod_liquidation()
-        logger.info("SUCCESS: [Job S9] 청산 완료 liquidated=%d", result.get("liquidated", 0))
+        liquidation_result = await run_eod_liquidation()
+        logger.info("SUCCESS: [Job S9] 청산 완료 liquidated=%d", liquidation_result.get("liquidated", 0))
     except Exception as exc:
+        liquidation_error = exc
         logger.error("FAIL: [Job S9] 청산 실패 — reason=%s", exc)
 
     try:
@@ -307,7 +618,18 @@ async def job_eod_liquidation() -> None:
         await decision_engine.deactivate()
         logger.info("SUCCESS: [Job S9] Decision Engine 비활성화 완료")
     except Exception as exc:
+        deactivate_error = str(exc)
         logger.error("FAIL: [Job S9] Decision Engine 비활성화 실패 — reason=%s", exc)
+
+    if liquidation_error:
+        raise RuntimeError(f"S9 liquidation failed: {liquidation_error}") from liquidation_error
+    return {
+        "ok": not deactivate_error,
+        "liquidation_ok": True,
+        "deactivate_ok": not deactivate_error,
+        "deactivate_error": deactivate_error,
+        "liquidation": liquidation_result,
+    }
 
 
 async def job_data_backup() -> None:
@@ -341,6 +663,70 @@ async def job_review_audit() -> None:
         )
     except Exception as exc:
         logger.error("FAIL: [Job ReviewAudit] 실패 — reason=%s", exc)
+
+
+async def job_postprocess_pipeline() -> None:
+    """Run S9 then S10 sequentially from one postprocess schedule key."""
+    logger.info("START: [PostProcess] S9~S10 후처리 프로세스")
+    pipeline_run_id = _audit_step_start("POSTPROCESS", {"pipeline": "postprocess"})
+    s9_failed = False
+    s9_message = "success"
+    try:
+        s9_run_id = _audit_step_start("S9", {"pipeline": "postprocess"})
+        try:
+            logger.info("START: [PostProcess] S9 당일 청산")
+            s9_result = await job_eod_liquidation()
+            s9_status = "success" if s9_result.get("ok") else "partial_failed"
+            s9_message = "liquidation_completed" if s9_result.get("ok") else "liquidation_completed_deactivate_failed"
+            if s9_status != "success":
+                s9_failed = True
+                logger.warning("WARN: [PostProcess] S9 partial failure result=%s", s9_result)
+            _audit_step_finish(
+                run_id=s9_run_id,
+                status=s9_status,
+                message=s9_message,
+                metadata={"pipeline": "postprocess", "s9": s9_result},
+            )
+            logger.info("SUCCESS: [PostProcess] S9 당일 청산 호출 완료")
+        except Exception as exc:
+            s9_failed = True
+            s9_message = f"S9 failed: {exc}"
+            _audit_step_finish(
+                run_id=s9_run_id,
+                status="failed",
+                message=s9_message,
+                metadata={"pipeline": "postprocess", "error": str(exc)},
+            )
+            logger.error("FAIL: [PostProcess] S9 당일 청산 실패 — S10 review continued reason=%s", exc)
+
+        logger.info("START: [PostProcess] S10 Review & Audit")
+        await job_review_audit()
+        logger.info("SUCCESS: [PostProcess] S10 Review & Audit 호출 완료")
+        if s9_failed:
+            message = "S9 failed, S10 review continued"
+            _audit_step_finish(
+                run_id=pipeline_run_id,
+                status="partial_failed",
+                message=message,
+                metadata={"pipeline": "postprocess", "s9_message": s9_message},
+            )
+            logger.warning("WARN: [PostProcess] %s", message)
+            return
+        _audit_step_finish(
+            run_id=pipeline_run_id,
+            status="success",
+            message="S9~S10 completed",
+            metadata={"pipeline": "postprocess"},
+        )
+        logger.info("SUCCESS: [PostProcess] S9~S10 후처리 프로세스 완료")
+    except Exception as exc:
+        _audit_step_finish(
+            run_id=pipeline_run_id,
+            status="failed",
+            message=f"postprocess failed: {exc}",
+            metadata={"pipeline": "postprocess", "error": str(exc)},
+        )
+        logger.error("FAIL: [PostProcess] 후처리 프로세스 중단 reason=%s", exc)
 
 
 async def job_learning_memory() -> None:
@@ -388,14 +774,9 @@ def _build_scheduler() -> AsyncIOScheduler:
     job 실패 시 예외가 외부로 전파되지 않도록 각 job 함수에서 try/except 처리한다.
     """
     schedule_times = {
-        "s1": "07:45",
-        "s2": "08:00",
-        "s3": "08:15",
-        "s4": "08:30",
-        "s5": "08:40",
+        "trade_prep": "07:45",
         "s6": "09:45",
-        "s9": "15:20",
-        "s10": "16:00",
+        "postprocess": "15:20",
         "s11": "22:00",
         "backup": "18:00",
         "us_watch": "22:00",
@@ -408,10 +789,19 @@ def _build_scheduler() -> AsyncIOScheduler:
             for item in list_settings()
             if isinstance(item.get("key"), str) and item["key"].startswith("schedule_")
         }
-        for key in schedule_times:
-            db_key = f"schedule_{key}_time"
+        key_map = {
+            "trade_prep": "schedule_trade_prep_time",
+            "s6": "schedule_s6_time",
+            "postprocess": "schedule_postprocess_time",
+            "s11": "schedule_s11_time",
+        }
+        for key, db_key in key_map.items():
             if isinstance(saved.get(db_key), str):
                 schedule_times[key] = saved[db_key]
+        if not isinstance(saved.get("schedule_trade_prep_time"), str) and isinstance(saved.get("schedule_s1_time"), str):
+            schedule_times["trade_prep"] = saved["schedule_s1_time"]
+        if not isinstance(saved.get("schedule_postprocess_time"), str) and isinstance(saved.get("schedule_s9_time"), str):
+            schedule_times["postprocess"] = saved["schedule_s9_time"]
         logger.info("INFO: Scheduler 시간 로드 times=%s", schedule_times)
     except Exception as exc:
         logger.warning("WARN: Scheduler settings 로드 실패 — 기본값 사용 reason=%s", exc)
@@ -429,14 +819,9 @@ def _build_scheduler() -> AsyncIOScheduler:
         except Exception as exc:
             logger.warning("WARN: Scheduler invalid time key=%s value=%s reason=%s", setting_key, raw_time, exc)
             fallback = {
-                "s1": (7, 45),
-                "s2": (8, 0),
-                "s3": (8, 15),
-                "s4": (8, 30),
-                "s5": (8, 40),
+                "trade_prep": (7, 45),
                 "s6": (9, 45),
-                "s9": (15, 20),
-                "s10": (16, 0),
+                "postprocess": (15, 20),
                 "s11": (22, 0),
                 "backup": (18, 0),
                 "us_watch": (22, 0),
@@ -445,44 +830,12 @@ def _build_scheduler() -> AsyncIOScheduler:
 
     scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
 
-    hour, minute = _parse_time("s1")
+    hour, minute = _parse_time("trade_prep")
     scheduler.add_job(
-        job_refresh_kis_token,
+        job_trade_preparation_pipeline,
         CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
-        id="job_refresh_kis_token",
-        name="KIS 토큰 선제 갱신",
-        replace_existing=True,
-    )
-    hour, minute = _parse_time("s2")
-    scheduler.add_job(
-        job_market_tone_analysis,
-        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
-        id="job_market_tone_analysis",
-        name="시장 톤 분석",
-        replace_existing=True,
-    )
-    hour, minute = _parse_time("s3")
-    scheduler.add_job(
-        job_universe_filter,
-        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
-        id="job_universe_filter",
-        name="유니버스 필터",
-        replace_existing=True,
-    )
-    hour, minute = _parse_time("s4")
-    scheduler.add_job(
-        job_hybrid_screening,
-        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
-        id="job_hybrid_screening",
-        name="하이브리드 스크리닝",
-        replace_existing=True,
-    )
-    hour, minute = _parse_time("s5")
-    scheduler.add_job(
-        job_daily_plan,
-        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
-        id="job_daily_plan",
-        name="Daily Plan 자동 생성",
+        id="job_trade_preparation_pipeline",
+        name="거래준비 프로세스 S1~S5-A",
         replace_existing=True,
     )
     hour, minute = _parse_time("s6")
@@ -493,12 +846,12 @@ def _build_scheduler() -> AsyncIOScheduler:
         name="Decision Engine 활성화",
         replace_existing=True,
     )
-    hour, minute = _parse_time("s9")
+    hour, minute = _parse_time("postprocess")
     scheduler.add_job(
-        job_eod_liquidation,
+        job_postprocess_pipeline,
         CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
-        id="job_eod_liquidation",
-        name="당일 청산",
+        id="job_postprocess_pipeline",
+        name="후처리 프로세스 S9~S10",
         replace_existing=True,
     )
     hour, minute = _parse_time("backup")
@@ -507,14 +860,6 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
         id="job_data_backup",
         name="데이터 백업",
-        replace_existing=True,
-    )
-    hour, minute = _parse_time("s10")
-    scheduler.add_job(
-        job_review_audit,
-        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
-        id="job_review_audit",
-        name="S10 Review & Audit",
         replace_existing=True,
     )
     hour, minute = _parse_time("s11")
