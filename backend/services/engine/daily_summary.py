@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from ..db import get_connection
 from .order_executor import get_today_orders
+from .position_integrity import json_compact, summarize_order_integrity
 from .rulepack_store import get_active_rulepack_for_date
 from ...config import settings
 
@@ -19,6 +20,7 @@ logger = logging.getLogger("DailySummary")
 
 
 def _ensure_tables() -> None:
+    """Create and migrate the daily_trade_summary table used by S10."""
     with get_connection() as conn:
         conn.execute(
             """CREATE TABLE IF NOT EXISTS daily_trade_summary (
@@ -33,10 +35,28 @@ def _ensure_tables() -> None:
                 symbols_traded TEXT NOT NULL DEFAULT '[]',
                 market_tone TEXT NOT NULL DEFAULT '',
                 rulepack_id TEXT NOT NULL DEFAULT '',
+                pnl_status TEXT NOT NULL DEFAULT 'unverified',
+                pnl_source TEXT NOT NULL DEFAULT 'orders_without_fills',
+                integrity_warnings TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )"""
         )
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(daily_trade_summary)").fetchall()}
+        migrations = [
+            ("pnl_status", "ALTER TABLE daily_trade_summary ADD COLUMN pnl_status TEXT NOT NULL DEFAULT 'unverified'"),
+            (
+                "pnl_source",
+                "ALTER TABLE daily_trade_summary ADD COLUMN pnl_source TEXT NOT NULL DEFAULT 'orders_without_fills'",
+            ),
+            (
+                "integrity_warnings",
+                "ALTER TABLE daily_trade_summary ADD COLUMN integrity_warnings TEXT NOT NULL DEFAULT '[]'",
+            ),
+        ]
+        for column, statement in migrations:
+            if column not in columns:
+                conn.execute(statement)
 
 
 async def run_daily_summary(trade_date: str | None = None) -> dict:
@@ -70,6 +90,7 @@ async def run_daily_summary(trade_date: str | None = None) -> dict:
 
     avg_pnl_pct = sum(realized_pnl_pcts) / len(realized_pnl_pcts) if realized_pnl_pcts else 0.0
     symbols_traded = list({o.get("symbol") for o in orders if o.get("symbol")})
+    integrity = summarize_order_integrity(trade_date)
 
     # 시장 톤 조회
     market_tone = ""
@@ -101,12 +122,17 @@ async def run_daily_summary(trade_date: str | None = None) -> dict:
                 """UPDATE daily_trade_summary SET
                    total_orders=?, buy_orders=?, sell_orders=?, failed_orders=?,
                    realized_pnl=?, realized_pnl_pct=?, symbols_traded=?,
-                   market_tone=?, rulepack_id=?, updated_at=?
+                   market_tone=?, rulepack_id=?, pnl_status=?, pnl_source=?,
+                   integrity_warnings=?, updated_at=?
                    WHERE trade_date=?""",
                 (
                     len(orders), len(buy_list), len(sell_list), len(failed_list),
                     realized_pnl, avg_pnl_pct, json.dumps(symbols_traded),
-                    market_tone, rulepack_id, now_iso, trade_date,
+                    market_tone, rulepack_id,
+                    integrity.get("pnl_status", "unverified"),
+                    integrity.get("pnl_source", "orders_without_fills"),
+                    json_compact(integrity.get("warnings", [])),
+                    now_iso, trade_date,
                 ),
             )
         else:
@@ -114,19 +140,23 @@ async def run_daily_summary(trade_date: str | None = None) -> dict:
                 """INSERT INTO daily_trade_summary
                    (id, trade_date, total_orders, buy_orders, sell_orders, failed_orders,
                     realized_pnl, realized_pnl_pct, symbols_traded, market_tone, rulepack_id,
-                    created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    pnl_status, pnl_source, integrity_warnings, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     summary_id, trade_date,
                     len(orders), len(buy_list), len(sell_list), len(failed_list),
                     realized_pnl, avg_pnl_pct, json.dumps(symbols_traded),
-                    market_tone, rulepack_id, now_iso, now_iso,
+                    market_tone, rulepack_id,
+                    integrity.get("pnl_status", "unverified"),
+                    integrity.get("pnl_source", "orders_without_fills"),
+                    json_compact(integrity.get("warnings", [])),
+                    now_iso, now_iso,
                 ),
             )
 
     logger.info(
-        "SUCCESS: DailySummary saved trade_date=%s orders=%d pnl=%.0f",
-        trade_date, len(orders), realized_pnl,
+        "SUCCESS: DailySummary saved trade_date=%s orders=%d pnl=%.0f pnl_status=%s pnl_source=%s",
+        trade_date, len(orders), realized_pnl, integrity.get("pnl_status"), integrity.get("pnl_source"),
     )
 
     backup_result = _backup_db(trade_date)
@@ -139,6 +169,15 @@ async def run_daily_summary(trade_date: str | None = None) -> dict:
         "failed_orders": len(failed_list),
         "realized_pnl": realized_pnl,
         "realized_pnl_pct": avg_pnl_pct,
+        "pnl_status": integrity.get("pnl_status", "unverified"),
+        "pnl_source": integrity.get("pnl_source", "orders_without_fills"),
+        "integrity_warnings": integrity.get("warnings", []),
+        "pending_buy_orders": integrity.get("pending_buy_orders", []),
+        "incomplete_fill_orders": integrity.get("incomplete_fill_orders", []),
+        "net_negative_positions": integrity.get("net_negative_positions", []),
+        "duplicate_sell_orders": integrity.get("duplicate_sell_orders", []),
+        "sell_qty_exceeds_buy_qty": integrity.get("sell_qty_exceeds_buy_qty", []),
+        "legacy_residual_positions": integrity.get("legacy_residual_positions", []),
         "symbols_traded": symbols_traded,
         "market_tone": market_tone,
         "rulepack_id": rulepack_id,
@@ -179,6 +218,11 @@ def get_trade_history(limit: int = 30) -> list[dict]:
         if isinstance(d.get("symbols_traded"), str):
             try:
                 d["symbols_traded"] = json.loads(d["symbols_traded"])
+            except Exception:
+                pass
+        if isinstance(d.get("integrity_warnings"), str):
+            try:
+                d["integrity_warnings"] = json.loads(d["integrity_warnings"])
             except Exception:
                 pass
         result.append(d)

@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 from ..db import get_connection
 from .order_executor import get_today_orders
+from .position_integrity import create_integrity_alert_once, json_compact, summarize_order_integrity
 
 logger = logging.getLogger("ReviewAudit")
 
@@ -136,7 +137,26 @@ def _load_daily_trade_summary(trade_date: str) -> dict[str, Any]:
         ).fetchone()
     summary = dict(row) if row else {}
     summary["symbols_traded"] = _json_loads(summary.get("symbols_traded"), [])
+    summary["integrity_warnings"] = _json_loads(summary.get("integrity_warnings"), [])
     return summary
+
+
+def _ensure_review_integrity_columns() -> None:
+    """Add S10 integrity columns when a DB predates the latest migration."""
+    migrations = [
+        ("pnl_status", "ALTER TABLE daily_review_reports ADD COLUMN pnl_status TEXT NOT NULL DEFAULT 'unverified'"),
+        ("pnl_source", "ALTER TABLE daily_review_reports ADD COLUMN pnl_source TEXT NOT NULL DEFAULT 'orders_without_fills'"),
+        ("integrity_warnings", "ALTER TABLE daily_review_reports ADD COLUMN integrity_warnings TEXT NOT NULL DEFAULT '[]'"),
+        (
+            "legacy_residual_positions",
+            "ALTER TABLE daily_review_reports ADD COLUMN legacy_residual_positions TEXT NOT NULL DEFAULT '[]'",
+        ),
+    ]
+    with get_connection() as conn:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(daily_review_reports)").fetchall()}
+        for column, statement in migrations:
+            if column not in columns:
+                conn.execute(statement)
 
 
 def _order_summary(trade_date: str) -> dict[str, Any]:
@@ -283,12 +303,53 @@ async def run_review_audit(trade_date: str) -> dict:
         "START: [S10] deterministic Review & Audit trade_date=%s prompt_template=1600_opus_review.md",
         trade_date,
     )
+    _ensure_review_integrity_columns()
     now_iso = _now_kst_iso()
     signals = _load_review_signals(trade_date)
     orders = _order_summary(trade_date)
+    integrity = summarize_order_integrity(trade_date)
     missed_entries = _load_missed_entries(trade_date)
     false_positives = _load_false_positives(trade_date)
     status_counts = _signal_status_counts(signals)
+    if integrity.get("pnl_status") == "unverified":
+        create_integrity_alert_once(
+            trade_date,
+            alert_type="fill_missing",
+            severity="WARNING",
+            title="체결/손익 검증 미완료",
+            detail=json_compact(
+                {
+                    "pnl_source": integrity.get("pnl_source"),
+                    "submitted_only_orders": integrity.get("submitted_only_orders"),
+                    "pending_buy_orders": integrity.get("pending_buy_orders", []),
+                    "submitted_without_order_no": integrity.get("submitted_without_order_no"),
+                    "incomplete_fill_orders": integrity.get("incomplete_fill_orders", []),
+                    "net_negative_positions": integrity.get("net_negative_positions", []),
+                    "duplicate_sell_orders": integrity.get("duplicate_sell_orders", []),
+                    "sell_qty_exceeds_buy_qty": integrity.get("sell_qty_exceeds_buy_qty", []),
+                    "warnings": integrity.get("warnings", []),
+                }
+            ),
+        )
+    if (
+        integrity.get("net_negative_positions")
+        or integrity.get("duplicate_sell_orders")
+        or integrity.get("sell_qty_exceeds_buy_qty")
+    ):
+        create_integrity_alert_once(
+            trade_date,
+            alert_type="risk_guard",
+            severity="WARNING",
+            title="중복 매도/순매도 이상 감지",
+            detail=json_compact(
+                {
+                    "net_negative_positions": integrity.get("net_negative_positions", []),
+                    "duplicate_sell_orders": integrity.get("duplicate_sell_orders", []),
+                    "sell_qty_exceeds_buy_qty": integrity.get("sell_qty_exceeds_buy_qty", []),
+                    "warnings": integrity.get("warnings", []),
+                }
+            ),
+        )
 
     total_trades = len(signals)
     total_pnl = 0.0
@@ -430,8 +491,9 @@ async def run_review_audit(trade_date: str) -> dict:
                 (id, trade_date, total_trades, win_count, loss_count, total_pnl,
                  profile_summary, exit_summary, trailing_quality, missed_entries,
                  false_positives, missed_entries_count, false_positive_count,
-                 no_trade_count, memory_count, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                 no_trade_count, memory_count, pnl_status, pnl_source, integrity_warnings,
+                 legacy_residual_positions, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
             """,
             (
                 str(uuid.uuid4()),
@@ -448,6 +510,10 @@ async def run_review_audit(trade_date: str) -> dict:
                 len(missed_entries),
                 len(false_positives),
                 no_trade_count,
+                integrity.get("pnl_status", "unverified"),
+                integrity.get("pnl_source", "orders_without_fills"),
+                json_compact(integrity.get("warnings", [])),
+                json_compact(integrity.get("legacy_residual_positions", [])),
                 now_iso,
             ),
         )
@@ -469,6 +535,15 @@ async def run_review_audit(trade_date: str) -> dict:
         "total_pnl": total_pnl,
         "realized_pnl": total_pnl,
         "realized_pnl_pct": 0.0,
+        "pnl_status": integrity.get("pnl_status", "unverified"),
+        "pnl_source": integrity.get("pnl_source", "orders_without_fills"),
+        "integrity_warnings": integrity.get("warnings", []),
+        "pending_buy_orders": integrity.get("pending_buy_orders", []),
+        "incomplete_fill_orders": integrity.get("incomplete_fill_orders", []),
+        "net_negative_positions": integrity.get("net_negative_positions", []),
+        "duplicate_sell_orders": integrity.get("duplicate_sell_orders", []),
+        "sell_qty_exceeds_buy_qty": integrity.get("sell_qty_exceeds_buy_qty", []),
+        "legacy_residual_positions": integrity.get("legacy_residual_positions", []),
         "profile_summary": profile_summary,
         "exit_summary": exit_summary,
         "trailing_quality": trailing_quality,
@@ -479,13 +554,14 @@ async def run_review_audit(trade_date: str) -> dict:
         "no_trade_count": no_trade_count,
     }
     logger.info(
-        "SUCCESS: [S10] Review & Audit trade_date=%s trades=%d orders=%d missed=%d fp=%d pnl=%.4f",
+        "SUCCESS: [S10] Review & Audit trade_date=%s trades=%d orders=%d missed=%d fp=%d pnl=%.4f pnl_status=%s",
         trade_date,
         total_trades,
         orders["total_orders"],
         len(missed_entries),
         len(false_positives),
         total_pnl,
+        integrity.get("pnl_status"),
     )
     return result
 
@@ -527,6 +603,8 @@ def get_review_report(trade_date: str) -> dict | None:
     payload["trailing_quality"] = _json_loads(payload.get("trailing_quality"), {})
     payload["missed_entries"] = _json_loads(payload.get("missed_entries"), [])
     payload["false_positives"] = _json_loads(payload.get("false_positives"), [])
+    payload["integrity_warnings"] = _json_loads(payload.get("integrity_warnings"), [])
+    payload["legacy_residual_positions"] = _json_loads(payload.get("legacy_residual_positions"), [])
     payload["total_orders"] = _safe_int(daily_summary.get("total_orders") or orders.get("total_orders"))
     payload["buy_orders"] = _safe_int(daily_summary.get("buy_orders") or orders.get("buy_orders"))
     payload["sell_orders"] = _safe_int(daily_summary.get("sell_orders") or orders.get("sell_orders"))
@@ -537,6 +615,10 @@ def get_review_report(trade_date: str) -> dict | None:
     payload["signal_status_counts"] = _signal_status_counts(_load_review_signals(trade_date))
     payload["realized_pnl"] = _safe_float(daily_summary.get("realized_pnl") or payload.get("total_pnl"))
     payload["realized_pnl_pct"] = _safe_float(daily_summary.get("realized_pnl_pct"))
+    payload["pnl_status"] = daily_summary.get("pnl_status") or payload.get("pnl_status") or "unverified"
+    payload["pnl_source"] = daily_summary.get("pnl_source") or payload.get("pnl_source") or "orders_without_fills"
+    if daily_summary.get("integrity_warnings"):
+        payload["integrity_warnings"] = daily_summary.get("integrity_warnings")
     payload["symbols_traded"] = daily_summary.get("symbols_traded") or orders.get("symbols_traded", [])
     payload["market_tone"] = daily_summary.get("market_tone", "")
     payload["rulepack_id"] = daily_summary.get("rulepack_id", "")

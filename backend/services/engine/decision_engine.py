@@ -369,51 +369,16 @@ def _load_sent_symbols(trade_date: str) -> set[str]:
 
 
 def _restore_positions_from_db(trade_date: str, candidate_symbols: list[str]) -> None:
-    """서버 재시작 후 position_stop_states에서 오늘 포지션을 복원한다.
+    """서버 재시작 후 DB 주문 순수량 기준으로 오늘 포지션을 복원한다.
 
     Args:
         trade_date: YYYY-MM-DD 형식의 거래일.
         candidate_symbols: 현재 DecisionEngine 후보 종목 코드 목록. 비어 있으면 오늘 매수 주문 전체를 대상으로 복원한다.
     """
     try:
-        with get_connection() as conn:
-            safe_symbols = [str(symbol).strip() for symbol in candidate_symbols if str(symbol).strip()]
-            if safe_symbols:
-                placeholders = ",".join("?" for _ in safe_symbols)
-                symbol_filter_orders = f"AND symbol IN ({placeholders})"
-                symbol_filter_stops = f"AND symbol_code IN ({placeholders})"
-                params_symbols = safe_symbols
-            else:
-                symbol_filter_orders = ""
-                symbol_filter_stops = ""
-                params_symbols = []
+        from .position_integrity import build_restore_position_plan
 
-            rows = conn.execute(
-                f"""
-                SELECT ps.*, latest.qty
-                FROM position_stop_states ps
-                JOIN (
-                    SELECT symbol, qty, MAX(created_at) AS latest_created_at
-                    FROM trading_orders
-                    WHERE trade_date = ?
-                      AND status IN ('submitted', 'filled')
-                      AND side = 'buy'
-                      {symbol_filter_orders}
-                    GROUP BY symbol
-                ) latest
-                  ON latest.symbol = ps.symbol_code
-                JOIN (
-                    SELECT symbol_code, MAX(last_updated_at) AS latest_updated_at
-                    FROM position_stop_states
-                    WHERE date(last_updated_at) = ?
-                      {symbol_filter_stops}
-                    GROUP BY symbol_code
-                ) latest_stop
-                  ON latest_stop.symbol_code = ps.symbol_code
-                 AND latest_stop.latest_updated_at = ps.last_updated_at
-                """,
-                [trade_date] + params_symbols + [trade_date] + params_symbols,
-            ).fetchall()
+        rows = build_restore_position_plan(trade_date, candidate_symbols)
     except Exception as exc:
         logger.warning("WARN: [S6] 포지션 복원 쿼리 실패 error=%s", exc)
         return
@@ -424,9 +389,33 @@ def _restore_positions_from_db(trade_date: str, candidate_symbols: list[str]) ->
     for row in rows:
         data = dict(row)
         symbol = str(data.get("symbol_code") or "")
+        if not symbol:
+            symbol = str(data.get("symbol") or "")
+        buy_qty = int(data.get("buy_qty") or 0)
+        sell_qty = int(data.get("sell_qty") or 0)
+        net_qty = int(data.get("net_qty") or 0)
+        skipped_reason = str(data.get("skipped_reason") or "")
+        if not data.get("should_restore"):
+            logger.warning(
+                "WARN: [S6] 포지션 복원 스킵 symbol=%s buy_qty=%d sell_qty=%d net_qty=%d skipped_reason=%s",
+                symbol,
+                buy_qty,
+                sell_qty,
+                net_qty,
+                skipped_reason or "not_restorable",
+            )
+            continue
         qty = int(data.get("qty") or 0)
         entry_price = float(data.get("entry_price") or 0)
         if not symbol or qty <= 0 or entry_price <= 0:
+            logger.warning(
+                "WARN: [S6] 포지션 복원 스킵 symbol=%s buy_qty=%d sell_qty=%d net_qty=%d skipped_reason=%s",
+                symbol,
+                buy_qty,
+                sell_qty,
+                net_qty,
+                "invalid_restore_payload",
+            )
             continue
         position_manager.add_position(
             symbol=symbol,
@@ -437,10 +426,14 @@ def _restore_positions_from_db(trade_date: str, candidate_symbols: list[str]) ->
         )
         restored += 1
         logger.info(
-            "SUCCESS: [S6] 포지션 복원 symbol=%s qty=%d entry=%.2f",
+            "SUCCESS: [S6] 포지션 복원 symbol=%s qty=%d entry=%.2f buy_qty=%d sell_qty=%d net_qty=%d skipped_reason=%s",
             symbol,
             qty,
             entry_price,
+            buy_qty,
+            sell_qty,
+            net_qty,
+            skipped_reason,
         )
 
     logger.info("SUCCESS: [S6] 포지션 복원 완료 count=%d trade_date=%s", restored, trade_date)

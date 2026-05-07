@@ -725,6 +725,10 @@ CREATE TABLE IF NOT EXISTS daily_review_reports (
     false_positive_count INTEGER NOT NULL DEFAULT 0,
     no_trade_count   INTEGER NOT NULL DEFAULT 0,
     memory_count     INTEGER NOT NULL DEFAULT 0,
+    pnl_status       TEXT NOT NULL DEFAULT 'unverified',
+    pnl_source       TEXT NOT NULL DEFAULT 'orders_without_fills',
+    integrity_warnings TEXT NOT NULL DEFAULT '[]',
+    legacy_residual_positions TEXT NOT NULL DEFAULT '[]',
     created_at       TEXT NOT NULL
 )
 """,
@@ -1061,6 +1065,13 @@ def _daily_review_migration_statements() -> list[tuple[str, str]]:
         ("false_positives", "ALTER TABLE daily_review_reports ADD COLUMN false_positives TEXT NOT NULL DEFAULT '[]'"),
         ("missed_entries_count", "ALTER TABLE daily_review_reports ADD COLUMN missed_entries_count INTEGER NOT NULL DEFAULT 0"),
         ("false_positive_count", "ALTER TABLE daily_review_reports ADD COLUMN false_positive_count INTEGER NOT NULL DEFAULT 0"),
+        ("pnl_status", "ALTER TABLE daily_review_reports ADD COLUMN pnl_status TEXT NOT NULL DEFAULT 'unverified'"),
+        ("pnl_source", "ALTER TABLE daily_review_reports ADD COLUMN pnl_source TEXT NOT NULL DEFAULT 'orders_without_fills'"),
+        ("integrity_warnings", "ALTER TABLE daily_review_reports ADD COLUMN integrity_warnings TEXT NOT NULL DEFAULT '[]'"),
+        (
+            "legacy_residual_positions",
+            "ALTER TABLE daily_review_reports ADD COLUMN legacy_residual_positions TEXT NOT NULL DEFAULT '[]'",
+        ),
     ]
 
 

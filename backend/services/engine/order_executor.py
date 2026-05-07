@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from ..db import get_connection
 from ..kis.domestic.service import get_balance, order_cash
 from .order_preflight import is_new_buy_blocked_by_emergency_halt, run_preflight
+from .position_integrity import find_active_sell_order, load_order_net_positions
 from .position_manager import position_manager
 from .rule_cache import get_rule
 
@@ -328,6 +329,45 @@ class OrderExecutor:
             logger.warning("WARN: [S8/S9] invalid sell request order_id=%s symbol=%s qty=%d", order_id, safe_symbol, safe_qty)
             return {"ok": False, "order_id": order_id, "symbol": safe_symbol, "reason": fail_reason}
 
+        duplicate_sell = find_active_sell_order(today, safe_symbol)
+        if duplicate_sell:
+            logger.warning(
+                "WARN: [S8/S9] duplicate sell skipped symbol=%s qty=%d existing_order_id=%s existing_status=%s",
+                safe_symbol,
+                safe_qty,
+                duplicate_sell.get("id"),
+                duplicate_sell.get("status"),
+            )
+            return {
+                "ok": False,
+                "status": "skipped_duplicate",
+                "symbol": safe_symbol,
+                "qty": safe_qty,
+                "reason": "sell_already_submitted",
+                "existing_order_id": duplicate_sell.get("id"),
+                "existing_status": duplicate_sell.get("status"),
+            }
+
+        summaries = load_order_net_positions(today, [safe_symbol])
+        if summaries and int(summaries[0].get("buy_qty") or 0) > 0 and int(summaries[0].get("net_qty") or 0) <= 0:
+            logger.warning(
+                "WARN: [S8/S9] sell skipped because DB net position is closed symbol=%s buy_qty=%s sell_qty=%s net_qty=%s",
+                safe_symbol,
+                summaries[0].get("buy_qty"),
+                summaries[0].get("sell_qty"),
+                summaries[0].get("net_qty"),
+            )
+            return {
+                "ok": False,
+                "status": "skipped_duplicate",
+                "symbol": safe_symbol,
+                "qty": safe_qty,
+                "reason": "net_position_closed",
+                "buy_qty": summaries[0].get("buy_qty"),
+                "sell_qty": summaries[0].get("sell_qty"),
+                "net_qty": summaries[0].get("net_qty"),
+            }
+
         try:
             response = await order_cash(
                 side="sell",
@@ -337,6 +377,8 @@ class OrderExecutor:
                 ord_dvsn=ord_dvsn,
             )
             kis_order_no = self._extract_order_no(response)
+            status = "submitted" if kis_order_no else "submitted_without_order_no"
+            saved_reason = reason if kis_order_no else f"{reason}:submit_uncertain"
             order_id = self._save_order(
                 trade_date=today,
                 signal_id="",
@@ -347,12 +389,36 @@ class OrderExecutor:
                 qty=safe_qty,
                 price=safe_price,
                 kis_order_no=kis_order_no,
-                status="submitted",
-                reason=reason,
+                status=status,
+                reason=saved_reason,
             )
+            if not kis_order_no:
+                logger.warning(
+                    "WARN: [S8/S9] sell submit uncertain order_id=%s symbol=%s qty=%d reason=missing_kis_order_no",
+                    order_id,
+                    safe_symbol,
+                    safe_qty,
+                )
+                return {
+                    "ok": False,
+                    "order_id": order_id,
+                    "status": status,
+                    "symbol": safe_symbol,
+                    "qty": safe_qty,
+                    "kis_order_no": kis_order_no,
+                    "reason": "missing_kis_order_no",
+                    "uncertain": True,
+                }
             position_manager.remove_position(safe_symbol)
             logger.info("SUCCESS: [S8/S9] sell order submitted order_id=%s symbol=%s qty=%d", order_id, safe_symbol, safe_qty)
-            return {"ok": True, "order_id": order_id, "symbol": safe_symbol, "qty": safe_qty, "kis_order_no": kis_order_no}
+            return {
+                "ok": True,
+                "order_id": order_id,
+                "status": status,
+                "symbol": safe_symbol,
+                "qty": safe_qty,
+                "kis_order_no": kis_order_no,
+            }
         except Exception as exc:
             order_id = self._save_order(
                 trade_date=today,
