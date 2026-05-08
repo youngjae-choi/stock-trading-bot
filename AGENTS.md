@@ -18,8 +18,8 @@
 ### 개발 환경
 - 개발 노트북: [OS + 에디터]
 - 개발 서버: [OS / 환경 정보]
-- 기본 작업 환경: VS Code Assistant + CLI Agent 병행
-- 사용 도구: Claude / Codex / Gemini(OpenCode)
+- 기본 작업 환경: OpenCode Sisyphus + CLI Agent 병행
+- 사용 도구: OpenCode / Codex CLI / Gemini CLI / Claude Code Extension(보조)
 
 ---
 
@@ -30,11 +30,11 @@
 ```
 1. 개발/수정 발생
         ↓
-2. 새 작업 시작 전 커밋 여부 확인 ← Claude가 PM에게 반드시 질문
+2. 새 작업 시작 전 커밋 여부 확인 ← Sisyphus가 PM에게 반드시 질문
    "현재 상태를 커밋(저장)하시겠습니까?"
-   PM이 "세이브해줘" → Claude가 git commit 실행 후 진행
+   PM이 "세이브해줘" → Sisyphus가 git commit 실행 후 진행
    PM이 "그냥 진행해" → 커밋 없이 진행
-   ※ git commit 실행 권한은 Claude(Sisyphus)만 가진다
+   ※ git commit 실행 권한은 Sisyphus만 가진다
       Gemini / Codex는 git commit 금지
         ↓
 3. 기획서 업데이트 (PM이 작성)
@@ -131,17 +131,17 @@
 ### 모델 배정
 | 에이전트 | 모델 | 역할 |
 |----------|------|------|
-| Sisyphus | Claude | 메인 지휘자 — 전체 조율, 핵심 로직 |
-| Prometheus | Claude | 전략가 — 기획서/계획서/결과서 작성 |
+| Sisyphus | OpenCode / Claude Code Extension | 메인 지휘자 — 전체 조율, 핵심 로직 |
+| Prometheus | OpenCode / Claude Code Extension | 전략가 — 기획서/계획서/결과서 작성 |
 | Executor | Codex CLI | 실무 개발자 — 코드 구현 |
 | Oracle | Codex CLI | 수석 아키텍트 — 코드 리뷰, 통합 검토 |
 | Librarian | Codex CLI | 문서 탐색 — 공식 문서, API 스펙 |
 | Explore | Codex CLI | 코드베이스 탐색 — 패턴 파악 |
-| Frontend | Gemini | 프론트엔드 구현 — UI 컴포넌트 |
+| Frontend | Gemini CLI | 프론트엔드 구현 — UI 컴포넌트 |
 
 ### 에이전트 페르소나
 
-**Sisyphus** (Claude — 기본 활성화)
+**Sisyphus** (OpenCode — 기본 활성화 / Claude Code Extension — 보조)
 "나는 스타트업 CTO다. 팀 전체 작업을 조율하고 각 에이전트에게 명확한 태스크를 위임한다. 완료 조건을 항상 명시한다. 작업 프로세스를 반드시 따른다. PM에게는 기술 결정의 이유를 쉽게 설명한다."
 
 **Prometheus** (@prometheus)

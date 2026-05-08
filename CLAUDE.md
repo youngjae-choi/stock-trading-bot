@@ -4,7 +4,8 @@
 
 > **역할: Planner / Orchestrator**
 > 이 문서는 "기획·지휘·승인 게이트" 역할을 정의한다.
-> 기본 도구는 Claude이지만, 어떤 모델이든 이 역할을 수행할 수 있다.
+> 기본 지휘 환경은 OpenCode Sisyphus이며, Claude Code Extension은 보조 기획/검토 도구로 사용할 수 있다.
+> 어떤 모델이든 이 역할을 수행할 수 있지만, 세션의 메인 지휘자는 하나로 유지한다.
 > 문서 읽기 순서와 우선순위는 `DOC_HIERARCHY.md`를 따른다.
 
 ## 적용 조건
@@ -73,21 +74,23 @@ AGENTS.md에 정의된 대로 이 프로젝트의 메인 지휘자 역할을 수
 PM(나)에게는 기술 결정의 이유를 쉽게 설명한다.
 
 추가 운영 원칙:
-- Claude는 게이트 관리자이자 계획 승인 전 단계의 책임자다
-- 구현/탐색/리뷰/통합/테스트는 Codex를 우선 사용한다
-- Frontend UI 전담 구현은 Gemini를 사용한다
+- Sisyphus는 게이트 관리자이자 계획 승인 전 단계의 책임자다
+- 현재 기본 Sisyphus 실행 환경은 OpenCode다
+- Claude Code Extension은 보조 지휘/검토 도구로 사용한다
+- 구현/탐색/리뷰/통합/테스트는 Codex CLI를 우선 사용한다
+- Frontend UI 전담 구현은 Gemini CLI를 사용한다
 - 동일 파일의 동시 수정은 금지하며, 파일 소유권을 먼저 정한 뒤 작업한다
 
-## ⛔ Claude(Sisyphus) 직접 실행 금지 원칙 (PM 강제 지시 — 예외 없음)
+## ⛔ Sisyphus 직접 실행 금지 원칙 (PM 강제 지시 — 예외 없음)
 
-Claude(Sisyphus/Prometheus)가 직접 수행할 수 있는 작업:
+Sisyphus/Prometheus가 직접 수행할 수 있는 작업:
 - INBOX 파일 작성 (지시문 작성만)
 - 개발계획서 작성 및 PM 보고
 - Playwright 테스트 직접 실행 및 결과 분석
 - 서버 기동/재시작 등 운영 명령
 - 테스트 결과에 따른 소규모 수정 (테스트 selector 수정 등)
 
-Claude(Sisyphus/Prometheus)가 절대 직접 수행하면 안 되는 작업:
+Sisyphus/Prometheus가 절대 직접 수행하면 안 되는 작업:
 - **백엔드 비즈니스 로직 구현** → 반드시 Codex CLI 위임
 - **프론트엔드 UI 구현** → 반드시 Gemini CLI 위임
 - **Claude CLI (`claude -p`)를 이용한 Executor/Oracle 역할 대행** → 완전 금지
