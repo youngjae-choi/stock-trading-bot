@@ -274,12 +274,24 @@ test('Console shell loads extracted assets without browser runtime errors', asyn
     '/static/js/console-utils.js',
     '/static/js/console-api.js',
     '/static/js/console-auth.js',
-    '/static/js/console-navigation.js',
+    '/static/js/screens/console-today-orders.js',
+    '/static/js/screens/console-positions.js',
+    '/static/js/screens/console-trading-monitor.js',
+    '/static/js/screens/console-live-decision.js',
+    '/static/js/screens/console-diagnostics.js',
+    '/static/js/screens/console-execution-risk.js',
     '/static/js/screens/console-alerts.js',
     '/static/js/screens/console-approval.js',
     '/static/js/screens/console-missed-tracking.js',
     '/static/js/screens/console-false-positive.js',
     '/static/js/screens/console-confidence-calibration.js',
+    '/static/js/screens/console-settings.js',
+    '/static/js/screens/console-funnel-data-health.js',
+    '/static/js/screens/console-review.js',
+    '/static/js/screens/console-statistics.js',
+    '/static/js/screens/console-daily-plan.js',
+    '/static/js/screens/console-expert-knowledge.js',
+    '/static/js/console-navigation.js',
     '/static/js/console-main.js',
   ];
 
@@ -315,6 +327,8 @@ test('Console shell loads extracted assets without browser runtime errors', asyn
       'loadFalsePositive',
       'loadConfidenceCalibration',
       'runConfidenceCalibration',
+      'loadDailyPlanScreen',
+      'generateDailyPlan',
     ];
     const missing = expectedFunctions.filter((name) => typeof window[name] !== 'function');
     if (typeof window._settingsProfileData === 'undefined') {

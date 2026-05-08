@@ -13,11 +13,13 @@
 - `backend/static/js/screens/console-missed-tracking.js`
 - `backend/static/js/screens/console-false-positive.js`
 - `backend/static/js/screens/console-confidence-calibration.js`
+- `backend/static/js/screens/console-diagnostics.js`
+- `backend/static/js/screens/console-execution-risk.js`
 - `backend/static/js/console-main.js`
 - `tests/e2e/status-truth.spec.cjs`
 - `docs/agent-comm/OUTBOX_CODEX_20260508_console_js_split_stage2.md`
 
-참고: 기존 `backend/static/js/console.js`는 삭제하지 않고 legacy 파일로 남겼다. `console.html`에서는 더 이상 로드하지 않는다.
+참고: 기존 `backend/static/js/console.js`는 legacy 파일로 남기지 않고 삭제했다. `console.html`에서도 더 이상 로드하지 않는다.
 
 ## 구현 전 확인 요약
 
@@ -36,7 +38,7 @@
   - `shadow-trading` -> `loadMissedTracking()`
   - `false-positive` -> `loadFalsePositive()`
   - `confidence-cal` -> `loadConfidenceCalibration()`
-  - 그 외 trading/live/positions/settings/diagnostics 등 기존 loader 호출은 `console-main.js`에 남겼다.
+  - trading/live/positions/settings 등 기존 loader 호출은 `console-main.js` 또는 각 화면별 분리 파일에 남겼다.
 
 ## 분리 후 script load order
 
@@ -45,12 +47,24 @@
 <script src="/static/js/console-utils.js"></script>
 <script src="/static/js/console-api.js"></script>
 <script src="/static/js/console-auth.js"></script>
-<script src="/static/js/console-navigation.js"></script>
+<script src="/static/js/screens/console-today-orders.js"></script>
+<script src="/static/js/screens/console-positions.js"></script>
+<script src="/static/js/screens/console-trading-monitor.js"></script>
+<script src="/static/js/screens/console-live-decision.js"></script>
+<script src="/static/js/screens/console-diagnostics.js"></script>
+<script src="/static/js/screens/console-execution-risk.js"></script>
 <script src="/static/js/screens/console-alerts.js"></script>
 <script src="/static/js/screens/console-approval.js"></script>
 <script src="/static/js/screens/console-missed-tracking.js"></script>
 <script src="/static/js/screens/console-false-positive.js"></script>
 <script src="/static/js/screens/console-confidence-calibration.js"></script>
+<script src="/static/js/screens/console-settings.js"></script>
+<script src="/static/js/screens/console-funnel-data-health.js"></script>
+<script src="/static/js/screens/console-review.js"></script>
+<script src="/static/js/screens/console-statistics.js"></script>
+<script src="/static/js/screens/console-daily-plan.js"></script>
+<script src="/static/js/screens/console-expert-knowledge.js"></script>
+<script src="/static/js/console-navigation.js"></script>
 <script src="/static/js/console-main.js"></script>
 ```
 
@@ -68,7 +82,9 @@
 - `screens/console-missed-tracking.js`: `_missedTrackingAll`, `_missedFilter`, `getPayloadRows`, `loadMissedTracking`, `filterMissedTracking`, `renderMissedTracking`, legacy aliases `loadShadowTrading`, `loadMissedOpportunity`.
 - `screens/console-false-positive.js`: `loadFalsePositive`.
 - `screens/console-confidence-calibration.js`: `loadConfidenceCalibration`, `runConfidenceCalibration`.
-- `console-main.js`: 나머지 diagnostics/settings/trading/live/positions/data/review/statistics/daily-plan/expert-knowledge/init 로직.
+- `screens/console-diagnostics.js`: diagnostics 설정/메타데이터 및 엔진 테스트 결과/로그 렌더링.
+- `screens/console-execution-risk.js`: execution risk 주문 요약 렌더링.
+- `console-main.js`: bootstrap/init 및 아직 별도 분리 범위 밖에 남은 공통 흐름.
 
 ## 기존 기능 영향 범위
 
@@ -100,8 +116,9 @@ PASS:
 - `node --check backend/static/js/screens/console-missed-tracking.js`
 - `node --check backend/static/js/screens/console-false-positive.js`
 - `node --check backend/static/js/screens/console-confidence-calibration.js`
+- `node --check backend/static/js/screens/console-diagnostics.js`
+- `node --check backend/static/js/screens/console-execution-risk.js`
 - `node --check backend/static/js/console-main.js`
-- `node --check backend/static/js/console.js`
 - `node --check tests/e2e/status-truth.spec.cjs`
 - `.venv/bin/python -m compileall -q backend`
 - `git diff --check`
@@ -130,11 +147,11 @@ Playwright:
 ## 남은 위험
 
 - `console-utils.js`와 `console-main.js`는 아직 크다. Stage 2 범위 밖인 trading/live/positions/settings/diagnostics/daily-plan 분리는 후속 작업으로 남았다.
-- legacy `console.js`는 로드되지 않지만 파일로 남아 있으므로, 다음 단계에서 혼동 방지를 위해 README/OUTBOX 또는 파일 상단 legacy 주석 보강을 검토할 수 있다.
+- legacy `console.js`는 삭제됐으므로 배포 시 신규 분리 파일 전체가 커밋/배포 대상에 포함되어야 한다.
 - 기존 inline handler와 동적 HTML handler 의존성은 유지했다. 이벤트 위임 전환은 별도 Stage가 필요하다.
 
 ## 다음 추천 작업
 
 1. Stage 3로 statistics/review/funnel/data-health 같은 중위험 이하 화면을 같은 classic script 방식으로 추가 분리한다.
-2. `_settingsProfileData` 동적 onchange 접근과 `generateDailyPlan()`의 암묵적 `event` 의존성을 별도 안정화 작업으로 정리한다.
+2. `_settingsProfileData` 동적 onchange 접근과 남은 inline handler 의존성을 별도 안정화 작업으로 정리한다.
 3. legacy `console.js`의 보존/삭제 정책을 정해 혼동 가능성을 줄인다.
