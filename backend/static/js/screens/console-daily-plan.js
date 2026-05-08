@@ -120,8 +120,9 @@
     } catch(e) {}
   }
 
-  async function generateDailyPlan() {
-    var btn = event.target;
+  // Daily Plan 수동 생성 버튼 상태를 갱신하며 생성 API를 호출한다.
+  async function generateDailyPlan(btn) {
+    if (!btn) return;
     btn.disabled = true;
     btn.textContent = '생성 중...';
     try {
@@ -139,7 +140,7 @@
     setTimeout(function() { btn.disabled = false; btn.textContent = 'Daily Plan 생성'; }, 2000);
   }
 
-  function toggleDpAdvanced(btn) {
+  function toggleDpAdvanced() {
     var menu = document.getElementById('dp-advanced-menu');
     if (!menu) return;
     menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
