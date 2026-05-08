@@ -1,11 +1,8 @@
 const { test, expect } = require('@playwright/test');
 const fs = require('fs');
-const http = require('http');
 const path = require('path');
 
 const staticRoot = path.resolve(__dirname, '../../backend/static');
-let statusTruthServer;
-let statusTruthBaseUrl;
 
 function contentTypeFor(filePath) {
   if (filePath.endsWith('.html')) return 'text/html; charset=utf-8';
@@ -25,49 +22,6 @@ function resolveStaticPath(requestPath) {
   return resolved;
 }
 
-test.beforeAll(async () => {
-  statusTruthServer = http.createServer((request, response) => {
-    if (request.method !== 'GET') {
-      response.writeHead(405, { 'content-type': 'text/plain; charset=utf-8' });
-      response.end('Method Not Allowed');
-      return;
-    }
-
-    const requestUrl = new URL(request.url, 'http://status-truth.local');
-    if (requestUrl.pathname !== '/console' && !requestUrl.pathname.startsWith('/static/')) {
-      response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-      response.end('Not Found');
-      return;
-    }
-
-    const filePath = resolveStaticPath(decodeURIComponent(requestUrl.pathname));
-    if (!filePath || !fs.existsSync(filePath)) {
-      response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-      response.end('Not Found');
-      return;
-    }
-
-    response.writeHead(200, { 'content-type': contentTypeFor(filePath) });
-    fs.createReadStream(filePath).pipe(response);
-  });
-
-  await new Promise((resolve) => {
-    statusTruthServer.listen(0, '127.0.0.1', resolve);
-  });
-  const { port } = statusTruthServer.address();
-  statusTruthBaseUrl = `http://127.0.0.1:${port}`;
-});
-
-test.afterAll(async () => {
-  if (!statusTruthServer) return;
-  await new Promise((resolve, reject) => {
-    statusTruthServer.close((error) => {
-      if (error) reject(error);
-      else resolve();
-    });
-  });
-});
-
 test.beforeEach(async ({ page }) => {
   page._statusTruthBrowserErrors = [];
   page.on('console', (message) => {
@@ -82,6 +36,31 @@ test.beforeEach(async ({ page }) => {
     if (response.url().includes('/static/') && !response.ok()) {
       page._statusTruthBrowserErrors.push(`Failed to load resource ${response.url()} status=${response.status()}`);
     }
+  });
+
+  await page.route('http://console.local/**', async (route) => {
+    const request = route.request();
+    const requestUrl = new URL(request.url());
+    if (request.method() !== 'GET') {
+      await route.fulfill({ status: 405, contentType: 'text/plain; charset=utf-8', body: 'Method Not Allowed' });
+      return;
+    }
+    if (requestUrl.pathname !== '/console' && !requestUrl.pathname.startsWith('/static/')) {
+      await route.fulfill({ status: 404, contentType: 'text/plain; charset=utf-8', body: 'Not Found' });
+      return;
+    }
+
+    const filePath = resolveStaticPath(decodeURIComponent(requestUrl.pathname));
+    if (!filePath || !fs.existsSync(filePath)) {
+      await route.fulfill({ status: 404, contentType: 'text/plain; charset=utf-8', body: 'Not Found' });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: contentTypeFor(filePath),
+      body: fs.readFileSync(filePath),
+    });
   });
 
   await page.addInitScript(() => {
@@ -286,13 +265,30 @@ test.beforeEach(async ({ page }) => {
       });
     };
   });
-  await page.goto(`${statusTruthBaseUrl}/console`, { waitUntil: 'domcontentloaded' });
+  await page.goto('http://console.local/console', { waitUntil: 'domcontentloaded' });
 });
 
 test('Console shell loads extracted assets without browser runtime errors', async ({ page }) => {
+  const expectedScripts = [
+    '/static/js/console-state.js',
+    '/static/js/console-utils.js',
+    '/static/js/console-api.js',
+    '/static/js/console-auth.js',
+    '/static/js/console-navigation.js',
+    '/static/js/screens/console-alerts.js',
+    '/static/js/screens/console-approval.js',
+    '/static/js/screens/console-missed-tracking.js',
+    '/static/js/screens/console-false-positive.js',
+    '/static/js/screens/console-confidence-calibration.js',
+    '/static/js/console-main.js',
+  ];
+
   await expect(page.getByRole('heading', { name: 'Dantabot Control Console' })).toBeVisible();
   await expect(page.locator('link[href="/static/css/console.css"]')).toHaveCount(1);
-  await expect(page.locator('script[src="/static/js/console.js"]')).toHaveCount(1);
+  await expect(page.locator('script[src="/static/js/console.js"]')).toHaveCount(0);
+  for (const scriptSrc of expectedScripts) {
+    await expect(page.locator(`script[src="${scriptSrc}"]`)).toHaveCount(1);
+  }
   await expect(page.locator('.screen')).toHaveCount(18);
 
   const appDisplay = await page.locator('.app').evaluate((element) => getComputedStyle(element).display);
@@ -308,6 +304,17 @@ test('Console shell loads extracted assets without browser runtime errors', asyn
       'liveDecisionActivate',
       'engineTestRun',
       'saveRiskSettings',
+      'loadAlerts',
+      'ackAlert',
+      'loadApprovalQueue',
+      'approveRequest',
+      'rejectRequest',
+      'deferRequest',
+      'loadMissedTracking',
+      'filterMissedTracking',
+      'loadFalsePositive',
+      'loadConfidenceCalibration',
+      'runConfidenceCalibration',
     ];
     const missing = expectedFunctions.filter((name) => typeof window[name] !== 'function');
     if (typeof window._settingsProfileData === 'undefined') {
