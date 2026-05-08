@@ -14,9 +14,9 @@
       tbody.innerHTML = items.map(r => {
         const cls = r.status === 'pending' ? 'warn' : r.status === 'approved' ? 'ok' : 'fail';
         const btns = r.status === 'pending'
-          ? `<button class="btn small secondary" onclick="approveRequest('${r.id}')">승인</button>
-             <button class="btn small" onclick="rejectRequest('${r.id}')">거부</button>
-             <button class="btn small" onclick="deferRequest('${r.id}')">보류</button>`
+          ? `<button class="btn small secondary" data-action="approveRequest" data-id="${escapeHtml(r.id)}">승인</button>
+             <button class="btn small" data-action="rejectRequest" data-id="${escapeHtml(r.id)}">거부</button>
+             <button class="btn small" data-action="deferRequest" data-id="${escapeHtml(r.id)}">보류</button>`
           : `<span class="muted">${r.status}</span>`;
         return `<tr>
           <td>${r.change_type}</td>

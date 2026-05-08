@@ -188,8 +188,8 @@
     tbody.innerHTML = items.map(item => {
       const statusClass = item.status === 'approved' ? 'ok' : item.status === 'rejected' ? 'fail' : 'info';
       const actionBtns = item.status === 'pending'
-        ? `<button class="btn small secondary" onclick="approveKnowledge('${item.id}')">승인</button>
-           <button class="btn small" onclick="rejectKnowledge('${item.id}')">거부</button>`
+        ? `<button class="btn small secondary" data-action="approveKnowledge" data-id="${escapeHtml(item.id)}">승인</button>
+           <button class="btn small" data-action="rejectKnowledge" data-id="${escapeHtml(item.id)}">거부</button>`
         : `<span class="muted">${item.status}</span>`;
       return `<tr>
         <td>${escapeHtml(item.title)}</td>

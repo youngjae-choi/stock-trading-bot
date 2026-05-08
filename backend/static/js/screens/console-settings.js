@@ -139,7 +139,7 @@
           : '<input type="text" id="input-' + k.key + '" value="' + escapeHtml(current) + '" style="width: 80px; padding: 5px; border-radius: 5px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);">';
         var buttonHtml = k.readOnly
           ? '<span class="muted">실시간</span>'
-          : '<button class="btn primary" onclick="saveSchedulerSetting(\'' + k.key + '\')">저장</button>';
+          : '<button class="btn primary" data-action="saveSchedulerSetting" data-key="' + escapeHtml(k.key) + '">저장</button>';
         return ''
           + '<tr>'
           + '  <td>' + k.label + '</td>'
@@ -196,7 +196,7 @@
           + '  <td>' + k.label + '</td>'
           + '  <td>' + escapeHtml(currentLabel) + '</td>'
           + '  <td><input type="text" id="input-' + k.key + '" value="' + escapeHtml(current) + '" placeholder="' + escapeHtml(k.placeholder) + '" style="width: 120px; padding: 5px; border-radius: 5px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);"></td>'
-          + '  <td><button class="btn primary" onclick="saveExitOverrideSetting(\'' + k.key + '\')">저장</button></td>'
+          + '  <td><button class="btn primary" data-action="saveExitOverrideSetting" data-key="' + escapeHtml(k.key) + '">저장</button></td>'
           + '  <td class="muted">' + k.example + '</td>'
           + '</tr>';
       }).join("");
@@ -272,7 +272,7 @@
           + '<td style="padding:8px 4px; font-weight:600; color:var(--blue);">' + row.aiValue + '</td>'
           + '<td style="padding:8px 4px;">'
           + '<input type="number" step="0.01" value="' + guardVal + '" '
-          + 'onchange="saveGuardrail(\'' + row.guardKey + '\', this.value)" '
+          + 'data-action="saveGuardrail" data-key="' + escapeHtml(row.guardKey) + '" '
           + 'style="width:70px; padding:4px; border-radius:4px; background:var(--panel-2); color:var(--text); border:1px solid var(--border);">'
           + '</td>'
           + '<td style="padding:8px 4px; font-size:11px; color:var(--muted);">' + escapeHtml(row.desc) + '</td>'
@@ -412,30 +412,45 @@
     if (!tbody) return;
     tbody.innerHTML = profileOrder.map(function(name) {
       var p = profiles[name] || {};
-      var escName = name.replace(/'/g, "\\'");
+      var escName = escapeHtml(name);
       return '<tr>'
         + '<td style="font-weight:600;">' + name + '</td>'
         + '<td><input type="number" step="0.1" value="' + ((p.initial_stop_loss||0)*100).toFixed(1) + '"'
-        + ' onchange="_settingsProfileData[\'' + escName + '\'].initial_stop_loss=parseFloat(this.value)/100"'
+        + ' data-action="updateSettingsProfileField" data-profile="' + escName + '" data-field="initial_stop_loss" data-value-type="number" data-scale="100"'
         + ' style="width:70px; text-align:center;"></td>'
         + '<td><input type="number" step="0.1" value="' + ((p.trailing_activate_profit||0)*100).toFixed(1) + '"'
-        + ' onchange="_settingsProfileData[\'' + escName + '\'].trailing_activate_profit=parseFloat(this.value)/100"'
+        + ' data-action="updateSettingsProfileField" data-profile="' + escName + '" data-field="trailing_activate_profit" data-value-type="number" data-scale="100"'
         + ' style="width:70px; text-align:center;"></td>'
         + '<td><input type="number" step="0.1" value="' + ((p.trailing_stop_rate||0)*100).toFixed(1) + '"'
-        + ' onchange="_settingsProfileData[\'' + escName + '\'].trailing_stop_rate=parseFloat(this.value)/100"'
+        + ' data-action="updateSettingsProfileField" data-profile="' + escName + '" data-field="trailing_stop_rate" data-value-type="number" data-scale="100"'
         + ' style="width:70px; text-align:center;"></td>'
         + '<td><input type="number" step="1" value="' + ((p.max_position_rate||0)*100).toFixed(0) + '"'
-        + ' onchange="_settingsProfileData[\'' + escName + '\'].max_position_rate=parseFloat(this.value)/100"'
+        + ' data-action="updateSettingsProfileField" data-profile="' + escName + '" data-field="max_position_rate" data-value-type="number" data-scale="100"'
         + ' style="width:60px; text-align:center;"></td>'
         + '<td><input type="number" step="10" value="' + (p.max_holding_minutes||180) + '"'
-        + ' onchange="_settingsProfileData[\'' + escName + '\'].max_holding_minutes=parseInt(this.value)"'
+        + ' data-action="updateSettingsProfileField" data-profile="' + escName + '" data-field="max_holding_minutes" data-value-type="integer"'
         + ' style="width:60px; text-align:center;"></td>'
-        + '<td><select onchange="_settingsProfileData[\'' + escName + '\'].reentry_allowed=this.value===\'true\'" style="font-size:11px;">'
+        + '<td><select data-action="updateSettingsProfileField" data-profile="' + escName + '" data-field="reentry_allowed" data-value-type="boolean" style="font-size:11px;">'
         + '<option value="true"' + (p.reentry_allowed!==false?' selected':'') + '>허용</option>'
         + '<option value="false"' + (p.reentry_allowed===false?' selected':'') + '>불가</option>'
         + '</select></td>'
         + '</tr>';
     }).join('');
+  }
+
+  /* Update the editable Profile Pack draft from declarative form controls. */
+  function updateSettingsProfileField(profileName, fieldName, rawValue, valueType, scale) {
+    if (!_settingsProfileData[profileName]) return;
+    var value;
+    if (valueType === 'boolean') {
+      value = rawValue === 'true';
+    } else if (valueType === 'integer') {
+      value = parseInt(rawValue);
+    } else {
+      value = parseFloat(rawValue);
+      if (scale) value = value / scale;
+    }
+    _settingsProfileData[profileName][fieldName] = value;
   }
 
     async function saveRiskProfilePack() {

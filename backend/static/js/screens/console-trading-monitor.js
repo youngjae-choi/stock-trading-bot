@@ -201,7 +201,7 @@
     var detailId = 'cand-detail-' + c.code;
 
     return '<div style="border:1px solid var(--line); border-radius:6px; overflow:hidden;">'
-      + '<div id="' + rowId + '" onclick="toggleCandidateDetail(\'' + c.code + '\')"'
+      + '<div id="' + rowId + '" data-action="toggleCandidateDetail" data-code="' + escapeHtml(c.code) + '"'
       + ' style="display:flex; align-items:center; gap:10px; padding:8px 10px; cursor:pointer; background:var(--panel-2);">'
       + '<div style="min-width:80px;">'
       + '<div style="font-size:13px; font-weight:600;">' + escapeHtml(c.name || c.code) + '</div>'
@@ -409,4 +409,3 @@
     }
     setTimeout(loadTradingMonitor, 500);
   }
-

@@ -45,7 +45,7 @@
           tbody.innerHTML = items.map(function(item) {
             var pnl = item.realized_pnl_pct || 0;
             var pnlStr = (pnl >= 0 ? "+" : "") + pnl.toFixed(2) + "%";
-            return '<tr style="cursor:pointer;" onclick="showScreen(\'statistics\')">'
+            return '<tr style="cursor:pointer;" data-action="showScreen" data-screen="statistics">'
               + '<td>' + (item.trade_date || "") + '</td>'
               + '<td>' + (item.total_orders || 0) + '</td>'
               + '<td>' + (item.buy_orders || 0) + '</td>'

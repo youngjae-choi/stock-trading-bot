@@ -26,7 +26,7 @@
         tbody.innerHTML = items.map(a => {
           const cls = a.severity === 'CRITICAL' ? 'fail' : a.severity === 'WARNING' ? 'warn' : 'info';
           const ackBtn = !a.acknowledged
-            ? `<button class="btn small secondary" onclick="ackAlert('${a.id}')">확인</button>`
+            ? `<button class="btn small secondary" data-action="ackAlert" data-id="${escapeHtml(a.id)}">확인</button>`
             : '<span class="muted">확인됨</span>';
           return `<tr>
             <td><span class="status ${cls}">${a.severity}</span></td>
