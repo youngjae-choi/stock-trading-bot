@@ -292,12 +292,16 @@ test('Console shell loads extracted assets without browser runtime errors', asyn
     '/static/js/screens/console-daily-plan.js',
     '/static/js/screens/console-expert-knowledge.js',
     '/static/js/console-navigation.js',
+    '/static/js/console-actions.js',
+    '/static/js/console-events.js',
     '/static/js/console-main.js',
   ];
 
   await expect(page.getByRole('heading', { name: 'Dantabot Control Console' })).toBeVisible();
   await expect(page.locator('link[href="/static/css/console.css"]')).toHaveCount(1);
   await expect(page.locator('script[src="/static/js/console.js"]')).toHaveCount(0);
+  await expect(page.locator('[onclick], [onchange]')).toHaveCount(0);
+  await expect(page.locator('#loginSubmitBtn')).toHaveAttribute('type', 'submit');
   for (const scriptSrc of expectedScripts) {
     await expect(page.locator(`script[src="${scriptSrc}"]`)).toHaveCount(1);
   }
@@ -329,6 +333,10 @@ test('Console shell loads extracted assets without browser runtime errors', asyn
       'runConfidenceCalibration',
       'loadDailyPlanScreen',
       'generateDailyPlan',
+      'bindConsoleActionEvents',
+      'bindEvents',
+      'init',
+      'updateSettingsProfileField',
     ];
     const missing = expectedFunctions.filter((name) => typeof window[name] !== 'function');
     if (typeof window._settingsProfileData === 'undefined') {
@@ -337,6 +345,48 @@ test('Console shell loads extracted assets without browser runtime errors', asyn
     return missing;
   });
   expect(missingGlobals).toEqual([]);
+
+  const loginClickSubmitsForm = await page.evaluate(() => {
+    const form = document.getElementById('loginForm');
+    const button = document.getElementById('loginSubmitBtn');
+    let submitted = false;
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      submitted = true;
+    }, { capture: true, once: true });
+    button.click();
+    return submitted;
+  });
+  expect(loginClickSubmitsForm).toBe(true);
+
+  const delegatedActionCalls = await page.evaluate(() => {
+    const calls = [];
+    const originalShowScreen = window.showScreen;
+    const originalFilterMissedTracking = window.filterMissedTracking;
+
+    window.showScreen = (screen) => { calls.push(`showScreen:${screen}`); };
+    window.filterMissedTracking = (filter) => { calls.push(`filterMissedTracking:${filter}`); };
+
+    const screenButton = document.createElement('button');
+    screenButton.dataset.action = 'showScreen';
+    screenButton.dataset.screen = 'alerts';
+    document.body.appendChild(screenButton);
+    screenButton.click();
+
+    const filterButton = document.createElement('button');
+    filterButton.dataset.action = 'filterMissedTracking';
+    filterButton.dataset.filter = 'candidate';
+    document.body.appendChild(filterButton);
+    filterButton.click();
+
+    screenButton.remove();
+    filterButton.remove();
+    window.showScreen = originalShowScreen;
+    window.filterMissedTracking = originalFilterMissedTracking;
+    return calls;
+  });
+  expect(delegatedActionCalls).toEqual(['showScreen:alerts', 'filterMissedTracking:candidate']);
 
   const severeErrors = page._statusTruthBrowserErrors.filter((message) => (
     /ReferenceError|TypeError/i.test(message)

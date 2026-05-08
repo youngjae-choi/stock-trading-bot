@@ -28,15 +28,15 @@
             <option value="backup_codes">백업 코드</option>
           </select>
         </div>
-        <button type="button" class="btn" type="button" id="mfaStartBtn" style="display:none; width:100%; margin-bottom:10px;">선택한 수단 등록</button>
+        <button type="button" class="btn" id="mfaStartBtn" style="display:none; width:100%; margin-bottom:10px;">선택한 수단 등록</button>
         <div id="mfaSetupBox" class="muted" style="display:none; font-size:12px; line-height:1.5; margin-bottom:10px;"></div>
         <div class="field" id="mfaCodeField" style="display:none;">
           <label for="mfaCode">2차 인증 코드</label>
           <input id="mfaCode" autocomplete="one-time-code" inputmode="numeric" placeholder="인증 코드 입력">
         </div>
-        <button type="button" class="btn primary" type="button" id="mfaVerifyBtn" style="display:none; width:100%;">인증 완료</button>
+        <button type="button" class="btn primary" id="mfaVerifyBtn" style="display:none; width:100%;">인증 완료</button>
       </div>
-      <button type="button" class="btn primary" type="submit" id="loginSubmitBtn">로그인</button>
+      <button type="submit" class="btn primary" id="loginSubmitBtn">로그인</button>
       <div class="login-status" id="loginStatus">서버 인증 상태를 확인하는 중입니다.</div>
     </form>
   </section>
@@ -110,7 +110,7 @@
               <h1 class="page-title">Today's</h1>
               <p class="page-desc">오늘 자동매매 사이클, RulePack 적용 상태, Funnel 진행, 리스크 상태를 한 화면에서 확인합니다.</p>
             </div>
-            <button type="button" class="btn" onclick="refreshTodayControl()">새로고침</button>
+            <button type="button" class="btn" data-action="refreshTodayControl">새로고침</button>
           </div>
 
           <div class="grid cols-4">
@@ -179,7 +179,7 @@
               </div>
             </div>
             <div style="text-align:right; margin-top:8px;">
-              <button type="button" class="btn" style="font-size:11px;" onclick="showScreen('funnel')">
+              <button type="button" class="btn" style="font-size:11px;" data-action="showScreen" data-screen="funnel">
                 자세히보기 (Funnel Monitor) →
               </button>
             </div>
@@ -191,7 +191,7 @@
             <div class="card-title">오늘 운영 현황</div>
             <div id="today-ops-feed" style="display:flex; gap:8px; overflow-x:auto; padding-bottom:8px;"></div>
             <div style="text-align:right; margin-top:8px;">
-              <button type="button" class="btn" style="font-size:11px;" onclick="showScreen('engine-test')">
+              <button type="button" class="btn" style="font-size:11px;" data-action="showScreen" data-screen="engine-test">
                 자세히보기 (System Diagnostics) →
               </button>
             </div>
@@ -209,7 +209,7 @@
                 <span class="status warn" id="tc-alert-warning" style="font-size:11px;">WARNING 0</span>
                 <span class="status info" id="tc-alert-unack" style="font-size:11px;">미확인 0</span>
               </div>
-              <button type="button" class="btn" style="font-size:11px;" onclick="showScreen('alerts')">자세히보기 →</button>
+              <button type="button" class="btn" style="font-size:11px;" data-action="showScreen" data-screen="alerts">자세히보기 →</button>
             </div>
           </div>
 
@@ -217,7 +217,7 @@
           <div class="card" id="today-orders-card">
             <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
               <span>최근 주문내역 (최신 5건)</span>
-              <button type="button" class="btn" style="font-size:11px;" onclick="showScreen('statistics')">자세히보기 →</button>
+              <button type="button" class="btn" style="font-size:11px;" data-action="showScreen" data-screen="statistics">자세히보기 →</button>
             </div>
             <div class="table-wrap">
               <table>
@@ -239,10 +239,10 @@
               <p class="page-desc">매수 후보와 보유 포지션의 신호 접근률을 실시간으로 감시합니다.</p>
             </div>
             <div style="display:flex; gap:8px; align-items:center;">
-              <button type="button" id="tm-de-toggle" class="btn" onclick="toggleDecisionEngine()" style="min-width:120px;">
+              <button type="button" id="tm-de-toggle" class="btn" data-action="toggleDecisionEngine" style="min-width:120px;">
                 <span id="tm-de-label">DE 상태 로딩중</span>
               </button>
-              <button type="button" class="btn" onclick="loadTradingMonitor()">새로고침</button>
+              <button type="button" class="btn" data-action="loadTradingMonitor">새로고침</button>
             </div>
           </div>
 
@@ -272,7 +272,7 @@
             <div class="card" style="flex:1; min-width:280px;">
               <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
                 <span>계좌 정보 <span style="font-size:11px; color:var(--muted); font-weight:400;" id="tm-account-no"></span></span>
-                <button type="button" class="btn" style="font-size:11px; padding:2px 8px;" onclick="loadAccountBalance()">새로고침</button>
+                <button type="button" class="btn" style="font-size:11px; padding:2px 8px;" data-action="loadAccountBalance">새로고침</button>
               </div>
               <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
                 <div style="background:var(--panel-2); border-radius:6px; padding:8px 10px;">
@@ -344,17 +344,17 @@
               <p class="page-desc">오늘 적용되는 Base RulePack, Risk Profile Pack, Daily Trading Plan의 합성 결과를 확인합니다.</p>
             </div>
             <div style="display:flex; gap:8px; align-items:center;">
-              <button type="button" class="btn" onclick="loadDailyPlanScreen()">새로고침</button>
-              <button type="button" class="btn" onclick="showDpContext()">Context 보기</button>
+              <button type="button" class="btn" data-action="loadDailyPlanScreen">새로고침</button>
+              <button type="button" class="btn" data-action="showDpContext">Context 보기</button>
               <div style="position:relative; display:inline-block;">
-                <button type="button" class="btn" onclick="toggleDpAdvanced(this)">고급 작업 ▾</button>
+                <button type="button" class="btn" data-action="toggleDpAdvanced">고급 작업 ▾</button>
                 <div id="dp-advanced-menu" style="display:none; position:absolute; right:0; top:100%; background:var(--bg2); border:1px solid var(--border); border-radius:6px; min-width:180px; z-index:100; padding:4px 0;">
-                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:var(--fg); font-size:12px; cursor:pointer;" onclick="runDailyPlanDryRun()">Daily Plan Dry Run</button>
-                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:var(--fg); font-size:12px; cursor:pointer;" onclick="manualRerunS5()">S5 수동 재실행</button>
-                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:var(--fg); font-size:12px; cursor:pointer;" onclick="revalidateDailyPlan()">Daily Plan 재검증</button>
+                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:var(--fg); font-size:12px; cursor:pointer;" data-action="runDailyPlanDryRun">Daily Plan Dry Run</button>
+                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:var(--fg); font-size:12px; cursor:pointer;" data-action="manualRerunS5">S5 수동 재실행</button>
+                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:var(--fg); font-size:12px; cursor:pointer;" data-action="revalidateDailyPlan">Daily Plan 재검증</button>
                   <hr style="margin:4px 0; border-color:var(--border);">
-                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:#f85149; font-size:12px; cursor:pointer;" onclick="deactivateDailyPlan()">Daily Plan 비활성화</button>
-                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:#f85149; font-size:12px; cursor:pointer;" onclick="rollbackDailyPlan()">이전 Plan으로 롤백</button>
+                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:#f85149; font-size:12px; cursor:pointer;" data-action="deactivateDailyPlan">Daily Plan 비활성화</button>
+                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:#f85149; font-size:12px; cursor:pointer;" data-action="rollbackDailyPlan">이전 Plan으로 롤백</button>
                 </div>
               </div>
             </div>
@@ -463,7 +463,7 @@
           <div class="card">
             <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
               <span>원본 Daily Trading Plan JSON</span>
-              <button type="button" class="btn" style="font-size:11px;" onclick="toggleDpJson()">펼치기/접기</button>
+              <button type="button" class="btn" style="font-size:11px;" data-action="toggleDpJson">펼치기/접기</button>
             </div>
             <pre id="dp-raw-json" style="display:none; font-size:11px; overflow:auto; max-height:300px; background:var(--bg2); padding:10px; border-radius:6px;"></pre>
           </div>
@@ -475,7 +475,7 @@
               <h1 class="page-title">Funnel Monitor</h1>
               <p class="page-desc">전체 종목이 어떤 조건으로 유니버스와 후보 종목으로 압축됐는지 확인합니다. 숫자는 매일 달라집니다.</p>
             </div>
-            <button type="button" class="btn" onclick="loadFunnelData()">새로고침</button>
+            <button type="button" class="btn" data-action="loadFunnelData">새로고침</button>
           </div>
 
           <div class="grid cols-4">
@@ -579,7 +579,7 @@
             <div class="card-title">PDF 전략 문서 업로드</div>
             <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:8px;">
               <input type="file" id="ek-pdf-input" accept=".pdf" style="flex:1; padding:8px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; color:var(--text);">
-              <button type="button" class="btn primary" id="ek-upload-btn" onclick="ekUploadPdf()">업로드 및 분석</button>
+              <button type="button" class="btn primary" id="ek-upload-btn" data-action="ekUploadPdf">업로드 및 분석</button>
             </div>
             <div id="ek-upload-status" style="margin-top:8px; font-size:12px; color:var(--muted);"></div>
           </div>
@@ -608,8 +608,8 @@
             </div>
 
             <div style="margin-top:16px; display:flex; gap:8px;">
-              <button type="button" class="btn primary" id="ek-apply-btn" onclick="ekApplyStrategy()">승인 및 Settings 적용</button>
-              <button type="button" class="btn" onclick="ekReset()">취소</button>
+              <button type="button" class="btn primary" id="ek-apply-btn" data-action="ekApplyStrategy">승인 및 Settings 적용</button>
+              <button type="button" class="btn" data-action="ekReset">취소</button>
             </div>
             <div id="ek-apply-result" style="margin-top:8px; font-size:12px;"></div>
           </div>
@@ -626,7 +626,7 @@
               <h1 class="page-title">Alert Center</h1>
               <p class="page-desc">시스템 이상 알림을 확인하고 처리합니다.</p>
             </div>
-            <button type="button" class="btn" onclick="loadAlerts()">새로고침</button>
+            <button type="button" class="btn" data-action="loadAlerts">새로고침</button>
           </div>
 
           <!-- 요약 카드 -->
@@ -659,7 +659,7 @@
               <h1 class="page-title">Approval Queue</h1>
               <p class="page-desc">위험 변경사항에 대한 승인 요청을 관리합니다.</p>
             </div>
-            <button type="button" class="btn" onclick="loadApprovalQueue()">새로고침</button>
+            <button type="button" class="btn" data-action="loadApprovalQueue">새로고침</button>
           </div>
 
           <div class="card">
@@ -683,7 +683,7 @@
               <h1 class="page-title">Missed Entries</h1>
               <p class="page-desc">오늘 매수하지 않은 종목이 이후 어떻게 움직였는지 추적합니다.</p>
             </div>
-            <button type="button" class="btn" onclick="loadMissedTracking()">새로고침</button>
+            <button type="button" class="btn" data-action="loadMissedTracking">새로고침</button>
           </div>
 
           <!-- 요약 카드 -->
@@ -699,11 +699,11 @@
             <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
               <span>미진입 종목 목록</span>
               <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                <button type="button" class="btn" id="ms-filter-all" onclick="filterMissedTracking('all')">전체</button>
-                <button type="button" class="btn" id="ms-filter-s3s4" onclick="filterMissedTracking('filter')">필터탈락</button>
-                <button type="button" class="btn" id="ms-filter-s5" onclick="filterMissedTracking('plan')">미배정</button>
-                <button type="button" class="btn" id="ms-filter-s6" onclick="filterMissedTracking('signal')">신호미발생</button>
-                <button type="button" class="btn" id="ms-filter-candidate" onclick="filterMissedTracking('candidate')">개선후보</button>
+                <button type="button" class="btn" id="ms-filter-all" data-action="filterMissedTracking" data-filter="all">전체</button>
+                <button type="button" class="btn" id="ms-filter-s3s4" data-action="filterMissedTracking" data-filter="filter">필터탈락</button>
+                <button type="button" class="btn" id="ms-filter-s5" data-action="filterMissedTracking" data-filter="plan">미배정</button>
+                <button type="button" class="btn" id="ms-filter-s6" data-action="filterMissedTracking" data-filter="signal">신호미발생</button>
+                <button type="button" class="btn" id="ms-filter-candidate" data-action="filterMissedTracking" data-filter="candidate">개선후보</button>
               </div>
             </div>
             <div class="table-wrap">
@@ -735,7 +735,7 @@
               <h1 class="page-title">False Positive</h1>
               <p class="page-desc">진입 후 손실이 난 종목의 원인을 분석합니다.</p>
             </div>
-            <button type="button" class="btn" onclick="loadFalsePositive()">새로고침</button>
+            <button type="button" class="btn" data-action="loadFalsePositive">새로고침</button>
           </div>
 
           <div class="card">
@@ -760,8 +760,8 @@
               <p class="page-desc">Confidence 구간별 예측 정확도를 분석합니다.</p>
             </div>
             <div>
-              <button type="button" class="btn secondary" onclick="runConfidenceCalibration()">캘리브레이션 실행</button>
-              <button type="button" class="btn" onclick="loadConfidenceCalibration()">새로고침</button>
+              <button type="button" class="btn secondary" data-action="runConfidenceCalibration">캘리브레이션 실행</button>
+              <button type="button" class="btn" data-action="loadConfidenceCalibration">새로고침</button>
             </div>
           </div>
 
@@ -797,8 +797,8 @@
               <div>신호 발행: <span id="live-engine-signals-sent" class="muted">-</span></div>
             </div>
             <div style="display:flex; gap:8px;">
-              <button type="button" class="btn primary" id="live-btn-activate" onclick="liveDecisionActivate()">수동 활성화</button>
-              <button type="button" class="btn" id="live-btn-deactivate" onclick="liveDecisionDeactivate()">비활성화</button>
+              <button type="button" class="btn primary" id="live-btn-activate" data-action="liveDecisionActivate">수동 활성화</button>
+              <button type="button" class="btn" id="live-btn-deactivate" data-action="liveDecisionDeactivate">비활성화</button>
             </div>
           </div>
 
@@ -807,7 +807,7 @@
           <div class="card">
             <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
               <span>오늘 매수 신호</span>
-              <button type="button" class="btn" onclick="loadLiveData()">새로고침</button>
+              <button type="button" class="btn" data-action="loadLiveData">새로고침</button>
             </div>
             <div class="table-wrap">
               <table>
@@ -838,7 +838,7 @@
           <div class="card" id="positions-account-card">
             <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
               <span>계좌 정보</span>
-              <button type="button" class="btn" onclick="loadAccountBalance()">새로고침</button>
+              <button type="button" class="btn" data-action="loadAccountBalance">새로고침</button>
             </div>
             <div id="positions-account-info" style="margin-bottom:12px;">
               <div class="muted" style="font-size:13px;" id="positions-account-no">계좌번호: -</div>
@@ -868,8 +868,8 @@
             <div class="card-title">
               <span>실시간 포지션 감시</span>
               <div style="display:flex; gap:8px;">
-                <button type="button" class="btn" onclick="loadPositionMonitoring()">새로고침</button>
-                <button type="button" class="btn danger" onclick="liquidateAll()">전체 청산</button>
+                <button type="button" class="btn" data-action="loadPositionMonitoring">새로고침</button>
+                <button type="button" class="btn danger" data-action="liquidateAll">전체 청산</button>
               </div>
             </div>
             <div class="table-wrap">
@@ -930,7 +930,7 @@
               <h1 class="page-title">Execution & Risk</h1>
               <p class="page-desc">주문 실행, 주문 차단, KIS 응답, 리스크 가드 상태를 확인합니다.</p>
             </div>
-            <button type="button" class="btn" onclick="loadExecutionRisk()">새로고침</button>
+            <button type="button" class="btn" data-action="loadExecutionRisk">새로고침</button>
           </div>
 
           <div class="grid cols-4">
@@ -972,7 +972,7 @@
               <h1 class="page-title">System Status</h1>
               <p class="page-desc">연결 상태 · 시스템 구성 · LLM 공급자를 확인합니다.</p>
             </div>
-            <button type="button" class="btn" onclick="loadDataAndApi()">새로고침</button>
+            <button type="button" class="btn" data-action="loadDataAndApi">새로고침</button>
           </div>
 
           <!-- 연결 상태 — 5개 연결을 한눈에 -->
@@ -1105,7 +1105,7 @@
           <div class="card">
             <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
               <span>API 호출 로그 <span style="font-size:10px; font-weight:400; color:var(--muted);">당일</span></span>
-              <button type="button" class="btn" style="font-size:11px;" onclick="loadDataApiLogs()">새로고침</button>
+              <button type="button" class="btn" style="font-size:11px;" data-action="loadDataApiLogs">새로고침</button>
             </div>
             <div class="table-wrap" style="max-height:300px; overflow-y:auto; margin-top:10px;">
               <table>
@@ -1134,8 +1134,8 @@
               <p class="page-desc">일별 매매 결과 점검 보고서입니다.</p>
             </div>
             <div style="display:flex; gap:8px; align-items:center;">
-              <input type="date" id="ra-date-input" style="padding:5px; border-radius:5px; background:var(--panel-2); color:var(--text); border:1px solid var(--line);" onchange="loadReviewByDate(this.value)">
-              <button type="button" class="btn" onclick="loadReviewAuditScreen()">오늘</button>
+              <input type="date" id="ra-date-input" style="padding:5px; border-radius:5px; background:var(--panel-2); color:var(--text); border:1px solid var(--line);" data-action="loadReviewByDate">
+              <button type="button" class="btn" data-action="loadReviewAuditScreen">오늘</button>
             </div>
           </div>
 
@@ -1143,7 +1143,7 @@
             <div class="card" style="text-align:center; padding:40px;">
               <div class="muted">해당 날짜의 점검 보고서가 없습니다.</div>
               <div class="muted" style="margin-top:8px; font-size:12px;">S10 Review & Audit이 실행되면 보고서가 생성됩니다.</div>
-              <button type="button" class="btn" style="margin-top:16px;" onclick="runReviewAudit()">지금 생성</button>
+              <button type="button" class="btn" style="margin-top:16px;" data-action="runReviewAudit">지금 생성</button>
             </div>
           </div>
 
@@ -1154,7 +1154,7 @@
                   <div style="font-size:18px; font-weight:700;" id="ra-report-title">OO월 OO일 시스템 점검 보고서</div>
                   <div style="font-size:12px; color:var(--muted); margin-top:4px;" id="ra-report-subtitle">시장톤: - | RulePack: -</div>
                 </div>
-                <button type="button" class="btn" onclick="openReviewDetailModal()">자세히 보기 ↗</button>
+                <button type="button" class="btn" data-action="openReviewDetailModal">자세히 보기 ↗</button>
               </div>
             </div>
 
@@ -1214,7 +1214,7 @@
             <div style="max-width:800px; margin:0 auto; background:var(--bg); border-radius:12px; padding:24px; position:relative;">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; gap:12px;">
                 <div style="font-size:16px; font-weight:700;" id="ra-modal-title">점검 보고서 전문</div>
-                <button type="button" class="btn" onclick="closeReviewDetailModal()">닫기 ✕</button>
+                <button type="button" class="btn" data-action="closeReviewDetailModal">닫기 ✕</button>
               </div>
               <pre id="ra-detail-content" style="font-size:12px; line-height:1.6; white-space:pre-wrap; color:var(--text); background:var(--panel-2); padding:16px; border-radius:8px; max-height:70vh; overflow-y:auto;"></pre>
             </div>
@@ -1227,17 +1227,17 @@
               <h1 class="page-title">Trade History</h1>
               <p class="page-desc">기간별 전체 주문 내역 (체결·미체결 포함)을 조회합니다.</p>
             </div>
-            <button type="button" class="btn" onclick="loadAllOrders()">새로고침</button>
+            <button type="button" class="btn" data-action="loadAllOrders">새로고침</button>
           </div>
 
           <div style="display:flex; gap:8px; margin-bottom:16px; align-items:center; flex-wrap:wrap;">
             <span style="color:var(--muted); font-size:13px;">기간:</span>
-            <button type="button" class="btn primary" id="sf-today" onclick="setStatsFilter('today')">오늘</button>
-            <button type="button" class="btn" id="sf-week" onclick="setStatsFilter('week')">이번주</button>
-            <button type="button" class="btn" id="sf-month" onclick="setStatsFilter('month')">이번달</button>
-            <button type="button" class="btn" id="sf-lastmonth" onclick="setStatsFilter('lastmonth')">지난달</button>
-            <button type="button" class="btn" id="sf-all" onclick="setStatsFilter('all')">전체</button>
-            <input type="date" id="sf-date" style="padding:5px; border-radius:5px; background:var(--panel-2); color:var(--text); border:1px solid var(--line);" onchange="loadStatisticsDetail(this.value)">
+            <button type="button" class="btn primary" id="sf-today" data-action="setStatsFilter" data-filter="today">오늘</button>
+            <button type="button" class="btn" id="sf-week" data-action="setStatsFilter" data-filter="week">이번주</button>
+            <button type="button" class="btn" id="sf-month" data-action="setStatsFilter" data-filter="month">이번달</button>
+            <button type="button" class="btn" id="sf-lastmonth" data-action="setStatsFilter" data-filter="lastmonth">지난달</button>
+            <button type="button" class="btn" id="sf-all" data-action="setStatsFilter" data-filter="all">전체</button>
+            <input type="date" id="sf-date" style="padding:5px; border-radius:5px; background:var(--panel-2); color:var(--text); border:1px solid var(--line);" data-action="loadStatisticsDetail">
           </div>
 
           <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:16px; display:none;">
@@ -1251,7 +1251,7 @@
           <div class="card">
             <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
               <span id="st-table-title">주문 내역</span>
-              <button type="button" class="btn" onclick="loadAllOrders()">새로고침</button>
+              <button type="button" class="btn" data-action="loadAllOrders">새로고침</button>
             </div>
             <div class="table-wrap">
               <table>
@@ -1284,8 +1284,8 @@
               <p class="page-sub">S1~S11 상태를 확인합니다. S1~S5-A는 거래준비 프로세스 하위 단계, S9~S10은 후처리 프로세스 하위 단계입니다.</p>
             </div>
             <div class="page-actions">
-              <button type="button" class="btn" onclick="engineTestClearAll()">전체 결과 지우기</button>
-              <button type="button" class="btn" onclick="engineTestLoadLogs('')">전체 로그 보기</button>
+              <button type="button" class="btn" data-action="engineTestClearAll">전체 결과 지우기</button>
+              <button type="button" class="btn" data-action="engineTestLoadLogs" data-value="">전체 로그 보기</button>
             </div>
           </div>
 
@@ -1301,7 +1301,7 @@
                 </div>
                 <span class="badge" id="et-badge-s1">대기</span>
               </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s1')">▶ 실행</button>
+              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s1">▶ 실행</button>
               <pre class="et-result" id="et-result-s1" style="display:none;"></pre>
             </div>
 
@@ -1314,7 +1314,7 @@
                 </div>
                 <span class="badge" id="et-badge-s2">대기</span>
               </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s2')">▶ 실행</button>
+              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s2">▶ 실행</button>
               <pre class="et-result" id="et-result-s2" style="display:none;"></pre>
             </div>
 
@@ -1327,7 +1327,7 @@
                 </div>
                 <span class="badge" id="et-badge-s3">대기</span>
               </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s3')">▶ 실행</button>
+              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s3">▶ 실행</button>
               <pre class="et-result" id="et-result-s3" style="display:none;"></pre>
             </div>
 
@@ -1340,7 +1340,7 @@
                 </div>
                 <span class="badge" id="et-badge-s4">대기</span>
               </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s4')">▶ 실행</button>
+              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s4">▶ 실행</button>
               <pre class="et-result" id="et-result-s4" style="display:none;"></pre>
             </div>
 
@@ -1355,7 +1355,7 @@
                 </div>
                 <span class="badge" id="et-badge-s5">대기</span>
               </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s5')">▶ 실행</button>
+              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s5">▶ 실행</button>
               <pre class="et-result" id="et-result-s5" style="display:none;"></pre>
             </div>
 
@@ -1370,7 +1370,7 @@
                 </div>
                 <span class="badge" id="et-badge-s5v">대기</span>
               </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s5v')">▶ 실행</button>
+              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s5v">▶ 실행</button>
               <pre class="et-result" id="et-result-s5v" style="display:none;"></pre>
             </div>
 
@@ -1385,7 +1385,7 @@
                 </div>
                 <span class="badge" id="et-badge-s5a">대기</span>
               </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s5a')">▶ 활성화 확인</button>
+              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s5a">▶ 활성화 확인</button>
               <pre class="et-result" id="et-result-s5a" style="display:none;"></pre>
             </div>
 
@@ -1398,7 +1398,7 @@
                 </div>
                 <span class="badge" id="et-badge-s6">대기</span>
               </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s6')">▶ 활성화</button>
+              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s6">▶ 활성화</button>
               <pre class="et-result" id="et-result-s6" style="display:none;"></pre>
             </div>
 
@@ -1411,7 +1411,7 @@
                 </div>
                 <span class="badge" id="et-badge-s7">대기</span>
               </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s7')">▶ 오늘 주문 현황</button>
+              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s7">▶ 오늘 주문 현황</button>
               <pre class="et-result" id="et-result-s7" style="display:none;"></pre>
             </div>
 
@@ -1424,7 +1424,7 @@
                 </div>
                 <span class="badge" id="et-badge-s8">대기</span>
               </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s8')">▶ 포지션 조회</button>
+              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s8">▶ 포지션 조회</button>
               <pre class="et-result" id="et-result-s8" style="display:none;"></pre>
             </div>
 
@@ -1437,7 +1437,7 @@
                 </div>
                 <span class="badge" id="et-badge-s9">대기</span>
               </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s9')">▶ 즉시 전체 청산</button>
+              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s9">▶ 즉시 전체 청산</button>
               <pre class="et-result" id="et-result-s9" style="display:none;"></pre>
             </div>
 
@@ -1450,7 +1450,7 @@
                 </div>
                 <span class="badge" id="et-badge-s10">대기</span>
               </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s10')">▶ Review Audit 실행</button>
+              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s10">▶ Review Audit 실행</button>
               <pre class="et-result" id="et-result-s10" style="display:none;"></pre>
             </div>
 
@@ -1465,7 +1465,7 @@
                 </div>
                 <span class="badge" id="et-badge-s11">대기</span>
               </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" onclick="engineTestRun('s11')">▶ 실행</button>
+              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s11">▶ 실행</button>
               <pre class="et-result" id="et-result-s11" style="display:none;"></pre>
             </div>
 
@@ -1478,8 +1478,8 @@
               <div style="display:flex; gap:8px; align-items:center;">
                 <input type="text" id="etLogFilter" placeholder="필터 키워드 (예: UniverseFilter)" 
                        style="padding:4px 8px; border-radius:4px; border:1px solid var(--border); background:var(--input-bg); color:var(--text); font-size:12px; width:220px;">
-                <button type="button" class="btn" onclick="engineTestLoadLogs(document.getElementById('etLogFilter').value)">불러오기</button>
-                <button type="button" class="btn" onclick="engineTestClearLog()">지우기</button>
+                <button type="button" class="btn" data-action="engineTestLoadLogs" data-value-source="etLogFilter">불러오기</button>
+                <button type="button" class="btn" data-action="engineTestClearLog">지우기</button>
               </div>
             </div>
             <pre id="et-server-log" style="font-size:11px; max-height:400px; overflow-y:auto; white-space:pre-wrap; word-break:break-all; background:var(--code-bg, #111); padding:12px; border-radius:4px; color:var(--code-text, #ccc);">로그를 불러오려면 위 [불러오기] 버튼을 클릭하세요.</pre>
@@ -1517,7 +1517,7 @@
           <div class="card">
             <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
               <span>리스크 & 청산 설정 <span>system_settings</span></span>
-              <button type="button" class="btn primary" onclick="saveRiskSettings()">저장</button>
+              <button type="button" class="btn primary" data-action="saveRiskSettings">저장</button>
             </div>
             <p class="muted" style="margin-bottom:12px; font-size:12px;">이 설정값을 기준으로 Risk Profile Pack의 위험 한도가 자동 적용됩니다.</p>
 
@@ -1613,7 +1613,7 @@
           <div class="card">
             <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
               <span>Risk Profile Pack <span id="settings-profile-ver" style="font-size:10px; color:var(--muted);"></span></span>
-              <button type="button" class="btn" onclick="saveRiskProfilePack()">저장 (새 버전 생성)</button>
+              <button type="button" class="btn" data-action="saveRiskProfilePack">저장 (새 버전 생성)</button>
             </div>
             <p style="font-size:11px; color:var(--muted); margin-bottom:10px;">
               저장 시 새 버전이 자동 생성됩니다. 기존 버전 이력은 보존됩니다.
@@ -1689,6 +1689,8 @@
   <script src="/static/js/screens/console-daily-plan.js"></script>
   <script src="/static/js/screens/console-expert-knowledge.js"></script>
   <script src="/static/js/console-navigation.js"></script>
+  <script src="/static/js/console-actions.js"></script>
+  <script src="/static/js/console-events.js"></script>
   <script src="/static/js/console-main.js"></script>
 </body>
 </html>
