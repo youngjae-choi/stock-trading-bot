@@ -670,6 +670,26 @@
   }
 
 
-  function showToast(message, type = 'success') {
+  function showToast(message) {
     alert(message); // Simple alert as fallback if showToast is not defined
+  }
+
+  /* Write identical text into every element id that exists on the active console page. */
+  function setTextForIds(ids, text) {
+    for (var i = 0; i < ids.length; i++) {
+      var element = document.getElementById(ids[i]);
+      if (element) {
+        element.textContent = text;
+      }
+    }
+  }
+
+  /* Write identical table HTML into every table body id that exists on the active console page. */
+  function setHtmlForIds(ids, html) {
+    for (var i = 0; i < ids.length; i++) {
+      var element = document.getElementById(ids[i]);
+      if (element) {
+        element.innerHTML = html;
+      }
+    }
   }
