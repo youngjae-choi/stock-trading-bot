@@ -60,14 +60,29 @@
 
 ### Sisyphus / OpenCode
 - 요구사항 해석
-- 작업계획서와 테스트계획서 초안 정리
+- 전문 Agent 배정과 작업 범위 통제
 - PM 승인 게이트 관리
 - 기술 결정 이유 설명
 - 최종 변경 설명 정리
+- git commit 수행
+
+Sisyphus는 PM의 단일 창구이지만 모든 일을 직접 하지 않는다. 코드 탐색, 공식 문서 확인, 계획서 작성, 구현, 리뷰, UI 작업은 가능한 한 전문 Agent에게 위임한다.
 
 ### Prometheus / OpenCode
 - 계획서, 테스트계획서, 테스트결과서, 매뉴얼/WBS 정리
 - PM이 이해할 수 있는 언어로 변경 내용 문서화
+
+### Metis / OpenCode
+- 모호한 요청의 숨은 의도, 누락된 요구사항, 실패 가능성 분석
+- 구현 전 질문이 필요한 지점 정리
+
+### Explore / OpenCode
+- 코드베이스 구조, 활성 코드 경로, 기존 구현 패턴 조사
+- 수정 후보 파일과 영향 범위 요약
+
+### Librarian / OpenCode
+- 공식 문서, API 스펙, 외부 라이브러리 사용법 확인
+- 추측 구현 방지를 위한 근거 자료 제공
 
 ### Executor / Codex CLI
 - 승인된 계획 범위 안에서 코드 구현
@@ -82,6 +97,16 @@
 - UI 작업
 - 프론트엔드 상호작용 구현
 
+### Oracle / Codex CLI
+- 아키텍처, 보안, 성능, 회귀 위험 검토
+- 테스트 결과와 완료 주장 검증
+
+### Momus / OpenCode
+- 작업계획서와 테스트계획서의 누락/모호함/검증 불가능 항목 검토
+
+### Multimodal Looker / OpenCode
+- 스크린샷, PDF, 다이어그램, 이미지 기반 오류 상태 해석
+
 ## 6. 파일 수정 규칙
 
 - 같은 파일을 두 도구가 동시에 수정하지 않는다
@@ -91,9 +116,13 @@
 - 기존 사용자의 변경사항은 절대 임의로 되돌리지 않는다
 
 추천 분담:
-- 문서/계획서: Sisyphus / Prometheus
-- 비프론트엔드 구현: Codex CLI
-- 프론트엔드 UI 구현: Gemini CLI
+- PM 대화/승인/커밋: Sisyphus
+- 문서/계획서/결과서: Prometheus
+- 코드 구조 조사: Explore
+- 공식 문서/API 조사: Librarian
+- 비프론트엔드 구현: Executor / Codex CLI
+- 프론트엔드 UI 구현: Frontend / Gemini CLI
+- 보안/성능/회귀 검토: Oracle
 - 보조 기획/검토: Claude Code Extension
 
 ## 7. 구현 규칙

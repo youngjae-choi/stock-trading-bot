@@ -77,8 +77,9 @@ PM(나)에게는 기술 결정의 이유를 쉽게 설명한다.
 - Sisyphus는 게이트 관리자이자 계획 승인 전 단계의 책임자다
 - 현재 기본 Sisyphus 실행 환경은 OpenCode다
 - Claude Code Extension은 보조 지휘/검토 도구로 사용한다
-- 구현/탐색/리뷰/통합/테스트는 Codex CLI를 우선 사용한다
-- Frontend UI 전담 구현은 Gemini CLI를 사용한다
+- PM은 Sisyphus에게만 요청하고, Sisyphus가 내부적으로 전문 Agent를 배정한다
+- 구현/탐색/리뷰/통합/테스트는 OpenCode Agent 또는 연결된 CLI Agent에 위임한다
+- Frontend UI 전담 구현은 Frontend Agent에 위임한다
 - 동일 파일의 동시 수정은 금지하며, 파일 소유권을 먼저 정한 뒤 작업한다
 
 ## ⛔ Sisyphus 직접 실행 금지 원칙 (PM 강제 지시 — 예외 없음)
@@ -89,10 +90,11 @@ Sisyphus/Prometheus가 직접 수행할 수 있는 작업:
 - Playwright 테스트 직접 실행 및 결과 분석
 - 서버 기동/재시작 등 운영 명령
 - 테스트 결과에 따른 소규모 수정 (테스트 selector 수정 등)
+- git commit 수행 (Sisyphus만 허용)
 
 Sisyphus/Prometheus가 절대 직접 수행하면 안 되는 작업:
-- **백엔드 비즈니스 로직 구현** → 반드시 Codex CLI 위임
-- **프론트엔드 UI 구현** → 반드시 Gemini CLI 위임
+- **백엔드 비즈니스 로직 구현** → 반드시 Executor / Hephaestus 위임
+- **프론트엔드 UI 구현** → 반드시 Frontend 위임
 - **Claude CLI (`claude -p`)를 이용한 Executor/Oracle 역할 대행** → 완전 금지
 - Extension(VSCode 등) 통한 파일 대량 수정 → 금지
 
