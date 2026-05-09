@@ -1,287 +1,320 @@
 # 자동매매 시스템 운영 가이드
 
-> 최종 수정: 2026-05-04  
-> 대상: 운영자(PM) — 기술 배경 없이도 시스템 상태를 파악하고 결과를 해석하기 위한 문서
+> 최종 수정: 2026-05-08
+> 대상: 운영자(PM) — 지금 시스템이 **어떻게 동작하는지**를 먼저 이해하기 위한 문서
 
 ---
 
 ## 목차
-1. [하루 사이클 개요](#1-하루-사이클-개요)
-2. [시장 톤 (S2)](#2-시장-톤-s2)
-3. [유니버스 필터 (S3)](#3-유니버스-필터-s3)
-4. [종목 스크리닝 (S4)](#4-종목-스크리닝-s4)
-5. [Risk Profile — 매도 조건](#5-risk-profile--매도-조건)
-6. [RulePack — 매수 조건](#6-rulepack--매수-조건)
-7. [어디서 확인하나](#7-어디서-확인하나)
-8. [서버 운영 명령어](#8-서버-운영-명령어)
+1. [이 문서의 읽는 법](#1-이-문서의-읽는-법)
+2. [현재 시스템 구조 한눈에 보기](#2-현재-시스템-구조-한눈에-보기)
+3. [백엔드 단계별 동작](#3-백엔드-단계별-동작)
+4. [콘솔 화면별로 무엇을 보여주나](#4-콘솔-화면별로-무엇을-보여주나)
+5. [각 화면이 부르는 API](#5-각-화면이-부르는-api)
+6. [데이터가 꼬이기 쉬운 지점](#6-데이터가-꼬이기-쉬운-지점)
+7. [서버 운영 명령어](#7-서버-운영-명령어)
 
 ---
 
-## 1. 하루 사이클 개요
+## 1. 이 문서의 읽는 법
 
-시스템은 매 영업일 아래 순서로 자동 실행된다.
+이 문서는 “무엇을 고쳐야 하는가”보다 먼저, **현재 시스템이 어떤 기준으로 움직이는지**를 정리한다.
 
-```
-07:45  S1  KIS 토큰 갱신          ← 장 시작 전 인증 준비
-08:00  S2  AI 시장 톤 분석        ← Claude가 해외 시장 분위기 판단
-09:05  S3  유니버스 필터          ← 거래대금·거래량 상위 종목 추려내기
-09:20  S4  Hybrid Screening       ← Claude Opus가 후보 종목 정성 평가
-09:35  S5  Daily Plan 생성        ← 오늘 매매할 종목 + 프로파일 배정
-09:45  S6  Decision Engine 활성화 ← 실시간 WebSocket 매매 시작
-15:20  S9  당일 청산              ← 남은 포지션 전부 정리
-16:00  S10 Review & Audit         ← 오늘 거래 복기 분석
-16:30  S11 Learning Memory        ← 내일에 반영할 교훈 저장
-```
+- **백엔드**는 실제 데이터와 상태를 만들고 저장한다.
+- **프론트엔드**는 그 결과를 화면에 보여준다.
+- 일부 화면은 프론트엔드가 상태를 조금 계산한다.
+  그래서 “backend가 준 값”과 “화면에 보이는 값”이 완전히 같지 않을 수 있다.
 
-**S3~S5는 09:00 이후에 실행** — 장 시작 전엔 거래량 데이터가 없어서 의미가 없기 때문.
+특히 아래 세 가지는 항상 같이 봐야 한다.
+
+1. **KST 오늘 날짜**
+2. **DB에 실제로 저장된 결과**
+3. **화면이 해석한 상태값**
 
 ---
 
-## 2. 시장 톤 (S2)
+## 2. 현재 시스템 구조 한눈에 보기
 
-### "Positive"가 좋은 건가요?
+### 2-1. 백엔드 큰 구조
 
-**좋은 것이다.** 시장 톤은 5단계가 아닌 4단계 분류다:
+현재 백엔드는 FastAPI 기반이다.
 
-| 톤 | 의미 | 시스템 반응 |
-|----|------|-------------|
-| `positive` | 해외 시장 강세, 한국 시장 상승 기대 | 거래량 가중치 ↑, 공격적 필터 |
-| `neutral` | 뚜렷한 방향성 없음 | 기본 가중치 |
-| `mixed` | 강세/약세 신호 혼재 | neutral과 동일하게 처리 |
-| `negative` | 해외 시장 약세, 하락 우려 | 거래대금 가중치 ↑, 보수적 필터 |
+- `backend/main.py`
+  - 앱 시작점
+  - DB 초기화
+  - 인증 초기화
+  - 스케줄러 시작
+  - `logs/server.log` 파일 로깅 연결
+- `backend/services/scheduler.py`
+  - S1~S11 스케줄 관리
+  - `schedule_skip_today` 같은 운영 플래그 관리
+- `backend/services/console_state.py`
+  - Today Control 상단 요약용 상태를 만든다
+  - 현재 단계, 다음 작업, funnel 요약, 로그 요약을 합쳐서 반환한다
+- `backend/services/engine/pipeline_audit.py`
+  - S1~S11 실행 흔적을 `pipeline_run_audit`에 기록한다
+- `backend/api/routes/*`
+  - 각 화면이 호출하는 API를 제공한다
 
-### 오늘(2026-05-04) 시장 톤
+### 2-2. 프론트 구조
 
-```
-톤:         positive (confidence: 82%)
-판단 근거:  S&P500·NASDAQ 동반 +1.3~1.8%, 미국 10년 금리 하락, 원/달러 소폭 하락
-리스크:     WTI 원유 소폭 하락으로 에너지 업종 약세 가능, 환율 1,471원대 높은 수준
-```
+콘솔은 React가 아니라 **정적 HTML + 분리된 classic JS** 구조다.
 
-### 톤이 가중치에 미치는 영향
-
-| 톤 | 거래대금 가중치 | 거래량 가중치 | 등락률 가중치 |
-|----|---------------|--------------|--------------|
-| positive | 40% | **40%** | 20% |
-| neutral | 50% | 30% | 20% |
-| negative | **60%** | 30% | 10% |
-
-→ 오늘은 `positive`이므로 거래대금과 거래량을 동등하게 봐서 **모멘텀이 붙는 종목**을 선호한다.
-
----
-
-## 3. 유니버스 필터 (S3)
-
-### 무엇을 하나
-
-KIS에서 **거래대금 상위 30종목**과 **거래량 상위 30종목**을 가져와 합산·점수화한 뒤, 1차 필터를 통과한 종목을 Claude Opus에게 넘긴다.
-
-### 필터 조건 (이것에 걸리면 즉시 탈락)
-
-| 조건 | 기준 | 이유 |
-|------|------|------|
-| 상한가/하한가 근접 | 등락률 ±29% 이상 | 급등락 종목은 예측 불가 |
-| 가격 0원 | 가격 ≤ 0 | 데이터 오류 |
-| 거래량 + 거래대금 모두 0 | 동시에 0 | 실제 거래 없는 종목 |
-
-### 점수 계산 방식
-
-```
-점수 = 거래대금 점수 × (시장톤 가중치)
-     + 거래량 점수 × (시장톤 가중치)
-     + 등락률 점수 × (시장톤 가중치)
-
-등락률 점수 = (등락률% + 30) / 60  ← -30%~+30% 범위 정규화, 양수 선호
-```
-
-### 결과 확인 위치
-
-**콘솔 UI** → `Today Control` 화면 → **Funnel Monitor** 카드  
-또는 API: `GET /api/v1/universe-filter/today`
+- `backend/static/console.html`
+  - 전체 화면 shell
+  - 각 screen 섹션을 포함
+  - 스크립트를 마지막에 순서대로 로드
+- `backend/static/js/console-main.js`
+  - DOM 로드 후 초기화
+- `backend/static/js/console-auth.js`
+  - 로그인 상태 확인
+  - Today Control 상단 요약(`bot/overview`, `bot/data-health`) 로드
+  - 로그/오늘 주문도 함께 로드
+- `backend/static/js/console-utils.js`
+  - 오늘 날짜, timeline 상태, diagnostics 상태 계산
+- `backend/static/js/console-state.js`
+  - S1~S11 단계 정의와 화면용 설명 텍스트
+- `backend/static/js/screens/*.js`
+  - 각 화면 전용 렌더러
 
 ---
 
-## 4. 종목 스크리닝 (S4)
+## 3. 백엔드 단계별 동작
 
-### 무엇을 하나
+아래는 현재 시스템이 운영상 어떻게 움직이는지 기준으로 정리한 것이다.
 
-S3에서 선별된 상위 30종목을 **Claude Opus**가 정성 평가해 오늘 매매에 적합한 종목을 선별한다. AI가 점수를 매기는 것이지 매수 지시가 아니다.
+| 단계 | 백엔드 역할 | 저장/조회 대상 | 화면에서 보이는 곳 |
+|---|---|---|---|
+| S1 | KIS 토큰 갱신 | scheduler / pipeline audit | Diagnostics, Today Control timeline |
+| S2 | 시장 톤 분석 | `market_tone_results` | Today Control, Funnel, Diagnostics |
+| S3 | 유니버스 필터 | `universe_filter_results` | Funnel, Today Control, Diagnostics |
+| S4 | 하이브리드 스크리닝 | `hybrid_screening_results` | Funnel, Today Control, Diagnostics |
+| S5 | Daily Plan 생성/검증/활성화 | `daily_trading_plans` | Today Control, Trading Monitor, Funnel, Diagnostics |
+| S6 | Decision Engine 활성화 | `decision` 상태 | Today Control, Trading Monitor, Diagnostics |
+| S7 | 주문 실행 결과 | `orders` / `trading_signals` | Today Control, Trade History, Diagnostics |
+| S8 | 포지션 감시 | `position_stop_states` / 주문 포지션 | Trading Monitor, Today Control, Diagnostics |
+| S9 | 당일 청산 | 주문/포지션 후처리 | Today Control, Diagnostics |
+| S10 | Review & Audit | `review_audit` / 리포트 | Today Control, Review & Audit, Diagnostics |
+| S11 | Learning Memory | `learning_memory` | Today Control, Learning Memory, Diagnostics |
 
-### Claude가 평가하는 항목
+### 3-1. 공통 기준
 
-1. **시장 톤과의 부합도** — 오늘이 positive면 모멘텀 섹터 선호
-2. **테마 적합성** — 오늘의 이슈(반도체, AI, 외국인 수급 등)와 연관성
-3. **재료 유무** — 공시, 뉴스, 업황 이슈
-4. **리스크 요인** — 환율, 섹터 약세, 수급 이탈 징후
+- 날짜는 대부분 **Asia/Seoul(KST)** 기준이다.
+- “오늘”은 UTC가 아니라 **KST 오늘**이다.
+- 화면에 보이는 상태는 종종 **DB 결과 + 프론트 상태 해석**의 합이다.
 
-### suitability_score 기준
+### 3-2. S1~S5의 핵심 의미
 
-| 점수 | 의미 |
-|------|------|
-| 0.8 ~ 1.0 | 오늘 테마와 강하게 부합, 명확한 재료 있음 → 최우선 후보 |
-| 0.5 ~ 0.8 | 부분적으로 부합, 일반적 매력 → 후보 포함 |
-| 0.3 ~ 0.5 | 약한 근거, 큰 매력 없음 → 하위 후보 |
-| 0.0 ~ 0.3 | 부합하지 않거나 정보 부족 → 제외 |
+이 구간은 장 시작 전 준비 단계다.
 
-### 최종 후보 선정
+1. **S1**: 인증 토큰을 준비한다.
+2. **S2**: 오늘 시장 분위기를 정한다.
+3. **S3**: 거래 대상이 될 수 있는 종목 풀을 줄인다.
+4. **S4**: AI가 정성 평가로 후보를 고른다.
+5. **S5**: 오늘 실제로 쓸 매매 계획을 만든다.
 
-```
-최종 점수 = 정량 점수(S3) × 50% + 정성 점수(Claude S4) × 50%
-```
+이 5개가 잘 돌아가야, 뒤 단계(S6~S11)도 의미가 생긴다.
 
-상위 10~15종목이 S5 Daily Plan으로 넘어간다.
+### 3-3. `schedule_skip_today`
 
-### Risk Profile 배정
+`backend/services/scheduler.py`가 오늘을 거래일/비거래일로 판단해 `schedule_skip_today`를 만든다.
 
-S5(Daily Plan)에서 Claude가 각 종목에 프로파일을 배정한다. 배정 기준:
-
-| 프로파일 | 특성 | 배정 기준 |
-|----------|------|-----------|
-| `LOW_VOL` | 저변동성, 안정적 | 대형주, 저변동성 섹터 |
-| `MID_VOL` | 중간 변동성 | 일반 중형주 |
-| `HIGH_VOL` | 고변동성, 공격적 | 테마주, 급등 후보 |
-| `THEME_SPIKE` | 극고변동성, 단기 | 테마 급등 종목, 재진입 불가 |
-
-### 결과 확인 위치
-
-**콘솔 UI** → `Today Control` → **Funnel Monitor** 카드 (S4 건수 확인)  
-상세 종목 목록 → `Today Control` → **Today Daily Plan** 카드  
-또는 API: `GET /api/v1/screening/today`
+- 비거래일이면 S2~S6 같은 준비 단계가 스킵될 수 있다.
+- 이 플래그는 Diagnostics와 Today Control timeline에도 영향을 준다.
 
 ---
 
-## 5. Risk Profile — 매도 조건
+## 4. 콘솔 화면별로 무엇을 보여주나
 
-### 매도 조건은 Settings에서 관리된다 (고정값)
+### 4-1. Today Control
 
-매도는 종목마다 배정된 프로파일에 따라 자동으로 결정된다.
+이 화면은 운영자가 가장 먼저 보는 **요약 허브**다.
 
-#### LOW_VOL (저변동성)
-```
-초기 손절:    -2.0%  (매수가 대비 2% 손실 시 바로 매도)
-트레일링 발동: +1.5%  (이 수익을 넘으면 트레일링 스탑 작동)
-트레일링 간격: 1.8%   (고점 대비 1.8% 하락 시 익절)
-최대 보유 시간: 240분 (4시간)
-포지션 한도:  계좌의 15%
-```
+보여주는 내용:
 
-#### MID_VOL (중간 변동성)
-```
-초기 손절:    -3.0%
-트레일링 발동: +2.5%
-트레일링 간격: 3.0%
-최대 보유 시간: 180분 (3시간)
-포지션 한도:  계좌의 12%
-```
+- 현재 단계 / 다음 단계
+- 오늘 시장 톤
+- 유니버스 필터 결과
+- 스크리닝 결과
+- Daily Plan 상태
+- Risk Profile / RulePack 상태
+- 현재 포지션
+- 오늘 주문
+- 운영 로그
+- funnel 요약
 
-#### HIGH_VOL (고변동성)
-```
-초기 손절:    -4.5%
-트레일링 발동: +4.0%
-트레일링 간격: 5.0%
-최대 보유 시간: 120분 (2시간)
-포지션 한도:  계좌의 8%
-```
+실제 특징:
 
-#### THEME_SPIKE (테마 급등)
-```
-초기 손절:    -6.0%
-트레일링 발동: +5.0%
-트레일링 간격: 6.0%
-최대 보유 시간: 60분 (1시간)
-포지션 한도:  계좌의 5%
-재진입 금지
-```
+- 데이터는 여러 API를 합쳐서 보여준다.
+- 화면 자체가 숫자를 많이 계산한다기보다, **backend overview를 요약해서 보여주는 편**이다.
+- 예전처럼 단일 카드 하나만 보고 끝나는 구조가 아니다.
 
-### 트레일링 스탑 작동 방식
+### 4-2. Trading Monitor
 
-```
-매수 → 수익이 트레일링 발동 기준 초과
-→ 트레일링 스탑 ON
-→ 고점 갱신할 때마다 스탑 라인도 따라 올라감
-→ 고점 대비 트레일링 간격 이상 하락 시 자동 매도 (익절)
-→ 단, 초기 손절은 항상 유지 (손실 보호)
-```
+이 화면은 **실시간 감시 화면**이다.
 
-### 15:20 강제 청산
+보여주는 내용:
 
-프로파일에 관계없이 **15:20에 남은 포지션 전부 시장가 청산**.
+- Decision Engine 활성/비활성
+- 계좌 정보
+  - 예수금
+  - 주식 평가금액
+  - 총 평가금액
+  - 당일 매수/매도 금액
+- 오늘 적용 정책
+  - 매수 조건
+  - 매도 조건
+  - 현금/리스크 문구
+- 매수 대기 후보
+- 보유 포지션
+- 실시간 tick 스트림
 
-### 확인 위치
+실제 특징:
 
-**콘솔 UI** → `Settings` → **Risk Profiles** 카드
+- 후보 리스트와 포지션 리스트는 **row-by-row 갱신**을 하도록 되어 있다.
+- 정책 문구는 `trading-monitor/policy-summary`에서 만든 자연어 설명을 쓴다.
+- 계좌정보는 `account/balance`가 기준이다.
 
----
+### 4-3. Trade History
 
-## 6. RulePack — 매수 조건
+이 화면은 **과거 주문 조회** 화면이다.
 
-### 매수 조건은 그날그날 달라지나요?
+보여주는 내용:
 
-**원칙적으로 달라질 수 있다.** RulePack은 매일 AI가 생성하거나 운영자가 수동으로 설정할 수 있다.  
-현재는 **수동 생성된 RulePack이 활성화**돼 있으며, 오늘 자동 생성은 아직 미구현이다.
+- 기간 필터
+- 주문 내역 표
+- 체결/미체결 상태
+- 날짜별 조회 결과
 
-### 현재 활성 매수 조건
+실제 특징:
 
-```
-[ Layer 3 — 실시간 진입 조건 ] (09:45 Decision Engine 활성화 후 적용)
+- “거래를 제어하는 화면”이 아니라 **기록을 보는 화면**이다.
+- 일부 요약 블록은 남아 있어도, 핵심은 주문 테이블이다.
 
-VWAP 위에서만 매수       ← 당일 평균 가격 위에서만 진입 (약세 흐름 배제)
-거래량 배율 ≥ 2.0배      ← 평소 대비 2배 이상 거래량 (모멘텀 확인)
-20일 이평선 위            ← 중기 상승 추세 확인
-RSI 40~70               ← 과매도/과매수 구간 배제
-호가 스프레드 ≤ 0.3%     ← 유동성 불량 종목 배제
-코스피 방향 일치          ← 지수 역행 종목 배제
-AI 신뢰도 ≥ 65%          ← S4 정성 점수 65% 미만 종목 배제
+### 4-4. Funnel Monitor
 
-[ 리스크 한도 ]
-일일 손실 한도: -2.0%    ← 계좌 대비 2% 손실 시 당일 신규 매수 중단
-최대 동시 보유: 5종목
-종목당 최대 비중: 10%
-```
+이 화면은 **S3 → S4 → S5로 얼마나 줄어드는지** 설명하는 화면이다.
 
-### 매수 실행 흐름
+보여주는 내용:
 
-```
-09:45  Decision Engine ON
-  ↓
-실시간 WebSocket으로 체결 tick 수신
-  ↓
-Layer 3 조건 실시간 체크
-  ↓
-모든 조건 통과 → KIS 모의투자 매수 주문 (limit order)
-  ↓
-체결 확인 → Position Manager 등록 → 트레일링 스탑 감시 시작
-```
+- 전체 universe
+- S3 통과 수
+- S4 통과 수
+- 현재 매수 대기 수
+- Risk Profile 배정 수
+- S3 탈락 사유
+- Funnel Quality 문구
+- 마지막 갱신 시각
 
-### 확인 위치
+실제 특징:
 
-**콘솔 UI** → `Today Control` → **Active RulePack** 카드  
-또는 API: `GET /api/v1/bot/rulepack/today`
+- `funnel/summary`가 핵심이다.
+- `daily-plan/today`, `screening/today`도 같이 읽어 종목 배정과 후보 수를 맞춘다.
+- 하드코딩된 숫자가 남아 있으면 이 화면이 제일 먼저 어색해진다.
 
----
+### 4-5. System Diagnostics
 
-## 7. 어디서 확인하나
+이 화면은 **S1~S11이 오늘 어떤 상태인지** 보여준다.
 
-| 궁금한 것 | 콘솔 화면 | 경로 |
-|-----------|-----------|------|
-| 오늘 시장 톤 | Today Control | Market Tone 카드 |
-| 유니버스 필터 결과 (몇 종목?) | Today Control | Funnel Monitor → S3 건수 |
-| 스크리닝 결과 (어느 종목?) | Today Control | Funnel Monitor → S4 건수, Daily Plan 카드 |
-| 종목별 Risk Profile | Today Control | Daily Plan 카드 → 종목별 profile 컬럼 |
-| 오늘 매수 조건 | Today Control | Active RulePack 카드 |
-| 현재 보유 포지션 | Today Control | Positions 카드 |
-| 오늘 체결 내역 | Today Control | Signals / Orders 카드 |
-| 매도 프로파일 설정값 | Settings | Risk Profiles 카드 |
-| 알림/이상 | Alert Center | 사이드바 → Alert Center |
-| 데이터 품질 이상 | Data & API | Data Quality Guard 카드 |
-| 어제 복기 결과 | Review & Audit | 사이드바 → Review & Audit |
-| 학습된 교훈 | Learning Memory | 사이드바 → Learning Memory |
+보여주는 내용:
 
-**콘솔 URL**: `http://서버IP:8000/console`
+- 각 단계의 배지(완료/대기/스킵/실행중)
+- 각 단계의 raw JSON 결과
+- `pipeline_run_audit` 카드
+- 서버 로그
+
+실제 특징:
+
+- `scheduler/status`와 `engine/audit/today`를 같이 본다.
+- “ok=true”만으로 완료 처리하지 않도록 설계되어 있다.
+- null payload는 완료가 아니라 대기/미생성으로 보여야 한다.
+
+### 4-6. 그 외 화면
+
+- **Settings**: RulePack, Risk Profiles, Scheduler 시간 설정
+- **Review & Audit**: S10 결과 확인
+- **Learning Memory**: S11 교훈/메모리 확인
+- **Alerts / Data & API / Execution & Risk**: 운영 상태 보조 화면
 
 ---
 
-## 8. 서버 운영 명령어
+## 5. 각 화면이 부르는 API
+
+### 5-1. Today Control
+
+- `GET /api/v1/bot/overview`
+- `GET /api/v1/bot/data-health`
+- `GET /api/v1/engine/logs`
+- `GET /api/v1/orders/today`
+- `GET /api/v1/daily-plan/today`
+- `GET /api/v1/funnel/summary`
+
+### 5-2. Trading Monitor
+
+- `GET /api/v1/decision/status`
+- `GET /api/v1/account/balance`
+- `GET /api/v1/trading-monitor/policy-summary`
+- `GET /api/v1/trading-monitor/candidates`
+- `GET /api/v1/trading-monitor/positions`
+- `GET /api/v1/trading-monitor/stream` (SSE)
+
+### 5-3. Trade History
+
+- `GET /api/v1/trades/history`
+- `GET /api/v1/orders/recent`
+- `GET /api/v1/orders/today`
+
+### 5-4. Funnel Monitor
+
+- `GET /api/v1/funnel/summary`
+- `GET /api/v1/daily-plan/today`
+- `GET /api/v1/screening/today`
+- `GET /api/v1/pipeline/S3/context-preview`
+- `GET /api/v1/pipeline/S4/context-preview`
+- `GET /api/v1/pipeline/S5/context-preview`
+
+### 5-5. System Diagnostics
+
+- `GET /api/v1/scheduler/status`
+- `GET /api/v1/engine/audit/today`
+- `GET /api/v1/engine/logs`
+- `POST /api/v1/engine/token-refresh`
+
+---
+
+## 6. 데이터가 꼬이기 쉬운 지점
+
+이 부분은 “현재 구조를 보고 수정할 때” 특히 주의해야 한다.
+
+### 6-1. 0과 null
+
+- **0**은 진짜 값일 수 있다.
+- **null**은 데이터가 비었거나 아직 안 온 것일 수 있다.
+- 화면에서 둘을 같은 값처럼 보여주면 운영자가 오해한다.
+
+### 6-2. 오늘 날짜 기준
+
+- KST 기준 오늘인지 확인해야 한다.
+- UTC 날짜로 보면 하루가 어긋날 수 있다.
+
+### 6-3. fallback 숫자
+
+- `2500` 같은 고정 숫자는 보기 편하지만 실제와 다를 수 있다.
+- fallback은 항상 “왜 fallback인지”가 같이 보여야 한다.
+
+### 6-4. 프론트 계산값
+
+- Diagnostics와 Today Control timeline은 일부 상태를 프론트가 계산한다.
+- 그래서 backend가 바뀌면 프론트 상태 계산도 같이 검토해야 한다.
+
+### 6-5. 로그와 파일 출력
+
+- Diagnostics의 로그 패널은 `logs/server.log`를 읽는다.
+- 서버가 그 파일에 실제로 쓰고 있는지 확인해야 한다.
+
+---
+
+## 7. 서버 운영 명령어
 
 ### 서버 상태 확인
 ```bash
@@ -326,19 +359,21 @@ sudo systemctl is-enabled stock-trading-bot
 ## 부록: 전체 데이터 흐름 요약
 
 ```
-[해외 시장 데이터] ──→ S2(Claude) ──→ 시장 톤(positive/neutral/negative/mixed)
-                                            │
-[KIS 거래대금·거래량] ──→ S3 ──→ 상위 30종목 (시장 톤 가중치 반영)
-                                            │
-[KIS 현재가·투자자 동향] ──→ S4(Claude Opus) ──→ 정성 점수 + 적합 종목 선별
-                                            │
-[S3+S4 후보 합산] ──→ S5(Claude) ──→ Daily Plan (종목별 Risk Profile 배정)
-                                            │
-[09:45 장 시작 후] ──→ Decision Engine ──→ Layer3 조건 실시간 체크
-                                            │
-               [통과] ──→ KIS 매수 주문 ──→ Position Manager(트레일링 스탑)
-                                            │
-                          [손절/익절/강제청산] ──→ KIS 매도 주문
-                                            │
-[16:00] ──→ S10 Review & Audit ──→ S11 Learning Memory ──→ 내일 S3~S5에 반영
+[해외 시장/지표] ──→ S2 시장 톤 ──→ 시장 톤 결과
+                                   │
+[KIS 유니버스 데이터] ──→ S3 유니버스 필터 ──→ universe_filter_results
+                                   │
+[S3 결과 + KIS/AI 정보] ──→ S4 스크리닝 ──→ hybrid_screening_results
+                                   │
+[S3+S4 결과] ──→ S5 Daily Plan ──→ daily_trading_plans
+                                   │
+[장중] ──→ S6 Decision Engine ──→ 주문/포지션 감시
+                                   │
+[주문/체결] ──→ S7/S8 ──→ orders / positions / signals
+                                   │
+[15:20~] ──→ S9 청산 ──→ 후처리
+                                   │
+[16:00] ──→ S10 Review & Audit ──→ 복기 리포트
+                                   │
+[16:30~22:00] ──→ S11 Learning Memory ──→ 다음날 참고 데이터
 ```
