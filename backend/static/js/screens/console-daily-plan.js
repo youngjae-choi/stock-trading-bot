@@ -6,9 +6,9 @@
       var el;
       if (!plan) {
         el = document.getElementById('dp-market-tone');
-        if (el) el.textContent = '미생성';
+        if (el) el.textContent = '미수집';
         el = document.getElementById('dp-plan-status');
-        if (el) el.textContent = 'Plan 없음';
+        if (el) el.textContent = 'Plan 미수집';
         return;
       }
 
@@ -19,7 +19,7 @@
       el = document.getElementById('dp-new-entry');
       if (el) el.textContent = plan.new_entry_allowed ? '허용' : '차단';
       var statusColors = { active:'ok', validated:'info', generated:'info', validation_failed:'err', inactive:'warn', expired:'warn', superseded:'warn', rollbacked:'warn', dry_run:'info', draft:'warn', none:'warn' };
-      var statusLabel = { active:'active', validated:'validated', generated:'generated', validation_failed:'검증실패', inactive:'inactive', expired:'만료', superseded:'superseded', rollbacked:'롤백됨', dry_run:'dry_run', draft:'draft', none:'없음' };
+      var statusLabel = { active:'active', validated:'validated', generated:'generated', validation_failed:'검증실패', inactive:'inactive', expired:'만료', superseded:'superseded', rollbacked:'롤백됨', dry_run:'dry_run', draft:'draft', none:'미수집' };
       var st = (plan && plan.status) ? plan.status : 'none';
       var planStatusEl = document.getElementById('dp-plan-status');
       if (planStatusEl) planStatusEl.innerHTML = 'Plan 상태: <span class="status ' + (statusColors[st]||'warn') + '">' + (statusLabel[st]||st) + '</span>';

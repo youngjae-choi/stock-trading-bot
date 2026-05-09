@@ -8,7 +8,7 @@
       const tbody = document.getElementById('fp-list-tbody');
       if (!tbody) return;
       if (!items.length) {
-        tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center">데이터 없음</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center">미수집</td></tr>';
         return;
       }
       tbody.innerHTML = items.map(f => `<tr>

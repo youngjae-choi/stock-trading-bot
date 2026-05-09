@@ -9,7 +9,7 @@
         var eld = document.getElementById(idDetail);
         var status = s.status || "info";
         if (el) {
-          el.textContent = status === "ok" ? "정상" : status === "warn" ? "주의" : "미구현";
+          el.textContent = status === "ok" ? "정상" : status === "warn" ? "주의" : "미수집";
           el.className = "metric " + (status === "ok" ? "good" : status === "warn" ? "warn" : "info");
         }
         if (eld) {
@@ -125,12 +125,12 @@
     if (summary.has_s3 && summary.layer1_count === 0) {
       if (strengthStatus) strengthStatus.textContent = '후보 없음';
       if (strengthDetail) strengthDetail.textContent = '후보 없음: S3 통과 0';
-      if (anomalyStatus) anomalyStatus.textContent = '후속 미생성';
+      if (anomalyStatus) anomalyStatus.textContent = '후속 미수집';
       if (anomalyDetail) anomalyDetail.textContent = summary.empty_reason || 'S3 통과 종목이 없어 S4/S5가 생성되지 않았습니다.';
       return;
     }
     if (strengthStatus) strengthStatus.textContent = summary.has_s3 ? 'DB 기준 표시' : 'S3 없음';
-    if (strengthDetail) strengthDetail.textContent = '최근 N거래일 품질 집계 미구현: 오늘 저장된 Funnel 결과만 표시합니다.';
+    if (strengthDetail) strengthDetail.textContent = '최근 N거래일 품질 집계 미수집: 오늘 저장된 Funnel 결과만 표시합니다.';
     if (anomalyStatus) anomalyStatus.textContent = summary.empty_reason ? '확인 필요' : '저장 결과 기준';
     if (anomalyDetail) anomalyDetail.textContent = summary.empty_reason || '정적 품질 문구를 제거하고 DB 결과만 표시 중입니다.';
   }
@@ -165,7 +165,7 @@
         var l2DetailEl = document.getElementById("funnel-layer2-detail");
         var emptyReasonEl = document.getElementById("funnel-empty-reason");
         var lastUpdatedEl = document.getElementById("funnel-last-updated");
-        if (totalEl) totalEl.textContent = fp.total_universe != null ? fp.total_universe.toLocaleString() : "-";
+        if (totalEl) totalEl.textContent = (fp.total_universe != null && fp.total_universe > 0) ? fp.total_universe.toLocaleString() : "-";
         if (totalSourceEl) totalSourceEl.textContent = fp.total_universe_source || "출처 미확인";
         if (l1El) l1El.textContent = fp.layer1_count != null ? fp.layer1_count.toLocaleString() : "-";
         if (l1DetailEl) l1DetailEl.textContent = "raw " + (fp.layer1_raw != null ? fp.layer1_raw.toLocaleString() : "-") + " / 탈락 " + (fp.layer1_rejected != null ? fp.layer1_rejected.toLocaleString() : "-");

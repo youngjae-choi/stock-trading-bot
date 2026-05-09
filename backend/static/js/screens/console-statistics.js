@@ -82,7 +82,7 @@
   async function loadAllOrders() {
     var tbody = document.getElementById("st-orders-tbody");
     var title = document.getElementById("st-table-title");
-    if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">로딩중...</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">로딩중...</td></tr>';
 
     try {
       var orders = [];
@@ -124,7 +124,7 @@
       renderOrdersTable(orders, "해당 기간 주문 없음");
     } catch (e) {
       console.error("[ERROR]", "loadAllOrders", "-", e.message);
-      if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">조회 실패: ' + escapeHtml(e.message || "") + '</td></tr>';
+      if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">조회 실패: ' + escapeHtml(e.message || "") + '</td></tr>';
     }
   }
 
@@ -169,7 +169,7 @@
     if (sfDate) sfDate.value = tradeDate;
     var tbody = document.getElementById("st-orders-tbody");
     var title = document.getElementById("st-table-title");
-    if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">로딩중...</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">로딩중...</td></tr>';
     if (title) title.textContent = tradeDate + " 주문 내역";
 
     try {
@@ -180,7 +180,7 @@
       renderOrdersTable(orders.concat(signals), "해당 날짜 주문 없음");
     } catch (e) {
       console.error("[ERROR]", "loadStatisticsDetail", "-", e.message);
-      if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>';
+      if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>';
     }
   }
 
@@ -192,7 +192,7 @@
       var plan = d.payload || {};
       var el;
       el = document.getElementById('tc-daily-plan-id');
-      if (el) el.textContent = plan.id || '미생성';
+    if (el) el.textContent = plan.id || '미수집';
       el = document.getElementById('tc-daily-plan-status');
       if (el) el.textContent = plan.status || '-';
       el = document.getElementById('tc-trading-intensity');

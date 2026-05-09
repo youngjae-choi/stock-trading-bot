@@ -68,10 +68,10 @@
 
 
   async function liquidateAll() {
-    if (!confirm("전체 포지션을 즉시 청산할까요?")) return;
+    if (!confirm("보유 포지션 전량을 즉시 시장가로 청산할까요? (일괄매도)")) return;
     try {
       await fetchJson("/api/v1/orders/liquidate-all", { method: "POST" });
-      alert("전체 청산 주문이 전송되었습니다.");
+      alert("전량 청산(일괄매도) 주문이 전송되었습니다.");
       loadPositionMonitoring();
       loadTodayOrders();
     } catch (e) {

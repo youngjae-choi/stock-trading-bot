@@ -102,7 +102,7 @@
         var data = await res.json();
         var p = data.payload || {};
         var dp = p.daily_plan || {};
-        var setEl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v || '데이터 확인 필요'; };
+        var setEl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v || '미수집'; };
         setEl('tm-policy-buy-desc', dp.buy_condition_text);
         setEl('tm-policy-sell-desc', dp.sell_condition_text);
         setEl('tm-policy-risk-desc', dp.cash_usage_text);

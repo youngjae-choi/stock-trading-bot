@@ -1,6 +1,6 @@
   async function loadReviewData() {
     try {
-      var data = await fetchJson("/api/v1/trades/history?limit=30");
+      var data = await fetchJson("/api/v1/trades/history?limit=31");
       var items = (data.payload && data.payload.items) || [];
 
       var tradeDays = items.length;
@@ -40,7 +40,7 @@
       var tbody = document.getElementById("review-history-tbody");
       if (tbody) {
         if (items.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;">거래 이력 없음 (S10 실행 전)</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;">미수집</td></tr>';
         } else {
           tbody.innerHTML = items.map(function(item) {
             var pnl = item.realized_pnl_pct || 0;
@@ -111,7 +111,7 @@
     var todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
     var input = document.getElementById('ra-date-input');
     if (input) input.value = todayStr;
-    await loadReviewByDate(todayStr);
+    await loadReviewByDate();
   }
 
   /* Fetch a Review & Audit report for a specific YYYY-MM-DD date and route empty/error states to the empty panel. */

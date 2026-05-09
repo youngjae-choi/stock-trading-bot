@@ -150,7 +150,7 @@
         return;
       }
       var items = data.payload || [];
-      if (!items.length) { el.textContent = '분석 이력 없음'; return; }
+      if (!items.length) { el.textContent = '미수집'; return; }
       el.innerHTML = items.map(function(item) {
         var ts = item.created_at ? item.created_at.substring(0, 16).replace('T', ' ') : '-';
         var status = item.status === 'applied' ? '<span style="color:var(--green);">적용됨</span>' : '대기';
@@ -182,7 +182,7 @@
     const tbody = document.getElementById('ek-list-tbody');
     if (!tbody) return;
     if (!items.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">등록된 지식 없음</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">미수집</td></tr>';
       return;
     }
     tbody.innerHTML = items.map(item => {

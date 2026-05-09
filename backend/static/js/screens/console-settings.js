@@ -246,10 +246,10 @@
       
       var rows = [
         {
-          label: 'AI confidence 임계값',
+          label: '주식단타매매 전문 AI 판단값',
           aiValue: aiEntryRules.min_ai_confidence ?? '-',
           guardKey: 'engine.min_confidence_floor',
-          desc: 'AI가 설정한 오늘의 최소 신뢰도 / 가드레일은 절대 하한선'
+          desc: '전문 AI가 판단한 오늘의 추천값 / 가드레일은 절대 하한선'
         },
         {
           label: '최소 등락률 %',
@@ -318,7 +318,7 @@
       var ddp = await rdp.json();
       var plan = ddp.payload || {};
       var el3 = document.getElementById('da-plan-id');
-      if (el3) el3.textContent = plan.id || '미생성';
+      if (el3) el3.textContent = plan.id || '미수집';
       var el4 = document.getElementById('da-assignments-n');
       if (el4) el4.textContent = (plan.symbol_assignments || []).length + '개';
     } catch(e) {}
