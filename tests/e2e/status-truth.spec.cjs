@@ -127,6 +127,10 @@ test.beforeEach(async ({ page }) => {
         '/api/v1/decision/status': { ok: true, payload: { active: false } },
         '/api/v1/orders/today': { ok: true, payload: { orders: [] } },
         '/api/v1/orders/positions': { ok: true, payload: { positions: [] } },
+        '/api/v1/account/balance': { ok: true, payload: { positions: [], stock_eval: 0, pnl_total: 0, pnl_rate: 0 } },
+        '/api/v1/trading-monitor/policy-summary': { ok: true, payload: { daily_plan: {} } },
+        '/api/v1/trading-monitor/candidates': { ok: true, payload: { candidates: [] } },
+        '/api/v1/trading-monitor/positions': { ok: true, payload: { positions: [] } },
         '/api/v1/review-audit/today': { ok: true, payload: null },
         '/api/v1/learning-memory/today': { ok: true, payload: [] },
       };
@@ -231,6 +235,45 @@ test.beforeEach(async ({ page }) => {
             total: 0,
             lines: [],
             message: '서버 로그 파일은 비어 있습니다: /tmp/mock-empty-server.log',
+          },
+        };
+      }
+
+      if (scenario === 'tm-monitoring') {
+        responses['/api/v1/account/balance'] = {
+          ok: true,
+          payload: {
+            account_no: 'mock',
+            buyable_cash: 1000000,
+            deposit: 1000000,
+            stock_eval: 70000,
+            total_eval: 1070000,
+            pnl_total: -16000,
+            pnl_rate: -16,
+            today_buy_amt: 0,
+            today_sell_amt: 0,
+            positions: [{ symbol: '005930', name: '삼성전자', qty: 1, avg_price: 100000, current_price: 84000 }],
+          },
+        };
+        responses['/api/v1/trading-monitor/positions'] = {
+          ok: true,
+          payload: {
+            positions: [{
+              symbol: '005930',
+              name: '삼성전자',
+              qty: 1,
+              entry_price: 100000,
+              market_price: 84000,
+              highest_price_since_entry: 100000,
+              active_stop_price: 97000,
+              monitoring_status: '미감시',
+              monitoring_detail: 'KIS 실보유에는 있으나 자동 손절/트레일링 감시 대상이 아님',
+              auto_monitoring: false,
+              ws_subscribed: false,
+              position_manager_registered: false,
+              stop_state_source: 'fallback',
+              profile_assigned: 'MID_VOL',
+            }],
           },
         };
       }
@@ -471,4 +514,35 @@ test('Diagnostics cards display pipeline_run_audit source time and status', asyn
   await expect(page.locator('#et-audit-s3')).toContainText('자동 실행 결과를 카드에 표시 중');
   await expect(page.locator('#et-audit-s3')).toContainText('success');
   await expect(page.locator('#et-audit-s3')).toContainText('raw=30 filtered=0');
+});
+
+
+test('Trading Monitor exposes automatic monitoring gaps for held positions', async ({ page }) => {
+  await page.evaluate(() => {
+    const host = document.createElement('div');
+    host.id = 'tm-monitoring-render-host';
+    document.body.appendChild(host);
+    host.innerHTML = window.renderPositionRow({
+      symbol: '005930',
+      name: '삼성전자',
+      qty: 1,
+      entry_price: 100000,
+      market_price: 84000,
+      highest_price_since_entry: 100000,
+      active_stop_price: 97000,
+      monitoring_status: '미감시',
+      monitoring_detail: 'KIS 실보유에는 있으나 자동 손절/트레일링 감시 대상이 아님',
+      auto_monitoring: false,
+      ws_subscribed: false,
+      position_manager_registered: false,
+      stop_state_source: 'fallback',
+      profile_assigned: 'MID_VOL',
+    });
+  });
+
+  const host = page.locator('#tm-monitoring-render-host');
+  await expect(host.getByText('삼성전자')).toBeVisible();
+  await expect(host.getByText('미감시')).toBeVisible();
+  await expect(host.getByText('S8등록')).toBeVisible();
+  await expect(host.getByText('미구독')).toBeVisible();
 });
