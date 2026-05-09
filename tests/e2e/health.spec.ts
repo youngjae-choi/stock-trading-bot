@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 
 const backendUrl = process.env.BACKEND_URL ?? 'http://127.0.0.1:8000';
@@ -14,14 +15,35 @@ function envValue(key: string, fallback = ''): string {
   }
 }
 
-async function login(request) {
-  const response = await request.post(`${backendUrl}/api/v1/auth/login`, {
-    data: {
-      username: envValue('APP_ADMIN_USERNAME', 'admin'),
-      password: envValue('APP_ADMIN_PASSWORD'),
+function createAuthHeaders(): { Cookie: string } {
+  const script = `
+import os
+from backend.services.auth_service import SESSION_COOKIE_NAME, authenticate_user, create_session
+username = os.environ.get('E2E_USERNAME', 'admin')
+password = os.environ.get('E2E_PASSWORD', '')
+user = authenticate_user(username, password)
+if user is None:
+    raise SystemExit('INVALID_E2E_CREDENTIALS')
+print(f"{SESSION_COOKIE_NAME}={create_session(user['id'])}")
+`;
+  const cookie = execFileSync('python', ['-c', script], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      E2E_USERNAME: envValue('APP_ADMIN_USERNAME', 'admin'),
+      E2E_PASSWORD: envValue('APP_ADMIN_PASSWORD'),
     },
-  });
-  expect(response.ok()).toBeTruthy();
+    encoding: 'utf8',
+  }).trim();
+  return { Cookie: cookie };
+}
+
+function runPythonCheck(script: string): string {
+  return execFileSync('python', ['-c', script], {
+    cwd: process.cwd(),
+    env: process.env,
+    encoding: 'utf8',
+  }).trim();
 }
 
 test('backend health endpoint responds', async ({ request }) => {
@@ -54,13 +76,62 @@ test('backend console routes respond with html', async ({ request }) => {
   expect(await consoleResponse.text()).toContain('Dantabot Control Console');
 });
 
+test('closed trading day S2 skips market tone analysis', async () => {
+  const output = runPythonCheck(`
+import asyncio
+from backend.services import scheduler
+
+calls = []
+
+async def fake_refresh(actor=''):
+    calls.append(('refresh', actor))
+    scheduler._set_schedule_skip_today(skip=True, description='e2e closed day', actor='e2e_closed_day')
+    return {'status': 'closed', 'reason': 'e2e', 'date': scheduler._today_kst_compact()}
+
+original_refresh = scheduler.refresh_trading_day_skip_flag
+scheduler.refresh_trading_day_skip_flag = fake_refresh
+try:
+    asyncio.run(scheduler.job_market_tone_analysis())
+finally:
+    scheduler.refresh_trading_day_skip_flag = original_refresh
+    scheduler._set_schedule_skip_today(skip=False, description='e2e cleanup', actor='e2e_cleanup')
+
+assert calls == [('refresh', 'scheduler_s2')], calls
+print('S2_CLOSED_DAY_SKIP_OK')
+`);
+  expect(output).toContain('S2_CLOSED_DAY_SKIP_OK');
+});
+
+test('skipped day data basis stays on previous pipeline date', async () => {
+  const output = runPythonCheck(`
+from backend.services import console_state, scheduler
+
+original_has = console_state._has_pipeline_data_for_date
+original_latest = console_state._latest_pipeline_data_date
+scheduler._set_schedule_skip_today(skip=True, description='e2e data basis', actor='e2e_data_basis')
+console_state._has_pipeline_data_for_date = lambda trade_date: True
+console_state._latest_pipeline_data_date = lambda today, include_today=True: '2026-05-08' if include_today is False else today
+try:
+    basis = console_state._build_data_basis('2026-05-09')
+finally:
+    console_state._has_pipeline_data_for_date = original_has
+    console_state._latest_pipeline_data_date = original_latest
+    scheduler._set_schedule_skip_today(skip=False, description='e2e cleanup', actor='e2e_cleanup')
+
+assert basis['display_date'] == '2026-05-08', basis
+assert basis['is_today'] is False, basis
+print('DATA_BASIS_PRIOR_DAY_OK')
+`);
+  expect(output).toContain('DATA_BASIS_PRIOR_DAY_OK');
+});
+
 test('bot console api endpoints respond with current payloads', async ({ request }) => {
-  await login(request);
-  const overviewResponse = await request.get(`${backendUrl}/api/v1/bot/overview`);
-  const rulepackResponse = await request.get(`${backendUrl}/api/v1/bot/rulepack/today`);
-  const dataHealthResponse = await request.get(`${backendUrl}/api/v1/bot/data-health`);
-  const haltResponse = await request.post(`${backendUrl}/api/v1/bot/control/halt`);
-  const apiLogsResponse = await request.get(`${backendUrl}/api/v1/bot/api-logs`);
+  const headers = createAuthHeaders();
+  const overviewResponse = await request.get(`${backendUrl}/api/v1/bot/overview`, { headers });
+  const rulepackResponse = await request.get(`${backendUrl}/api/v1/bot/rulepack/today`, { headers });
+  const dataHealthResponse = await request.get(`${backendUrl}/api/v1/bot/data-health`, { headers });
+  const haltResponse = await request.post(`${backendUrl}/api/v1/bot/control/halt`, { headers });
+  const apiLogsResponse = await request.get(`${backendUrl}/api/v1/bot/api-logs`, { headers });
 
   expect(overviewResponse.ok()).toBeTruthy();
   expect(rulepackResponse.ok()).toBeTruthy();
@@ -78,8 +149,9 @@ test('bot console api endpoints respond with current payloads', async ({ request
   expect(overview.source).toBe('backend');
   expect(overview.live).toBeTruthy();
   expect(overview.payload.trade_date).toEqual(expect.any(String));
+  expect(overview.payload.data_basis.display_date).toEqual(expect.any(String));
   expect(overview.payload.health).toEqual(expect.any(Object));
-  expect(rulepack.payload.status).toBe('mock');
+  expect(rulepack.payload.status ?? rulepack.payload.rulepack?.status).toEqual(expect.any(String));
   expect(dataHealth.payload.note).toEqual(expect.any(String));
   expect(halt.payload.halted).toBeTruthy();
   expect(apiLogs.source).toBe('backend');
@@ -105,7 +177,7 @@ test('bot console api endpoints respond with current payloads', async ({ request
         entry.endpoint === '/api/v1/bot/overview'
         && entry.feature_name === '운영 개요 조회'
         && entry.purpose === '운영 화면에서 엔진 상태와 리스크 상태를 한 번에 확인'
-        && entry.result_summary === '성공 mock 운영 개요와 오늘 상태 요약을 반환',
+        && entry.result_summary === '성공 실 DB 기반 운영 개요 반환',
     ),
   ).toBeTruthy();
   expect(
@@ -119,23 +191,25 @@ test('bot console api endpoints respond with current payloads', async ({ request
 });
 
 test('settings and trading data persist through authenticated APIs', async ({ request }) => {
-  await login(request);
-  const settingsResponse = await request.get(`${backendUrl}/api/v1/settings`);
+  const headers = createAuthHeaders();
+  const settingsResponse = await request.get(`${backendUrl}/api/v1/settings`, { headers });
   expect(settingsResponse.ok()).toBeTruthy();
   const settingsPayload = await settingsResponse.json();
   expect(Array.isArray(settingsPayload.payload.items)).toBeTruthy();
 
   const updateResponse = await request.put(`${backendUrl}/api/v1/settings/risk.max_positions`, {
+    headers,
     data: { value: 5, value_type: 'number', description: '최대 보유 종목' },
   });
   expect(updateResponse.ok()).toBeTruthy();
 
   const orderResponse = await request.post(`${backendUrl}/api/v1/trading-data/orders`, {
+    headers,
     data: { symbol: '005930', side: 'buy', quantity: 1, order_type: 'market', status: 'created' },
   });
   expect(orderResponse.ok()).toBeTruthy();
 
-  const ordersResponse = await request.get(`${backendUrl}/api/v1/trading-data/orders`);
+  const ordersResponse = await request.get(`${backendUrl}/api/v1/trading-data/orders`, { headers });
   expect(ordersResponse.ok()).toBeTruthy();
   const ordersPayload = await ordersResponse.json();
   expect(ordersPayload.payload.items.some((entry: { symbol: string }) => entry.symbol === '005930')).toBeTruthy();

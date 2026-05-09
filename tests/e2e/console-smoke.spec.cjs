@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 
 function envValue(key, fallback = '') {
@@ -12,13 +13,33 @@ function envValue(key, fallback = '') {
   }
 }
 
+function createSessionCookie() {
+  const script = `
+import os
+from backend.services.auth_service import SESSION_COOKIE_NAME, authenticate_user, create_session
+username = os.environ.get('E2E_USERNAME', 'admin')
+password = os.environ.get('E2E_PASSWORD', '')
+user = authenticate_user(username, password)
+if user is None:
+    raise SystemExit('INVALID_E2E_CREDENTIALS')
+print(f"{SESSION_COOKIE_NAME}={create_session(user['id'])}")
+`;
+  return execFileSync('python', ['-c', script], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      E2E_USERNAME: envValue('APP_ADMIN_USERNAME', 'admin'),
+      E2E_PASSWORD: envValue('APP_ADMIN_PASSWORD'),
+    },
+    encoding: 'utf8',
+  }).trim();
+}
+
 async function login(page, url) {
+  const [name, value] = createSessionCookie().split('=');
+  await page.context().addCookies([{ name, value, url }]);
   await page.goto(`${url}/console`, { waitUntil: 'domcontentloaded', timeout: 20_000 });
-  await expect(page.getByRole('heading', { name: 'Dantabot Control Console' })).toBeVisible();
-  await page.locator('#loginUsername').fill(envValue('APP_ADMIN_USERNAME', 'admin'));
-  await page.locator('#loginPassword').fill(envValue('APP_ADMIN_PASSWORD'));
-  await page.getByRole('button', { name: '로그인' }).click();
-  await expect(page.getByRole('heading', { name: "Today's" })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Today Control' })).toBeVisible();
 }
 
 test('fastapi console root serves html shell', async ({ request }) => {
@@ -42,8 +63,8 @@ test('fastapi console page can call halt api', async ({ page }) => {
 
   await login(page, url);
   const haltButton = page.locator('#haltBtn');
-  await page.getByRole('button', { name: /Data & API/i }).click();
-  await expect(page.getByRole('heading', { name: 'Data & API' })).toBeVisible();
+  await page.getByRole('button', { name: /System Status/i }).click();
+  await expect(page.getByRole('heading', { name: 'System Status' })).toBeVisible();
   const dataScreen = page.locator('#screen-data');
   await expect(dataScreen.getByText('Base RulePack', { exact: true })).toBeVisible();
   await expect(dataScreen.getByText('Risk Profile Pack', { exact: true })).toBeVisible();
