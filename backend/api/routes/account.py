@@ -39,6 +39,23 @@ def _to_int(value: Any, default: int = 0) -> int:
     return int(_to_float(value, float(default)))
 
 
+def _to_optional_int(value: Any) -> int | None:
+    """Convert a KIS numeric string to int while preserving blank fields as None.
+
+    Args:
+        value: Raw KIS value, usually a string.
+    """
+    if value is None:
+        return None
+    text = str(value).replace(",", "").strip()
+    if text == "":
+        return None
+    try:
+        return int(float(text))
+    except (TypeError, ValueError):
+        return None
+
+
 def _as_list(value: Any) -> list[dict[str, Any]]:
     """Normalize a KIS output field into a list of dictionaries.
 
@@ -109,8 +126,8 @@ def _build_balance_payload(data: dict[str, Any]) -> dict[str, Any]:
         "stock_eval": _to_int(summary.get("scts_evlu_amt")),        # 주식 평가금액
         "pnl_rate": _to_float(summary.get("asst_icdc_erng_rt")),    # 자산증감수익률
         "prev_buy_amt": _to_int(summary.get("bfdy_buy_amt")),       # 전일 매수금액
-        "today_buy_amt": _to_int(summary.get("thdt_buy_amt")),      # 당일 매수금액
-        "today_sell_amt": _to_int(summary.get("thdt_sll_amt")),     # 당일 매도금액
+        "today_buy_amt": _to_optional_int(summary.get("thdt_buy_amt")),      # 당일 매수금액
+        "today_sell_amt": _to_optional_int(summary.get("thdt_sll_amt")),     # 당일 매도금액
         "positions": positions,
     }
 

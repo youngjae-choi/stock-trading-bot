@@ -83,6 +83,15 @@ async def get_funnel_summary():
     logger.info("START: GET %s trade_date=%s", endpoint, today)
     try:
         with get_connection() as conn:
+            # Step 0: Canonical active-universe count for the overall market.
+            total_universe = 0
+            total_universe_source = "symbols.is_active=1 DB count"
+            if _table_exists(conn, "symbols"):
+                market_row = conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM symbols WHERE is_active = 1"
+                ).fetchone()
+                total_universe = int(market_row["cnt"] or 0) if market_row else 0
+
             # Step 1: Read the latest S3 Universe Filter result when the table exists.
             uf_row = None
             if _table_exists(conn, "universe_filter_results"):
@@ -136,6 +145,9 @@ async def get_funnel_summary():
         has_s3 = uf_row is not None
         has_s4 = sc_row is not None
         has_s5 = plan_row is not None
+        if total_universe <= 0 and layer1_raw > 0:
+            total_universe = layer1_raw
+            total_universe_source = "universe_filter_results.raw_count fallback"
         updated_candidates = [
             row["created_at"]
             for row in (uf_row, sc_row, plan_row)
@@ -143,8 +155,8 @@ async def get_funnel_summary():
         ]
         payload = {
             "trade_date": today,
-            "total_universe": 2500,
-            "total_universe_source": "KRX 기준 universe 값(DB 집계 아님)",
+            "total_universe": total_universe,
+            "total_universe_source": total_universe_source,
             "layer1_raw": layer1_raw,
             "layer1_count": layer1_count,
             "layer1_rejected": max(0, layer1_raw - layer1_count),

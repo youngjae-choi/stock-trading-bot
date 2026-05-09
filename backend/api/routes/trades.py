@@ -8,7 +8,7 @@ router = APIRouter(prefix="/api/v1/trades", tags=["trades"])
 
 
 @router.get("/history")
-async def get_trade_history(limit: int = 30):
+async def get_trade_history(limit: int = 31):
     """일별 거래 요약 최근 N일 조회."""
     from ...services.engine.daily_summary import get_trade_history as _get
     items = _get(limit=limit)
