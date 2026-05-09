@@ -65,12 +65,13 @@
     if (mfaSetupBox) {
       var labels = (payload.methods || []).map(function(m) { return m.label || m.method_type; }).join(", ");
       mfaSetupBox.style.display = "";
-      mfaSetupBox.textContent = "등록된 2차 인증 수단: " + (labels || "인증 코드");
+      mfaSetupBox.textContent = "비밀번호 확인 완료. 기존에 등록한 인증 앱의 6자리 코드를 입력하세요. 등록된 수단: " + (labels || "인증 앱");
     }
     if (mfaCodeField) mfaCodeField.style.display = "";
     if (mfaVerifyBtn) {
       mfaVerifyBtn.style.display = "";
       mfaVerifyBtn.textContent = "2차 인증 확인";
+      mfaVerifyBtn.disabled = false;
     }
     if (loginStatus) {
       loginStatus.textContent = "2차 인증 코드를 입력하세요.";
@@ -281,4 +282,3 @@
     applyResumeState(result.payload);
     await loadConsoleData();
   }
-
