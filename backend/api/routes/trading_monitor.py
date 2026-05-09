@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter
@@ -252,9 +252,9 @@ def _build_entry_rules(plan: dict[str, Any] | None, screening: dict[str, Any] | 
         screening: Hybrid screening result row.
         rulepack: Active RulePack machine_rules generated from screening.
     """
-    overrides = (plan or {}).get("daily_overrides") or {}
-    rulepack_entry = rulepack.get("entry_rules") if isinstance(rulepack.get("entry_rules"), dict) else {}
-    candidates = screening.get("candidates", []) if screening else []
+    overrides = cast(dict[str, Any], (plan or {}).get("daily_overrides") or {})
+    rulepack_entry = cast(dict[str, Any], rulepack.get("entry_rules") if isinstance(rulepack.get("entry_rules"), dict) else {})
+    candidates = cast(list[dict[str, Any]], screening.get("candidates", []) if screening else [])
     change_rates = [_to_float(c.get("change_rate") or c.get("chg_rate")) for c in candidates if isinstance(c, dict)]
     return {
         "min_ai_confidence": _to_float(
@@ -311,7 +311,7 @@ def _build_policy_texts(
         f"{buy_prefix}. AI confidence {entry_rules['min_ai_confidence']:.2f} 이상이고 "
         f"등락률 {entry_rules['min_price_change_pct']:.1f}%~{entry_rules['max_price_change_pct']:.1f}% 범위의 후보만 검토합니다."
     )
-    exit_rules = rulepack.get("exit_rules") if isinstance(rulepack.get("exit_rules"), dict) else {}
+    exit_rules = cast(dict[str, Any], rulepack.get("exit_rules") if isinstance(rulepack.get("exit_rules"), dict) else {})
     force_close = exit_rules.get("force_close_at") or "15:20"
     stop_loss = exit_rules.get("stop_loss_trigger") or "손절 기준"
     trailing = exit_rules.get("take_profit_trigger") or "트레일링 스탑"
@@ -324,15 +324,18 @@ def _build_policy_texts(
 
 
 def _latest_stop_states() -> dict[str, dict[str, Any]]:
-    """Return the newest persisted stop state by symbol code."""
+    """Return today's newest persisted stop state by symbol code."""
     states: dict[str, dict[str, Any]] = {}
+    today = _today_kst()
     with get_connection() as conn:
         rows = conn.execute(
             """
             SELECT *
             FROM position_stop_states
+            WHERE substr(last_updated_at, 1, 10) = ?
             ORDER BY last_updated_at DESC
-            """
+            """,
+            (today,),
         ).fetchall()
     for row in rows:
         data = dict(row)
@@ -366,6 +369,43 @@ def _latest_submitted_orders() -> dict[str, dict[str, Any]]:
         if symbol and symbol not in orders:
             orders[symbol] = data
     return orders
+
+
+def _monitoring_status(symbol: str, memory_positions: dict[str, dict[str, Any]], subscribed_symbols: set[str], stop_state_source: str) -> dict[str, Any]:
+    """Classify whether a KIS holding is actually protected by S8 automation.
+
+    Args:
+        symbol: KIS holding symbol.
+        memory_positions: PositionManager in-memory positions by symbol.
+        subscribed_symbols: Realtime websocket subscription symbols.
+        stop_state_source: Source of stop-state values shown on the screen.
+    """
+    managed = symbol in memory_positions
+    subscribed = symbol in subscribed_symbols
+    if managed and subscribed:
+        status = "자동감시중"
+        detail = "PositionManager 등록 및 실시간 구독 확인"
+    elif managed:
+        status = "상태불일치"
+        detail = "PositionManager에는 있지만 실시간 구독 대상이 아님"
+    elif subscribed:
+        status = "상태불일치"
+        detail = "실시간 구독은 있으나 PositionManager 포지션이 없음"
+    else:
+        status = "미감시"
+        detail = "KIS 실보유에는 있으나 자동 손절/트레일링 감시 대상이 아님"
+
+    if stop_state_source == "fallback" and status == "자동감시중":
+        status = "상태불일치"
+        detail = "자동감시 상태이나 오늘 stop state 저장값이 없어 fallback 손절선 표시"
+
+    return {
+        "auto_monitoring": status == "자동감시중",
+        "monitoring_status": status,
+        "monitoring_detail": detail,
+        "ws_subscribed": subscribed,
+        "position_manager_registered": managed,
+    }
 
 
 def _fallback_stop_state(symbol: str, entry_price: float) -> dict[str, Any]:
@@ -406,7 +446,7 @@ def get_candidates():
         ).fetchone()
 
     import json as _json
-    raw_candidates: list[dict] = []
+    raw_candidates: list[dict[str, Any]] = []
     if row:
         try:
             raw_candidates = _json.loads(row["candidates"] or "[]")
@@ -470,7 +510,8 @@ async def get_positions():
 
     stop_states = _latest_stop_states()
     submitted_orders = _latest_submitted_orders()
-    memory_positions = {p.get("symbol"): p for p in position_manager.get_positions()}
+    memory_positions = {str(p.get("symbol") or ""): p for p in position_manager.get_positions()}
+    subscribed_symbols = {str(symbol) for symbol in getattr(realtime_ws_manager, "_symbols", [])}
 
     positions: list[dict[str, Any]] = []
     for holding in account_positions:
@@ -486,7 +527,10 @@ async def get_positions():
         purchase_amount = _to_float(holding.get("purchase_amount"), entry_price * qty)
         memory_pos = memory_positions.get(symbol, {})
         order = submitted_orders.get(symbol, {})
-        stop_state = stop_states.get(symbol) or _fallback_stop_state(symbol, entry_price)
+        persisted_stop_state = stop_states.get(symbol)
+        stop_state_source = "persisted" if persisted_stop_state else "fallback"
+        stop_state = persisted_stop_state or _fallback_stop_state(symbol, entry_price)
+        monitoring = _monitoring_status(symbol, memory_positions, subscribed_symbols, stop_state_source)
 
         positions.append({
             "position_id": stop_state.get("position_id") or memory_pos.get("position_id") or f"{symbol}-account",
@@ -508,6 +552,8 @@ async def get_positions():
             "trailing_stop_rate": memory_pos.get("trailing_stop_rate"),
             "max_holding_minutes": memory_pos.get("max_holding_minutes"),
             "force_exit_time": memory_pos.get("force_exit_time") or "15:20:00",
+            "stop_state_source": stop_state_source,
+            **monitoring,
             "source": "kis_account",
         })
 
@@ -541,7 +587,7 @@ def get_policy_summary():
             cash_usage_text=cash_usage_text,
         )
 
-        payload = {
+        payload: dict[str, Any] = {
             "trade_date": trade_date,
             "market_tone": {
                 "tone": tone,

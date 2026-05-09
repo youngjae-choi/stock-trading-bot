@@ -368,6 +368,16 @@
     var stopBarW = Math.min(Math.max((stopDistPct / 5.0) * 100, 0), 100);
     var profileColors = {LOW_VOL:'#6cb6ff', MID_VOL:'#3fb950', HIGH_VOL:'#d29922', THEME_SPIKE:'#f85149'};
     var profileColor = profileColors[profile] || '#aaa';
+    var monitoringStatus = p.monitoring_status || (p.auto_monitoring ? '자동감시중' : '미감시');
+    var monitoringDetail = p.monitoring_detail || '';
+    var monitoringOk = monitoringStatus === '자동감시중';
+    var monitoringBg = monitoringOk ? '#12351f' : '#3b1d1d';
+    var monitoringColor = monitoringOk ? '#3fb950' : '#f85149';
+    var monitoringBorder = monitoringOk ? 'rgba(63,185,80,.45)' : 'rgba(248,81,73,.45)';
+    var monitoringTitle = monitoringDetail
+      + (p.ws_subscribed === false ? ' · 실시간 미구독' : '')
+      + (p.position_manager_registered === false ? ' · S8 미등록' : '')
+      + (p.stop_state_source === 'fallback' ? ' · fallback 손절선' : '');
 
     return '<div style="border:1px solid var(--line); border-radius:6px; padding:10px 12px; background:var(--panel-2);">'
       + '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">'
@@ -375,6 +385,7 @@
       + '<span style="font-size:13px; font-weight:600;">' + escapeHtml(p.name || p.symbol || '') + '</span>'
       + '<span style="font-size:10px; color:' + profileColor + '; font-weight:600; margin-left:6px;">' + escapeHtml(profile) + '</span>'
       + (trailingActive ? '<span style="font-size:10px; background:#1c3a1c; color:#3fb950; border-radius:3px; padding:1px 5px; margin-left:4px;">Trailing ON</span>' : '')
+      + '<span title="' + escapeHtml(monitoringTitle) + '" style="font-size:10px; background:' + monitoringBg + '; color:' + monitoringColor + '; border:1px solid ' + monitoringBorder + '; border-radius:3px; padding:1px 5px; margin-left:4px; font-weight:700;">' + escapeHtml(monitoringStatus) + '</span>'
       + '</div>'
       + '<div style="font-size:13px; font-weight:700; color:' + pnlColor + ';">' + (pnlPct >= 0 ? '+' : '') + Math.round(pnlPct) + '%</div>'
       + '</div>'
@@ -385,6 +396,9 @@
       + '<div><span style="color:var(--muted);">손절선</span> <span style="color:' + stopColor + '; font-weight:600;">' + Math.round(activeStop).toLocaleString() + '</span></div>'
       + '<div><span style="color:var(--muted);">수량</span> ' + qty.toLocaleString() + '주</div>'
       + '<div><span style="color:var(--muted);">매수금액</span> ' + Math.round(purchaseAmount).toLocaleString() + '원</div>'
+      + '<div><span style="color:var(--muted);">S8등록</span> ' + (p.position_manager_registered ? '예' : '아니오') + '</div>'
+      + '<div><span style="color:var(--muted);">실시간</span> ' + (p.ws_subscribed ? '구독중' : '미구독') + '</div>'
+      + '<div><span style="color:var(--muted);">상태원천</span> ' + escapeHtml(p.stop_state_source || '-') + '</div>'
       + '</div>'
       + '<div>'
       + '<div style="display:flex; justify-content:space-between; font-size:10px; color:var(--muted); margin-bottom:2px;">'
