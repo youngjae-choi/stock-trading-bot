@@ -120,7 +120,7 @@ def _audit_skipped_step(step: str, message: str, metadata: dict[str, Any], statu
         logger.warning("WARN: scheduler skipped-step audit failed step=%s reason=%s", step, exc)
 
 
-def get_schedule_skip_today_status() -> dict:
+def get_schedule_skip_today_status() -> dict[str, Any]:
     """Return schedule_skip_today visibility with stale-flag protection.
 
     The flag is honored only when it was updated for today's Asia/Seoul date.
@@ -295,7 +295,10 @@ async def job_market_tone_analysis() -> None:
     분석 실패 시 neutral 기본값을 저장하고 서버는 계속 실행된다.
     """
     logger.info("START: [Job2] 시장 톤 분석 (08:00 KST)")
+    trading_day = await refresh_trading_day_skip_flag(actor="scheduler_s2")
+    logger.info("INFO: [Job2] 거래일 상태 확인 완료 trading_day=%s", trading_day)
     if _should_skip_auto_job("S2"):
+        logger.warning("SKIP: [Job2] 명확한 비거래일 — 시장 톤 분석 미실행 trading_day=%s", trading_day)
         return
 
     try:
@@ -491,7 +494,8 @@ async def job_trade_preparation_pipeline() -> None:
         run_id = _audit_step_start("S1", {"pipeline": "trade_preparation"})
         s1_result = await job_refresh_kis_token()
         token_status = str(s1_result.get("token_status") or "unknown")
-        trading_day = s1_result.get("trading_day") if isinstance(s1_result.get("trading_day"), dict) else {}
+        raw_trading_day = s1_result.get("trading_day")
+        trading_day: dict[str, Any] = raw_trading_day if isinstance(raw_trading_day, dict) else {}
         trading_day_status = str(s1_result.get("trading_day_status") or trading_day.get("status") or "unknown")
         s1_audit_status = "success"
         if token_status != "success":

@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .db import get_connection
-
 logger = logging.getLogger("BackendConsoleState")
 _API_LOG_LIMIT = 50
 
@@ -231,8 +230,127 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _has_pipeline_data_for_date(trade_date: str) -> bool:
+    """Return whether any persisted pipeline output exists for the requested date.
+
+    Args:
+        trade_date: YYYY-MM-DD date used by the console overview as a candidate basis date.
+    """
+    table_names = (
+        "market_tone_results",
+        "universe_filter_results",
+        "hybrid_screening_results",
+        "daily_trading_plans",
+    )
+    try:
+        with get_connection() as conn:
+            for table_name in table_names:
+                try:
+                    row = conn.execute(
+                        f"SELECT 1 FROM {table_name} WHERE trade_date = ? LIMIT 1",
+                        (trade_date,),
+                    ).fetchone()
+                except Exception as table_exc:
+                    logger.warning(
+                        "WARN: console_state pipeline data presence table skipped table=%s date=%s reason=%s",
+                        table_name,
+                        trade_date,
+                        table_exc,
+                    )
+                    continue
+                if row:
+                    return True
+    except Exception as exc:
+        logger.warning("WARN: console_state pipeline data presence check failed date=%s reason=%s", trade_date, exc)
+    return False
+
+
+def _latest_pipeline_data_date(today: str, *, include_today: bool = True) -> str | None:
+    """Return the latest available pipeline date on or before today for display fallback.
+
+    Args:
+        today: YYYY-MM-DD KST date used as the upper bound so future test data is ignored.
+        include_today: False when today's scheduler is skipped and display should stay on a prior trading day.
+    """
+    table_names = (
+        "market_tone_results",
+        "universe_filter_results",
+        "hybrid_screening_results",
+        "daily_trading_plans",
+    )
+    operator = "<=" if include_today else "<"
+    latest_date = None
+    try:
+        with get_connection() as conn:
+            for table_name in table_names:
+                try:
+                    row = conn.execute(
+                        f"SELECT MAX(trade_date) AS trade_date FROM {table_name} WHERE trade_date {operator} ?",
+                        (today,),
+                    ).fetchone()
+                except Exception as table_exc:
+                    logger.warning(
+                        "WARN: console_state latest pipeline date table skipped table=%s today=%s reason=%s",
+                        table_name,
+                        today,
+                        table_exc,
+                    )
+                    continue
+                row_date = str(row["trade_date"] or "") if row else ""
+                if row_date and (latest_date is None or row_date > latest_date):
+                    latest_date = row_date
+    except Exception as exc:
+        logger.warning("WARN: console_state latest pipeline date lookup failed today=%s reason=%s", today, exc)
+    return latest_date
+
+
+def _build_data_basis(today: str) -> dict[str, Any]:
+    """Build PM-facing metadata that explains which date the overview data uses.
+
+    Args:
+        today: YYYY-MM-DD KST date at the time of the overview request.
+    """
+    schedule_skipped_today = False
+    try:
+        from .scheduler import get_schedule_skip_today_status
+
+        schedule_skipped_today = bool(get_schedule_skip_today_status().get("skip"))
+    except Exception as exc:
+        logger.warning("WARN: console_state data basis schedule skip read failed today=%s reason=%s", today, exc)
+
+    if not schedule_skipped_today and _has_pipeline_data_for_date(today):
+        return {
+            "today_kst": today,
+            "display_date": today,
+            "basis_date": today,
+            "is_today": True,
+            "source": "today_pipeline_data",
+            "message": "오늘 파이프라인 데이터 기준입니다.",
+        }
+
+    latest_date = _latest_pipeline_data_date(today, include_today=not schedule_skipped_today)
+    if latest_date:
+        return {
+            "today_kst": today,
+            "display_date": latest_date,
+            "basis_date": latest_date,
+            "is_today": latest_date == today,
+            "source": "last_available_pipeline_data",
+            "message": f"오늘은 자동 프로세스 미진행 상태라 마지막 데이터 기준일({latest_date})을 표시합니다." if schedule_skipped_today else f"오늘 파이프라인 데이터가 없어 마지막 데이터 기준일({latest_date})을 표시합니다.",
+        }
+
+    return {
+        "today_kst": today,
+        "display_date": today,
+        "basis_date": today,
+        "is_today": True,
+        "source": "no_pipeline_data",
+        "message": "표시할 파이프라인 데이터가 아직 없어 오늘 날짜를 기준값으로 사용합니다.",
+    }
+
+
 def is_emergency_halt_enabled() -> bool:
-    """Return whether emergency halt is active from persistent Settings or console memory."""
+    """Return whether emergency halt is active from persistent Settings."""
     try:
         from .settings_store import get_setting
 
@@ -241,7 +359,7 @@ def is_emergency_halt_enabled() -> bool:
             return True
     except Exception as exc:
         logger.warning("WARN: console_state.is_emergency_halt_enabled setting read failed - %s", exc)
-    return bool(_CONSOLE_STATE["emergency_halt"])
+    return False
 
 
 def get_cached_emergency_halt_state() -> bool:
@@ -309,6 +427,8 @@ def get_console_overview() -> dict[str, Any]:
 
     now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
     today = now_kst.strftime("%Y-%m-%d")
+    data_basis = _build_data_basis(today)
+    display_date = str(data_basis.get("display_date") or today)
 
     # 1. KIS token status
     try:
@@ -335,7 +455,7 @@ def get_console_overview() -> dict[str, Any]:
     try:
         from .engine.rulepack_store import get_active_rulepack_for_date
 
-        rulepack = get_active_rulepack_for_date(today)
+        rulepack = get_active_rulepack_for_date(display_date)
         rulepack_ready = rulepack is not None
         rulepack_id = rulepack.get("rulepack_id", "") if rulepack else ""
     except Exception as exc:
@@ -369,7 +489,7 @@ def get_console_overview() -> dict[str, Any]:
         with get_connection() as conn:
             rows = conn.execute(
                 "SELECT status, COUNT(*) as cnt FROM trading_signals WHERE trade_date=? GROUP BY status",
-                (today,),
+                (display_date,),
             ).fetchall()
         for row in rows:
             if row["status"] == "pending":
@@ -386,7 +506,7 @@ def get_console_overview() -> dict[str, Any]:
             row = conn.execute(
                 """SELECT realized_pnl_pct FROM daily_trade_summary
                    WHERE trade_date=? ORDER BY created_at DESC LIMIT 1""",
-                (today,),
+                (display_date,),
             ).fetchone()
         if row:
             pnl_pct = float(row["realized_pnl_pct"] or 0.0)
@@ -409,7 +529,7 @@ def get_console_overview() -> dict[str, Any]:
             row = conn.execute(
                 """SELECT items FROM universe_filter_results
                    WHERE trade_date=? ORDER BY created_at DESC LIMIT 1""",
-                (today,),
+                (display_date,),
             ).fetchone()
         if row:
             import json as _json
@@ -424,7 +544,7 @@ def get_console_overview() -> dict[str, Any]:
             row = conn.execute(
                 """SELECT output_count FROM hybrid_screening_results
                    WHERE trade_date=? ORDER BY created_at DESC LIMIT 1""",
-                (today,),
+                (display_date,),
             ).fetchone()
         if row:
             layer2_count = row["output_count"] or 0
@@ -433,11 +553,11 @@ def get_console_overview() -> dict[str, Any]:
 
     # 9. Timeline step completion checks
     def _step_done(table: str, date_col: str = "trade_date") -> bool:
-        """Return whether a date-scoped pipeline table has at least one row for today."""
+        """Return whether a date-scoped pipeline table has at least one row for the display date."""
         try:
             with get_connection() as conn:
                 row = conn.execute(
-                    f"SELECT 1 FROM {table} WHERE {date_col}=? LIMIT 1", (today,)
+                    f"SELECT 1 FROM {table} WHERE {date_col}=? LIMIT 1", (display_date,)
                 ).fetchone()
             return row is not None
         except Exception:
@@ -513,7 +633,7 @@ def get_console_overview() -> dict[str, Any]:
             rows = conn.execute(
                 """SELECT time(created_at, '+9 hours') as kst_time, 'AI 시장 톤 분석 완료 tone='||tone as text
                    FROM market_tone_results WHERE trade_date=? ORDER BY created_at DESC LIMIT 1""",
-                (today,),
+                (display_date,),
             ).fetchall()
         for row in rows:
             logs.append({"time": (row["kst_time"] or "")[:5], "text": row["text"]})
@@ -525,7 +645,7 @@ def get_console_overview() -> dict[str, Any]:
             rows = conn.execute(
                 """SELECT time(created_at, '+9 hours') as kst_time, raw_input_count, output_count
                    FROM hybrid_screening_results WHERE trade_date=? ORDER BY created_at DESC LIMIT 1""",
-                (today,),
+                (display_date,),
             ).fetchall()
         for row in rows:
             logs.append({
@@ -540,7 +660,7 @@ def get_console_overview() -> dict[str, Any]:
             rows = conn.execute(
                 """SELECT time(created_at, '+9 hours') as kst_time, symbol, name, status
                    FROM trading_signals WHERE trade_date=? ORDER BY created_at DESC LIMIT 5""",
-                (today,),
+                (display_date,),
             ).fetchall()
         for row in rows:
             logs.append({
@@ -573,7 +693,8 @@ def get_console_overview() -> dict[str, Any]:
 
     emergency_halt = is_emergency_halt_enabled()
     payload = {
-        "trade_date": today,
+        "trade_date": display_date,
+        "data_basis": data_basis,
         "pnl_percent": pnl_pct,
         "daily_loss_limit_percent": daily_loss_limit_pct,
         "open_positions": open_positions,
@@ -617,8 +738,10 @@ def get_console_overview() -> dict[str, Any]:
         "note": "실 DB 및 런타임 상태 기반 응답",
     }
     logger.info(
-        "SUCCESS: console_state.get_console_overview trade_date=%s kis=%s ws=%s rulepack=%s",
+        "SUCCESS: console_state.get_console_overview trade_date=%s display_date=%s basis_source=%s kis=%s ws=%s rulepack=%s",
         today,
+        display_date,
+        data_basis.get("source"),
         kis_ok,
         ws_connected,
         rulepack_ready,

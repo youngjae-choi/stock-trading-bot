@@ -302,15 +302,12 @@ def _time_from_rule(value: Any, fallback: tuple[int, int]) -> tuple[int, int]:
 def is_new_buy_blocked_by_emergency_halt() -> tuple[bool, str]:
     """Return whether emergency halt state must block a new BUY order.
 
-    The guard is fail-closed for new entries: persistent Settings and the
-    console cached fallback are both checked, and any lookup uncertainty blocks
-    only new BUY orders while leaving SELL/liquidation paths outside this guard.
+    The guard is fail-closed for new entries: persistent Settings is checked,
+    and any lookup uncertainty blocks only new BUY orders while leaving
+    SELL/liquidation paths outside this guard.
     """
     setting_enabled = False
     setting_error: Exception | None = None
-    cached_enabled = False
-    cached_error: Exception | None = None
-
     try:
         emergency_halt = get_setting("risk.emergency_halt_enabled", False)
         setting_enabled = emergency_halt is True or str(emergency_halt).lower() == "true"
@@ -318,21 +315,12 @@ def is_new_buy_blocked_by_emergency_halt() -> tuple[bool, str]:
         setting_error = exc
         logger.error("FAIL: [S6-P] emergency halt persistent setting read failed reason=%s", exc)
 
-    try:
-        from ..console_state import get_cached_emergency_halt_state
-
-        cached_enabled = get_cached_emergency_halt_state()
-    except Exception as exc:
-        cached_error = exc
-        logger.error("FAIL: [S6-P] emergency halt console fallback read failed reason=%s", exc)
-
-    if setting_enabled or cached_enabled:
+    if setting_enabled:
         return True, "emergency_halt_active"
-    if setting_error is not None or cached_error is not None:
+    if setting_error is not None:
         logger.warning(
-            "BLOCK: [S6-P] emergency halt status uncertain; fail-closed for new BUY setting_error=%s cached_error=%s",
+            "BLOCK: [S6-P] emergency halt status uncertain; fail-closed for new BUY setting_error=%s",
             bool(setting_error),
-            bool(cached_error),
         )
         return True, "emergency_halt_status_uncertain"
     return False, ""
