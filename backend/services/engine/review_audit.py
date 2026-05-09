@@ -11,6 +11,7 @@ import logging
 import uuid
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -19,6 +20,7 @@ from .order_executor import get_today_orders
 from .position_integrity import create_integrity_alert_once, json_compact, summarize_order_integrity
 
 logger = logging.getLogger("ReviewAudit")
+_DOCS_DIR = Path(__file__).resolve().parents[3] / "docs"
 
 
 def _now_kst_iso() -> str:
@@ -39,6 +41,63 @@ def _json_loads(value: str | None, default: Any) -> Any:
         return json.loads(value)
     except (TypeError, json.JSONDecodeError):
         return default
+
+
+def _build_review_markdown(result: dict[str, Any]) -> str:
+    """Render the S10 review payload into a readable markdown artifact."""
+    trade_date = str(result.get("trade_date") or "")
+    lines = [
+        f"# SYSTEM AUDIT {trade_date}",
+        "",
+        "## Summary",
+        f"- total_trades: {result.get('total_trades', 0)}",
+        f"- total_orders: {result.get('total_orders', 0)}",
+        f"- buy_orders: {result.get('buy_orders', 0)}",
+        f"- sell_orders: {result.get('sell_orders', 0)}",
+        f"- failed_orders: {result.get('failed_orders', 0)}",
+        f"- realized_pnl: {result.get('realized_pnl', 0)}",
+        f"- realized_pnl_pct: {result.get('realized_pnl_pct', 0)}",
+        f"- pnl_status: {result.get('pnl_status', '')}",
+        f"- pnl_source: {result.get('pnl_source', '')}",
+        "",
+        "## Counts",
+        f"- missed_entries: {result.get('missed_entries_count', 0)}",
+        f"- false_positives: {result.get('false_positive_count', 0)}",
+        f"- no_trade_count: {result.get('no_trade_count', 0)}",
+        f"- integrity_warnings: {len(result.get('integrity_warnings', []) or [])}",
+    ]
+
+    warnings = result.get("integrity_warnings", []) or []
+    if warnings:
+        lines.extend(["", "## Integrity Warnings"])
+        for warning in warnings:
+            lines.append(f"- {warning}")
+
+    for section_name, key in (("Missed Entries", "missed_entries"), ("False Positives", "false_positives")):
+        rows = result.get(key, []) or []
+        lines.extend(["", f"## {section_name}"])
+        if not rows:
+            lines.append("- 없음")
+            continue
+        for row in rows[:20]:
+            if isinstance(row, dict):
+                symbol = row.get("symbol") or row.get("name") or "-"
+                reason = row.get("reason") or row.get("loss_reason") or row.get("entry_reason") or ""
+                lines.append(f"- {symbol}: {reason}")
+            else:
+                lines.append(f"- {row}")
+
+    return "\n".join(lines) + "\n"
+
+
+def _write_review_markdown(result: dict[str, Any]) -> str:
+    """Persist the S10 review report as a markdown file in docs/."""
+    _DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    trade_date = str(result.get("trade_date") or _now_kst_iso()[:10])
+    md_path = _DOCS_DIR / f"SYSTEM_AUDIT_{trade_date.replace('-', '')}.md"
+    md_path.write_text(_build_review_markdown(result), encoding="utf-8")
+    logger.info("SUCCESS: [S10] review markdown saved path=%s", md_path)
+    return str(md_path)
 
 
 def _table_columns(table_name: str) -> set[str]:
@@ -293,7 +352,7 @@ def _replace_daily_rows(table_name: str, trade_date: str, rows: list[tuple[Any, 
             )
 
 
-async def run_review_audit(trade_date: str) -> dict:
+async def run_review_audit(trade_date: str) -> dict[str, Any]:
     """Run S10 daily review aggregation and persist the report.
 
     Args:
@@ -563,10 +622,11 @@ async def run_review_audit(trade_date: str) -> dict:
         total_pnl,
         integrity.get("pnl_status"),
     )
+    result["md_path"] = _write_review_markdown(result)
     return result
 
 
-def get_review_report(trade_date: str) -> dict | None:
+def get_review_report(trade_date: str) -> dict[str, Any] | None:
     """Return the persisted S10 review report for a trade date.
 
     Args:

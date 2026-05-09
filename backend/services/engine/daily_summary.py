@@ -6,8 +6,9 @@ import json
 import logging
 import shutil
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from ..db import get_connection
@@ -17,6 +18,7 @@ from .rulepack_store import get_active_rulepack_for_date
 from ...config import settings
 
 logger = logging.getLogger("DailySummary")
+_RETENTION_DAYS = 30
 
 
 def _ensure_tables() -> None:
@@ -59,9 +61,36 @@ def _ensure_tables() -> None:
                 conn.execute(statement)
 
 
-async def run_daily_summary(trade_date: str | None = None) -> dict:
+def _prune_trade_history() -> None:
+    """Keep trade history and DB backups within the rolling retention window."""
+    cutoff_date = (datetime.now(ZoneInfo("Asia/Seoul")) - timedelta(days=_RETENTION_DAYS)).strftime("%Y-%m-%d")
+    with get_connection() as conn:
+        conn.execute("DELETE FROM daily_trade_summary WHERE trade_date < ?", (cutoff_date,))
+
+    db_path = Path(settings.APP_DB_PATH)
+    if not db_path.is_absolute():
+        from pathlib import Path as _P
+        import os
+
+        db_path = _P(os.getcwd()) / db_path
+    backup_dir = db_path.parent / "backups"
+    if not backup_dir.exists():
+        return
+
+    prefix = "stock_trading_bot_"
+    for backup_path in backup_dir.glob(f"{prefix}*.sqlite3"):
+        backup_date = backup_path.stem[len(prefix):]
+        try:
+            if backup_date < cutoff_date:
+                backup_path.unlink()
+        except Exception:
+            continue
+
+
+async def run_daily_summary(trade_date: str | None = None) -> dict[str, Any]:
     """당일 거래 결과를 집계해 daily_trade_summary에 저장하고 DB를 백업한다."""
     _ensure_tables()
+    _prune_trade_history()
     if trade_date is None:
         trade_date = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
 
@@ -185,7 +214,7 @@ async def run_daily_summary(trade_date: str | None = None) -> dict:
     }
 
 
-def _backup_db(trade_date: str) -> dict:
+def _backup_db(trade_date: str) -> dict[str, Any]:
     """SQLite DB 파일을 data/backups/ 디렉토리에 날짜별로 복사한다."""
     try:
         db_path = Path(settings.APP_DB_PATH)
@@ -204,7 +233,7 @@ def _backup_db(trade_date: str) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
-def get_trade_history(limit: int = 30) -> list[dict]:
+def get_trade_history(limit: int = 31) -> list[dict[str, Any]]:
     """daily_trade_summary 최근 N일 조회."""
     _ensure_tables()
     with get_connection() as conn:
