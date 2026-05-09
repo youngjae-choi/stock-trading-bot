@@ -176,6 +176,18 @@
       white-space: nowrap;
     }
 
+    .data-basis-pill strong {
+      color: var(--blue);
+      font-weight: 800;
+    }
+
+    .data-basis-note {
+      max-width: 420px;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     .dot {
       width: 7px;
       height: 7px;

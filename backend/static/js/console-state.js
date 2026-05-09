@@ -21,6 +21,9 @@
   var haltBtn = document.getElementById("haltBtn");
   var engineDot = document.getElementById("engineDot");
   var engineText = document.getElementById("engineText");
+  var dataBasisPill = document.getElementById("dataBasisPill");
+  var dataBasisDate = document.getElementById("dataBasisDate");
+  var dataBasisNote = document.getElementById("dataBasisNote");
   var restDot = document.getElementById("restDot");
   var restStatusText = document.getElementById("restStatusText");
   var socketDot = document.getElementById("socketDot");
@@ -86,4 +89,3 @@
     ["08:00", "AI 시장 톤 분석 완료. 코스닥 상대 강세, 리스크 중간."],
     ["08:15", "Layer 1 Universe 생성 완료. 2,500개 중 200개 통과."]
   ];
-

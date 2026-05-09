@@ -370,12 +370,36 @@
     setEl('fp-positions', pos);
   }
 
+  /* Update the common header so every screen shows the current display data basis date. */
+  function renderDataBasis(dataBasis, fallbackDate) {
+    var basis = dataBasis || {};
+    var displayDate = basis.display_date || basis.basis_date || fallbackDate || getKstDateString();
+    var isToday = basis.is_today;
+    if (typeof isToday !== "boolean") {
+      isToday = displayDate === getKstDateString();
+    }
+    var message = basis.message || (isToday ? "오늘 데이터 기준입니다." : "마지막으로 저장된 데이터 기준입니다.");
+
+    if (dataBasisDate) {
+      dataBasisDate.textContent = displayDate || "-";
+    }
+    if (dataBasisNote) {
+      dataBasisNote.textContent = message;
+      dataBasisNote.title = message;
+    }
+    if (dataBasisPill) {
+      dataBasisPill.classList.remove("good", "warn", "info");
+      dataBasisPill.classList.add(isToday ? "good" : "warn");
+    }
+  }
+
   function renderOverview(payload) {
     if (!payload) {
       return;
     }
 
     overviewData = payload;
+    renderDataBasis(payload.data_basis, payload.trade_date);
     timeline = payload.timeline || timeline;
     sampleLogs = (payload.logs || []).map(function (entry) {
       return [entry.time, entry.text];
@@ -453,6 +477,11 @@
   function renderFallbackOverview(reason) {
     isHalted = false;
     overviewData = { timeline: timeline, logs: sampleLogs.map(function(log) { return { time: log[0], text: log[1] }; }) };
+    renderDataBasis({
+      display_date: getKstDateString(),
+      is_today: true,
+      message: "overview API 실패로 기준일 확인 필요"
+    });
 
     if (engineText) {
       engineText.textContent = "Auto Engine MOCK";
