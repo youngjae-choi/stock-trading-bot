@@ -16,6 +16,8 @@ venv/
 node_modules/
 test-results/
 playwright-report/
+.opencode/*.bak
+.opencode/*.bak.*
 
 # Runtime logs and local process output
 logs/
