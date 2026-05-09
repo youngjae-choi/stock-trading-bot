@@ -145,6 +145,25 @@ class PositionManager:
         logger.info("SUCCESS: [S8] position added symbol=%s profile=%s entry=%.2f stop=%.2f",
                     safe_symbol, profile, safe_entry, initial_stop_price)
 
+
+    def update_position_quantity(self, symbol: str, qty: int) -> bool:
+        """Update an already managed position quantity from KIS real holdings.
+
+        Args:
+            symbol: Managed symbol code.
+            qty: Current account holding quantity.
+        """
+        safe_symbol = str(symbol or "").strip()
+        safe_qty = int(qty or 0)
+        position = self._positions.get(safe_symbol)
+        if not position or safe_qty <= 0:
+            return False
+        previous_qty = int(position.get("qty") or 0)
+        if previous_qty != safe_qty:
+            position["qty"] = safe_qty
+            logger.info("SUCCESS: [S8] position qty synced symbol=%s previous=%d current=%d", safe_symbol, previous_qty, safe_qty)
+        return True
+
     def remove_position(self, symbol: str) -> None:
         safe_symbol = str(symbol or "").strip()
         self._positions.pop(safe_symbol, None)
@@ -191,8 +210,10 @@ class PositionManager:
         trailing_activate = _to_float(position["trailing_activate_profit"])
         trailing_rate = _to_float(position["trailing_stop_rate"])
 
+        was_trailing_active = bool(position["trailing_active"])
+
         # 트레일링 활성화 여부
-        if not position["trailing_active"] and price >= entry_price * (1 + trailing_activate):
+        if not was_trailing_active and price >= entry_price * (1 + trailing_activate):
             position["trailing_active"] = True
             logger.info("INFO: [S8] trailing activated symbol=%s high=%.2f", position["symbol"], new_high)
 
@@ -205,8 +226,9 @@ class PositionManager:
         new_active = max(prev_active, position["initial_stop_price"], new_trailing_stop if position["trailing_active"] else 0)
         position["active_stop_price"] = new_active
 
-        # DB 갱신 (매 tick마다 하면 부하 → 고점 변경 시에만)
-        if new_high > prev_high:
+        trailing_state_changed = bool(position["trailing_active"]) != was_trailing_active
+        active_stop_changed = new_active > prev_active
+        if new_high > prev_high or trailing_state_changed or active_stop_changed:
             _upsert_stop_state(position["position_id"], {
                 "symbol_code": position["symbol"],
                 "entry_price": entry_price,

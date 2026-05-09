@@ -78,6 +78,36 @@ def _candidate_confidence(candidate: dict[str, Any]) -> float:
         return 0.0
 
 
+def _sync_managed_positions_with_account(account_positions: list[dict[str, Any]]) -> list[str]:
+    """Align S8-managed quantities to KIS real holdings without adding unmanaged holdings.
+
+    Args:
+        account_positions: Public account positions from the KIS balance API.
+    """
+    from .position_manager import position_manager
+
+    holdings = {str(item.get("symbol") or "").strip(): item for item in account_positions}
+    synced: list[str] = []
+    for position in position_manager.get_positions():
+        symbol = str(position.get("symbol") or "").strip()
+        if not symbol:
+            continue
+        holding = holdings.get(symbol)
+        if not holding:
+            position_manager.remove_position(symbol)
+            logger.warning("WARN: [S6] KIS 잔고 미존재 S8 포지션 제거 symbol=%s", symbol)
+            continue
+        qty = int(float(str(holding.get("qty") or 0).replace(",", "")))
+        if qty <= 0:
+            position_manager.remove_position(symbol)
+            logger.warning("WARN: [S6] KIS 수량 0 S8 포지션 제거 symbol=%s", symbol)
+            continue
+        if position_manager.update_position_quantity(symbol, qty):
+            synced.append(symbol)
+    logger.info("SUCCESS: [S6] KIS 실잔고 기준 S8 수량 동기화 count=%d", len(synced))
+    return synced
+
+
 def _to_float_or_none(value: Any) -> float | None:
     """숫자 변환 가능한 값만 float로 반환한다.
 
@@ -456,22 +486,17 @@ class DecisionEngine:
 
         screening = get_today_screening(today)
         candidates = screening.get("candidates", []) if screening else []
-        if not candidates:
-            self._active = False
-            logger.warning("WARN: [S6] 오늘 S4 스크리닝 결과 없음 — Decision Engine 비활성")
-            return {"ok": False, "reason": "no_screening_results"}
-
         self._candidates = {
             symbol: candidate
             for candidate in candidates
             if (symbol := _candidate_symbol(candidate))
         }
-        if not self._candidates:
-            self._active = False
-            logger.warning("WARN: [S6] S4 후보에 유효한 종목코드 없음 — Decision Engine 비활성")
-            return {"ok": False, "reason": "no_valid_candidates"}
 
-        load_daily_rules(today, list(self._candidates.keys()))
+        candidate_symbols = list(self._candidates.keys())
+        if candidate_symbols:
+            load_daily_rules(today, candidate_symbols)
+        else:
+            logger.warning("WARN: [S6] 오늘 S4 유효 후보 없음 — 신규 매수 판단 없이 보유 포지션 보호만 시도")
 
         self._signal_sent = _load_sent_symbols(today)
         self._active = True
@@ -481,21 +506,43 @@ class DecisionEngine:
 
         position_manager.activate()
         if not position_manager.get_positions():
-            _restore_positions_from_db(today, list(self._candidates.keys()))
+            _restore_positions_from_db(today, [])
+        account_symbols: list[str] = []
+        try:
+            from ...api.routes.account import _build_balance_payload
+            from ..kis.domestic.service import get_balance
+
+            account_payload = _build_balance_payload(await get_balance())
+            account_positions = account_payload.get("positions", [])
+            if isinstance(account_positions, list):
+                account_symbols = _sync_managed_positions_with_account(account_positions)
+        except Exception as exc:
+            logger.warning("WARN: [S6] KIS 실잔고 기준 S8 동기화 실패 error=%s", exc)
         fill_poller.start(today)
 
-        symbols = list(self._candidates.keys())
+        managed_symbols = [str(pos.get("symbol") or "") for pos in position_manager.get_positions()]
+        symbols = list(dict.fromkeys([*candidate_symbols, *managed_symbols]))
+        if not symbols:
+            self._active = False
+            position_manager.deactivate()
+            fill_poller.stop()
+            realtime_ws_manager.unregister_tick_callback(self._on_tick)
+            logger.warning("WARN: [S6] S4 후보와 KIS 실보유 포지션 모두 없어 Decision Engine 비활성")
+            return {"ok": False, "reason": "no_candidates_or_positions"}
+
         await realtime_ws_manager.start(symbols=symbols)
 
         logger.info(
-            "SUCCESS: [S6] Decision Engine 활성화 candidates=%d already_sent=%d symbols=%s",
-            len(symbols),
+            "SUCCESS: [S6] Decision Engine 활성화 candidates=%d holdings=%d already_sent=%d symbols=%s",
+            len(candidate_symbols),
+            len(account_symbols),
             len(self._signal_sent),
             symbols,
         )
         return {
             "ok": True,
-            "candidates": len(symbols),
+            "candidates": len(candidate_symbols),
+            "holdings": len(account_symbols),
             "already_sent": len(self._signal_sent),
             "symbols": symbols,
             "cache_meta": get_meta(),
