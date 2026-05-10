@@ -15,7 +15,17 @@ logger = logging.getLogger("ExpertKnowledge")
 
 _VALID_SCOPES = {"S3_UNIVERSE_FILTER", "S4_HYBRID_SCREENING", "S5_DAILY_PLAN", "ALL"}
 _VALID_CATEGORIES = {"timing", "sector", "profile", "risk", "general"}
-_VALID_STATUSES = {"pending", "approved", "rejected"}
+_VALID_STATUSES = {"pending", "approved", "rejected", "dev_required"}
+
+_PM_APPROVAL_SETTING_KEYS = {
+    "risk.daily_loss_limit_percent",
+    "risk.max_positions",
+    "risk.max_position_rate_per_stock",
+    "risk.force_exit_time",
+    "risk.new_entry_cutoff_time",
+}
+
+_PM_APPROVAL_REASON = "매수/청산/손실한도/포지션에 영향을 주는 값은 PM 승인 후 별도 반영해야 합니다"
 
 MAPPABLE_SETTINGS = {
     "engine.min_confidence_floor": ("AI 신뢰도 하한선", "number"),
@@ -113,26 +123,75 @@ def _parse_llm_json(raw: str) -> dict[str, Any]:
         return json.loads(text[start:end])
 
 
+def classify_strategy_candidate(setting_key: str) -> dict[str, str | bool]:
+    """Classify whether a mapped strategy candidate is safe to auto-apply to Settings.
+
+    Args:
+        setting_key: Settings key extracted from the PDF strategy analysis.
+    """
+    clean_key = str(setting_key or "").strip()
+    if clean_key not in MAPPABLE_SETTINGS:
+        return {
+            "setting_key": clean_key,
+            "safety_status": "dev_required",
+            "auto_applicable": False,
+            "approval_required": False,
+            "safety_reason": "현재 Settings에 매핑 가능한 키가 없어 개발필요로 저장합니다",
+        }
+    if clean_key in _PM_APPROVAL_SETTING_KEYS:
+        return {
+            "setting_key": clean_key,
+            "safety_status": "pm_approval_required",
+            "auto_applicable": False,
+            "approval_required": True,
+            "safety_reason": _PM_APPROVAL_REASON,
+        }
+    return {
+        "setting_key": clean_key,
+        "safety_status": "safe_auto_apply",
+        "auto_applicable": True,
+        "approval_required": False,
+        "safety_reason": "낮은 위험의 Settings 값으로 자동 적용 가능합니다",
+    }
+
+
 def _normalize_strategy_analysis(data: dict[str, Any]) -> dict[str, Any]:
     """Normalize LLM strategy analysis into the API contract and enforce setting allowlist."""
-    candidates: list[dict[str, str]] = []
+    candidates: list[dict[str, Any]] = []
+    unmappable: list[dict[str, str]] = []
     for raw_candidate in data.get("strategy_candidates", []) or []:
         if not isinstance(raw_candidate, dict):
             continue
         setting_key = str(raw_candidate.get("setting_key") or "").strip()
         value = str(raw_candidate.get("value") or "").strip()
         mapped = MAPPABLE_SETTINGS.get(setting_key)
+        safety = classify_strategy_candidate(setting_key)
+        label = str(raw_candidate.get("label") or (mapped[0] if mapped else ""))
+        reason = str(raw_candidate.get("reason") or "")
         candidates.append(
             {
-                "label": str(raw_candidate.get("label") or (mapped[0] if mapped else "")),
+                "label": label,
                 "value": value,
                 "setting_key": setting_key if mapped else "",
                 "value_type": mapped[1] if mapped else str(raw_candidate.get("value_type") or "string"),
-                "reason": str(raw_candidate.get("reason") or ""),
+                "reason": reason,
+                "safety_status": safety["safety_status"],
+                "auto_applicable": safety["auto_applicable"],
+                "approval_required": safety["approval_required"],
+                "safety_reason": safety["safety_reason"],
             }
         )
+        if not mapped:
+            unmappable.append(
+                {
+                    "label": label or "미매핑 전략 항목",
+                    "description": reason or "현재 Settings에 해당 키 없음",
+                    "raw_text": value,
+                    "status": "dev_required",
+                    "operator_status_label": "개발필요",
+                }
+            )
 
-    unmappable: list[dict[str, str]] = []
     for raw_item in data.get("unmappable", []) or []:
         if not isinstance(raw_item, dict):
             continue
@@ -141,6 +200,8 @@ def _normalize_strategy_analysis(data: dict[str, Any]) -> dict[str, Any]:
                 "label": str(raw_item.get("label") or ""),
                 "description": str(raw_item.get("description") or "현재 Settings에 해당 키 없음"),
                 "raw_text": str(raw_item.get("raw_text") or ""),
+                "status": "dev_required",
+                "operator_status_label": "개발필요",
             }
         )
 
@@ -181,7 +242,7 @@ def extract_pdf_text(file_bytes: bytes) -> str:
     return extracted
 
 
-async def analyze_strategy_with_llm(text: str) -> dict:
+async def analyze_strategy_with_llm(text: str) -> dict[str, Any]:
     """PDF 텍스트를 LLM에 보내 전략 후보 목록을 JSON으로 반환한다.
 
     Args:
@@ -263,8 +324,9 @@ def create_knowledge_item(
     priority: int = 5,
     auto_inject: bool = False,
     expires_at: str | None = None,
-) -> dict:
-    """Create a pending Expert Knowledge item.
+    status: str = "pending",
+) -> dict[str, Any]:
+    """Create an Expert Knowledge item with a validated operator workflow status.
 
     Args:
         title: Short operator-facing title.
@@ -274,14 +336,18 @@ def create_knowledge_item(
         priority: Injection order where 1 is highest priority and 10 is lowest.
         auto_inject: Whether this item should be marked for automatic injection after approval.
         expires_at: Optional ISO date or datetime after which the item is inactive.
+        status: Operator workflow status, including dev_required for unmappable strategy gaps.
     """
-    logger.info("START: ExpertKnowledge.create scope=%s category=%s", scope, category)
+    logger.info("START: ExpertKnowledge.create scope=%s category=%s status=%s", scope, category, status)
     clean_title = str(title or "").strip()
     clean_content = str(content or "").strip()
     if not clean_title or not clean_content:
         raise ValueError("title and content are required")
     clean_scope = _validate_scope(scope)
     clean_category = _validate_category(category)
+    clean_status = str(status or "pending").strip()
+    if clean_status not in _VALID_STATUSES:
+        raise ValueError(f"invalid status: {status}")
     clean_priority = max(1, min(10, int(priority)))
     item = {
         "id": str(uuid.uuid4()),
@@ -290,7 +356,7 @@ def create_knowledge_item(
         "content": clean_content,
         "scope": clean_scope,
         "category": clean_category,
-        "status": "pending",
+        "status": clean_status,
         "auto_inject": bool(auto_inject),
         "priority": clean_priority,
         "created_at": _now_utc(),
@@ -320,16 +386,66 @@ def create_knowledge_item(
                 item["expires_at"],
             ),
         )
-    logger.info("SUCCESS: ExpertKnowledge.create item_id=%s", item["id"])
+    logger.info("SUCCESS: ExpertKnowledge.create item_id=%s status=%s", item["id"], clean_status)
     return item
 
 
-def list_knowledge_items(scope: str | None = None, status: str | None = None) -> list[dict]:
+def persist_unmappable_strategy_items(
+    unmappable: list[dict[str, Any]],
+    filename: str,
+    analysis_id: str,
+) -> list[dict[str, Any]]:
+    """Persist unmappable PDF strategy items as operator-visible dev_required Knowledge rows.
+
+    Args:
+        unmappable: Normalized strategy items without current Settings mappings.
+        filename: Uploaded PDF filename used for operator traceability.
+        analysis_id: pdf_analyses.analysis_id that produced the items.
+    """
+    logger.info(
+        "START: ExpertKnowledge.persist_unmappable analysis_id=%s count=%d",
+        analysis_id,
+        len(unmappable or []),
+    )
+    created: list[dict[str, Any]] = []
+    for item in unmappable or []:
+        if not isinstance(item, dict):
+            logger.warning("WARN: ExpertKnowledge.persist_unmappable skipped_non_dict analysis_id=%s", analysis_id)
+            continue
+        label = str(item.get("label") or "미매핑 전략 항목").strip()
+        description = str(item.get("description") or "현재 Settings에 해당 키 없음").strip()
+        raw_text = str(item.get("raw_text") or "").strip()
+        content = (
+            f"PDF 전략 문서 '{filename}'에서 Settings 개발이 필요한 항목입니다.\n"
+            f"분석 ID: {analysis_id}\n"
+            f"설명: {description}\n"
+            f"원문: {raw_text or '-'}"
+        )
+        created.append(
+            create_knowledge_item(
+                title=f"[개발필요] {label}",
+                content=content,
+                scope="ALL",
+                category="general",
+                priority=5,
+                auto_inject=False,
+                status="dev_required",
+            )
+        )
+    logger.info(
+        "SUCCESS: ExpertKnowledge.persist_unmappable analysis_id=%s created=%d",
+        analysis_id,
+        len(created),
+    )
+    return created
+
+
+def list_knowledge_items(scope: str | None = None, status: str | None = None) -> list[dict[str, Any]]:
     """List Expert Knowledge items with optional scope and status filters.
 
     Args:
         scope: Optional target scope filter.
-        status: Optional pending, approved, or rejected filter.
+        status: Optional pending, approved, rejected, or dev_required filter.
     """
     logger.info("START: ExpertKnowledge.list scope=%s status=%s", scope or "all", status or "all")
     clauses: list[str] = []
@@ -354,7 +470,7 @@ def list_knowledge_items(scope: str | None = None, status: str | None = None) ->
     return items
 
 
-def get_knowledge_item(item_id: str) -> dict | None:
+def get_knowledge_item(item_id: str) -> dict[str, Any] | None:
     """Return one Expert Knowledge item by id.
 
     Args:
@@ -368,7 +484,7 @@ def get_knowledge_item(item_id: str) -> dict | None:
     return item
 
 
-def approve_knowledge(item_id: str, reason: str = "") -> dict:
+def approve_knowledge(item_id: str, reason: str = "") -> dict[str, Any]:
     """Approve a pending Expert Knowledge item and write an approval audit log.
 
     Args:
@@ -396,7 +512,7 @@ def approve_knowledge(item_id: str, reason: str = "") -> dict:
     return {"ok": True, "item_id": item_id, "status": "approved"}
 
 
-def reject_knowledge(item_id: str, reason: str = "") -> dict:
+def reject_knowledge(item_id: str, reason: str = "") -> dict[str, Any]:
     """Reject an Expert Knowledge item and write an approval audit log.
 
     Args:
@@ -424,7 +540,7 @@ def reject_knowledge(item_id: str, reason: str = "") -> dict:
     return {"ok": True, "item_id": item_id, "status": "rejected"}
 
 
-def get_active_knowledge(scope: str) -> list[dict]:
+def get_active_knowledge(scope: str) -> list[dict[str, Any]]:
     """Return approved, non-expired knowledge for one pipeline scope plus ALL.
 
     Args:
@@ -447,7 +563,7 @@ def get_active_knowledge(scope: str) -> list[dict]:
     return active_items
 
 
-def build_knowledge_prompt_snippet(knowledge_items: list[dict]) -> str:
+def build_knowledge_prompt_snippet(knowledge_items: list[dict[str, Any]]) -> str:
     """Build the prompt section used to inject approved operator knowledge.
 
     Args:

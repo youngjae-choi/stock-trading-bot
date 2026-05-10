@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from email.parser import BytesParser
 from email.policy import default
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -20,11 +21,13 @@ from ...services.engine.expert_knowledge import (
     MAPPABLE_SETTINGS,
     analyze_strategy_with_llm,
     approve_knowledge,
+    classify_strategy_candidate,
     create_knowledge_item,
     extract_pdf_text,
     get_active_knowledge,
     get_knowledge_item,
     list_knowledge_items,
+    persist_unmappable_strategy_items,
     reject_knowledge,
 )
 
@@ -98,13 +101,14 @@ async def _read_pdf_upload(request: Request) -> tuple[str, str, bytes]:
             continue
         filename = part.get_filename() or "uploaded.pdf"
         part_content_type = part.get_content_type()
-        payload = part.get_payload(decode=True) or b""
+        decoded_payload = part.get_payload(decode=True)
+        payload = decoded_payload if isinstance(decoded_payload, bytes) else b""
         return filename, part_content_type, payload
     raise ValueError("PDF 파일을 선택해주세요")
 
 
 @router.get("/impact")
-def get_knowledge_impact() -> dict:
+def get_knowledge_impact() -> dict[str, Any]:
     """Return Knowledge Impact statistics rows for judgment validation."""
     logger.info("START: GET /api/v1/expert-knowledge/impact")
     try:
@@ -124,7 +128,7 @@ def get_knowledge_impact() -> dict:
 
 
 @router.post("/")
-def create_item(body: KnowledgeCreateRequest) -> dict:
+def create_item(body: KnowledgeCreateRequest) -> dict[str, Any]:
     """Create a pending Expert Knowledge item for later approval."""
     logger.info("START: POST /api/v1/expert-knowledge scope=%s", body.scope)
     try:
@@ -139,6 +143,7 @@ def create_item(body: KnowledgeCreateRequest) -> dict:
         )
     except ValueError as exc:
         _raise_bad_request(exc)
+        raise AssertionError("unreachable")
     except Exception as exc:
         logger.error("FAIL: POST /api/v1/expert-knowledge reason=%s", exc)
         raise HTTPException(status_code=500, detail="Expert knowledge item creation failed") from exc
@@ -147,13 +152,14 @@ def create_item(body: KnowledgeCreateRequest) -> dict:
 
 
 @router.get("/")
-def list_items(scope: str | None = None, status: str | None = None) -> dict:
+def list_items(scope: str | None = None, status: str | None = None) -> dict[str, Any]:
     """Return Expert Knowledge items, optionally filtered by scope and status."""
     logger.info("START: GET /api/v1/expert-knowledge scope=%s status=%s", scope or "all", status or "all")
     try:
         items = list_knowledge_items(scope=scope, status=status)
     except ValueError as exc:
         _raise_bad_request(exc)
+        raise AssertionError("unreachable")
     except Exception as exc:
         logger.error("FAIL: GET /api/v1/expert-knowledge reason=%s", exc)
         raise HTTPException(status_code=500, detail="Expert knowledge list failed") from exc
@@ -161,11 +167,11 @@ def list_items(scope: str | None = None, status: str | None = None) -> dict:
     return {"ok": True, "payload": items}
 
 
-@router.post("/upload-pdf")
+@router.post("/upload-pdf", response_model=None)
 async def upload_pdf_for_analysis(
     request: Request,
-    user: dict = Depends(require_console_user),
-):
+    user: dict[str, Any] = Depends(require_console_user),
+) -> dict[str, Any] | JSONResponse:
     """PDF 업로드 → 텍스트 추출 → LLM 분석 → 전략 후보 반환.
 
     Args:
@@ -214,6 +220,7 @@ async def upload_pdf_for_analysis(
                     _now_utc(),
                 ),
             )
+        dev_required_items = persist_unmappable_strategy_items(unmappable, filename, analysis_id)
     except RuntimeError as exc:
         logger.error("FAIL: ExpertKnowledge upload dependency reason=%s", exc)
         return _error_response(500, str(exc))
@@ -225,27 +232,29 @@ async def upload_pdf_for_analysis(
         raise HTTPException(status_code=500, detail="PDF 분석 처리에 실패했습니다") from exc
 
     logger.info(
-        "SUCCESS: POST /api/v1/expert-knowledge/upload-pdf analysis_id=%s user=%s",
+        "SUCCESS: POST /api/v1/expert-knowledge/upload-pdf analysis_id=%s user=%s dev_required=%d",
         analysis_id,
         user.get("username", "unknown"),
+        len(dev_required_items),
     )
     payload = {
         "analysis_id": analysis_id,
         "candidates": candidates,
         "unmappable": unmappable,
         "summary": summary,
+        "dev_required_items": dev_required_items,
     }
     if analysis.get("error"):
         payload["error"] = analysis["error"]
     return {"ok": True, "payload": payload}
 
 
-@router.post("/apply-strategy/{analysis_id}")
+@router.post("/apply-strategy/{analysis_id}", response_model=None)
 async def apply_strategy(
     analysis_id: str,
     body: StrategyApplyRequest,
-    user: dict = Depends(require_console_user),
-):
+    user: dict[str, Any] = Depends(require_console_user),
+) -> dict[str, Any] | JSONResponse:
     """승인된 전략 후보를 Settings에 적용한다.
 
     Args:
@@ -266,6 +275,7 @@ async def apply_strategy(
 
     applied: list[dict[str, str]] = []
     skipped: list[dict[str, str]] = []
+    approval_required: list[dict[str, str]] = []
     messages: list[str] = []
     try:
         candidates = json.loads(row["candidates"] or "[]")
@@ -282,30 +292,66 @@ async def apply_strategy(
         mapped = MAPPABLE_SETTINGS.get(setting_key)
         if not mapped:
             skipped.append({"setting_key": setting_key, "reason": "매핑 가능한 Settings 키가 아닙니다"})
+            logger.warning(
+                "WARN: ExpertKnowledge apply skipped_unmapped analysis_id=%s setting_key=%s",
+                analysis_id,
+                setting_key,
+            )
             continue
         label, value_type = mapped
         value = str(candidate.get("value") or "")
-        upsert_setting(setting_key, value, value_type, label, user.get("username", "expert-knowledge"))
+        safety = classify_strategy_candidate(setting_key)
+        if not safety["auto_applicable"]:
+            reason = str(safety["safety_reason"])
+            approval_required.append({"setting_key": setting_key, "value": value, "reason": reason})
+            skipped.append({"setting_key": setting_key, "value": value, "reason": reason})
+            messages.append(f"{setting_key}: PM 승인 필요로 Settings 자동 적용 제외")
+            logger.warning(
+                "WARN: ExpertKnowledge apply approval_required analysis_id=%s setting_key=%s reason=%s",
+                analysis_id,
+                setting_key,
+                reason,
+            )
+            continue
+        try:
+            upsert_setting(setting_key, value, value_type, label, user.get("username", "expert-knowledge"))
+        except Exception as exc:
+            logger.error(
+                "FAIL: ExpertKnowledge apply upsert_failed analysis_id=%s setting_key=%s reason=%s",
+                analysis_id,
+                setting_key,
+                exc,
+            )
+            raise
         applied.append({"setting_key": setting_key, "value": value})
         messages.append(f"{setting_key}: {value} 적용 완료")
 
     with get_connection() as conn:
         conn.execute(
-            "UPDATE pdf_analyses SET status = 'applied', applied_at = ? WHERE analysis_id = ?",
-            (_now_utc(), analysis_id),
+            "UPDATE pdf_analyses SET status = ?, applied_at = ? WHERE analysis_id = ?",
+            ("applied" if applied else "pending", _now_utc() if applied else None, analysis_id),
         )
 
     logger.info(
-        "SUCCESS: POST /api/v1/expert-knowledge/apply-strategy/%s applied=%d skipped=%d",
+        "SUCCESS: POST /api/v1/expert-knowledge/apply-strategy/%s applied=%d skipped=%d approval_required=%d",
         analysis_id,
         len(applied),
         len(skipped),
+        len(approval_required),
     )
-    return {"ok": True, "payload": {"applied": applied, "skipped": skipped, "messages": messages}}
+    return {
+        "ok": True,
+        "payload": {
+            "applied": applied,
+            "skipped": skipped,
+            "approval_required": approval_required,
+            "messages": messages,
+        },
+    }
 
 
 @router.get("/analyses")
-async def list_analyses(user: dict = Depends(require_console_user)) -> dict:
+async def list_analyses(user: dict[str, Any] = Depends(require_console_user)) -> dict[str, Any]:
     """PDF 분석 이력 목록 반환 (최신 10건).
 
     Args:
@@ -327,7 +373,7 @@ async def list_analyses(user: dict = Depends(require_console_user)) -> dict:
 
 
 @router.get("/{item_id}")
-def get_item(item_id: str) -> dict:
+def get_item(item_id: str) -> dict[str, Any]:
     """Return one Expert Knowledge item by id."""
     logger.info("START: GET /api/v1/expert-knowledge/%s", item_id)
     item = get_knowledge_item(item_id)
@@ -339,7 +385,7 @@ def get_item(item_id: str) -> dict:
 
 
 @router.post("/{item_id}/approve")
-def approve_item(item_id: str, body: KnowledgeActionRequest | None = None) -> dict:
+def approve_item(item_id: str, body: KnowledgeActionRequest | None = None) -> dict[str, Any]:
     """Approve one Expert Knowledge item and record the approval reason."""
     logger.info("START: POST /api/v1/expert-knowledge/%s/approve", item_id)
     try:
@@ -355,7 +401,7 @@ def approve_item(item_id: str, body: KnowledgeActionRequest | None = None) -> di
 
 
 @router.post("/{item_id}/reject")
-def reject_item(item_id: str, body: KnowledgeActionRequest | None = None) -> dict:
+def reject_item(item_id: str, body: KnowledgeActionRequest | None = None) -> dict[str, Any]:
     """Reject one Expert Knowledge item and record the rejection reason."""
     logger.info("START: POST /api/v1/expert-knowledge/%s/reject", item_id)
     try:
@@ -371,13 +417,14 @@ def reject_item(item_id: str, body: KnowledgeActionRequest | None = None) -> dic
 
 
 @router.get("/active/{scope}")
-def get_active(scope: str) -> dict:
+def get_active(scope: str) -> dict[str, Any]:
     """Return approved, non-expired Expert Knowledge items for a pipeline scope."""
     logger.info("START: GET /api/v1/expert-knowledge/active/%s", scope)
     try:
         items = get_active_knowledge(scope=scope)
     except ValueError as exc:
         _raise_bad_request(exc)
+        raise AssertionError("unreachable")
     except Exception as exc:
         logger.error("FAIL: ExpertKnowledge active scope=%s reason=%s", scope, exc)
         raise HTTPException(status_code=500, detail="Expert knowledge active lookup failed") from exc
