@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Body, HTTPException
@@ -36,7 +37,7 @@ def _read_audit_md(date: str) -> str | None:
 
 
 @router.post("/run")
-async def run(payload: dict | None = Body(default=None)) -> dict:
+async def run(payload: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
     """Run S10 Review & Audit manually for a requested date or today's KST date.
 
     Args:
@@ -60,7 +61,7 @@ async def run(payload: dict | None = Body(default=None)) -> dict:
 
 
 @router.get("/today")
-def get_today() -> dict:
+def get_today() -> dict[str, Any]:
     """Return today's S10 Review & Audit report."""
     trade_date = _today_kst()
     logger.info("START: GET /api/v1/review-audit/today trade_date=%s", trade_date)
@@ -69,15 +70,18 @@ def get_today() -> dict:
     if not report and not md_content:
         logger.info("INFO: GET /api/v1/review-audit/today no report trade_date=%s", trade_date)
         return {"ok": True, "payload": None}
-    payload = report or {"trade_date": trade_date}
+    payload: dict[str, Any] = report or {"trade_date": trade_date, "review_source": "md_backup_only"}
     if md_content:
+        compact = trade_date.replace("-", "")
         payload["md_content"] = md_content
+        payload["md_path"] = str(_DOCS_DIR / f"SYSTEM_AUDIT_{compact}.md")
+        payload["md_backup_exists"] = True
     logger.info("SUCCESS: GET /api/v1/review-audit/today trade_date=%s md=%s", trade_date, bool(md_content))
     return {"ok": True, "payload": payload}
 
 
 @router.get("/{date}")
-def get_by_date(date: str) -> dict:
+def get_by_date(date: str) -> dict[str, Any]:
     """Return an S10 Review & Audit report by trade date.
 
     Args:
@@ -89,8 +93,11 @@ def get_by_date(date: str) -> dict:
     if not report and not md_content:
         logger.warning("WARN: GET /api/v1/review-audit/%s not found", date)
         raise HTTPException(status_code=404, detail="Review report not found")
-    payload = report or {"trade_date": date}
+    payload: dict[str, Any] = report or {"trade_date": date, "review_source": "md_backup_only"}
     if md_content:
+        compact = date.replace("-", "")
         payload["md_content"] = md_content
+        payload["md_path"] = str(_DOCS_DIR / f"SYSTEM_AUDIT_{compact}.md")
+        payload["md_backup_exists"] = True
     logger.info("SUCCESS: GET /api/v1/review-audit/%s md=%s", date, bool(md_content))
     return {"ok": True, "payload": payload}

@@ -90,11 +90,16 @@ def _build_review_markdown(result: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _review_markdown_path(trade_date: str) -> Path:
+    """Return the deterministic markdown backup path for one S10 review date."""
+    return _DOCS_DIR / f"SYSTEM_AUDIT_{trade_date.replace('-', '')}.md"
+
+
 def _write_review_markdown(result: dict[str, Any]) -> str:
     """Persist the S10 review report as a markdown file in docs/."""
     _DOCS_DIR.mkdir(parents=True, exist_ok=True)
     trade_date = str(result.get("trade_date") or _now_kst_iso()[:10])
-    md_path = _DOCS_DIR / f"SYSTEM_AUDIT_{trade_date.replace('-', '')}.md"
+    md_path = _review_markdown_path(trade_date)
     md_path.write_text(_build_review_markdown(result), encoding="utf-8")
     logger.info("SUCCESS: [S10] review markdown saved path=%s", md_path)
     return str(md_path)
@@ -673,6 +678,11 @@ def get_review_report(trade_date: str) -> dict[str, Any] | None:
     payload["filled_orders"] = _safe_int(orders.get("filled_orders"))
     payload["order_status_counts"] = orders.get("order_status_counts", {})
     payload["signal_status_counts"] = _signal_status_counts(_load_review_signals(trade_date))
+    md_path = _review_markdown_path(trade_date)
+    payload["md_path"] = str(md_path)
+    payload["md_backup_exists"] = md_path.exists()
+    payload["review_source"] = "daily_review_reports"
+    payload["md_backup_source"] = "docs/SYSTEM_AUDIT_YYYYMMDD.md"
     payload["realized_pnl"] = _safe_float(daily_summary.get("realized_pnl") or payload.get("total_pnl"))
     payload["realized_pnl_pct"] = _safe_float(daily_summary.get("realized_pnl_pct"))
     payload["pnl_status"] = daily_summary.get("pnl_status") or payload.get("pnl_status") or "unverified"
