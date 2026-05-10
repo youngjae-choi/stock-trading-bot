@@ -553,6 +553,8 @@ async def get_positions():
             "max_holding_minutes": memory_pos.get("max_holding_minutes"),
             "force_exit_time": memory_pos.get("force_exit_time") or "15:20:00",
             "stop_state_source": stop_state_source,
+            "timed_liquidation_target": True,
+            "timed_liquidation_status": "시간청산 대상",
             **monitoring,
             "source": "kis_account",
         })

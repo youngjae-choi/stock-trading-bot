@@ -7,6 +7,8 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from ...api.routes.account import _build_balance_payload
+from ..kis.domestic.service import get_balance
 from .order_executor import order_executor
 from .position_integrity import (
     create_integrity_alert_once,
@@ -47,6 +49,34 @@ def _get_open_positions_from_db(trade_date: str) -> list[dict[str, Any]]:
         logger.warning("WARN: [S9] DB 포지션 조회 실패 error=%s", exc)
         return []
 
+
+
+
+async def _get_open_positions_from_account() -> list[dict[str, Any]]:
+    """Return all current KIS holdings for administrator timed liquidation.
+
+    관리자 지정 청산 시간에는 수동/장기/이월/봇 매수 여부를 구분하지 않고
+    KIS 계좌 실보유 전체를 시장가 청산 대상으로 삼는다.
+    """
+    account_payload = _build_balance_payload(await get_balance())
+    account_positions = account_payload.get("positions", [])
+    positions: list[dict[str, Any]] = []
+    if not isinstance(account_positions, list):
+        return positions
+    for holding in account_positions:
+        if not isinstance(holding, dict):
+            continue
+        symbol = str(holding.get("symbol") or "").strip()
+        qty = int(holding.get("qty") or 0)
+        if symbol and qty > 0:
+            positions.append({
+                "symbol": symbol,
+                "name": str(holding.get("name") or ""),
+                "qty": qty,
+                "source": "kis_account",
+            })
+    logger.info("SUCCESS: [S9] KIS 실보유 청산 대상 조회 count=%d", len(positions))
+    return positions
 
 def _empty_summary() -> dict[str, int]:
     """Return the S9 result counter shape used by API and scheduler logs."""
@@ -95,25 +125,33 @@ def _classify_sell_result(result: dict[str, Any], summary: dict[str, int]) -> No
 
 
 async def run_eod_liquidation() -> dict[str, Any]:
-    """15:20 KST: 보유 전 포지션을 시장가로 청산한다.
+    """Administrator timed liquidation: sell all current KIS holdings at market.
 
-    인메모리 포지션을 우선 사용하되, 이미 매도 제출된 종목은 중복 청산하지 않는다.
-    서버 재시작으로 비어 있으면 DB 순포지션을 조회하고 전일 잔여 포지션은 경고로 남긴다.
+    지정 청산 시간에는 수동/장기/이월/봇 매수 여부를 구분하지 않고
+    KIS 계좌 실보유 전체를 시장가 청산한다. 이미 매도 제출된 종목은 중복 청산하지 않는다.
     """
     today = _today_kst()
     legacy_residual_positions = _record_legacy_residual_alert(today)
-    positions = position_manager.get_positions()
     skipped_duplicates: list[dict[str, Any]] = []
+    account_lookup_failed = False
 
-    if not positions:
-        logger.info("INFO: [S9] 인메모리 포지션 없음, DB 직접 조회 시도 trade_date=%s", today)
-        db_positions = _get_open_positions_from_db(today)
-        positions = [
-            {"symbol": str(position.get("symbol") or ""), "qty": int(position.get("qty") or 0)}
-            for position in db_positions
-            if int(position.get("qty") or 0) > 0
-        ]
-        logger.info("INFO: [S9] DB 조회 포지션 count=%d", len(positions))
+    try:
+        positions = await _get_open_positions_from_account()
+    except Exception as exc:
+        account_lookup_failed = True
+        logger.error("FAIL: [S9] KIS 실보유 청산 대상 조회 실패 error=%s", exc)
+        positions = []
+
+    if account_lookup_failed:
+        logger.warning("WARN: [S9] KIS 조회 실패로 기존 S8/DB 포지션 fallback 청산 시도 trade_date=%s", today)
+        positions = position_manager.get_positions()
+        if not positions:
+            db_positions = _get_open_positions_from_db(today)
+            positions = [
+                {"symbol": str(position.get("symbol") or ""), "qty": int(position.get("qty") or 0), "source": "db_fallback"}
+                for position in db_positions
+                if int(position.get("qty") or 0) > 0
+            ]
 
     logger.info("START: [S9] EOD liquidation positions=%d trade_date=%s", len(positions), today)
     if not positions:
@@ -124,6 +162,7 @@ async def run_eod_liquidation() -> dict[str, Any]:
             "summary": _empty_summary(),
             "legacy_residual_positions": legacy_residual_positions,
             "orphan_positions": legacy_residual_positions,
+            "account_lookup_failed": account_lookup_failed,
         }
 
     results = []
@@ -178,4 +217,5 @@ async def run_eod_liquidation() -> dict[str, Any]:
         "skipped_duplicates": skipped_duplicates,
         "legacy_residual_positions": legacy_residual_positions,
         "orphan_positions": legacy_residual_positions,
+        "account_lookup_failed": account_lookup_failed,
     }

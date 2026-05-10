@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import sqlite3
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from backend.api.routes import trading_monitor
-from backend.services.engine import decision_engine
+from backend.services.engine import decision_engine, eod_liquidation
 from backend.services.engine.position_manager import PositionManager
 
 
@@ -110,6 +110,33 @@ class DecisionEngineAccountSyncTest(unittest.TestCase):
         self.assertEqual(symbols, [])
         fake_manager.update_position_quantity.assert_not_called()
         fake_manager.remove_position.assert_called_once_with("005930")
+
+
+class EODLiquidationPolicyTest(unittest.IsolatedAsyncioTestCase):
+    """Verify administrator timed liquidation uses all KIS holdings."""
+
+    async def test_eod_liquidation_sells_all_kis_account_holdings(self) -> None:
+        """Timed liquidation must target KIS holdings regardless of PositionManager ownership."""
+        account_positions = [
+            {"symbol": "005930", "qty": 3, "source": "kis_account"},
+            {"symbol": "000660", "qty": 2, "source": "kis_account"},
+        ]
+        sell = AsyncMock(side_effect=[
+            {"ok": True, "kis_order_no": "KIS-1", "symbol": "005930", "qty": 3},
+            {"ok": True, "kis_order_no": "KIS-2", "symbol": "000660", "qty": 2},
+        ])
+
+        with patch("backend.services.engine.eod_liquidation._record_legacy_residual_alert", return_value=[]), \
+             patch("backend.services.engine.eod_liquidation._get_open_positions_from_account", new=AsyncMock(return_value=account_positions)), \
+             patch("backend.services.engine.eod_liquidation.find_active_sell_order", return_value=None), \
+             patch("backend.services.engine.eod_liquidation.order_executor.execute_sell", sell):
+            result = await eod_liquidation.run_eod_liquidation()
+
+        self.assertEqual(result["liquidated"], 2)
+        self.assertEqual(result["summary"]["submitted"], 2)
+        sell.assert_any_await(symbol="005930", qty=3, price=0, reason="eod")
+        sell.assert_any_await(symbol="000660", qty=2, price=0, reason="eod")
+
 
 
 class TradingMonitorStopStateTest(unittest.TestCase):

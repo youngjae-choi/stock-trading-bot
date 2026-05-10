@@ -536,6 +536,8 @@ test('Trading Monitor exposes automatic monitoring gaps for held positions', asy
       ws_subscribed: false,
       position_manager_registered: false,
       stop_state_source: 'fallback',
+      timed_liquidation_target: true,
+      timed_liquidation_status: '시간청산 대상',
       profile_assigned: 'MID_VOL',
     });
   });
@@ -545,4 +547,5 @@ test('Trading Monitor exposes automatic monitoring gaps for held positions', asy
   await expect(host.getByText('미감시')).toBeVisible();
   await expect(host.getByText('S8등록')).toBeVisible();
   await expect(host.getByText('미구독')).toBeVisible();
+  await expect(host.getByText('시간청산 대상')).toBeVisible();
 });

@@ -378,6 +378,7 @@
       + (p.ws_subscribed === false ? ' · 실시간 미구독' : '')
       + (p.position_manager_registered === false ? ' · S8 미등록' : '')
       + (p.stop_state_source === 'fallback' ? ' · fallback 손절선' : '');
+    var timedStatus = p.timed_liquidation_status || (p.timed_liquidation_target ? '시간청산 대상' : '시간청산 제외');
 
     return '<div style="border:1px solid var(--line); border-radius:6px; padding:10px 12px; background:var(--panel-2);">'
       + '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">'
@@ -386,6 +387,7 @@
       + '<span style="font-size:10px; color:' + profileColor + '; font-weight:600; margin-left:6px;">' + escapeHtml(profile) + '</span>'
       + (trailingActive ? '<span style="font-size:10px; background:#1c3a1c; color:#3fb950; border-radius:3px; padding:1px 5px; margin-left:4px;">Trailing ON</span>' : '')
       + '<span title="' + escapeHtml(monitoringTitle) + '" style="font-size:10px; background:' + monitoringBg + '; color:' + monitoringColor + '; border:1px solid ' + monitoringBorder + '; border-radius:3px; padding:1px 5px; margin-left:4px; font-weight:700;">' + escapeHtml(monitoringStatus) + '</span>'
+      + '<span title="관리자 지정 청산 시간에는 계좌 실보유 전체 시장가 매도 대상" style="font-size:10px; background:#2f260c; color:#f0b429; border:1px solid rgba(240,180,41,.45); border-radius:3px; padding:1px 5px; margin-left:4px; font-weight:700;">' + escapeHtml(timedStatus) + '</span>'
       + '</div>'
       + '<div style="font-size:13px; font-weight:700; color:' + pnlColor + ';">' + (pnlPct >= 0 ? '+' : '') + Math.round(pnlPct) + '%</div>'
       + '</div>'
