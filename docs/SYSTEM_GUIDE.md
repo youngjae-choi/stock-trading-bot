@@ -1,6 +1,6 @@
 # 자동매매 시스템 운영 가이드
 
-> 최종 수정: 2026-05-08
+> 최종 수정: 2026-05-10
 > 대상: 운영자(PM) — 지금 시스템이 **어떻게 동작하는지**를 먼저 이해하기 위한 문서
 
 ---
@@ -189,7 +189,8 @@
 실제 특징:
 
 - “거래를 제어하는 화면”이 아니라 **기록을 보는 화면**이다.
-- 일부 요약 블록은 남아 있어도, 핵심은 주문 테이블이다.
+- 주문 테이블은 `trading_orders` 기준이며 접수, 체결, 실패, 취소, 청산 사유를 함께 본다.
+- 빈 표시는 `데이터 없음`, 조회 오류는 `실행 실패`로 구분한다.
 
 ### 4-4. Funnel Monitor
 
@@ -210,6 +211,7 @@
 
 - `funnel/summary`가 핵심이다.
 - `daily-plan/today`, `screening/today`도 같이 읽어 종목 배정과 후보 수를 맞춘다.
+- S3/S4 결과가 아직 없으면 `미수집·대기`, 결과가 0건이면 `데이터 없음`, 조회가 실패하면 `실행 실패`로 구분한다.
 - 하드코딩된 숫자가 남아 있으면 이 화면이 제일 먼저 어색해진다.
 
 ### 4-5. System Diagnostics
@@ -228,11 +230,12 @@
 - `scheduler/status`와 `engine/audit/today`를 같이 본다.
 - “ok=true”만으로 완료 처리하지 않도록 설계되어 있다.
 - null payload는 완료가 아니라 대기/미생성으로 보여야 한다.
+- `pipeline_run_audit`가 있으면 그 기록을 최종 실행 근거로 표시한다.
 
 ### 4-6. 그 외 화면
 
 - **Settings**: RulePack, Risk Profiles, Scheduler 시간 설정
-- **Review & Audit**: S10 결과 확인
+- **Review & Audit**: S10 결과 확인. DB 원본은 `daily_review_reports`, 사람이 읽는 MD 백업은 `docs/SYSTEM_AUDIT_YYYYMMDD.md` 기준이다.
 - **Learning Memory**: S11 교훈/메모리 확인
 - **Alerts / Data & API / Execution & Risk**: 운영 상태 보조 화면
 
@@ -263,6 +266,7 @@
 - `GET /api/v1/trades/history`
 - `GET /api/v1/orders/recent`
 - `GET /api/v1/orders/today`
+- `GET /api/v1/orders/range`
 
 ### 5-4. Funnel Monitor
 
@@ -291,6 +295,7 @@
 - **0**은 진짜 값일 수 있다.
 - **null**은 데이터가 비었거나 아직 안 온 것일 수 있다.
 - 화면에서 둘을 같은 값처럼 보여주면 운영자가 오해한다.
+- 운영 화면 문구는 `데이터 없음`(정상 조회 결과 0건), `미수집·대기`(아직 실행 전), `실행 실패`(API/서버 오류)를 구분한다.
 
 ### 6-2. 오늘 날짜 기준
 
