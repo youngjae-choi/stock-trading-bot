@@ -66,13 +66,20 @@
 
     var candidates = payload.candidates || [];
     tbody.innerHTML = candidates.length === 0
-      ? '<tr><td colspan="5" class="muted" style="padding:12px; text-align:center;">추출된 전략 항목 없음</td></tr>'
+      ? '<tr><td colspan="6" class="muted" style="padding:12px; text-align:center;">추출된 전략 항목 없음</td></tr>'
       : candidates.map(function(c, i) {
+          var isSafe = c.auto_applicable === true || c.safety_status === 'safe_auto_apply';
+          var boundaryLabel = isSafe
+            ? '안전 자동적용'
+            : (c.approval_required ? 'PM 승인 필요' : '개발필요');
+          var boundaryColor = isSafe ? 'var(--green)' : (c.approval_required ? 'var(--yellow)' : 'var(--muted)');
+          var checkboxState = isSafe && c.setting_key ? ' checked' : ' disabled';
           return '<tr style="border-bottom:1px solid var(--border);">'
-            + '<td style="padding:6px 8px; text-align:center;"><input type="checkbox" id="ek-chk-' + i + '" data-key="' + escapeHtml(c.setting_key || '') + '" checked' + (c.setting_key ? '' : ' disabled') + '></td>'
+            + '<td style="padding:6px 8px; text-align:center;"><input type="checkbox" id="ek-chk-' + i + '" data-key="' + escapeHtml(c.setting_key || '') + '"' + checkboxState + '></td>'
             + '<td style="padding:6px 8px;">' + escapeHtml(c.label || '') + '</td>'
             + '<td style="padding:6px 8px; font-weight:600; color:var(--blue);">' + escapeHtml(String(c.value || '')) + '</td>'
             + '<td style="padding:6px 8px; font-size:11px; color:var(--muted);">' + escapeHtml(c.setting_key || '매핑 불가') + '</td>'
+            + '<td style="padding:6px 8px; font-size:11px; color:' + boundaryColor + ';">' + escapeHtml(boundaryLabel) + '<br><span style="color:var(--muted);">' + escapeHtml(c.safety_reason || '') + '</span></td>'
             + '<td style="padding:6px 8px; font-size:11px; color:var(--muted);">' + escapeHtml(c.reason || '') + '</td>'
             + '</tr>';
         }).join('');
@@ -83,7 +90,7 @@
       unmappableList.innerHTML = unmappable.map(function(u) {
         return '<div style="margin-bottom:4px;">- <strong>' + escapeHtml(u.label || '') + '</strong>: '
           + escapeHtml(u.description || '') + ' - '
-          + '<em>OOO 기능을 Setting 화면에 추가하여야 합니다. 개발 후 재 요청해주세요.</em></div>';
+          + '<em>개발필요 Knowledge 항목으로 저장되었습니다. Settings 개발 후 PM 승인 절차로 반영하세요.</em></div>';
       }).join('');
     } else {
       unmappableEl.style.display = 'none';
@@ -104,7 +111,7 @@
     }
     if (applyBtn) applyBtn.disabled = true;
     applyResult.style.color = 'var(--muted)';
-    applyResult.textContent = 'Settings 적용 중...';
+    applyResult.textContent = '안전 항목만 Settings 적용 중...';
     try {
       var res = await fetch('/api/v1/expert-knowledge/apply-strategy/' + encodeURIComponent(_ekCurrentAnalysisId), {
         method: 'POST',
@@ -118,6 +125,10 @@
         return;
       }
       var msgs = (data.payload.messages || []).join('\n');
+      var approvalCount = (data.payload.approval_required || []).length;
+      if (approvalCount) {
+        msgs += (msgs ? '\n' : '') + approvalCount + '개 항목은 PM 승인 필요로 자동 적용하지 않았습니다.';
+      }
       applyResult.style.color = 'var(--green)';
       applyResult.textContent = msgs || '적용 완료';
       ekLoadHistory();
@@ -187,16 +198,17 @@
     }
     tbody.innerHTML = items.map(item => {
       const statusClass = item.status === 'approved' ? 'ok' : item.status === 'rejected' ? 'fail' : 'info';
+      const statusLabel = item.status === 'dev_required' ? '개발필요' : item.status;
       const actionBtns = item.status === 'pending'
         ? `<button class="btn small secondary" data-action="approveKnowledge" data-id="${escapeHtml(item.id)}">승인</button>
            <button class="btn small" data-action="rejectKnowledge" data-id="${escapeHtml(item.id)}">거부</button>`
-        : `<span class="muted">${item.status}</span>`;
+        : `<span class="muted">${escapeHtml(statusLabel)}</span>`;
       return `<tr>
         <td>${escapeHtml(item.title)}</td>
         <td><span class="tag">${escapeHtml(item.scope)}</span></td>
         <td>${escapeHtml(item.category)}</td>
         <td>${item.priority}</td>
-        <td><span class="status ${statusClass}">${item.status}</span></td>
+        <td><span class="status ${statusClass}">${escapeHtml(statusLabel)}</span></td>
         <td>${(item.created_at || '').slice(0, 10)}</td>
         <td>${actionBtns}</td>
       </tr>`;

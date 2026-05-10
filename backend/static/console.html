@@ -579,7 +579,7 @@
           <div class="page-head">
             <div>
               <h1 class="page-title">Knowledge</h1>
-              <p class="page-desc">PDF 전략 문서를 업로드하면 AI가 매매 조건을 추출해 Settings에 반영합니다.</p>
+              <p class="page-desc">PDF 전략 문서를 업로드하면 AI가 매매 조건을 추출합니다. 안전한 Settings만 자동 반영하고, 위험값은 PM 승인, 미매핑 항목은 개발필요로 분리합니다.</p>
             </div>
           </div>
 
@@ -603,6 +603,7 @@
                     <th style="padding:6px 8px; text-align:left;">항목</th>
                     <th style="padding:6px 8px; text-align:left;">추출값</th>
                     <th style="padding:6px 8px; text-align:left;">Settings 키</th>
+                    <th style="padding:6px 8px; text-align:left;">적용 경계</th>
                     <th style="padding:6px 8px; text-align:left;">근거</th>
                   </tr>
                 </thead>
@@ -611,12 +612,12 @@
             </div>
 
             <div id="ek-unmappable" style="margin-top:12px; display:none;">
-              <div style="font-size:12px; color:var(--muted); margin-bottom:4px;">아래 항목은 현재 Settings에 키가 없어 적용 불가:</div>
+              <div style="font-size:12px; color:var(--muted); margin-bottom:4px;">아래 항목은 현재 Settings에 키가 없어 개발필요 Knowledge로 저장됨:</div>
               <div id="ek-unmappable-list" style="font-size:12px; color:var(--yellow);"></div>
             </div>
 
             <div style="margin-top:16px; display:flex; gap:8px;">
-              <button type="button" class="btn primary" id="ek-apply-btn" data-action="ekApplyStrategy">승인 및 Settings 적용</button>
+              <button type="button" class="btn primary" id="ek-apply-btn" data-action="ekApplyStrategy">안전 Settings만 적용</button>
               <button type="button" class="btn" data-action="ekReset">취소</button>
             </div>
             <div id="ek-apply-result" style="margin-top:8px; font-size:12px;"></div>
