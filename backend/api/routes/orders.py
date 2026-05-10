@@ -82,7 +82,15 @@ async def get_orders_range_api(
     try:
         orders = get_orders_by_range(start, end, limit)
         logger.info("SUCCESS: GET %s count=%d", endpoint, len(orders))
-        return {"ok": True, "payload": {"orders": orders, "count": len(orders)}}
+        return {
+            "ok": True,
+            "payload": {
+                "orders": orders,
+                "count": len(orders),
+                "source": "trading_orders",
+                "history_scope": "all_order_events",
+            },
+        }
     except Exception as exc:
         logger.error("FAIL: GET %s — %s", endpoint, exc)
         return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
