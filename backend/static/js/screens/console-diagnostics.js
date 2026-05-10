@@ -58,9 +58,11 @@
           etSetResult(step.id, res.payload);
         } else {
           etSetBadge(step.id, 'pending', '대기');
+          etSetResult(step.id, { status: '미수집·대기', message: '오늘 저장된 실행 결과가 아직 없습니다.' });
         }
       } catch(e) {
-        etSetBadge(step.id, 'pending', '대기');
+        etSetBadge(step.id, 'failed', '실행 실패');
+        etSetResult(step.id, { status: '실행 실패', message: e.message || 'Diagnostics 조회 실패' });
       }
     }
     applyDiagnosticsAudit(auditResponse && auditResponse.payload ? auditResponse.payload.by_step : {});
@@ -71,7 +73,7 @@
     var badge = document.getElementById('et-badge-' + stepId);
     if (!badge) return;
     badge.textContent = text;
-    badge.className = 'badge ' + (status === 'ok' ? 'ok' : status === 'running' ? 'running' : status === 'skipped' ? 'skipped' : '');
+    badge.className = 'badge ' + (status === 'ok' ? 'ok' : status === 'running' ? 'running' : status === 'skipped' ? 'skipped' : status === 'failed' ? 'danger' : '');
   }
 
   /* Render raw Diagnostics JSON so null payloads remain visible to operators. */
@@ -108,7 +110,7 @@
       card.insertBefore(auditEl, resultEl || null);
     }
     if (!audit) {
-      auditEl.textContent = '오늘 pipeline_run_audit 없음';
+      auditEl.textContent = '미수집·대기: 오늘 pipeline_run_audit 없음';
       return;
     }
     var when = audit.finished_at_kst || audit.started_at_kst || audit.started_at || '-';

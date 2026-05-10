@@ -40,7 +40,7 @@
       var tbody = document.getElementById("review-history-tbody");
       if (tbody) {
         if (items.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;">미수집</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;">데이터 없음: 최근 31일 거래 요약 없음</td></tr>';
         } else {
           tbody.innerHTML = items.map(function(item) {
             var pnl = item.realized_pnl_pct || 0;
@@ -58,7 +58,7 @@
       }
     } catch (e) {
       var tbody3 = document.getElementById("review-history-tbody");
-      if (tbody3) tbody3.innerHTML = '<tr><td colspan="6" class="muted">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>';
+      if (tbody3) tbody3.innerHTML = '<tr><td colspan="6" class="muted">실행 실패: 거래 요약을 불러오지 못했습니다 - ' + escapeHtml(e.message) + '</td></tr>';
     }
   }
 
@@ -105,6 +105,17 @@
 
   var _raCurrentReport = null;
 
+  /* Show the Review/Audit empty panel with the operator-facing status category and detail. */
+  function setReviewAuditEmptyState(statusText, detailText) {
+    var emptyEl = document.getElementById('ra-empty');
+    if (!emptyEl) return;
+    var statusEl = document.getElementById('ra-empty-status');
+    var detailEl = document.getElementById('ra-empty-detail');
+    if (statusEl) statusEl.textContent = statusText;
+    if (detailEl) detailEl.textContent = detailText;
+    emptyEl.style.display = '';
+  }
+
   /* Load today's Review & Audit report and keep the date picker aligned with the selected report date. */
   async function loadReviewAuditScreen() {
     var today = new Date();
@@ -130,7 +141,10 @@
 
       if (!res.ok || !report) {
         _raCurrentReport = null;
-        if (emptyEl) emptyEl.style.display = '';
+        setReviewAuditEmptyState(
+          res.ok ? '미수집·대기: S10 Review & Audit 미실행' : '데이터 없음: 해당 날짜 보고서 없음',
+          res.ok ? 'Backend audit 기준으로 아직 오늘 S10 결과가 없습니다. 실행 후 DB 원본과 MD 백업이 생성됩니다.' : '선택한 날짜에 저장된 Review/Audit DB 원본 또는 MD 백업이 없습니다.'
+        );
         console.warn('[WARN] ReviewAudit - report empty', dateStr || 'today');
         return;
       }
@@ -151,7 +165,7 @@
       console.info('[INFO] ReviewAudit - load complete', report.trade_date);
     } catch (e) {
       _raCurrentReport = null;
-      if (emptyEl) emptyEl.style.display = '';
+      setReviewAuditEmptyState('실행 실패: Review/Audit 조회 실패', '서버 응답 또는 네트워크 오류로 감사 보고서를 불러오지 못했습니다: ' + (e.message || 'unknown'));
       console.error('[ERROR] ReviewAudit - load failed', e.message);
     }
   }

@@ -6,9 +6,9 @@
       var el;
       if (!plan) {
         el = document.getElementById('dp-market-tone');
-        if (el) el.textContent = '미수집';
+        if (el) el.textContent = '미수집·대기';
         el = document.getElementById('dp-plan-status');
-        if (el) el.textContent = 'Plan 미수집';
+        if (el) el.textContent = 'Plan 상태: 미수집·대기 - 오늘 Daily Plan 생성 전';
         return;
       }
 
@@ -89,6 +89,10 @@
       var jsonEl = document.getElementById('dp-raw-json');
       if (jsonEl) jsonEl.textContent = JSON.stringify(plan, null, 2);
     } catch(e) {
+      var toneEl = document.getElementById('dp-market-tone');
+      var statusEl = document.getElementById('dp-plan-status');
+      if (toneEl) toneEl.textContent = '실행 실패';
+      if (statusEl) statusEl.textContent = 'Plan 상태: 실행 실패 - Daily Plan 조회 실패';
       console.error('loadDailyPlanScreen error:', e);
     }
 

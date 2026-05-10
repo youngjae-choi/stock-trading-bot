@@ -490,7 +490,7 @@
             <div class="card compact"><div class="card-title">기준 universe</div><div class="metric" id="funnel-total">-</div><div class="muted" id="funnel-total-source">출처 확인 전</div></div>
             <div class="card compact"><div class="card-title">Layer 1 통과</div><div class="metric" id="funnel-layer1">-</div><div class="muted" id="funnel-layer1-detail">S3 결과 확인 전</div></div>
             <div class="card compact"><div class="card-title">Layer 2 통과</div><div class="metric" id="funnel-layer2">-</div><div class="muted" id="funnel-layer2-detail">S4 결과 확인 전</div></div>
-            <div class="card compact"><div class="card-title">현재 매수대기</div><div class="metric" id="funnel-candidates">-</div><div class="muted">조건 접근중</div></div>
+            <div class="card compact"><div class="card-title">현재 매수대기</div><div class="metric" id="funnel-candidates">-</div><div class="muted" id="funnel-candidates-detail">미수집·대기: S4 결과 확인 전</div></div>
             <div class="card compact">
               <div class="card-title">Profile 배정 현황</div>
               <div style="font-size:11px; line-height:1.8;">
@@ -535,7 +535,7 @@
                     <tr><th>조건</th><th>탈락 수</th><th>비중</th><th>판단</th></tr>
                   </thead>
                   <tbody id="funnel-layer1-reasons-tbody">
-                    <tr><td colspan="4" class="muted" style="text-align:center;">새로고침을 눌러 불러오기</td></tr>
+                    <tr><td colspan="4" class="muted" style="text-align:center;">미수집·대기: 새로고침을 눌러 탈락 사유 불러오기</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -568,7 +568,7 @@
                   </tr>
                 </thead>
                 <tbody id="funnel-candidates-tbody">
-                  <tr><td colspan="12" class="muted" style="text-align:center;">새로고침을 눌러 불러오기</td></tr>
+                  <tr><td colspan="12" class="muted" style="text-align:center;">미수집·대기: 새로고침을 눌러 후보 선정 결과 불러오기</td></tr>
                 </tbody>
               </table>
             </div>
@@ -909,7 +909,7 @@
                   </tr>
                 </thead>
                 <tbody id="orders-today-tbody">
-                  <tr><td colspan="7" class="muted" style="text-align:center;">로딩중...</td></tr>
+                  <tr><td colspan="9" class="muted" style="text-align:center;">로딩중...</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1150,8 +1150,8 @@
 
           <div id="ra-empty" style="display:none;">
             <div class="card" style="text-align:center; padding:40px;">
-              <div class="muted">미수집: 해당 날짜의 점검 보고서가 없습니다.</div>
-              <div class="muted" style="margin-top:8px; font-size:12px;">S10 Review & Audit이 실행되면 보고서가 생성됩니다.</div>
+              <div class="muted" id="ra-empty-status">미수집·대기: 해당 날짜의 점검 보고서가 없습니다.</div>
+              <div class="muted" id="ra-empty-detail" style="margin-top:8px; font-size:12px;">S10 Review & Audit이 실행되면 보고서가 생성됩니다.</div>
               <button type="button" class="btn" style="margin-top:16px;" data-action="runReviewAudit">지금 생성</button>
             </div>
           </div>
@@ -1251,7 +1251,7 @@
 
           <div class="card">
             <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-              <span id="st-table-title">주문 내역</span>
+              <span><span id="st-table-title">주문 내역</span><span class="muted" id="st-table-source" style="margin-left:8px; font-size:12px;">trading_orders 전체 주문 이벤트</span></span>
               <button type="button" class="btn" data-action="loadAllOrders">새로고침</button>
             </div>
             <div class="table-wrap">
@@ -1270,7 +1270,7 @@
                   </tr>
                 </thead>
                 <tbody id="st-orders-tbody">
-                  <tr><td colspan="7" class="muted" style="text-align:center;">로딩중...</td></tr>
+                  <tr><td colspan="9" class="muted" style="text-align:center;">로딩중...</td></tr>
                 </tbody>
               </table>
             </div>
