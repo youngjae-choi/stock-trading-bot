@@ -8,377 +8,116 @@
 ## 목차
 1. [이 문서의 읽는 법](#1-이-문서의-읽는-법)
 2. [현재 시스템 구조 한눈에 보기](#2-현재-시스템-구조-한눈에-보기)
-3. [백엔드 단계별 동작](#3-백엔드-단계별-동작)
+3. [백엔드 단계별 동작 (S1~S11)](#3-백엔드-단계별-동작-s1s11)
 4. [콘솔 화면별로 무엇을 보여주나](#4-콘솔-화면별로-무엇을-보여주나)
-5. [각 화면이 부르는 API](#5-각-화면이-부르는-api)
-6. [데이터가 꼬이기 쉬운 지점](#6-데이터가-꼬이기-쉬운-지점)
-7. [서버 운영 명령어](#7-서버-운영-명령어)
+5. [데이터가 꼬이기 쉬운 지점](#5-데이터가-꼬이기-쉬운-지점)
+6. [서버 운영 명령어](#6-서버-운영-명령어)
 
 ---
 
 ## 1. 이 문서의 읽는 법
 
-이 문서는 “무엇을 고쳐야 하는가”보다 먼저, **현재 시스템이 어떤 기준으로 움직이는지**를 정리한다.
+이 문서는 시스템의 현재 작동 원리와 구조를 정리한다.
 
-- **백엔드**는 실제 데이터와 상태를 만들고 저장한다.
-- **프론트엔드**는 그 결과를 화면에 보여준다.
-- 일부 화면은 프론트엔드가 상태를 조금 계산한다.
-  그래서 “backend가 준 값”과 “화면에 보이는 값”이 완전히 같지 않을 수 있다.
-
-특히 아래 세 가지는 항상 같이 봐야 한다.
-
-1. **KST 오늘 날짜**
-2. **DB에 실제로 저장된 결과**
-3. **화면이 해석한 상태값**
+- **백엔드(Backend)**: FastAPI 기반 서버. 실제 데이터 처리, DB 저장, KIS API 연동, S1~S11 스케줄링을 담당한다. (Port 8000)
+- **프론트엔드 콘솔(Console)**: 백엔드에서 직접 서빙하는 HTML/JS UI. 일상적인 운영과 모니터링의 중심이다. (Port 8000)
+- **프론트엔드 대시보드(Dashboard)**: Streamlit 기반 UI. KIS API 직접 테스트, 전략 검증, 해외 주식 분석 등 연구/개발용 도구다. (Port 8501)
 
 ---
 
 ## 2. 현재 시스템 구조 한눈에 보기
 
-### 2-1. 백엔드 큰 구조
+### 2-1. 백엔드 (FastAPI)
+- `backend/main.py`: 서버 진입점. 모든 API 라우터와 미들웨어를 통합한다.
+- `backend/services/scheduler.py`: **시스템의 심장.** S1~S11 프로세스를 시간대에 맞춰 자동 실행한다.
+- `backend/services/console_state.py`: 운영 화면(Today Control)에 필요한 통합 상태 데이터를 생성한다.
+- `backend/services/engine/*`: 실제 로직(시장 분석, 필터링, 스크리닝, 매매 등)이 구현된 엔진들이다.
 
-현재 백엔드는 FastAPI 기반이다.
-
-- `backend/main.py`
-  - 앱 시작점
-  - DB 초기화
-  - 인증 초기화
-  - 스케줄러 시작
-  - `logs/server.log` 파일 로깅 연결
-- `backend/services/scheduler.py`
-  - S1~S11 스케줄 관리
-  - `schedule_skip_today` 같은 운영 플래그 관리
-- `backend/services/console_state.py`
-  - Today Control 상단 요약용 상태를 만든다
-  - 현재 단계, 다음 작업, funnel 요약, 로그 요약을 합쳐서 반환한다
-- `backend/services/engine/pipeline_audit.py`
-  - S1~S11 실행 흔적을 `pipeline_run_audit`에 기록한다
-- `backend/api/routes/*`
-  - 각 화면이 호출하는 API를 제공한다
-
-### 2-2. 프론트 구조
-
-콘솔은 React가 아니라 **정적 HTML + 분리된 classic JS** 구조다.
-
-- `backend/static/console.html`
-  - 전체 화면 shell
-  - 각 screen 섹션을 포함
-  - 스크립트를 마지막에 순서대로 로드
-- `backend/static/js/console-main.js`
-  - DOM 로드 후 초기화
-- `backend/static/js/console-auth.js`
-  - 로그인 상태 확인
-  - Today Control 상단 요약(`bot/overview`, `bot/data-health`) 로드
-  - 로그/오늘 주문도 함께 로드
-- `backend/static/js/console-utils.js`
-  - 오늘 날짜, timeline 상태, diagnostics 상태 계산
-- `backend/static/js/console-state.js`
-  - S1~S11 단계 정의와 화면용 설명 텍스트
-- `backend/static/js/screens/*.js`
-  - 각 화면 전용 렌더러
+### 2-2. UI 이원화 구조
+1.  **운영 콘솔 (Port 8000/console)**: 
+    - `backend/static/`에 위치한 정적 파일들.
+    - **Today Control, Trading Monitor, Funnel, Diagnostics** 등 실전 매매 운영용.
+2.  **개발 대시보드 (Port 8501)**:
+    - `frontend/app.py` (Streamlit).
+    - **API Smoke Test, Trading Hub, Strategy Debugging** 등 기능 검증용.
 
 ---
 
-## 3. 백엔드 단계별 동작
+## 3. 백엔드 단계별 동작 (S1~S11)
 
-아래는 현재 시스템이 운영상 어떻게 움직이는지 기준으로 정리한 것이다.
-
-| 단계 | 백엔드 역할 | 저장/조회 대상 | 화면에서 보이는 곳 |
-|---|---|---|---|
-| S1 | KIS 토큰 갱신 | scheduler / pipeline audit | Diagnostics, Today Control timeline |
-| S2 | 시장 톤 분석 | `market_tone_results` | Today Control, Funnel, Diagnostics |
-| S3 | 유니버스 필터 | `universe_filter_results` | Funnel, Today Control, Diagnostics |
-| S4 | 하이브리드 스크리닝 | `hybrid_screening_results` | Funnel, Today Control, Diagnostics |
-| S5 | Daily Plan 생성/검증/활성화 | `daily_trading_plans` | Today Control, Trading Monitor, Funnel, Diagnostics |
-| S6 | Decision Engine 활성화 | `decision` 상태 | Today Control, Trading Monitor, Diagnostics |
-| S7 | 주문 실행 결과 | `orders` / `trading_signals` | Today Control, Trade History, Diagnostics |
-| S8 | 포지션 감시 | `position_stop_states` / 주문 포지션 | Trading Monitor, Today Control, Diagnostics |
-| S9 | 당일 청산 | 주문/포지션 후처리 | Today Control, Diagnostics |
-| S10 | Review & Audit | `review_audit` / 리포트 | Today Control, Review & Audit, Diagnostics |
-| S11 | Learning Memory | `learning_memory` | Today Control, Learning Memory, Diagnostics |
-
-### 3-1. 공통 기준
-
-- 날짜는 대부분 **Asia/Seoul(KST)** 기준이다.
-- “오늘”은 UTC가 아니라 **KST 오늘**이다.
-- 화면에 보이는 상태는 종종 **DB 결과 + 프론트 상태 해석**의 합이다.
-
-### 3-2. S1~S5의 핵심 의미
-
-이 구간은 장 시작 전 준비 단계다.
-
-1. **S1**: 인증 토큰을 준비한다.
-2. **S2**: 오늘 시장 분위기를 정한다.
-3. **S3**: 거래 대상이 될 수 있는 종목 풀을 줄인다.
-4. **S4**: AI가 정성 평가로 후보를 고른다.
-5. **S5**: 오늘 실제로 쓸 매매 계획을 만든다.
-
-이 5개가 잘 돌아가야, 뒤 단계(S6~S11)도 의미가 생긴다.
-
-### 3-3. `schedule_skip_today`
-
-`backend/services/scheduler.py`가 오늘을 거래일/비거래일로 판단해 `schedule_skip_today`를 만든다.
-
-- 비거래일이면 S2~S6 같은 준비 단계가 스킵될 수 있다.
-- 이 플래그는 Diagnostics와 Today Control timeline에도 영향을 준다.
+| 단계 | 시간 (KST) | 이름 | 핵심 역할 |
+|:---:|:---:|---|---|
+| **S1** | 07:45 | 거래 준비 | KIS 토큰 갱신, **오늘 거래일 여부 확인** 및 스킵 플래그 설정 |
+| **S2** | 08:00 | 시장 분석 | 해외 시장 지표 기반 오늘의 시장 톤(Tone) 분석 |
+| **S3** | 08:15 | 유니버스 필터 | KIS 순위 데이터를 가져와 기초 거래 대상 종목 풀 생성 |
+| **S4** | 08:30 | AI 스크리닝 | LLM이 S3 종목들을 정성 평가하여 후보군 압축 |
+| **S5** | 08:45 | Daily Plan | 오늘의 매매 강도, 리스크 정책, 종목별 할당 계획 생성 |
+| **S5-V/A**| ~09:00 | 검증 및 활성화 | 생성된 계획의 무결성 검증 및 최종 활성화 승인 |
+| **S6** | 09:00~09:45 | 엔진 가동 | Decision Engine 활성화 및 실시간 WebSocket 시세 수신 시작 |
+| **S7/S8** | 장중 | 매매 및 감시 | 실시간 시그널 발생, 주문 실행 및 보유 포지션 관리 |
+| **S9** | 15:20 | 당일 청산 | 장 마감 전 모든 포지션 정리 및 엔진 비활성화 |
+| **S10** | 16:00/18:00 | 복기 및 요약 | 당일 매매 결과 분석(Review & Audit) 및 DB/로그 백업 |
+| **S11** | 16:30/22:00 | 학습 및 관찰 | 내일 준비를 위한 학습 메모리 생성 및 야간 미국 시장 지표 수집 |
 
 ---
 
 ## 4. 콘솔 화면별로 무엇을 보여주나
 
-### 4-1. Today Control
+### 4-1. Today Control (운영 허브)
+- 시스템의 현재 위치(Step)와 다음 예정 작업을 보여준다.
+- 오늘 생성된 시장 톤, 유니버스, 스크리닝, 매매 계획을 한눈에 요약한다.
+- `GET /api/v1/bot/overview`를 통해 대부분의 데이터를 가져온다.
 
-이 화면은 운영자가 가장 먼저 보는 **요약 허브**다.
+### 4-2. Trading Monitor (실시간 감시)
+- 현재 계좌 잔고(예수금, 평가금액)를 실시간으로 보여준다.
+- 적용 중인 리스크 정책(매수/매도 조건)과 매수 후보 종목 리스트를 표시한다.
+- 보유 포지션의 수익률과 실시간 체결 로그를 확인한다.
 
-보여주는 내용:
+### 4-3. Funnel Monitor (깔때기 분석)
+- **전체 종목 → S3(필터) → S4(스크리닝) → S5(계획)**로 이어지는 필터링 효율을 분석한다.
+- 어떤 사유로 종목들이 탈락했는지 통계를 보여주며, `funnel/summary` API를 사용한다.
 
-- 현재 단계 / 다음 단계
-- 오늘 시장 톤
-- 유니버스 필터 결과
-- 스크리닝 결과
-- Daily Plan 상태
-- Risk Profile / RulePack 상태
-- 현재 포지션
-- 오늘 주문
-- 운영 로그
-- funnel 요약
-
-실제 특징:
-
-- 데이터는 여러 API를 합쳐서 보여준다.
-- 화면 자체가 숫자를 많이 계산한다기보다, **backend overview를 요약해서 보여주는 편**이다.
-- 예전처럼 단일 카드 하나만 보고 끝나는 구조가 아니다.
-
-### 4-2. Trading Monitor
-
-이 화면은 **실시간 감시 화면**이다.
-
-보여주는 내용:
-
-- Decision Engine 활성/비활성
-- 계좌 정보
-  - 예수금
-  - 주식 평가금액
-  - 총 평가금액
-  - 당일 매수/매도 금액
-- 오늘 적용 정책
-  - 매수 조건
-  - 매도 조건
-  - 현금/리스크 문구
-- 매수 대기 후보
-- 보유 포지션
-- 실시간 tick 스트림
-
-실제 특징:
-
-- 후보 리스트와 포지션 리스트는 **row-by-row 갱신**을 하도록 되어 있다.
-- 정책 문구는 `trading-monitor/policy-summary`에서 만든 자연어 설명을 쓴다.
-- 계좌정보는 `account/balance`가 기준이다.
-
-### 4-3. Trade History
-
-이 화면은 **과거 주문 조회** 화면이다.
-
-보여주는 내용:
-
-- 기간 필터
-- 주문 내역 표
-- 체결/미체결 상태
-- 날짜별 조회 결과
-
-실제 특징:
-
-- “거래를 제어하는 화면”이 아니라 **기록을 보는 화면**이다.
-- 주문 테이블은 `trading_orders` 기준이며 접수, 체결, 실패, 취소, 청산 사유를 함께 본다.
-- 빈 표시는 `데이터 없음`, 조회 오류는 `실행 실패`로 구분한다.
-
-### 4-4. Funnel Monitor
-
-이 화면은 **S3 → S4 → S5로 얼마나 줄어드는지** 설명하는 화면이다.
-
-보여주는 내용:
-
-- 전체 universe
-- S3 통과 수
-- S4 통과 수
-- 현재 매수 대기 수
-- Risk Profile 배정 수
-- S3 탈락 사유
-- Funnel Quality 문구
-- 마지막 갱신 시각
-
-실제 특징:
-
-- `funnel/summary`가 핵심이다.
-- `daily-plan/today`, `screening/today`도 같이 읽어 종목 배정과 후보 수를 맞춘다.
-- S3/S4 결과가 아직 없으면 `미수집·대기`, 결과가 0건이면 `데이터 없음`, 조회가 실패하면 `실행 실패`로 구분한다.
-- 하드코딩된 숫자가 남아 있으면 이 화면이 제일 먼저 어색해진다.
-
-### 4-5. System Diagnostics
-
-이 화면은 **S1~S11이 오늘 어떤 상태인지** 보여준다.
-
-보여주는 내용:
-
-- 각 단계의 배지(완료/대기/스킵/실행중)
-- 각 단계의 raw JSON 결과
-- `pipeline_run_audit` 카드
-- 서버 로그
-
-실제 특징:
-
-- `scheduler/status`와 `engine/audit/today`를 같이 본다.
-- “ok=true”만으로 완료 처리하지 않도록 설계되어 있다.
-- null payload는 완료가 아니라 대기/미생성으로 보여야 한다.
-- `pipeline_run_audit`가 있으면 그 기록을 최종 실행 근거로 표시한다.
-
-### 4-6. 그 외 화면
-
-- **Settings**: RulePack, Risk Profiles, Scheduler 시간 설정
-- **Review & Audit**: S10 결과 확인. DB 원본은 `daily_review_reports`, 사람이 읽는 MD 백업은 `docs/SYSTEM_AUDIT_YYYYMMDD.md` 기준이다.
-- **Learning Memory**: S11 교훈/메모리 확인
-- **Alerts / Data & API / Execution & Risk**: 운영 상태 보조 화면
+### 4-4. System Diagnostics (자가 진단)
+- 각 단계(S1~S11)의 성공/실패/스킵 상태를 배지로 보여준다.
+- 백엔드 서버의 원시 로그(`logs/server.log`)를 실시간으로 조회할 수 있다.
 
 ---
 
-## 5. 각 화면이 부르는 API
+## 5. 데이터가 꼬이기 쉬운 지점
 
-### 5-1. Today Control
-
-- `GET /api/v1/bot/overview`
-- `GET /api/v1/bot/data-health`
-- `GET /api/v1/engine/logs`
-- `GET /api/v1/orders/today`
-- `GET /api/v1/daily-plan/today`
-- `GET /api/v1/funnel/summary`
-
-### 5-2. Trading Monitor
-
-- `GET /api/v1/decision/status`
-- `GET /api/v1/account/balance`
-- `GET /api/v1/trading-monitor/policy-summary`
-- `GET /api/v1/trading-monitor/candidates`
-- `GET /api/v1/trading-monitor/positions`
-- `GET /api/v1/trading-monitor/stream` (SSE)
-
-### 5-3. Trade History
-
-- `GET /api/v1/trades/history`
-- `GET /api/v1/orders/recent`
-- `GET /api/v1/orders/today`
-- `GET /api/v1/orders/range`
-
-### 5-4. Funnel Monitor
-
-- `GET /api/v1/funnel/summary`
-- `GET /api/v1/daily-plan/today`
-- `GET /api/v1/screening/today`
-- `GET /api/v1/pipeline/S3/context-preview`
-- `GET /api/v1/pipeline/S4/context-preview`
-- `GET /api/v1/pipeline/S5/context-preview`
-
-### 5-5. System Diagnostics
-
-- `GET /api/v1/scheduler/status`
-- `GET /api/v1/engine/audit/today`
-- `GET /api/v1/engine/logs`
-- `POST /api/v1/engine/token-refresh`
+- **스킵 플래그 (`schedule_skip_today`)**: 휴장일이나 수동 중단 시 이 값이 `true`가 되면 자동 스케줄이 멈춘다. 장 시작 전 반드시 확인해야 한다.
+- **날짜 기준**: 시스템은 철저히 **KST(Asia/Seoul)**를 기준으로 한다. 서버 시간이 UTC라면 날짜 표시가 꼬일 수 있다.
+- **0 vs null**: 값이 0인 것(정상 결과가 0건)과 null인 것(아직 실행 전이거나 오류)은 화면에서 엄격히 구분되어야 한다.
 
 ---
 
-## 6. 데이터가 꼬이기 쉬운 지점
+## 6. 서버 운영 명령어
 
-이 부분은 “현재 구조를 보고 수정할 때” 특히 주의해야 한다.
+### 전체 서버 상태 확인
+```bash
+# 백엔드 및 프론트엔드 프로세스 확인
+ps aux | grep -E "uvicorn|streamlit"
+```
 
-### 6-1. 0과 null
+### 서버 통합 재시작 (수동)
+```bash
+# 실행 중인 프로세스 종료 후 재시작
+pkill -f "uvicorn backend.main:app"
+pkill -f "streamlit run frontend/app.py"
+# 이후 각 서버를 백그라운드로 실행
+```
 
-- **0**은 진짜 값일 수 있다.
-- **null**은 데이터가 비었거나 아직 안 온 것일 수 있다.
-- 화면에서 둘을 같은 값처럼 보여주면 운영자가 오해한다.
-- 운영 화면 문구는 `데이터 없음`(정상 조회 결과 0건), `미수집·대기`(아직 실행 전), `실행 실패`(API/서버 오류)를 구분한다.
-
-### 6-2. 오늘 날짜 기준
-
-- KST 기준 오늘인지 확인해야 한다.
-- UTC 날짜로 보면 하루가 어긋날 수 있다.
-
-### 6-3. fallback 숫자
-
-- `2500` 같은 고정 숫자는 보기 편하지만 실제와 다를 수 있다.
-- fallback은 항상 “왜 fallback인지”가 같이 보여야 한다.
-
-### 6-4. 프론트 계산값
-
-- Diagnostics와 Today Control timeline은 일부 상태를 프론트가 계산한다.
-- 그래서 backend가 바뀌면 프론트 상태 계산도 같이 검토해야 한다.
-
-### 6-5. 로그와 파일 출력
-
-- Diagnostics의 로그 패널은 `logs/server.log`를 읽는다.
-- 서버가 그 파일에 실제로 쓰고 있는지 확인해야 한다.
+### 로그 확인
+- **통합 로그**: `logs/server.log` (콘솔 Diagnostics 화면에서도 확인 가능)
+- **프론트엔드 로그**: `logs/frontend_latest.log`
 
 ---
 
-## 7. 서버 운영 명령어
+## 부록: 주요 API 그룹
+- `/api/v1/bot/*`: 전체 시스템 상태 및 제어
+- `/api/v1/kis/*`: 한국투자증권 API 직접 연동
+- `/api/v1/daily-plan/*`: 매매 계획 관리
+- `/api/v1/funnel/*`: 깔때기 분석 데이터
+- `/api/v1/decision/*`: 매매 엔진 제어
+- `/api/v1/expert-knowledge/*`: AI 지식베이스 관리
 
-### 서버 상태 확인
-```bash
-sudo systemctl status stock-trading-bot
-```
-
-### 로그 실시간 모니터링
-```bash
-sudo journalctl -u stock-trading-bot -f
-```
-
-### 서버 재시작
-```bash
-sudo systemctl restart stock-trading-bot
-```
-
-### 서버 중지 / 시작
-```bash
-sudo systemctl stop stock-trading-bot
-sudo systemctl start stock-trading-bot
-```
-
-### 부팅 시 자동 시작 여부 확인
-```bash
-sudo systemctl is-enabled stock-trading-bot
-# → enabled 이면 정상
-```
-
-### 오늘 특정 단계 수동 실행 (콘솔 로그인 후)
-| 단계 | API |
-|------|-----|
-| S1 토큰 갱신 | `POST /api/v1/engine/token-refresh` |
-| S2 시장 톤 | `POST /api/v1/market-tone/analyze` |
-| S3 유니버스 | `POST /api/v1/universe-filter/run` |
-| S4 스크리닝 | `POST /api/v1/screening/run` |
-| S5 Daily Plan | `POST /api/v1/daily-plan/generate` |
-| Decision Engine ON | `POST /api/v1/decision/activate` |
-| Decision Engine OFF | `POST /api/v1/decision/deactivate` |
-
----
-
-## 부록: 전체 데이터 흐름 요약
-
-```
-[해외 시장/지표] ──→ S2 시장 톤 ──→ 시장 톤 결과
-                                   │
-[KIS 유니버스 데이터] ──→ S3 유니버스 필터 ──→ universe_filter_results
-                                   │
-[S3 결과 + KIS/AI 정보] ──→ S4 스크리닝 ──→ hybrid_screening_results
-                                   │
-[S3+S4 결과] ──→ S5 Daily Plan ──→ daily_trading_plans
-                                   │
-[장중] ──→ S6 Decision Engine ──→ 주문/포지션 감시
-                                   │
-[주문/체결] ──→ S7/S8 ──→ orders / positions / signals
-                                   │
-[15:20~] ──→ S9 청산 ──→ 후처리
-                                   │
-[16:00] ──→ S10 Review & Audit ──→ 복기 리포트
-                                   │
-[16:30~22:00] ──→ S11 Learning Memory ──→ 다음날 참고 데이터
-```

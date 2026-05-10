@@ -100,6 +100,39 @@ def _audit_step_finish(
             message=message,
             metadata=metadata or {"pipeline": "scheduler"},
         )
+
+        # ── 텔레그램 알림 자동 전송 (Phase 5B 추가) ───────────────────────────
+        # S1, S5-A, S6, S9, S10, S11 등 주요 단계 종료 시 알림 전송
+        try:
+            from .alert_service import send_telegram_alert
+            from .engine.pipeline_audit import get_connection
+
+            # DB에서 방금 업데이트된 step 정보를 가져옴
+            with get_connection() as conn:
+                row = conn.execute("SELECT step FROM pipeline_run_audit WHERE id = ?", (run_id,)).fetchone()
+                step = row["step"] if row else "Unknown"
+
+            # 알림 대상 단계 필터링
+            NOTIFY_STEPS = {"S1", "S2", "S3", "S4", "S5", "S5-A", "S6", "S9", "S10", "S11", "POSTPROCESS"}
+            if step in NOTIFY_STEPS or status == "failed":
+                emoji = "✅" if status == "success" else "⚠️" if status == "skipped" else "❌"
+                title = f"BOT {step} {status.upper()} {emoji}"
+                body = f"Message: {message}\nDate: {_today_kst()}"
+                
+                # 특정 단계 상세 정보 추가
+                if step == "S1" and metadata and "s1" in metadata:
+                    s1 = metadata["s1"]
+                    body += f"\nToken: {s1.get('token_status')}\nMarket: {s1.get('trading_day_status')}"
+                elif step == "S9" and metadata and "s9" in metadata:
+                    s9 = metadata["s9"]
+                    body += f"\nLiquidated: {s9.get('liquidation', {}).get('liquidated', 0)} items"
+
+                import asyncio
+                # 동기 환경(APScheduler worker)에서 비동기 함수 호출
+                asyncio.create_task(send_telegram_alert(title, body))
+        except Exception as alert_exc:
+            logger.warning("WARN: scheduler telegram alert failed run_id=%s reason=%s", run_id, alert_exc)
+
     except Exception as exc:
         logger.warning("WARN: scheduler audit finish failed run_id=%s reason=%s", run_id, exc)
 
