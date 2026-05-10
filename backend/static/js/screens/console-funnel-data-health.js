@@ -109,7 +109,7 @@
     }
     var rejected = summary.layer1_rejected != null ? summary.layer1_rejected.toLocaleString() : '-';
     tbody.innerHTML = '<tr>'
-      + '<td>탈락 사유 상세 집계 없음</td>'
+      + '<td>데이터 없음: 탈락 사유 상세 집계 없음</td>'
       + '<td>' + rejected + '</td>'
       + '<td>-</td>'
       + '<td><span class="status info">S3 breakdown 미수집</span></td>'
@@ -172,6 +172,8 @@
         if (l2El2 && fp.layer2_count != null) l2El2.textContent = fp.layer2_count.toLocaleString();
         if (l2DetailEl) l2DetailEl.textContent = (fp.has_s4 ? "S4 결과 있음" : "S4 결과 없음") + " / " + (fp.has_s5 ? "S5 결과 있음" : "S5 결과 없음");
         if (candEl2 && fp.signals_count != null) candEl2.textContent = fp.signals_count;
+        var candDetailEl = document.getElementById('funnel-candidates-detail');
+        if (candDetailEl) candDetailEl.textContent = fp.signals_count > 0 ? 'S4 결과 기준 매수대기 후보' : '데이터 없음: 현재 매수대기 후보 없음';
         if (emptyReasonEl) {
           emptyReasonEl.textContent = fp.empty_reason || "";
           emptyReasonEl.style.display = fp.empty_reason ? "block" : "none";
@@ -187,7 +189,13 @@
         setPC('fn-high-count', 'HIGH_VOL');
         setPC('fn-spike-count', 'THEME_SPIKE');
       }
-    } catch (e) { /* ignore funnel summary fail */ }
+    } catch (e) {
+      var emptyReasonEl2 = document.getElementById('funnel-empty-reason');
+      if (emptyReasonEl2) {
+        emptyReasonEl2.textContent = '실행 실패: Funnel summary 조회 실패 - ' + (e.message || 'unknown');
+        emptyReasonEl2.style.display = 'block';
+      }
+    }
 
     try {
       var screenData = await fetchJson("/api/v1/screening/today");
@@ -225,12 +233,12 @@
               + '</tr>';
           }).join("");
         } else if (tbody && sc.output_count === 0) {
-          tbody.innerHTML = '<tr><td colspan="12" class="muted" style="text-align:center;">오늘 스크리닝 후보 없음</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="12" class="muted" style="text-align:center;">데이터 없음: 오늘 스크리닝 통과 후보 없음</td></tr>';
         }
       }
     } catch (e) {
       var tbody2 = document.getElementById("funnel-candidates-tbody");
-      if (tbody2) tbody2.innerHTML = '<tr><td colspan="12" class="muted">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>';
+      if (tbody2) tbody2.innerHTML = '<tr><td colspan="12" class="muted">실행 실패: 후보 선정 결과 조회 실패 - ' + escapeHtml(e.message) + '</td></tr>';
     }
   }
 

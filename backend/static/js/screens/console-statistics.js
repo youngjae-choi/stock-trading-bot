@@ -82,6 +82,7 @@
   async function loadAllOrders() {
     var tbody = document.getElementById("st-orders-tbody");
     var title = document.getElementById("st-table-title");
+    var sourceEl = document.getElementById("st-table-source");
     if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">로딩중...</td></tr>';
 
     try {
@@ -89,6 +90,7 @@
       if (stFilter === "today") {
         var todayResponse = await fetchJson("/api/v1/orders/today");
         orders = (todayResponse && todayResponse.payload && todayResponse.payload.orders) || [];
+        if (sourceEl) sourceEl.textContent = 'trading_orders 오늘 주문 이벤트';
       } else {
         var now = new Date();
         var todayStr = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
@@ -110,6 +112,7 @@
         }
         var rangeResponse = await fetchJson("/api/v1/orders/range?start=" + startStr + "&end=" + todayStr + "&limit=500");
         orders = (rangeResponse && rangeResponse.payload && rangeResponse.payload.orders) || [];
+        if (sourceEl) sourceEl.textContent = (rangeResponse && rangeResponse.payload && rangeResponse.payload.history_scope === 'all_order_events') ? 'trading_orders 전체 주문 이벤트' : '주문 이력';
       }
 
       if (stFilter === "today") {
@@ -121,10 +124,10 @@
       var filterLabel = { today: "오늘", week: "이번주", month: "이번달", lastmonth: "지난달", all: "전체" };
       if (title) title.textContent = (filterLabel[stFilter] || "") + " 주문 내역";
 
-      renderOrdersTable(orders, "해당 기간 주문 없음");
+      renderOrdersTable(orders, "데이터 없음: 해당 기간 주문 이벤트 없음");
     } catch (e) {
       console.error("[ERROR]", "loadAllOrders", "-", e.message);
-      if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">조회 실패: ' + escapeHtml(e.message || "") + '</td></tr>';
+      if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">실행 실패: 주문 이력 조회 실패 - ' + escapeHtml(e.message || "") + '</td></tr>';
     }
   }
 
@@ -169,6 +172,7 @@
     if (sfDate) sfDate.value = tradeDate;
     var tbody = document.getElementById("st-orders-tbody");
     var title = document.getElementById("st-table-title");
+    var sourceEl = document.getElementById("st-table-source");
     if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">로딩중...</td></tr>';
     if (title) title.textContent = tradeDate + " 주문 내역";
 
