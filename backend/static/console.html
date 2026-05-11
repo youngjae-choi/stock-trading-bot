@@ -1739,14 +1739,23 @@
           <div class="grid cols-2" style="margin-top:20px;">
             <!-- 계좌 목록 -->
             <div class="card">
-              <div class="card-title">등록 계좌 <span>Account List</span></div>
+              <div class="card-header-actions" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <div class="card-title" style="margin:0;">등록 계좌 <span>Account List</span></div>
+                <div class="flex-row" style="gap:8px;">
+                  <button class="btn compact" onclick="handleEditSelectedAccount()">수정</button>
+                  <button class="btn compact danger" onclick="handleBulkDeleteAccounts()">삭제</button>
+                </div>
+              </div>
               <div class="table-wrap" style="max-height: 400px; overflow-y: auto;">
-                <table>
+                <table id="dividendAccountsTable">
                   <thead>
-                    <tr><th>금융사</th><th>계좌번호</th><th>소유자</th><th>관리</th></tr>
+                    <tr>
+                      <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll('dividendAccountsTableBody', this.checked)"></th>
+                      <th>금융사</th><th>계좌번호</th><th>소유자</th>
+                    </tr>
                   </thead>
                   <tbody id="dividendAccountsTableBody">
-                    <tr><td colspan="3" class="muted">계좌 정보를 불러오는 중...</td></tr>
+                    <tr><td colspan="4" class="muted">계좌 정보를 불러오는 중...</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -1754,14 +1763,23 @@
 
             <!-- 최근 배당 이력 -->
             <div class="card">
-              <div class="card-title">최근 배당 이력 <span>Recent History</span></div>
+              <div class="card-header-actions" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <div class="card-title" style="margin:0;">최근 배당 이력 <span>Recent History</span></div>
+                <div class="flex-row" style="gap:8px;">
+                  <button class="btn compact" onclick="handleEditSelectedEntry()">수정</button>
+                  <button class="btn compact danger" onclick="handleBulkDeleteEntries()">삭제</button>
+                </div>
+              </div>
               <div class="table-wrap" style="max-height: 400px; overflow-y: auto;">
-                <table>
+                <table id="dividendHistoryTable">
                   <thead>
-                    <tr><th>날짜</th><th>금융사</th><th>순수익</th><th>메모</th><th>관리</th></tr>
+                    <tr>
+                      <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll('dividendHistoryTableBody', this.checked)"></th>
+                      <th>날짜</th><th>금융사</th><th>순수익</th><th>메모</th>
+                    </tr>
                   </thead>
                   <tbody id="dividendHistoryTableBody">
-                    <tr><td colspan="4" class="muted">이력 정보를 불러오는 중...</td></tr>
+                    <tr><td colspan="5" class="muted">이력 정보를 불러오는 중...</td></tr>
                   </tbody>
                 </table>
               </div>

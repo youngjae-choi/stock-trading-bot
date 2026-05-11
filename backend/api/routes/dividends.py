@@ -22,6 +22,9 @@ class DividendAccountCreate(BaseModel):
     account_number: str
     bank_name: str
 
+class BulkDeleteIds(BaseModel):
+    ids: list[str]
+
 class DividendEntryCreate(BaseModel):
     account_id: str
     dividend_date: str
@@ -94,6 +97,20 @@ async def delete_dividend_account(account_id: str):
         if res.rowcount == 0:
             raise HTTPException(status_code=404, detail="Account not found.")
     return {"ok": True}
+
+@router.post("/accounts/bulk-delete")
+async def bulk_delete_dividend_accounts(payload: BulkDeleteIds):
+    """Soft delete multiple accounts at once."""
+    if not payload.ids:
+        return {"ok": True, "count": 0}
+    
+    placeholders = ",".join(["?"] * len(payload.ids))
+    with get_connection() as conn:
+        res = conn.execute(
+            f"UPDATE dividend_accounts SET is_active = 0 WHERE id IN ({placeholders})",
+            payload.ids
+        )
+    return {"ok": True, "count": res.rowcount}
 
 
 # ─── Routes: Dividends ───────────────────────────────────────────────────────
@@ -169,6 +186,20 @@ async def delete_dividend_entry(entry_id: str):
         if res.rowcount == 0:
             raise HTTPException(status_code=404, detail="Entry not found.")
     return {"ok": True}
+
+@router.post("/entries/bulk-delete")
+async def bulk_delete_dividend_entries(payload: BulkDeleteIds):
+    """Delete multiple dividend entries at once."""
+    if not payload.ids:
+        return {"ok": True, "count": 0}
+    
+    placeholders = ",".join(["?"] * len(payload.ids))
+    with get_connection() as conn:
+        res = conn.execute(
+            f"DELETE FROM dividends WHERE id IN ({placeholders})",
+            payload.ids
+        )
+    return {"ok": True, "count": res.rowcount}
 
 
 # ─── Routes: Stats ───────────────────────────────────────────────────────────
