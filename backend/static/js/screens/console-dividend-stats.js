@@ -11,8 +11,7 @@ async function refreshDividendStats() {
     const accountTbody = document.getElementById('divStatAccountTableBody');
 
     try {
-        const resp = await authFetch(`/api/v1/dividends/stats/summary?year=${year}`);
-        const data = await resp.json();
+        const data = await fetchJson(`/api/v1/dividends/stats/summary?year=${year}`);
 
         if (data.ok) {
             // Update Summary Cards

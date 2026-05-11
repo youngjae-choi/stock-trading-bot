@@ -14,8 +14,7 @@ async function loadDividendAccounts() {
     const select = document.getElementById('divEntryAccId');
     
     try {
-        const resp = await authFetch('/api/v1/dividends/accounts');
-        const data = await resp.json();
+        const data = await fetchJson('/api/v1/dividends/accounts');
         
         if (data.ok) {
             // Update table
@@ -46,8 +45,7 @@ async function loadDividendAccounts() {
 async function refreshDividendHistory() {
     const tbody = document.getElementById('dividendHistoryTableBody');
     try {
-        const resp = await authFetch('/api/v1/dividends/history');
-        const data = await resp.json();
+        const data = await fetchJson('/api/v1/dividends/history');
         
         if (data.ok) {
             if (data.history.length === 0) {
@@ -78,11 +76,11 @@ document.getElementById('dividendAccountForm').addEventListener('submit', async 
     };
     
     try {
-        const resp = await authFetch('/api/v1/dividends/accounts', {
+        const data = await fetchJson('/api/v1/dividends/accounts', {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-        const data = await resp.json();
         if (data.ok) {
             alert('계좌가 등록되었습니다.');
             e.target.reset();
@@ -107,11 +105,11 @@ document.getElementById('dividendEntryForm').addEventListener('submit', async (e
     };
     
     try {
-        const resp = await authFetch('/api/v1/dividends/entries', {
+        const data = await fetchJson('/api/v1/dividends/entries', {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-        const data = await resp.json();
         if (data.ok) {
             alert('배당 내역이 저장되었습니다.');
             e.target.reset();
