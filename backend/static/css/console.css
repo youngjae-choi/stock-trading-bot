@@ -115,6 +115,10 @@
       color: var(--red);
     }
 
+    #loginSubmitBtn {
+      margin-top: 8px;
+    }
+
     .topbar {
       position: fixed;
       top: 0;
@@ -676,6 +680,46 @@
       padding: 10px;
       outline: none;
     }
+
+    .table-wrap tr:hover {
+      background: var(--line-soft);
+    }
+
+    /* ── Action Buttons cleanup ── */
+    .action-cell {
+      text-align: right;
+      white-space: nowrap;
+    }
+    .action-btn {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 4px 8px;
+      font-size: 12px;
+      border-radius: 4px;
+      transition: all 0.2s;
+      opacity: 0.6;
+    }
+    .action-btn:hover {
+      background: var(--line);
+      color: var(--text);
+      opacity: 1;
+    }
+    .action-btn.danger:hover {
+      background: var(--red-soft);
+      color: var(--red);
+    }
+    
+    /* Show buttons only on row hover for a cleaner look */
+    tr .action-btn {
+      visibility: hidden;
+    }
+    tr:hover .action-btn {
+      visibility: visible;
+    }
+
+    /* ── End of Action Buttons ── */
 
     .footerbar {
       margin-top: 18px;

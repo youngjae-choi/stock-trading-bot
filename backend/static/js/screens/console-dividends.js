@@ -29,9 +29,9 @@ async function loadDividendAccounts() {
                         <td>${escapeHtml(acc.bank_name)}</td>
                         <td>${escapeHtml(acc.account_number)}</td>
                         <td>${escapeHtml(acc.owner_name)}</td>
-                        <td>
-                            <button class="btn compact" onclick="editDividendAccount('${acc.id}', '${escapeJs(acc.bank_name)}', '${escapeJs(acc.account_number)}', '${escapeJs(acc.owner_name)}')">수정</button>
-                            <button class="btn compact danger" onclick="deleteDividendAccount('${acc.id}')">삭제</button>
+                        <td class="action-cell">
+                            <button class="action-btn" title="수정" onclick="editDividendAccount('${acc.id}', '${escapeJs(acc.bank_name)}', '${escapeJs(acc.account_number)}', '${escapeJs(acc.owner_name)}')">✎ 수정</button>
+                            <button class="action-btn danger" title="삭제" onclick="deleteDividendAccount('${acc.id}')">✕ 삭제</button>
                         </td>
                     </tr>
                 `).join('');
@@ -60,13 +60,13 @@ async function refreshDividendHistory() {
             } else {
                 tbody.innerHTML = data.history.map(row => `
                     <tr>
-                        <td>${row.dividend_date}</td>
+                        <td style="font-size:12px;">${row.dividend_date}</td>
                         <td>${escapeHtml(row.bank_name)}</td>
                         <td class="good">${row.net_amount.toLocaleString()}</td>
-                        <td class="muted" style="font-size:12px;">${escapeHtml(row.memo || '-')}</td>
-                        <td>
-                            <button class="btn compact" onclick="editDividendEntry('${row.id}', '${row.account_id}', '${row.dividend_date}', ${row.amount}, ${row.tax}, '${escapeJs(row.memo)}')">수정</button>
-                            <button class="btn compact danger" onclick="deleteDividendEntry('${row.id}')">삭제</button>
+                        <td class="muted" style="font-size:12px; max-width:120px; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(row.memo || '-')}</td>
+                        <td class="action-cell">
+                            <button class="action-btn" title="수정" onclick="editDividendEntry('${row.id}', '${row.account_id}', '${row.dividend_date}', ${row.amount}, ${row.tax}, '${escapeJs(row.memo)}')">✎ 수정</button>
+                            <button class="action-btn danger" title="삭제" onclick="deleteDividendEntry('${row.id}')">✕ 삭제</button>
                         </td>
                     </tr>
                 `).join('');
