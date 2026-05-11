@@ -69,6 +69,32 @@ async def list_dividend_accounts():
         rows = conn.execute("SELECT * FROM dividend_accounts WHERE is_active = 1 ORDER BY bank_name ASC").fetchall()
     return {"ok": True, "accounts": [dict(row) for row in rows]}
 
+@router.put("/accounts/{account_id}")
+async def update_dividend_account(account_id: str, payload: DividendAccountCreate):
+    """Update an existing dividend account."""
+    now = _now_iso()
+    with get_connection() as conn:
+        res = conn.execute(
+            """
+            UPDATE dividend_accounts 
+            SET owner_name = ?, account_number = ?, bank_name = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (payload.owner_name, payload.account_number, payload.bank_name, now, account_id),
+        )
+        if res.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Account not found.")
+    return {"ok": True}
+
+@router.delete("/accounts/{account_id}")
+async def delete_dividend_account(account_id: str):
+    """Delete a dividend account (soft delete by setting is_active=0)."""
+    with get_connection() as conn:
+        res = conn.execute("UPDATE dividend_accounts SET is_active = 0 WHERE id = ?", (account_id,))
+        if res.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Account not found.")
+    return {"ok": True}
+
 
 # ─── Routes: Dividends ───────────────────────────────────────────────────────
 
@@ -117,6 +143,32 @@ async def list_dividend_history(account_id: str | None = None, start_date: str |
     with get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
     return {"ok": True, "history": [dict(row) for row in rows]}
+
+@router.put("/entries/{entry_id}")
+async def update_dividend_entry(entry_id: str, payload: DividendEntryCreate):
+    """Update an existing dividend entry."""
+    now = _now_iso()
+    with get_connection() as conn:
+        res = conn.execute(
+            """
+            UPDATE dividends 
+            SET account_id = ?, dividend_date = ?, amount = ?, tax = ?, net_amount = ?, memo = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (payload.account_id, payload.dividend_date, payload.amount, payload.tax, payload.net_amount, payload.memo, now, entry_id),
+        )
+        if res.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Entry not found.")
+    return {"ok": True}
+
+@router.delete("/entries/{entry_id}")
+async def delete_dividend_entry(entry_id: str):
+    """Delete a dividend entry."""
+    with get_connection() as conn:
+        res = conn.execute("DELETE FROM dividends WHERE id = ?", (entry_id,))
+        if res.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Entry not found.")
+    return {"ok": True}
 
 
 # ─── Routes: Stats ───────────────────────────────────────────────────────────
