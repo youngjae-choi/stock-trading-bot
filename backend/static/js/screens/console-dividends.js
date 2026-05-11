@@ -40,7 +40,7 @@ async function loadDividendAccounts() {
             // Update select options
             const currentVal = select.value;
             select.innerHTML = '<option value="">계좌 선택</option>' + data.accounts.map(acc => `
-                <option value="${acc.id}">${escapeHtml(acc.bank_name)} (${escapeHtml(acc.account_number)})</option>
+                <option value="${acc.id}">${escapeHtml(acc.bank_name)} - ${escapeHtml(acc.account_number)} (${escapeHtml(acc.owner_name)})</option>
             `).join('');
             select.value = currentVal;
         }
