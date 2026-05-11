@@ -1037,6 +1037,32 @@ CREATE TABLE IF NOT EXISTS confidence_calibration_bins (
     last_updated    TEXT NOT NULL
 )
 """,
+        """
+CREATE TABLE IF NOT EXISTS dividend_accounts (
+    id              TEXT PRIMARY KEY,
+    owner_name      TEXT NOT NULL,
+    account_number  TEXT NOT NULL UNIQUE,
+    bank_name       TEXT NOT NULL,
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+)
+""",
+        """
+CREATE TABLE IF NOT EXISTS dividends (
+    id              TEXT PRIMARY KEY,
+    account_id      TEXT NOT NULL REFERENCES dividend_accounts(id) ON DELETE CASCADE,
+    dividend_date   TEXT NOT NULL,
+    amount          REAL NOT NULL DEFAULT 0.0,
+    tax             REAL NOT NULL DEFAULT 0.0,
+    net_amount      REAL NOT NULL DEFAULT 0.0,
+    memo            TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_dividends_account ON dividends(account_id)",
+        "CREATE INDEX IF NOT EXISTS idx_dividends_date ON dividends(dividend_date)",
     ]
 
 

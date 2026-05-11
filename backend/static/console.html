@@ -72,6 +72,8 @@
         <option value="data">System Status</option>
         <option value="engine-test">System Diagnostics</option>
         <option value="settings">Settings</option>
+        <option value="dividends">Dividend Management</option>
+        <option value="dividend-stats">Dividend Stats</option>
       </select>
 
       <div class="top-actions">
@@ -103,6 +105,10 @@
           <button type="button" data-screen="data">System Status <small>health</small></button>
           <button type="button" data-screen="engine-test">System Diagnostics <small>diag</small></button>
           <button type="button" data-screen="settings">Settings <small>admin</small></button>
+
+          <div class="menu-label">Portfolio</div>
+          <button type="button" data-screen="dividends">Dividend Mgmt <small>div</small></button>
+          <button type="button" data-screen="dividend-stats">Dividend Stats <small>stats</small></button>
         </nav>
 
         <div class="sidebar-footer">
@@ -1660,6 +1666,170 @@
 
         </section>
 
+        <!-- ─── Portfolio: Dividend Management ──────────────────────────────── -->
+        <section class="screen" id="screen-dividends">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Dividend Management</h1>
+              <p class="page-desc">배당금 수령 계좌를 관리하고 새로운 배당 내역을 입력합니다.</p>
+            </div>
+            <button type="button" class="btn" data-action="refreshDividends">새로고침</button>
+          </div>
+
+          <div class="grid cols-2">
+            <!-- 계좌 등록 -->
+            <div class="card">
+              <div class="card-title">계좌 등록 <span>Register Account</span></div>
+              <form id="dividendAccountForm" style="margin-top:15px;">
+                <div class="field">
+                  <label>금융사명 (은행/증권)</label>
+                  <input type="text" id="divAccBank" placeholder="예: 미래에셋증권, 국민은행" required>
+                </div>
+                <div class="field">
+                  <label>계좌번호</label>
+                  <input type="text" id="divAccNumber" placeholder="하이픈(-) 포함" required>
+                </div>
+                <div class="field">
+                  <label>소유자명</label>
+                  <input type="text" id="divAccOwner" placeholder="실명 입력" required>
+                </div>
+                <button type="submit" class="btn primary" style="width:100%;">계좌 등록</button>
+              </form>
+            </div>
+
+            <!-- 배당금 입력 -->
+            <div class="card">
+              <div class="card-title">배당금 입력 <span>Record Dividend</span></div>
+              <form id="dividendEntryForm" style="margin-top:15px;">
+                <div class="field">
+                  <label>계좌 선택</label>
+                  <select id="divEntryAccId" required>
+                    <option value="">계좌를 먼저 등록하세요</option>
+                  </select>
+                </div>
+                <div class="grid cols-2" style="gap:10px;">
+                  <div class="field">
+                    <label>배당일</label>
+                    <input type="date" id="divEntryDate" required>
+                  </div>
+                  <div class="field">
+                    <label>배당금 (세전)</label>
+                    <input type="number" id="divEntryAmount" step="0.01" value="0" required>
+                  </div>
+                </div>
+                <div class="grid cols-2" style="gap:10px;">
+                  <div class="field">
+                    <label>세금</label>
+                    <input type="number" id="divEntryTax" step="0.01" value="0" required>
+                  </div>
+                  <div class="field">
+                    <label>순 수익금 (자동계산)</label>
+                    <input type="number" id="divEntryNet" step="0.01" value="0" readonly>
+                  </div>
+                </div>
+                <div class="field">
+                  <label>메모</label>
+                  <input type="text" id="divEntryMemo" placeholder="종목명 등 자유 입력">
+                </div>
+                <button type="submit" class="btn primary" style="width:100%;">배당금 기록</button>
+              </form>
+            </div>
+          </div>
+
+          <div class="grid cols-2" style="margin-top:20px;">
+            <!-- 계좌 목록 -->
+            <div class="card">
+              <div class="card-title">등록 계좌 <span>Account List</span></div>
+              <div class="table-wrap" style="max-height: 400px; overflow-y: auto;">
+                <table>
+                  <thead>
+                    <tr><th>금융사</th><th>계좌번호</th><th>소유자</th></tr>
+                  </thead>
+                  <tbody id="dividendAccountsTableBody">
+                    <tr><td colspan="3" class="muted">계좌 정보를 불러오는 중...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- 최근 배당 이력 -->
+            <div class="card">
+              <div class="card-title">최근 배당 이력 <span>Recent History</span></div>
+              <div class="table-wrap" style="max-height: 400px; overflow-y: auto;">
+                <table>
+                  <thead>
+                    <tr><th>날짜</th><th>금융사</th><th>순수익</th><th>메모</th></tr>
+                  </thead>
+                  <tbody id="dividendHistoryTableBody">
+                    <tr><td colspan="4" class="muted">이력 정보를 불러오는 중...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="section-gap"></div>
+        </section>
+
+        <!-- ─── Portfolio: Dividend Stats ─────────────────────────────────── -->
+        <section class="screen" id="screen-dividend-stats">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Dividend Statistics</h1>
+              <p class="page-desc">지급받은 배당금을 기간별, 계좌별로 분석하고 시각화합니다.</p>
+            </div>
+            <div class="flex-row" style="gap:10px;">
+              <select id="divStatsYear" class="btn" style="padding: 5px 15px;">
+                <option value="2026">2026년</option>
+                <option value="2025">2025년</option>
+                <option value="2024">2024년</option>
+              </select>
+              <button type="button" class="btn" data-action="refreshDividendStats">조회</button>
+            </div>
+          </div>
+
+          <div class="grid cols-3">
+            <div class="card compact">
+              <div class="card-title">연간 총 배당 (세전) <span>gross</span></div>
+              <div class="metric" id="divStatGross">0</div>
+            </div>
+            <div class="card compact">
+              <div class="card-title">연간 납부 세금 <span>tax</span></div>
+              <div class="metric bad" id="divStatTax">0</div>
+            </div>
+            <div class="card compact">
+              <div class="card-title">연간 순 수익 <span>net</span></div>
+              <div class="metric good" id="divStatNet">0</div>
+            </div>
+          </div>
+
+          <div class="grid cols-2" style="margin-top:20px;">
+            <!-- 월별 배당 차트 -->
+            <div class="card">
+              <div class="card-title">월별 배당금 추이 <span>Monthly Trend</span></div>
+              <div id="dividendMonthlyChartContainer" style="height: 300px; display: flex; align-items: flex-end; gap: 10px; padding: 20px 0;">
+                <!-- JS에서 막대 그래프 생성 예정 -->
+                <div class="muted" style="width:100%; text-align:center;">데이터를 분석 중입니다...</div>
+              </div>
+            </div>
+
+            <!-- 계좌별 배당 비중 -->
+            <div class="card">
+              <div class="card-title">계좌별 수령 비중 <span>By Account</span></div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>금융사</th><th>계좌번호</th><th>누적 순수익</th><th>비중</th></tr>
+                  </thead>
+                  <tbody id="divStatAccountTableBody">
+                    <tr><td colspan="4" class="muted">데이터 없음</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="section-gap"></div>
+        </section>
+
         <div class="footerbar">
           <div>Last update: <span id="lastUpdate">-</span></div>
           <div id="consoleFooterNote">Prototype v1.0 · 실제 주문 기능 없음 · Python backend API 연결 전 단계</div>
@@ -1689,6 +1859,8 @@
   <script src="/static/js/screens/console-statistics.js"></script>
   <script src="/static/js/screens/console-daily-plan.js"></script>
   <script src="/static/js/screens/console-expert-knowledge.js"></script>
+  <script src="/static/js/screens/console-dividends.js"></script>
+  <script src="/static/js/screens/console-dividend-stats.js"></script>
   <script src="/static/js/console-navigation.js"></script>
   <script src="/static/js/console-actions.js"></script>
   <script src="/static/js/console-events.js"></script>

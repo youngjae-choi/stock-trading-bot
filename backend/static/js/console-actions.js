@@ -47,6 +47,8 @@
       loadDataAndApi: function() { return loadDataAndApi(); },
       loadDataApiLogs: function() { return loadDataApiLogs(); },
       loadReviewAuditScreen: function() { return loadReviewAuditScreen(); },
+      refreshDividends: function() { return refreshDividends(); },
+      refreshDividendStats: function() { return refreshDividendStats(); },
       runReviewAudit: function() { return runReviewAudit(); },
       openReviewDetailModal: function() { return openReviewDetailModal(); },
       closeReviewDetailModal: function() { return closeReviewDetailModal(); },

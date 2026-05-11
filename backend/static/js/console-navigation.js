@@ -92,6 +92,13 @@
       loadReviewAuditScreen();
     }
 
+    if (name === "dividends") {
+      refreshDividends();
+    }
+    if (name === "dividend-stats") {
+      refreshDividendStats();
+    }
+
     if (name === "statistics") {
       loadStatistics();
       loadAllOrders();
