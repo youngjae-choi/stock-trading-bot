@@ -49,10 +49,10 @@ def _ensure_table() -> None:
 
 
 def _build_prompt(
-    candidates_30: list[dict],
-    market_tone: dict | None,
-    memories: list[dict] | None = None,
-    knowledge_items: list[dict] | None = None,
+    candidates_30: list[dict[str, Any]],
+    market_tone: dict[str, Any] | None,
+    memories: list[dict[str, Any]] | None = None,
+    knowledge_items: list[dict[str, Any]] | None = None,
 ) -> str:
     """스크리닝 프롬프트를 빌드한다.
 
@@ -104,6 +104,19 @@ def _build_prompt(
         },
     )
     return prompt
+
+
+def _build_universe_context(universe: dict[str, Any] | None) -> dict[str, Any]:
+    """S4 no_universe 원인 분석에 필요한 S3 결과 요약만 안전하게 만든다."""
+    items = universe.get("items", []) if universe else []
+    if not isinstance(items, list):
+        items = []
+    return {
+        "universe_present": universe is not None,
+        "raw_count": int(universe.get("raw_count") or 0) if universe else 0,
+        "filtered_count": int(universe.get("filtered_count") or 0) if universe else 0,
+        "items_count": len(items),
+    }
 
 
 def _parse_screening_response(raw: str) -> dict[str, Any]:
@@ -254,7 +267,15 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
     # S3 유니버스 필터 결과 조회
     universe = get_today_universe(today)
     if universe is None or not universe.get("items"):
-        logger.warning("WARN: HybridScreening S3 결과 없음 — 스크리닝 생략 trade_date=%s", today)
+        universe_context = _build_universe_context(universe)
+        logger.warning(
+            "WARN: HybridScreening S3 결과 없음 — 스크리닝 생략 trade_date=%s universe_present=%s raw_count=%d filtered_count=%d items_count=%d",
+            today,
+            universe_context["universe_present"],
+            universe_context["raw_count"],
+            universe_context["filtered_count"],
+            universe_context["items_count"],
+        )
         record_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         try:
@@ -274,7 +295,7 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
                 status="failed",
                 result_ref_id=record_id,
                 message=f"save_failed: {exc}",
-                metadata={"trigger_source": safe_source},
+                metadata={"trigger_source": safe_source, "universe_context": universe_context},
             )
             logger.error("FAIL: HybridScreeningService no-universe save failed trade_date=%s reason=%s", today, exc)
             raise
@@ -291,7 +312,12 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
             status="skipped",
             result_ref_id=record_id,
             message="no_universe",
-            metadata={"trigger_source": safe_source},
+            metadata={
+                "trigger_source": safe_source,
+                "universe_context": universe_context,
+                "memory_count": len(memories),
+                "knowledge_count": len(knowledge_items),
+            },
         )
         return {
             "ok": True,
@@ -350,8 +376,8 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
         raise
 
     # LLM 응답 파싱
-    candidates: list = []
-    skipped: list = []
+    candidates: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
     entry_rules: dict[str, Any] = {}
     overall_confidence = 0.0
 

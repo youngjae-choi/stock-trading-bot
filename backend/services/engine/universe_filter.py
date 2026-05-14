@@ -67,11 +67,11 @@ def _ensure_table() -> None:
 # ---------------------------------------------------------------------------
 
 def _merge_and_deduplicate(
-    volume_items: list[dict],
-    trade_items: list[dict],
-) -> list[dict]:
+    volume_items: list[dict[str, Any]],
+    trade_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """거래량 순위와 거래대금 순위를 병합하고 중복을 제거한다."""
-    merged: dict[str, dict] = {}
+    merged: dict[str, dict[str, Any]] = {}
 
     for idx, item in enumerate(volume_items):
         sym = item.get("symbol", "")
@@ -110,7 +110,7 @@ def _merge_and_deduplicate(
     return list(merged.values())
 
 
-def _apply_filters(items: list[dict]) -> list[dict]:
+def _apply_filters(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """상한가/하한가, 가격/거래량 0 종목을 제거한다."""
     result = []
     for item in items:
@@ -123,6 +123,39 @@ def _apply_filters(items: list[dict]) -> list[dict]:
             continue
         result.append(item)
     return result
+
+
+def _count_filter_rejections(items: list[dict[str, Any]]) -> dict[str, int]:
+    """필터 동작을 바꾸지 않고 S3 탈락 사유만 집계한다."""
+    counts = {
+        "limit_change_rate": 0,
+        "invalid_price": 0,
+        "empty_liquidity": 0,
+    }
+    for item in items:
+        change = abs(item.get("change_rate", 0.0))
+        if change >= _CHANGE_RATE_LIMIT:
+            counts["limit_change_rate"] += 1
+            continue
+        if item.get("price", 0) <= 0:
+            counts["invalid_price"] += 1
+            continue
+        if item.get("volume", 0) <= 0 and item.get("trade_amount", 0) <= 0:
+            counts["empty_liquidity"] += 1
+            continue
+    return counts
+
+
+def _sample_symbols(items: list[dict[str, Any]], limit: int = 5) -> list[str]:
+    """로그/audit에 안전하게 남길 종목 코드 샘플만 추출한다."""
+    symbols: list[str] = []
+    for item in items:
+        symbol = str(item.get("symbol") or item.get("ticker") or "").strip()
+        if symbol:
+            symbols.append(symbol)
+        if len(symbols) >= limit:
+            break
+    return symbols
 
 
 _TONE_WEIGHTS: dict[str, dict[str, float]] = {
@@ -159,7 +192,7 @@ def _get_tone_weights(trade_date: str) -> tuple[dict[str, float], str]:
         return _DEFAULT_WEIGHTS, "fallback"
 
 
-def _apply_memory_adjustments(weights: dict[str, float], memories: list[dict]) -> dict[str, float]:
+def _apply_memory_adjustments(weights: dict[str, float], memories: list[dict[str, Any]]) -> dict[str, float]:
     """S3 learning memories 기반으로 유니버스 필터 점수 가중치를 미세 조정한다.
 
     Args:
@@ -181,7 +214,7 @@ def _apply_memory_adjustments(weights: dict[str, float], memories: list[dict]) -
     return adjusted
 
 
-def _score_and_rank(items: list[dict], total: int, weights: dict[str, float]) -> list[dict]:
+def _score_and_rank(items: list[dict[str, Any]], total: int, weights: dict[str, float]) -> list[dict[str, Any]]:
     """정량 점수를 계산하고 내림차순으로 정렬한다.
 
     점수 = 거래대금 순위 점수 * trade_w + 거래량 순위 점수 * volume_w + 등락률 점수 * change_w
@@ -261,11 +294,27 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
     weights, tone_used = _get_tone_weights(today)
     weights = _apply_memory_adjustments(weights, memories)
 
-    raw_count = len(volume_items) + len(trade_items)
+    raw_split_counts = {"volume": len(volume_items), "trade_amount": len(trade_items)}
+    raw_count = raw_split_counts["volume"] + raw_split_counts["trade_amount"]
     merged = _merge_and_deduplicate(volume_items, trade_items)
+    rejection_counts = _count_filter_rejections(merged)
     filtered = _apply_filters(merged)
     ranked = _score_and_rank(filtered, total=len(merged), weights=weights)
     top_n = ranked[:_TOP_N_RESULT]
+    diagnostic_context = {
+        "raw_split_counts": raw_split_counts,
+        "raw_count": raw_count,
+        "merged_count": len(merged),
+        "filtered_count": len(filtered),
+        "top_n": len(top_n),
+        "rejection_reason_counts": rejection_counts,
+        "sample_symbols": {
+            "volume": _sample_symbols(volume_items),
+            "trade_amount": _sample_symbols(trade_items),
+            "merged": _sample_symbols(merged),
+            "filtered": _sample_symbols(filtered),
+        },
+    }
 
     # DB 저장
     record_id = str(uuid.uuid4())
@@ -291,7 +340,11 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
         "ok": True,
         "trade_date": today,
         "raw_count": raw_count,
+        "raw_split_counts": raw_split_counts,
+        "merged_count": len(merged),
         "filtered_count": len(filtered),
+        "rejection_reason_counts": rejection_counts,
+        "sample_symbols": diagnostic_context["sample_symbols"],
         "result_count": len(top_n),
         "tone_used": tone_used,
         "weights_used": weights,
@@ -303,15 +356,30 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
         "id": record_id,
     }
     logger.info(
-        "SUCCESS: UniverseFilter trade_date=%s tone=%s raw=%d filtered=%d top_n=%d memories=%d knowledge=%d",
-        today, tone_used, raw_count, len(filtered), len(top_n), len(memories), len(knowledge_items),
+        "SUCCESS: UniverseFilter trade_date=%s tone=%s raw_volume=%d raw_trade=%d raw=%d merged=%d filtered=%d top_n=%d rejections=%s samples=%s memories=%d knowledge=%d",
+        today,
+        tone_used,
+        raw_split_counts["volume"],
+        raw_split_counts["trade_amount"],
+        raw_count,
+        len(merged),
+        len(filtered),
+        len(top_n),
+        rejection_counts,
+        diagnostic_context["sample_symbols"],
+        len(memories),
+        len(knowledge_items),
     )
     finish_pipeline_run(
         run_id=run_audit_id,
         status="success",
         result_ref_id=record_id,
         message=f"raw={raw_count} filtered={len(filtered)} top_n={len(top_n)}",
-        metadata={"tone_used": tone_used, "trigger_source": safe_source},
+        metadata={
+            "tone_used": tone_used,
+            "trigger_source": safe_source,
+            "diagnostic_context": diagnostic_context,
+        },
     )
     return result
 
