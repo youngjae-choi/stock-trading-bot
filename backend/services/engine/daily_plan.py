@@ -49,10 +49,10 @@ def _today_kst() -> str:
 
 
 def _build_prompt(
-    candidates: list[dict],
-    market_tone_data: dict | None,
-    memories: list[dict] | None = None,
-    knowledge_items: list[dict] | None = None,
+    candidates: list[dict[str, Any]],
+    market_tone_data: dict[str, Any] | None,
+    memories: list[dict[str, Any]] | None = None,
+    knowledge_items: list[dict[str, Any]] | None = None,
 ) -> str:
     """Build the S5 Daily Plan prompt from candidates, market tone, and learning memories.
 
@@ -153,6 +153,26 @@ def _validate_plan(plan_data: dict[str, Any]) -> dict[str, str]:
     return result
 
 
+def _summarize_validation(validation: dict[str, str]) -> dict[str, Any]:
+    """Daily Plan 검증 결과를 audit/log용 짧은 요약으로 변환한다."""
+    failed = {key: value for key, value in validation.items() if value != "pass"}
+    return {
+        "passed_count": len(validation) - len(failed),
+        "failed_count": len(failed),
+        "failed_checks": failed,
+    }
+
+
+def _plan_count_context(plan_data: dict[str, Any]) -> dict[str, int]:
+    """Daily Plan 후보 배정/제외 개수를 안전하게 계산한다."""
+    assignments = plan_data.get("symbol_assignments", [])
+    excluded = plan_data.get("excluded_symbols", [])
+    return {
+        "assignments_count": len(assignments) if isinstance(assignments, list) else 0,
+        "excluded_count": len(excluded) if isinstance(excluded, list) else 0,
+    }
+
+
 def get_today_daily_plan(trade_date: str | None = None) -> dict[str, Any] | None:
     """오늘 활성 Daily Trading Plan 조회."""
     if not trade_date:
@@ -190,7 +210,7 @@ def get_today_daily_plan(trade_date: str | None = None) -> dict[str, Any] | None
     return d
 
 
-async def _auto_validate_and_activate(plan_id: str, trade_date: str, plan_data: dict) -> tuple[str, str]:
+async def _auto_validate_and_activate(plan_id: str, trade_date: str, plan_data: dict[str, Any]) -> tuple[str, str]:
     """생성 직후 자동 검증 후 검증 통과 시 자동 active 처리."""
     validation = _validate_plan(plan_data)
     all_pass = all(v == "pass" for v in validation.values())
@@ -336,6 +356,15 @@ async def run_daily_plan_generation(
         used_memory_ids = [m["memory_id"] for m in memories]
         knowledge_items = get_active_knowledge(scope="S5_DAILY_PLAN")
         used_knowledge_ids = [k["id"] for k in knowledge_items]
+        market_tone_label = market_tone.get("tone", "neutral") if market_tone else "neutral"
+        logger.info(
+            "START: [S5] Daily Plan inputs trade_date=%s candidates=%d market_tone=%s memories=%d knowledge=%d",
+            trade_date,
+            len(candidates),
+            market_tone_label,
+            len(memories),
+            len(knowledge_items),
+        )
     except Exception as exc:
         finish_pipeline_run(
             run_id=run_audit_id,
@@ -401,6 +430,8 @@ async def run_daily_plan_generation(
 
     # 검증 결과는 저장하되, 상태 전환은 자동 파이프라인에서 수행한다.
     validation = _validate_plan(plan_data)
+    validation_summary = _summarize_validation(validation)
+    count_context = _plan_count_context(plan_data)
     status = "generated"
 
     plan_id = f"daily-{trade_date}"
@@ -468,6 +499,15 @@ async def run_daily_plan_generation(
             )
             logger.error("FAIL: [S5] Daily Plan auto validation failed plan_id=%s reason=%s", plan_id, exc)
             raise
+    if status == "validation_failed":
+        logger.warning(
+            "WARN: [S5] Daily Plan validation_failed plan_id=%s assignments=%d excluded=%d validation=%s summary=%s",
+            plan_id,
+            count_context["assignments_count"],
+            count_context["excluded_count"],
+            validation,
+            validation_summary,
+        )
 
     try:
         history_id = _save_plan_run_history(
@@ -496,7 +536,19 @@ async def run_daily_plan_generation(
         logger.error("FAIL: [S5] Daily Plan history save failed plan_id=%s reason=%s", plan_id, exc)
         raise
 
-    logger.info("SUCCESS: [S5] Daily Plan saved id=%s status=%s provider=%s", plan_id, status, provider)
+    logger.info(
+        "SUCCESS: [S5] Daily Plan saved id=%s status=%s provider=%s candidates=%d market_tone=%s memories=%d knowledge=%d assignments=%d excluded=%d validation_summary=%s",
+        plan_id,
+        status,
+        provider,
+        len(candidates),
+        market_tone_label,
+        len(memories),
+        len(knowledge_items),
+        count_context["assignments_count"],
+        count_context["excluded_count"],
+        validation_summary,
+    )
     finish_pipeline_run(
         run_id=run_audit_id,
         status="success",
@@ -507,7 +559,14 @@ async def run_daily_plan_generation(
             "creation_mode": creation_mode,
             "created_by": created_by,
             "trigger_source": safe_source,
-            "assignments_count": len(plan_data.get("symbol_assignments", [])),
+            "candidates_count": len(candidates),
+            "market_tone": market_tone_label,
+            "memory_count": len(memories),
+            "knowledge_count": len(knowledge_items),
+            "assignments_count": count_context["assignments_count"],
+            "excluded_count": count_context["excluded_count"],
+            "validation_summary": validation_summary,
+            "validation_result": validation,
             "history_id": history_id,
         },
     )
@@ -526,5 +585,5 @@ async def run_daily_plan_generation(
         "used_knowledge_ids": used_knowledge_ids,
         "knowledge_count": len(knowledge_items),
         "candidates_count": len(candidates),
-        "assignments_count": len(plan_data.get("symbol_assignments", [])),
+        "assignments_count": count_context["assignments_count"],
     }

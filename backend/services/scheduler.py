@@ -8,6 +8,7 @@ S2~S13 단계에서 placeholder job들이 실 구현으로 교체된다.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from typing import Any, Awaitable, Callable
@@ -520,6 +521,72 @@ def _get_active_daily_plan_for_s6() -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def _summarize_daily_plan_validation(raw_validation: str | None) -> dict[str, Any]:
+    """S6 차단 로그에 사용할 Daily Plan 검증 결과 요약을 만든다."""
+    try:
+        validation = json.loads(raw_validation or "{}")
+    except Exception:
+        validation = {}
+    if not isinstance(validation, dict):
+        validation = {}
+    failed = {key: value for key, value in validation.items() if value != "pass"}
+    return {
+        "passed_count": len(validation) - len(failed),
+        "failed_count": len(failed),
+        "failed_checks": failed,
+    }
+
+
+def _get_latest_daily_plan_context_for_s6() -> dict[str, Any]:
+    """S6 blocked 원인 분석용 최신 Daily Plan 상태를 조회한다."""
+    from .db import get_connection
+
+    today = _today_kst()
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT id, status, validation_result, created_at, activated_at, validated_at
+            FROM daily_trading_plans
+            WHERE trade_date = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (today,),
+        ).fetchone()
+    if row is None:
+        return {"plan_present": False, "trade_date": today}
+    plan = dict(row)
+    return {
+        "plan_present": True,
+        "trade_date": today,
+        "id": plan.get("id", ""),
+        "status": plan.get("status", ""),
+        "validation_summary": _summarize_daily_plan_validation(plan.get("validation_result")),
+        "created_at": plan.get("created_at", ""),
+        "activated_at": plan.get("activated_at", ""),
+        "validated_at": plan.get("validated_at", ""),
+    }
+
+
+def _get_recent_pre_s6_audit_context() -> list[dict[str, Any]]:
+    """최근 S3/S4/S5 audit 메시지를 S6 blocked metadata에 넣을 안전한 요약으로 조회한다."""
+    from .db import get_connection
+
+    today = _today_kst()
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT step, status, message, result_ref_id, started_at, finished_at
+            FROM pipeline_run_audit
+            WHERE trade_date = ? AND step IN ('S3', 'S4', 'S5')
+            ORDER BY started_at DESC
+            LIMIT 9
+            """,
+            (today,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 async def job_trade_preparation_pipeline() -> None:
     """Run S1 through S5-A sequentially from one trade-preparation schedule key."""
     logger.info("START: [TradePrep] S1~S5-A 거래준비 프로세스")
@@ -606,10 +673,25 @@ async def job_decision_engine_start() -> None:
     try:
         active_plan = _get_active_daily_plan_for_s6()
         if not active_plan:
-            metadata = {"pipeline": "decision_engine_start", "trade_date": _today_kst(), "required_status": "active"}
+            latest_plan_context = _get_latest_daily_plan_context_for_s6()
+            recent_audit_context = _get_recent_pre_s6_audit_context()
+            metadata = {
+                "pipeline": "decision_engine_start",
+                "trade_date": _today_kst(),
+                "required_status": "active",
+                "latest_daily_plan": latest_plan_context,
+                "recent_s3_s4_s5_audits": recent_audit_context,
+            }
             message = "S6 activation blocked: no active Daily Plan for today"
             _audit_skipped_step("S6", message, metadata, status="blocked")
-            logger.warning("WARN: [Job6] %s", message)
+            logger.warning(
+                "WARN: [Job6] %s latest_plan_id=%s latest_plan_status=%s validation_summary=%s recent_audits=%s",
+                message,
+                latest_plan_context.get("id", ""),
+                latest_plan_context.get("status", "none"),
+                latest_plan_context.get("validation_summary", {}),
+                recent_audit_context,
+            )
             return
 
         from .engine.decision_engine import decision_engine
