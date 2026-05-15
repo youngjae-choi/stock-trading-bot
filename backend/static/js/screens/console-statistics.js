@@ -1,9 +1,12 @@
   var stAllItems = [];
   var stFilter = "today";
+  var stCurrentOrders = [];
+  var stCurrentPage = 1;
+  var ST_PAGE_SIZE = 20;
 
   function setStatsFilter(filter) {
     stFilter = filter;
-    ["today", "week", "all", "month", "lastmonth"].forEach(function(f) {
+    ["today", "week", "all", "month", "lastmonth", "range"].forEach(function(f) {
       var btn = document.getElementById("sf-" + f);
       if (btn) btn.className = "btn" + (f === filter ? " primary" : "");
     });
@@ -109,6 +112,11 @@
           todayStr = lmEnd.getFullYear() + "-" + String(lmEnd.getMonth() + 1).padStart(2, "0") + "-" + String(lmEnd.getDate()).padStart(2, "0");
         } else if (stFilter === "all") {
           startStr = "2020-01-01";
+        } else if (stFilter === "range") {
+          var rsEl = document.getElementById("sf-range-start");
+          var reEl = document.getElementById("sf-range-end");
+          startStr = (rsEl && rsEl.value) ? rsEl.value : "2020-01-01";
+          todayStr = (reEl && reEl.value) ? reEl.value : todayStr;
         }
         var rangeResponse = await fetchJson("/api/v1/orders/range?start=" + startStr + "&end=" + todayStr + "&limit=500");
         orders = (rangeResponse && rangeResponse.payload && rangeResponse.payload.orders) || [];
@@ -121,9 +129,11 @@
         orders = orders.filter(function(o) { return (o.trade_date || (o.created_at || "").slice(0, 10) || todayStr) === todayStr; });
       }
 
-      var filterLabel = { today: "오늘", week: "이번주", month: "이번달", lastmonth: "지난달", all: "전체" };
+      var filterLabel = { today: "오늘", week: "이번주", month: "이번달", lastmonth: "지난달", all: "전체", range: "기간검색" };
       if (title) title.textContent = (filterLabel[stFilter] || "") + " 주문 내역";
 
+      stCurrentOrders = orders;
+      stCurrentPage = 1;
       renderOrdersTable(orders, "데이터 없음: 해당 기간 주문 이벤트 없음");
     } catch (e) {
       console.error("[ERROR]", "loadAllOrders", "-", e.message);
@@ -137,10 +147,17 @@
     if (!tbody) return;
     if (!orders || orders.length === 0) {
       tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">' + escapeHtml(emptyMessage || "주문 없음") + '</td></tr>';
+      renderPagination(0);
       return;
     }
 
-    tbody.innerHTML = orders.map(function(o) {
+    var totalPages = Math.ceil(orders.length / ST_PAGE_SIZE);
+    if (stCurrentPage > totalPages) stCurrentPage = totalPages;
+    if (stCurrentPage < 1) stCurrentPage = 1;
+    var start = (stCurrentPage - 1) * ST_PAGE_SIZE;
+    var pageOrders = orders.slice(start, start + ST_PAGE_SIZE);
+
+    tbody.innerHTML = pageOrders.map(function(o) {
       var rawSide = o.side || o.action || "buy";
       var side = rawSide === "buy" ? '<span class="status ok">매수</span>' : '<span class="status warn">매도</span>';
       var statusMap = { executed: "체결", filled: "체결", completed: "체결", pending: "대기", submitted: "접수", failed: "실패", cancelled: "취소" };
@@ -161,9 +178,32 @@
         + '<td>' + (price ? Number(price).toLocaleString() + "원" : "-") + '</td>'
         + '<td><span class="status ' + statusCls + '">' + escapeHtml(statusLabel) + '</span></td>'
         + '<td style="font-size:11px; color:' + profileColor + '; font-weight:600;">' + escapeHtml(profile) + '</td>'
-        + '<td style="font-size:11px; color:var(--muted);">' + escapeHtml(o.exit_reason || '-') + '</td>'
+        + '<td style="font-size:11px; color:var(--muted);">' + escapeHtml(o.exit_reason || o.reason || '-') + '</td>'
         + '</tr>';
     }).join("");
+
+    renderPagination(orders.length);
+  }
+
+  function renderPagination(totalCount) {
+    var container = document.getElementById("st-pagination");
+    if (!container) return;
+    if (totalCount <= ST_PAGE_SIZE) {
+      container.innerHTML = '';
+      return;
+    }
+    var totalPages = Math.ceil(totalCount / ST_PAGE_SIZE);
+    var html = '<div style="display:flex; gap:6px; align-items:center; justify-content:center; padding:12px 0;">';
+    html += '<button type="button" class="btn" ' + (stCurrentPage <= 1 ? 'disabled' : '') + ' onclick="stGoPage(' + (stCurrentPage - 1) + ')">이전</button>';
+    html += '<span style="color:var(--muted); font-size:13px;">' + stCurrentPage + ' / ' + totalPages + '페이지 (총 ' + totalCount + '건)</span>';
+    html += '<button type="button" class="btn" ' + (stCurrentPage >= totalPages ? 'disabled' : '') + ' onclick="stGoPage(' + (stCurrentPage + 1) + ')">다음</button>';
+    html += '</div>';
+    container.innerHTML = html;
+  }
+
+  function stGoPage(page) {
+    stCurrentPage = page;
+    renderOrdersTable(stCurrentOrders);
   }
 
   async function loadStatisticsDetail(tradeDate) {
@@ -181,7 +221,9 @@
       var p = data.payload || {};
       var orders = p.orders || [];
       var signals = p.signals || [];
-      renderOrdersTable(orders.concat(signals), "해당 날짜 주문 없음");
+      stCurrentOrders = orders.concat(signals);
+      stCurrentPage = 1;
+      renderOrdersTable(stCurrentOrders, "해당 날짜 주문 없음");
     } catch (e) {
       console.error("[ERROR]", "loadStatisticsDetail", "-", e.message);
       if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>';

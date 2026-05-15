@@ -137,7 +137,7 @@
       var url = dateStr ? '/api/v1/review-audit/' + encodeURIComponent(dateStr) : '/api/v1/review-audit/today';
       var res = await fetch(url);
       var data = await res.json();
-      var report = data.payload || (data.ok ? data : null);
+      var report = (data.payload && typeof data.payload === 'object') ? data.payload : null;
 
       if (!res.ok || !report) {
         _raCurrentReport = null;

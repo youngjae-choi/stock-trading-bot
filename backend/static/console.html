@@ -1245,14 +1245,20 @@
             <button type="button" class="btn" data-action="loadAllOrders">새로고침</button>
           </div>
 
-          <div style="display:flex; gap:8px; margin-bottom:16px; align-items:center; flex-wrap:wrap;">
+          <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center; flex-wrap:wrap;">
             <span style="color:var(--muted); font-size:13px;">기간:</span>
             <button type="button" class="btn primary" id="sf-today" data-action="setStatsFilter" data-filter="today">오늘</button>
             <button type="button" class="btn" id="sf-week" data-action="setStatsFilter" data-filter="week">이번주</button>
             <button type="button" class="btn" id="sf-month" data-action="setStatsFilter" data-filter="month">이번달</button>
             <button type="button" class="btn" id="sf-lastmonth" data-action="setStatsFilter" data-filter="lastmonth">지난달</button>
             <button type="button" class="btn" id="sf-all" data-action="setStatsFilter" data-filter="all">전체</button>
-            <input type="date" id="sf-date" style="padding:5px; border-radius:5px; background:var(--panel-2); color:var(--text); border:1px solid var(--line);" data-action="loadStatisticsDetail">
+          </div>
+          <div style="display:flex; gap:8px; margin-bottom:16px; align-items:center; flex-wrap:wrap;">
+            <span style="color:var(--muted); font-size:13px;">직접입력:</span>
+            <input type="date" id="sf-range-start" style="padding:5px; border-radius:5px; background:var(--panel-2); color:var(--text); border:1px solid var(--line);">
+            <span style="color:var(--muted); font-size:13px;">~</span>
+            <input type="date" id="sf-range-end" style="padding:5px; border-radius:5px; background:var(--panel-2); color:var(--text); border:1px solid var(--line);">
+            <button type="button" class="btn" id="sf-range" data-action="setStatsFilter" data-filter="range">기간검색</button>
           </div>
 
           <div class="card">
@@ -1280,6 +1286,7 @@
                 </tbody>
               </table>
             </div>
+            <div id="st-pagination"></div>
           </div>
 
         </section>
