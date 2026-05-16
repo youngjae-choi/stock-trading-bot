@@ -10,6 +10,13 @@ from ..common.client import kis_client
 
 logger = logging.getLogger("KISUniverseService")
 
+_SYMBOL_KEYS = ("mksc_shrn_iscd", "stck_shrn_iscd", "pdno", "symbol", "code")
+_NAME_KEYS = ("hts_kor_isnm", "stck_kor_isnm", "prdt_name", "name")
+_PRICE_KEYS = ("stck_prpr", "stck_prc", "prpr", "now_prc", "price")
+_CHANGE_RATE_KEYS = ("prdy_ctrt", "prdy_vrss_rate", "fluctuation_rate", "change_rate")
+_VOLUME_KEYS = ("acml_vol", "acc_trdvol", "cntg_vol", "vol", "volume")
+_TRADE_AMOUNT_KEYS = ("acml_tr_pbmn", "acc_trdval", "tr_pbmn", "trade_amount", "turnover", "stck_avls")
+
 
 def _clamp_top_n(top_n: int) -> int:
     if top_n <= 0:
@@ -38,6 +45,16 @@ def _pick(row: Dict[str, Any], *keys: str, default: Any = None) -> Any:
         if key in row and row.get(key) not in (None, ""):
             return row.get(key)
     return default
+
+
+def _pick_int(row: Dict[str, Any], keys: tuple[str, ...]) -> int:
+    """KIS ranking 응답의 유사 숫자 필드 중 첫 유효값을 정수로 변환한다."""
+    return _to_int(_pick(row, *keys, default=0))
+
+
+def _pick_float(row: Dict[str, Any], keys: tuple[str, ...]) -> float:
+    """KIS ranking 응답의 유사 숫자 필드 중 첫 유효값을 실수로 변환한다."""
+    return _to_float(_pick(row, *keys, default=0.0))
 
 
 def _extract_rows(payload: Dict[str, Any]) -> list[Dict[str, Any]]:
@@ -78,7 +95,7 @@ async def get_volume_rank(market_code: str = "J", top_n: int = 100) -> Dict[str,
             },
         )
         for row in _extract_rows(payload):
-            sym = str(_pick(row, "mksc_shrn_iscd", "stck_shrn_iscd", "pdno", "symbol", default=""))
+            sym = str(_pick(row, *_SYMBOL_KEYS, default=""))
             if sym and sym not in seen_symbols:
                 seen_symbols.add(sym)
                 raw_rows.append(row)
@@ -91,11 +108,11 @@ async def get_volume_rank(market_code: str = "J", top_n: int = 100) -> Dict[str,
         items.append(
             {
                 "rank": idx,
-                "symbol": str(_pick(row, "mksc_shrn_iscd", "stck_shrn_iscd", "pdno", "symbol", default="")),
-                "name": str(_pick(row, "hts_kor_isnm", "stck_kor_isnm", "name", default="")),
-                "volume": _to_int(_pick(row, "acml_vol", "volume", default=0)),
-                "price": _to_int(_pick(row, "stck_prpr", "price", default=0)),
-                "change_rate": _to_float(_pick(row, "prdy_ctrt", "change_rate", default=0.0)),
+                "symbol": str(_pick(row, *_SYMBOL_KEYS, default="")),
+                "name": str(_pick(row, *_NAME_KEYS, default="")),
+                "volume": _pick_int(row, _VOLUME_KEYS),
+                "price": _pick_int(row, _PRICE_KEYS),
+                "change_rate": _pick_float(row, _CHANGE_RATE_KEYS),
             }
         )
 
@@ -176,14 +193,17 @@ async def get_price_rank(
             )
             segment_rows = [await _fetch_rows("J", "0")]
         else:
-            segment_rows = [parallel_results[0], parallel_results[1]]
+            segment_rows = [
+                result for result in parallel_results
+                if isinstance(result, list)
+            ]
     else:
         mrkt_map = {"J": "J", "STK": "STK", "KSQ": "KSQ"}
         segment_rows = [await _fetch_rows(mrkt_map.get(market_code, "J"), "0")]
 
     for rows in segment_rows:
         for row in rows:
-            sym = str(_pick(row, "mksc_shrn_iscd", "stck_shrn_iscd", "pdno", "symbol", default=""))
+            sym = str(_pick(row, *_SYMBOL_KEYS, default=""))
             if sym and sym not in seen_symbols:
                 seen_symbols.add(sym)
                 raw_rows.append(row)
@@ -197,11 +217,11 @@ async def get_price_rank(
         items.append(
             {
                 "rank": idx,
-                "symbol": str(_pick(row, "mksc_shrn_iscd", "stck_shrn_iscd", "pdno", "symbol", default="")),
-                "name": str(_pick(row, "hts_kor_isnm", "stck_kor_isnm", "name", default="")),
-                "price": _to_int(_pick(row, "stck_prpr", "price", default=0)),
-                "change_rate": _to_float(_pick(row, "prdy_ctrt", "change_rate", default=0.0)),
-                "trade_amount": _to_int(_pick(row, "acml_tr_pbmn", "stck_avls", "trade_amount", default=0)),
+                "symbol": str(_pick(row, *_SYMBOL_KEYS, default="")),
+                "name": str(_pick(row, *_NAME_KEYS, default="")),
+                "price": _pick_int(row, _PRICE_KEYS),
+                "change_rate": _pick_float(row, _CHANGE_RATE_KEYS),
+                "trade_amount": _pick_int(row, _TRADE_AMOUNT_KEYS),
             }
         )
 

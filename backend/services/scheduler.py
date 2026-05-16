@@ -37,6 +37,53 @@ def _today_kst_compact() -> str:
     return datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
 
 
+def _hhmm_to_minutes(value: str) -> int | None:
+    """HH:MM 문자열을 자정 기준 분으로 변환한다."""
+    try:
+        hour_text, minute_text = str(value).split(":", maxsplit=1)
+        hour = int(hour_text)
+        minute = int(minute_text)
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            return None
+        return hour * 60 + minute
+    except Exception:
+        return None
+
+
+def _minutes_to_hhmm(value: int) -> str:
+    """자정 기준 분 값을 HH:MM 문자열로 변환한다."""
+    bounded = max(0, min(value, 23 * 60 + 59))
+    return f"{bounded // 60:02d}:{bounded % 60:02d}"
+
+
+def _apply_market_open_schedule_guards(schedule_times: dict[str, str]) -> dict[str, str]:
+    """장 시작 전 랭킹 데이터로 S3가 비는 것을 막기 위해 실행 시간을 보정한다."""
+    guarded = dict(schedule_times)
+    min_trade_prep = 9 * 60 + 1
+    min_s6 = 9 * 60 + 10
+
+    trade_prep_minutes = _hhmm_to_minutes(guarded.get("trade_prep", ""))
+    if trade_prep_minutes is not None and trade_prep_minutes < min_trade_prep:
+        logger.warning(
+            "WARN: Scheduler trade_prep time before market data readiness value=%s effective=%s",
+            guarded["trade_prep"],
+            _minutes_to_hhmm(min_trade_prep),
+        )
+        guarded["trade_prep"] = _minutes_to_hhmm(min_trade_prep)
+        trade_prep_minutes = min_trade_prep
+
+    s6_minutes = _hhmm_to_minutes(guarded.get("s6", ""))
+    required_s6 = max(min_s6, (trade_prep_minutes or min_trade_prep) + 5)
+    if s6_minutes is not None and s6_minutes < required_s6:
+        logger.warning(
+            "WARN: Scheduler S6 time before Daily Plan readiness value=%s effective=%s",
+            guarded["s6"],
+            _minutes_to_hhmm(required_s6),
+        )
+        guarded["s6"] = _minutes_to_hhmm(required_s6)
+    return guarded
+
+
 def _set_schedule_skip_today(*, skip: bool, description: str, actor: str) -> None:
     """Persist the scheduler skip flag with the standard safety description.
 
@@ -924,6 +971,7 @@ def _build_scheduler() -> AsyncIOScheduler:
         logger.info("INFO: Scheduler 시간 로드 times=%s", schedule_times)
     except Exception as exc:
         logger.warning("WARN: Scheduler settings 로드 실패 — 기본값 사용 reason=%s", exc)
+    schedule_times = _apply_market_open_schedule_guards(schedule_times)
 
     def _parse_time(setting_key: str) -> tuple[int, int]:
         """Parse HH:MM scheduler settings, falling back to the built-in default on invalid values."""

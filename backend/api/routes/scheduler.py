@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
@@ -24,8 +24,8 @@ router = APIRouter(prefix="/api/v1/scheduler", tags=["scheduler"])
 
 @router.get("/status")
 async def get_scheduler_status(
-    _user: Annotated[dict, Depends(require_console_user)],
-) -> dict:
+    _user: Annotated[dict[str, Any], Depends(require_console_user)],
+) -> dict[str, Any]:
     """등록된 스케줄 job 목록과 스케줄러 실행 상태를 반환한다.
 
     Returns:
@@ -58,7 +58,14 @@ async def get_scheduler_status(
         last_run_status = None
         try:
             runs = get_recent_pipeline_runs(today, limit=20)
-            last_s1 = next((row for row in runs if str(row.get("step_id") or "") == "s1"), None)
+            last_s1 = next(
+                (
+                    row for row in runs
+                    if str(row.get("step_id") or "").lower() == "s1"
+                    or str(row.get("step") or "").upper() == "S1"
+                ),
+                None,
+            )
             if last_s1:
                 last_run = last_s1.get("finished_at_kst") or last_s1.get("started_at_kst") or last_s1.get("finished_at") or last_s1.get("started_at")
                 last_run_step = last_s1.get("step")

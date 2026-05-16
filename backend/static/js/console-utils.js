@@ -147,6 +147,12 @@
     if (scheduleSkipped && isScheduleSkippedStep(stepId)) {
       return { status: "skipped", text: "비거래일 스킵" };
     }
+    if (stepId === "s1") {
+      var s1Status = response && response.payload ? response.payload.last_run_status : "";
+      if (s1Status === "partial_failed") return { status: "failed", text: "일부 실패" };
+      if (s1Status === "failed") return { status: "failed", text: "실패" };
+      return response && response.ok ? { status: "ok", text: "완료" } : { status: "pending", text: "대기" };
+    }
     if (["s2", "s3", "s4", "s5"].indexOf(stepId) >= 0) {
       var readState = getPipelineReadState(stepId, response, false);
       if (readState === "completed") return { status: "ok", text: "완료" };

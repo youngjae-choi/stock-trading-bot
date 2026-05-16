@@ -158,6 +158,19 @@ def _sample_symbols(items: list[dict[str, Any]], limit: int = 5) -> list[str]:
     return symbols
 
 
+def _market_data_readiness_status(merged_count: int, rejection_counts: dict[str, int]) -> str:
+    """S3 후보 0개가 데이터 준비 문제인지 운영자가 볼 수 있게 분류한다."""
+    if merged_count <= 0:
+        return "no_ranking_rows"
+    if rejection_counts.get("empty_liquidity", 0) == merged_count:
+        return "liquidity_not_ready"
+    if rejection_counts.get("invalid_price", 0) == merged_count:
+        return "price_not_ready"
+    if rejection_counts.get("limit_change_rate", 0) == merged_count:
+        return "all_limit_change_rate"
+    return "ready_or_mixed"
+
+
 _TONE_WEIGHTS: dict[str, dict[str, float]] = {
     "positive": {"trade": 0.40, "volume": 0.40, "change": 0.20},
     "neutral":  {"trade": 0.50, "volume": 0.30, "change": 0.20},
@@ -308,6 +321,7 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
         "filtered_count": len(filtered),
         "top_n": len(top_n),
         "rejection_reason_counts": rejection_counts,
+        "data_readiness_status": _market_data_readiness_status(len(merged), rejection_counts),
         "sample_symbols": {
             "volume": _sample_symbols(volume_items),
             "trade_amount": _sample_symbols(trade_items),
@@ -344,6 +358,7 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
         "merged_count": len(merged),
         "filtered_count": len(filtered),
         "rejection_reason_counts": rejection_counts,
+        "data_readiness_status": diagnostic_context["data_readiness_status"],
         "sample_symbols": diagnostic_context["sample_symbols"],
         "result_count": len(top_n),
         "tone_used": tone_used,

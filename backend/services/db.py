@@ -141,7 +141,7 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
             "매수 진입 최대 등락률 % (AI가 이 값 이상으로 설정 불가)",
         ),
         ("risk.emergency_halt_enabled", False, "boolean", "긴급정지 신규 주문 차단 상태"),
-        ("schedule_trade_prep_time", "07:45", "string", "거래준비 프로세스 시작 시간 (S1~S5-A 순차 실행, HH:MM)"),
+        ("schedule_trade_prep_time", "09:01", "string", "거래준비 프로세스 시작 시간 (S1~S5-A 순차 실행, HH:MM)"),
         ("schedule_s1_time", "07:45", "string", "[legacy] S1 개별 실행 시간 - scheduler 등록에는 사용하지 않음"),
         ("schedule_s2_time", "08:00", "string", "[legacy] S2 개별 실행 시간 - schedule_trade_prep_time 사용"),
         ("schedule_s3_time", "08:15", "string", "[legacy] S3 개별 실행 시간 - schedule_trade_prep_time 사용"),
@@ -176,7 +176,7 @@ def _migrate_scheduler_process_settings(connection: sqlite3.Connection) -> None:
     process_defaults = {
         "schedule_trade_prep_time": (
             "schedule_s1_time",
-            "07:45",
+            "09:01",
             "거래준비 프로세스 시작 시간 (S1~S5-A 순차 실행, HH:MM)",
         ),
         "schedule_postprocess_time": (
