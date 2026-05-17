@@ -188,6 +188,22 @@ async def run_daily_summary(trade_date: str | None = None) -> dict[str, Any]:
         trade_date, len(orders), realized_pnl, integrity.get("pnl_status"), integrity.get("pnl_source"),
     )
 
+    # False Positive 자동 생성: 당일 매도 완료된 손실 거래를 탐지해 DB에 저장
+    fp_result: dict[str, Any] = {"ok": False, "error": "skipped"}
+    try:
+        from .false_positive import generate_false_positives_for_date
+        fp_result = generate_false_positives_for_date(trade_date)
+        fp_result["ok"] = True
+        logger.info(
+            "SUCCESS: DailySummary false_positive generated trade_date=%s saved=%d skipped=%d",
+            trade_date,
+            len(fp_result.get("saved", [])),
+            len(fp_result.get("skipped", [])),
+        )
+    except Exception as exc:
+        fp_result = {"ok": False, "error": str(exc)}
+        logger.warning("WARN: DailySummary false_positive generation failed reason=%s", exc)
+
     backup_result = _backup_db(trade_date)
 
     return {
@@ -211,6 +227,7 @@ async def run_daily_summary(trade_date: str | None = None) -> dict[str, Any]:
         "market_tone": market_tone,
         "rulepack_id": rulepack_id,
         "backup": backup_result,
+        "false_positive": fp_result,
     }
 
 

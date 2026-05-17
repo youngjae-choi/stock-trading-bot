@@ -297,12 +297,19 @@ async def job_refresh_kis_token() -> dict[str, Any]:
     """Job 1 (07:45 KST): KIS 액세스 토큰 선제 갱신.
 
     장 시작 전에 토큰을 미리 발급해 두어 첫 주문 시 지연을 방지한다.
-    get_token()은 내부 캐시를 무시하고 강제 재발급하도록
-    token 만료 시각을 0으로 초기화한 뒤 호출한다.
+    기존 토큰이 충분히 남아있으면 재발급을 시도하되, 실패(EGW00133 등) 시
+    기존 토큰을 복구해 후속 API 호출이 끊기지 않도록 한다.
     """
+    import time as _time
+
     logger.info("START: [Job1] KIS 토큰 선제 갱신")
     token_status = "success"
     token_error = ""
+
+    # 기존 토큰 보존 (재발급 실패 시 롤백용)
+    _prev_token = kis_client.token
+    _prev_expires_at = kis_client.token_expires_at
+
     try:
         # 캐시를 무효화해 강제 재발급
         kis_client.token = None
@@ -310,10 +317,19 @@ async def job_refresh_kis_token() -> dict[str, Any]:
         await kis_client.get_token()
         logger.info("SUCCESS: [Job1] KIS 토큰 선제 갱신 완료")
     except Exception as exc:
-        token_status = "failed"
-        token_error = str(exc)
-        logger.error("FAIL: [Job1] KIS 토큰 갱신 실패 — reason=%s", exc)
-        # 서버는 계속 실행 (job 실패가 서버를 종료하지 않음)
+        # 재발급 실패 시 기존 유효 토큰 복구 (EGW00133 rate-limit 대응)
+        if _prev_token and _prev_expires_at > _time.time() + 60:
+            kis_client.token = _prev_token
+            kis_client.token_expires_at = _prev_expires_at
+            token_status = "success"
+            token_error = f"refresh_failed_using_cached: {exc}"
+            logger.warning(
+                "WARN: [Job1] KIS 토큰 재발급 실패 — 기존 유효 토큰 복구 사용 reason=%s", exc
+            )
+        else:
+            token_status = "failed"
+            token_error = str(exc)
+            logger.error("FAIL: [Job1] KIS 토큰 갱신 실패 — 유효 토큰 없음 reason=%s", exc)
 
     trading_day = await refresh_trading_day_skip_flag(actor="scheduler_s1")
     return {
@@ -1046,7 +1062,65 @@ def _build_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # 배당락일 D-2 알림 — 하루 2회 (08:00, 13:00 KST)
+    scheduler.add_job(
+        job_dividend_ex_date_alert,
+        CronTrigger(hour=8, minute=0, timezone="Asia/Seoul"),
+        id="job_dividend_alert_am",
+        name="배당락일 알림 (오전)",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        job_dividend_ex_date_alert,
+        CronTrigger(hour=13, minute=0, timezone="Asia/Seoul"),
+        id="job_dividend_alert_pm",
+        name="배당락일 알림 (오후)",
+        replace_existing=True,
+    )
+
     return scheduler
+
+
+async def job_dividend_ex_date_alert() -> None:
+    """배당락일 D-2 ~ D-0 종목에 텔레그램 알림 발송."""
+    from datetime import date
+    from .alert_service import send_telegram_with_inline_button
+    from .db import get_connection
+
+    today = date.today()
+    logger.info("START: job_dividend_ex_date_alert date=%s", today)
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                """SELECT id, name, code, next_ex_date
+                   FROM dividend_stocks
+                   WHERE is_active = 1
+                     AND notification_muted = 0
+                     AND next_ex_date IS NOT NULL""",
+            ).fetchall()
+
+        for row in rows:
+            try:
+                ex_date = date.fromisoformat(row["next_ex_date"])
+            except ValueError:
+                continue
+            delta = (ex_date - today).days
+            if 0 <= delta <= 2:
+                text = (
+                    f"📅 <b>배당락일 알림 (D-{delta})</b>\n"
+                    f"{row['name']}({row['code']}) 배당락일: {row['next_ex_date']}"
+                )
+                await send_telegram_with_inline_button(
+                    text=text,
+                    button_text="이 종목 알림 끄기",
+                    callback_data=f"mute_stock_{row['id']}",
+                )
+                logger.info(
+                    "INFO: job_dividend_ex_date_alert sent name=%s ex_date=%s d=%s",
+                    row["name"], row["next_ex_date"], delta,
+                )
+    except Exception as exc:
+        logger.error("FAIL: job_dividend_ex_date_alert reason=%s", exc)
 
 
 # 전역 싱글턴 — FastAPI lifespan에서 start/stop 호출

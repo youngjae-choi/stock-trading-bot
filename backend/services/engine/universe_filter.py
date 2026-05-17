@@ -29,6 +29,7 @@ from ..db import get_connection
 from ..kis.domestic.universe_service import get_price_rank, get_volume_rank
 from .expert_knowledge import get_active_knowledge
 from .learning_memory import get_active_memories
+from .missed_opportunity import record_missed_opportunity
 from .pipeline_audit import finish_pipeline_run, normalize_trigger_source, start_pipeline_run
 
 logger = logging.getLogger("UniverseFilterService")
@@ -314,6 +315,32 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
     filtered = _apply_filters(merged)
     ranked = _score_and_rank(filtered, total=len(merged), weights=weights)
     top_n = ranked[:_TOP_N_RESULT]
+
+    # 탈락 종목 Missed Opportunities 기록
+    filtered_symbols = {item.get("symbol") for item in filtered}
+    for item in merged:
+        sym = item.get("symbol", "")
+        if sym in filtered_symbols:
+            continue
+        change = abs(item.get("change_rate", 0.0))
+        if change >= _CHANGE_RATE_LIMIT:
+            reason = f"S3_FILTER: 상한가/하한가 제외 change_rate={item.get('change_rate', 0):.1f}%"
+        elif item.get("price", 0) <= 0:
+            reason = "S3_FILTER: 가격 0원"
+        else:
+            reason = "S3_FILTER: 거래량/거래대금 0"
+        try:
+            record_missed_opportunity(
+                trade_date=today,
+                symbol=sym,
+                symbol_name=item.get("name", ""),
+                missed_stage="S3_UNIVERSE_FILTER",
+                missed_reason=reason,
+                price_at_missed=float(item.get("price", 0)),
+                improvement_candidate=False,
+            )
+        except Exception as _mo_exc:
+            logger.warning("WARN: UniverseFilter missed_opportunity 기록 실패 symbol=%s reason=%s", sym, _mo_exc)
     diagnostic_context = {
         "raw_split_counts": raw_split_counts,
         "raw_count": raw_count,

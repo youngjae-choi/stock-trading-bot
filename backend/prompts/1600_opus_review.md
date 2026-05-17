@@ -1,3 +1,6 @@
+# ⚠️ UNUSED — S10은 현재 deterministic DB audit 방식으로 운영 중 (외부 LLM 미호출)
+# 실제 LLM 복기 분석이 필요해지면 이 파일을 활성화한다.
+
 # Opus — 장마감 후 복기 리포트
 
 ## 역할

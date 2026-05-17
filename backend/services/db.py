@@ -71,6 +71,13 @@ def initialize_database() -> None:
             if col_name not in review_cols:
                 connection.execute(alter_sql)
                 logger.info("DB migration: added column %s to daily_review_reports", col_name)
+        dividend_cols = {
+            row[1] for row in connection.execute("PRAGMA table_info(dividends)").fetchall()
+        }
+        for col_name, alter_sql in _dividends_migration_statements():
+            if col_name not in dividend_cols:
+                connection.execute(alter_sql)
+                logger.info("DB migration: added column %s to dividends", col_name)
     logger.info("SUCCESS: db.initialize_database path=%s", _db_path())
 
 
@@ -1063,6 +1070,21 @@ CREATE TABLE IF NOT EXISTS dividends (
 """,
         "CREATE INDEX IF NOT EXISTS idx_dividends_account ON dividends(account_id)",
         "CREATE INDEX IF NOT EXISTS idx_dividends_date ON dividends(dividend_date)",
+        """
+CREATE TABLE IF NOT EXISTS dividend_stocks (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    code            TEXT NOT NULL UNIQUE,
+    next_ex_date    TEXT,
+    last_fetched_at TEXT,
+    notification_muted INTEGER NOT NULL DEFAULT 0,
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_dividend_stocks_code ON dividend_stocks(code)",
+        "CREATE INDEX IF NOT EXISTS idx_dividend_stocks_ex_date ON dividend_stocks(next_ex_date)",
     ]
 
 
@@ -1098,6 +1120,14 @@ def _daily_review_migration_statements() -> list[tuple[str, str]]:
             "legacy_residual_positions",
             "ALTER TABLE daily_review_reports ADD COLUMN legacy_residual_positions TEXT NOT NULL DEFAULT '[]'",
         ),
+    ]
+
+
+def _dividends_migration_statements() -> list[tuple[str, str]]:
+    """dividends 테이블 컬럼 추가."""
+    return [
+        ("stock_id", "ALTER TABLE dividends ADD COLUMN stock_id TEXT REFERENCES dividend_stocks(id) ON DELETE SET NULL"),
+        ("dividend_rate", "ALTER TABLE dividends ADD COLUMN dividend_rate REAL"),
     ]
 
 

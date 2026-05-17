@@ -217,7 +217,10 @@ def _mark_order_filled(order: dict[str, Any], kis_fill_data: dict[str, Any]) -> 
                 json.dumps(kis_fill_data, ensure_ascii=False),
             ),
         )
-        conn.execute("UPDATE trading_orders SET status = 'filled' WHERE id = ?", (order_id,))
+        conn.execute(
+            "UPDATE trading_orders SET status = 'filled', price = ? WHERE id = ?",
+            (price, order_id),
+        )
         conn.execute(
             """
             INSERT OR IGNORE INTO fills
@@ -239,8 +242,78 @@ def _mark_order_filled(order: dict[str, Any], kis_fill_data: dict[str, Any]) -> 
         )
 
 
+async def _fetch_symbol_output2(symbol: str, date_str: str) -> dict[str, Any]:
+    """종목+날짜 지정 KIS output2 조회 (모의투자 output1 미지원 환경 대응).
+
+    Args:
+        symbol: 종목코드 (PDNO).
+        date_str: YYYYMMDD 형식 날짜.
+    Returns:
+        KIS output2 dict (tot_ccld_qty, tot_ccld_amt, pchs_avg_pric 등).
+    """
+    from ..kis.common.client import kis_client
+    from ...config import settings
+
+    resp = await kis_client.request(
+        method="GET",
+        path="/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+        tr_id="VTTC8001R" if "openapivts" in kis_client.base_url.lower() else "TTTC8001R",
+        params={
+            "CANO": settings.KIS_CANO,
+            "ACNT_PRDT_CD": settings.KIS_ACNT_PRDT_CD,
+            "INQR_STRT_DT": date_str,
+            "INQR_END_DT": date_str,
+            "SLL_BUY_DVSN_CD": "00",
+            "INQR_DVSN": "00",
+            "PDNO": symbol,
+            "CCLD_DVSN": "00",
+            "ORD_GNO_BRNO": "",
+            "ODNO": "",
+            "INQR_DVSN_3": "00",
+            "INQR_DVSN_1": "",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+        },
+    )
+    return resp.get("output2") or {}
+
+
+def _make_output2_fill_data(order: dict[str, Any], out2: dict[str, Any]) -> dict[str, Any]:
+    """output2 결과를 _mark_order_filled 호환 형식으로 변환한다.
+
+    buy limit 주문: DB 주문가(order.price) 사용.
+    sell/market 주문: output2.pchs_avg_pric 또는 tot_ccld_amt/tot_ccld_qty 사용.
+    """
+    fill_qty = _to_int(out2.get("tot_ccld_qty") or order.get("qty"))
+    side = str(order.get("side") or "")
+    order_price = _to_float(order.get("price") or "0")
+
+    if side == "buy" and order_price > 0:
+        fill_price = order_price
+    else:
+        fill_price = _to_float(out2.get("pchs_avg_pric") or "0")
+        if fill_price <= 0:
+            ccld_amt = _to_float(out2.get("tot_ccld_amt") or "0")
+            fill_price = ccld_amt / fill_qty if fill_qty > 0 else 0.0
+
+    # _mark_order_filled 가 읽는 output1 필드명으로 매핑
+    sll_buy_dvsn_cd = "02" if side == "buy" else "01" if side == "sell" else ""
+    return {
+        "odno": str(order.get("kis_order_no") or ""),
+        "pdno": str(order.get("symbol") or ""),
+        "tot_ccld_qty": str(fill_qty),
+        "ccld_qty": str(fill_qty),
+        "avg_prvs": str(fill_price),
+        "sll_buy_dvsn_cd": sll_buy_dvsn_cd,
+        "_source": "output2_fallback",
+    }
+
+
 async def poll_once(trade_date: str) -> dict[str, Any]:
     """KIS 체결 내역을 1회 조회해 submitted 주문 상태를 갱신한다.
+
+    1단계: output1 기반 조회 (실거래 환경 — 개별 주문 행 포함).
+    2단계: output1이 비어있으면 종목별 output2 폴백 (모의투자 환경 대응).
 
     Args:
         trade_date: YYYY-MM-DD 형식의 거래일.
@@ -251,8 +324,11 @@ async def poll_once(trade_date: str) -> dict[str, Any]:
         logger.info("SUCCESS: [FillPoller] submitted 주문 없음")
         return {"filled": 0, "unchanged": 0}
 
+    date_str = trade_date.replace("-", "")
+
+    # ── 1단계: output1 조회 ────────────────────────────────────────────
     try:
-        response = await get_daily_order_inquiry(trade_date.replace("-", ""), side="all")
+        response = await get_daily_order_inquiry(date_str, side="all")
     except Exception as exc:
         logger.warning("WARN: [FillPoller] KIS 체결 조회 실패 error=%s", exc)
         return {"filled": 0, "unchanged": len(submitted), "error": str(exc)}
@@ -272,11 +348,17 @@ async def poll_once(trade_date: str) -> dict[str, Any]:
             kis_map[odno] = item
 
     filled_count = 0
+    unmatched: list[dict[str, Any]] = []
+
     for order in submitted:
         order_id = str(order.get("id") or "")
         kis_order_no = str(order.get("kis_order_no") or "").strip()
+        if not order_id:
+            continue
+
         kis_data = kis_map.get(kis_order_no)
-        if not order_id or not kis_data:
+        if not kis_data:
+            unmatched.append(order)
             continue
 
         ccld_qty = _to_int(_kis_value(kis_data, "tot_ccld_qty", "ccld_qty"))
@@ -289,16 +371,60 @@ async def poll_once(trade_date: str) -> dict[str, Any]:
         _mark_order_filled(order, kis_data)
         filled_count += 1
         logger.info(
-            "SUCCESS: [FillPoller] filled order_id=%s symbol=%s qty=%d price=%.2f",
+            "SUCCESS: [FillPoller] output1 filled order_id=%s symbol=%s qty=%d price=%.2f",
             order_id,
             _kis_value(kis_data, "pdno") or order.get("symbol"),
             ccld_qty,
             _to_float(_kis_value(kis_data, "avg_prvs", "avg_prc") or order.get("price")),
         )
 
+    # ── 2단계: output2 폴백 (모의투자 — output1 항상 비어있음) ────────────
+    if unmatched:
+        logger.info(
+            "INFO: [FillPoller] output1 미매칭 %d건 → output2 폴백 시도",
+            len(unmatched),
+        )
+        for order in unmatched:
+            order_id = str(order.get("id") or "")
+            symbol = str(order.get("symbol") or "")
+            if not order_id or not symbol or _is_already_filled(order_id):
+                continue
+            try:
+                await asyncio.sleep(0.12)  # KIS rate limit 여유
+                out2 = await _fetch_symbol_output2(symbol, date_str)
+                ccld_qty = _to_int(out2.get("tot_ccld_qty") or "0")
+                if ccld_qty == 0:
+                    logger.info(
+                        "INFO: [FillPoller] output2 미체결 symbol=%s tot_ccld_qty=0",
+                        symbol,
+                    )
+                    continue
+
+                kis_data = _make_output2_fill_data(order, out2)
+                _mark_order_filled(order, kis_data)
+                filled_count += 1
+                logger.info(
+                    "SUCCESS: [FillPoller] output2 filled order_id=%s symbol=%s qty=%d price=%.2f",
+                    order_id,
+                    symbol,
+                    ccld_qty,
+                    _to_float(kis_data.get("avg_prvs") or "0"),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "WARN: [FillPoller] output2 폴백 실패 symbol=%s error=%s",
+                    symbol,
+                    exc,
+                )
+
     unchanged = len(submitted) - filled_count
-    logger.info("SUCCESS: [FillPoller] poll_once 완료 filled=%d unchanged=%d", filled_count, unchanged)
-    return {"filled": filled_count, "unchanged": unchanged}
+    logger.info(
+        "SUCCESS: [FillPoller] poll_once 완료 filled=%d unchanged=%d (output2_fallback=%s)",
+        filled_count,
+        unchanged,
+        bool(unmatched),
+    )
+    return {"filled": filled_count, "unchanged": unchanged, "output2_fallback": bool(unmatched)}
 
 
 class FillPoller:

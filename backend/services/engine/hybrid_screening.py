@@ -20,6 +20,7 @@ from .universe_filter import get_today_universe
 from . import llm_router
 from .expert_knowledge import build_knowledge_prompt_snippet, get_active_knowledge
 from .learning_memory import get_active_memories
+from .missed_opportunity import record_missed_opportunity
 from .pipeline_audit import finish_pipeline_run, normalize_trigger_source, start_pipeline_run
 from .prompt_loader import render_prompt
 
@@ -441,6 +442,47 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
             ai_source=provider,
             overall_confidence=overall_confidence,
         )
+
+    # S4 탈락 종목 Missed Opportunities 기록
+    # items 기준으로 candidates에 없는 종목 = S4에서 탈락
+    candidate_symbols = {c.get("symbol") or c.get("ticker") for c in candidates}
+    # skipped 리스트에 있는 종목은 LLM이 명시적으로 제외한 것
+    for sk in skipped:
+        sym = sk.get("symbol") or sk.get("ticker") or ""
+        if not sym:
+            continue
+        # 원본 S3 데이터에서 가격 찾기
+        orig = next((i for i in items if i.get("symbol") == sym), {})
+        try:
+            record_missed_opportunity(
+                trade_date=today,
+                symbol=sym,
+                symbol_name=sk.get("name") or orig.get("name", ""),
+                missed_stage="S4_HYBRID_SCREENING",
+                missed_reason=f"S4_SCREENING: {sk.get('reason') or sk.get('skip_reason') or 'LLM 제외'}",
+                price_at_missed=float(orig.get("price", 0)),
+                improvement_candidate=False,
+            )
+        except Exception as _mo_exc:
+            logger.warning("WARN: HybridScreening missed_opportunity 기록 실패 symbol=%s reason=%s", sym, _mo_exc)
+    # items 중 candidates에도 skipped에도 없는 종목 (LLM 응답 누락)
+    skipped_symbols = {sk.get("symbol") or sk.get("ticker") for sk in skipped}
+    for orig in items:
+        sym = orig.get("symbol", "")
+        if sym in candidate_symbols or sym in skipped_symbols:
+            continue
+        try:
+            record_missed_opportunity(
+                trade_date=today,
+                symbol=sym,
+                symbol_name=orig.get("name", ""),
+                missed_stage="S4_HYBRID_SCREENING",
+                missed_reason="S4_SCREENING: LLM 응답 미포함",
+                price_at_missed=float(orig.get("price", 0)),
+                improvement_candidate=False,
+            )
+        except Exception as _mo_exc:
+            logger.warning("WARN: HybridScreening missed_opportunity 기록 실패 symbol=%s reason=%s", sym, _mo_exc)
 
     result = {
         "ok": True,

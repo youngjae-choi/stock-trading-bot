@@ -1,233 +1,252 @@
-  var stAllItems = [];
   var stFilter = "today";
-  var stCurrentOrders = [];
+  var stCurrentPairs = [];
   var stCurrentPage = 1;
   var ST_PAGE_SIZE = 20;
+  var stExpandedRows = new Set();
 
+  /* ── 필터 버튼 활성화 ── */
   function setStatsFilter(filter) {
     stFilter = filter;
     ["today", "week", "all", "month", "lastmonth", "range"].forEach(function(f) {
       var btn = document.getElementById("sf-" + f);
       if (btn) btn.className = "btn" + (f === filter ? " primary" : "");
     });
-    renderStatsSummary();
-    loadAllOrders();
+    stExpandedRows.clear();
+    loadTradePairs();
   }
 
-  function filterStItems(items) {
-    if (stFilter === "all") return items;
+  /* ── 날짜 범위 계산 ── */
+  function _getDateRange() {
     var now = new Date();
-    var year = now.getFullYear();
-    var month = String(now.getMonth() + 1).padStart(2, "0");
-    var todayStr = year + "-" + month + "-" + String(now.getDate()).padStart(2, "0");
-    if (stFilter === "today") {
-      return items.filter(function(i) { return (i.trade_date || "") === todayStr; });
-    }
+    var pad = function(n) { return String(n).padStart(2, "0"); };
+    var fmt = function(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); };
+    var today = fmt(now);
+
+    if (stFilter === "today") return { start: today, end: today };
     if (stFilter === "week") {
       var day = now.getDay();
-      var monday = new Date(now);
-      monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
-      var mondayStr = monday.getFullYear() + "-" + String(monday.getMonth() + 1).padStart(2, "0") + "-" + String(monday.getDate()).padStart(2, "0");
-      return items.filter(function(i) { return (i.trade_date || "") >= mondayStr; });
+      var mon = new Date(now);
+      mon.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
+      return { start: fmt(mon), end: today };
     }
     if (stFilter === "month") {
-      var prefix = year + "-" + month;
-      return items.filter(function(i) { return (i.trade_date || "").startsWith(prefix); });
+      return { start: now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-01", end: today };
     }
     if (stFilter === "lastmonth") {
-      var lm = now.getMonth() === 0 ? 12 : now.getMonth();
-      var ly = now.getMonth() === 0 ? year - 1 : year;
-      var lmStr = ly + "-" + String(lm).padStart(2, "0");
-      return items.filter(function(i) { return (i.trade_date || "").startsWith(lmStr); });
+      var lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      var lmEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+      return { start: fmt(lm), end: fmt(lmEnd) };
     }
-    return items;
+    if (stFilter === "range") {
+      var rsEl = document.getElementById("sf-range-start");
+      var reEl = document.getElementById("sf-range-end");
+      return {
+        start: (rsEl && rsEl.value) ? rsEl.value : "2020-01-01",
+        end: (reEl && reEl.value) ? reEl.value : today,
+      };
+    }
+    return { start: "2020-01-01", end: today }; // all
   }
 
-  async function loadStatistics() {
+  /* ── 거래 페어 로드 ── */
+  async function loadTradePairs() {
+    var tbody = document.getElementById("st-orders-tbody");
+    var title = document.getElementById("st-table-title");
+    if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;">로딩중...</td></tr>';
+
+    var filterLabel = { today: "오늘", week: "이번주", month: "이번달", lastmonth: "지난달", all: "전체", range: "기간검색" };
+    if (title) title.textContent = (filterLabel[stFilter] || "") + " 거래 결과";
+
     try {
-      var data = await fetchJson("/api/v1/trades/history?limit=120");
-      stAllItems = (data.payload && data.payload.items) || [];
-      renderStatsSummary();
+      var range = _getDateRange();
+      var data = await fetchJson("/api/v1/trades/pairs?start=" + range.start + "&end=" + range.end);
+      stCurrentPairs = (data.payload && data.payload.pairs) || [];
+      stCurrentPage = 1;
+      renderSummaryBar(stCurrentPairs);
+      renderTradePairs(stCurrentPairs);
     } catch (e) {
-      console.error("[ERROR]", "loadStatistics", "-", e.message);
-      stAllItems = [];
-      renderStatsSummary();
+      console.error("[ERROR]", "loadTradePairs", "-", e.message);
+      if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;">조회 실패: ' + escapeHtml(e.message) + '</td></tr>';
     }
   }
 
-  function renderStatsSummary() {
-    var items = filterStItems(stAllItems || []);
-    var days = items.length;
-    var totalOrders = 0, profitDays = 0, pnlSum = 0;
-    items.forEach(function(item) {
-      totalOrders += item.total_orders || 0;
-      pnlSum += item.realized_pnl_pct || 0;
-      if ((item.realized_pnl_pct || 0) > 0) profitDays++;
-    });
-    var winrate = days > 0 ? Math.round(profitDays / days * 100) : 0;
-    var avgPnl = days > 0 ? pnlSum / days : 0;
+  /* ── 요약 바 ── */
+  function renderSummaryBar(pairs) {
+    var total = pairs.length;
+    var withResult = pairs.filter(function(p) { return p.pnl_amount != null; });
+    var profit = withResult.filter(function(p) { return p.pnl_amount > 0; }).length;
+    var loss = withResult.filter(function(p) { return p.pnl_amount < 0; }).length;
+    var totalPnl = withResult.reduce(function(acc, p) { return acc + (p.pnl_amount || 0); }, 0);
+    var winrate = withResult.length > 0 ? Math.round(profit / withResult.length * 100) : 0;
 
     function setST(id, text, cls) {
       var el = document.getElementById(id);
       if (el) { el.textContent = text; if (cls) el.className = "metric " + cls; }
     }
-    setST("st-days", days + "일");
-    setST("st-orders", totalOrders + "건");
+    setST("st-days", total + "건");
+    setST("st-orders", withResult.length + "건");
     setST("st-winrate", winrate + "%", winrate >= 50 ? "good" : "warn");
     var wd = document.getElementById("st-winrate-detail");
-    if (wd) wd.textContent = profitDays + "수익일 / " + days + "거래일";
-    setST("st-pnl", (pnlSum >= 0 ? "+" : "") + pnlSum.toFixed(2) + "%", pnlSum >= 0 ? "good" : "bad");
-    setST("st-avg-pnl", (avgPnl >= 0 ? "+" : "") + avgPnl.toFixed(2) + "%", avgPnl >= 0 ? "good" : "bad");
-
+    if (wd) wd.textContent = profit + "수익 / " + loss + "손실";
+    setST("st-pnl", (totalPnl >= 0 ? "+" : "") + totalPnl.toLocaleString() + "원", totalPnl >= 0 ? "good" : "bad");
+    setST("st-avg-pnl", "-");
   }
 
-  /* Load the Trade History order table for the active period filter. */
-  async function loadAllOrders() {
-    var tbody = document.getElementById("st-orders-tbody");
-    var title = document.getElementById("st-table-title");
-    var sourceEl = document.getElementById("st-table-source");
-    if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">로딩중...</td></tr>';
-
-    try {
-      var orders = [];
-      if (stFilter === "today") {
-        var todayResponse = await fetchJson("/api/v1/orders/today");
-        orders = (todayResponse && todayResponse.payload && todayResponse.payload.orders) || [];
-        if (sourceEl) sourceEl.textContent = 'trading_orders 오늘 주문 이벤트';
-      } else {
-        var now = new Date();
-        var todayStr = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
-        var startStr = todayStr;
-        if (stFilter === "week") {
-          var day = now.getDay();
-          var monday = new Date(now);
-          monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
-          startStr = monday.getFullYear() + "-" + String(monday.getMonth() + 1).padStart(2, "0") + "-" + String(monday.getDate()).padStart(2, "0");
-        } else if (stFilter === "month") {
-          startStr = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-01";
-        } else if (stFilter === "lastmonth") {
-          var lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-          var lmEnd = new Date(now.getFullYear(), now.getMonth(), 0);
-          startStr = lm.getFullYear() + "-" + String(lm.getMonth() + 1).padStart(2, "0") + "-01";
-          todayStr = lmEnd.getFullYear() + "-" + String(lmEnd.getMonth() + 1).padStart(2, "0") + "-" + String(lmEnd.getDate()).padStart(2, "0");
-        } else if (stFilter === "all") {
-          startStr = "2020-01-01";
-        } else if (stFilter === "range") {
-          var rsEl = document.getElementById("sf-range-start");
-          var reEl = document.getElementById("sf-range-end");
-          startStr = (rsEl && rsEl.value) ? rsEl.value : "2020-01-01";
-          todayStr = (reEl && reEl.value) ? reEl.value : todayStr;
-        }
-        var rangeResponse = await fetchJson("/api/v1/orders/range?start=" + startStr + "&end=" + todayStr + "&limit=500");
-        orders = (rangeResponse && rangeResponse.payload && rangeResponse.payload.orders) || [];
-        if (sourceEl) sourceEl.textContent = (rangeResponse && rangeResponse.payload && rangeResponse.payload.history_scope === 'all_order_events') ? 'trading_orders 전체 주문 이벤트' : '주문 이력';
-      }
-
-      if (stFilter === "today") {
-        var now = new Date();
-        var todayStr = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
-        orders = orders.filter(function(o) { return (o.trade_date || (o.created_at || "").slice(0, 10) || todayStr) === todayStr; });
-      }
-
-      var filterLabel = { today: "오늘", week: "이번주", month: "이번달", lastmonth: "지난달", all: "전체", range: "기간검색" };
-      if (title) title.textContent = (filterLabel[stFilter] || "") + " 주문 내역";
-
-      stCurrentOrders = orders;
-      stCurrentPage = 1;
-      renderOrdersTable(orders, "데이터 없음: 해당 기간 주문 이벤트 없음");
-    } catch (e) {
-      console.error("[ERROR]", "loadAllOrders", "-", e.message);
-      if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">실행 실패: 주문 이력 조회 실패 - ' + escapeHtml(e.message || "") + '</td></tr>';
-    }
-  }
-
-  /* Render order-like records from orders or decision signals into the unified table. */
-  function renderOrdersTable(orders, emptyMessage) {
+  /* ── 거래 결과 테이블 렌더 ── */
+  function renderTradePairs(pairs) {
     var tbody = document.getElementById("st-orders-tbody");
     if (!tbody) return;
-    if (!orders || orders.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">' + escapeHtml(emptyMessage || "주문 없음") + '</td></tr>';
+    if (!pairs || pairs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;">해당 기간 거래 내역 없음</td></tr>';
       renderPagination(0);
       return;
     }
 
-    var totalPages = Math.ceil(orders.length / ST_PAGE_SIZE);
+    var totalPages = Math.ceil(pairs.length / ST_PAGE_SIZE);
     if (stCurrentPage > totalPages) stCurrentPage = totalPages;
     if (stCurrentPage < 1) stCurrentPage = 1;
     var start = (stCurrentPage - 1) * ST_PAGE_SIZE;
-    var pageOrders = orders.slice(start, start + ST_PAGE_SIZE);
+    var pagePairs = pairs.slice(start, start + ST_PAGE_SIZE);
 
-    tbody.innerHTML = pageOrders.map(function(o) {
-      var rawSide = o.side || o.action || "buy";
-      var side = rawSide === "buy" ? '<span class="status ok">매수</span>' : '<span class="status warn">매도</span>';
-      var statusMap = { executed: "체결", filled: "체결", completed: "체결", pending: "대기", submitted: "접수", failed: "실패", cancelled: "취소" };
-      var rawStatus = o.status || o.signal_status || "pending";
-      var statusCls = (rawStatus === "executed" || rawStatus === "filled" || rawStatus === "completed") ? "ok" : (rawStatus === "failed" || rawStatus === "cancelled") ? "danger" : "warn";
-      var statusLabel = statusMap[rawStatus] || rawStatus || "-";
-      var timeStr = (o.created_at || o.time || "").slice(0, 19).replace("T", " ");
-      var price = o.price != null ? o.price : (o.entry_price != null ? o.entry_price : o.target_price);
-      var profileColors = {LOW_VOL:'#6cb6ff', MID_VOL:'#3fb950', HIGH_VOL:'#d29922', THEME_SPIKE:'#f85149'};
-      var profile = o.risk_profile || o.profile_assigned || '-';
-      var profileColor = profileColors[profile] || 'var(--muted)';
+    var statusStyles = {
+      "매수주문": "warn",
+      "매수완료": "ok",
+      "매도주문": "warn",
+      "매도완료": "ok",
+    };
+
+    var html = pagePairs.map(function(p) {
+      var rowKey = p.trade_date + "_" + p.symbol;
+      var isExpanded = stExpandedRows.has(rowKey);
+
+      var pnlHtml = "-";
+      if (p.pnl_amount != null) {
+        var pnlCls = p.pnl_amount > 0 ? "good" : p.pnl_amount < 0 ? "bad" : "";
+        var pnlSign = p.pnl_amount >= 0 ? "+" : "";
+        pnlHtml = '<span class="' + pnlCls + '">' + pnlSign + p.pnl_amount.toLocaleString() + "원</span>";
+      }
+
+      var pnlPctHtml = "-";
+      if (p.pnl_pct != null) {
+        var pctCls = p.pnl_pct > 0 ? "good" : p.pnl_pct < 0 ? "bad" : "";
+        var pctSign = p.pnl_pct >= 0 ? "+" : "";
+        pnlPctHtml = '<span class="' + pctCls + '">' + pctSign + p.pnl_pct.toFixed(2) + "%</span>";
+      }
+
+      var statusCls = statusStyles[p.status] || "warn";
+
+      var mainRow = '<tr class="pair-row" style="cursor:pointer;" onclick="stToggleDetail(\'' + escapeHtml(rowKey) + '\')">'
+        + '<td style="font-size:12px;">' + escapeHtml(p.trade_date) + '</td>'
+        + '<td><strong class="pair-name" style="color:var(--accent);">' + escapeHtml(p.name || p.symbol) + '</strong>'
+        + ' <span style="font-size:11px; color:var(--muted);">' + escapeHtml(p.symbol) + '</span></td>'
+        + '<td style="text-align:right;">' + (p.buy_price != null ? p.buy_price.toLocaleString() + "원" : "-") + '</td>'
+        + '<td style="text-align:right;">' + (p.buy_qty != null ? p.buy_qty + "주" : "-") + '</td>'
+        + '<td style="text-align:right;">' + (p.sell_price != null ? p.sell_price.toLocaleString() + "원" : "-") + '</td>'
+        + '<td style="text-align:right;">' + (p.sell_qty != null ? p.sell_qty + "주" : "-") + '</td>'
+        + '<td style="text-align:right;">' + pnlHtml + '</td>'
+        + '<td style="text-align:right;">' + pnlPctHtml + '</td>'
+        + '<td style="font-size:11px; color:var(--muted);">' + escapeHtml(p.exit_reason || "-") + '</td>'
+        + '<td><span class="status ' + statusCls + '">' + escapeHtml(p.status) + '</span></td>'
+        + '</tr>';
+
+      var detailRow = '<tr class="pair-detail-row" id="detail-' + escapeHtml(rowKey) + '" style="display:' + (isExpanded ? "table-row" : "none") + ';">'
+        + '<td colspan="10" style="padding:0; background:var(--panel-2);">'
+        + renderOrderDetail(p.orders)
+        + '</td></tr>';
+
+      return mainRow + detailRow;
+    }).join("");
+
+    tbody.innerHTML = html;
+    renderPagination(pairs.length);
+  }
+
+  /* ── 주문 상세 (accordion 내부) ── */
+  function renderOrderDetail(orders) {
+    if (!orders || orders.length === 0) {
+      return '<div style="padding:12px 20px; color:var(--muted); font-size:13px;">주문 이력 없음</div>';
+    }
+
+    var statusMap = { filled: "체결", completed: "체결", executed: "체결", submitted: "접수", submitted_without_order_no: "접수중", submit_uncertain: "불확실", partial_fill: "부분체결", failed: "실패", cancelled: "취소", preflight_blocked: "차단" };
+
+    var rows = orders.map(function(o) {
+      var sideCls = o.side === "buy" ? "ok" : "warn";
+      var sideLabel = o.side === "buy" ? "매수" : "매도";
+      var rawStatus = o.status || "submitted";
+      var statusCls = (rawStatus === "filled" || rawStatus === "completed" || rawStatus === "executed") ? "ok"
+        : (rawStatus === "failed" || rawStatus === "cancelled" || rawStatus === "preflight_blocked") ? "danger" : "warn";
+      var statusLabel = statusMap[rawStatus] || rawStatus;
+      var timeStr = (o.created_at || "").slice(0, 19).replace("T", " ");
+      var orderPrice = o.fill_price != null ? o.fill_price.toLocaleString() + "원 (체결)" : (o.price ? Number(o.price).toLocaleString() + "원" : "-");
+      var orderQty = o.fill_qty != null ? o.fill_qty + "주 (체결)" : (o.qty ? o.qty + "주" : "-");
+
       return '<tr>'
-        + '<td style="font-size:12px;">' + escapeHtml(timeStr || "-") + '</td>'
-        + '<td>' + escapeHtml(o.name || o.symbol_name || "-") + '</td>'
-        + '<td style="font-size:12px; color:var(--muted);">' + escapeHtml(o.symbol || "-") + '</td>'
-        + '<td>' + side + '</td>'
-        + '<td>' + escapeHtml(String(o.qty || o.quantity || "-")) + '</td>'
-        + '<td>' + (price ? Number(price).toLocaleString() + "원" : "-") + '</td>'
-        + '<td><span class="status ' + statusCls + '">' + escapeHtml(statusLabel) + '</span></td>'
-        + '<td style="font-size:11px; color:' + profileColor + '; font-weight:600;">' + escapeHtml(profile) + '</td>'
-        + '<td style="font-size:11px; color:var(--muted);">' + escapeHtml(o.exit_reason || o.reason || '-') + '</td>'
+        + '<td style="font-size:11px; color:var(--muted); padding:6px 12px;">' + escapeHtml(timeStr) + '</td>'
+        + '<td style="padding:6px 12px;"><span class="status ' + sideCls + '">' + sideLabel + '</span></td>'
+        + '<td style="text-align:right; padding:6px 12px;">' + escapeHtml(orderQty) + '</td>'
+        + '<td style="text-align:right; padding:6px 12px;">' + escapeHtml(orderPrice) + '</td>'
+        + '<td style="padding:6px 12px;"><span class="status ' + statusCls + '">' + escapeHtml(statusLabel) + '</span></td>'
+        + '<td style="font-size:11px; color:var(--muted); padding:6px 12px;">' + escapeHtml(o.reason || "-") + '</td>'
+        + '<td style="font-size:11px; color:var(--muted); padding:6px 12px;">' + escapeHtml(o.kis_order_no || "-") + '</td>'
         + '</tr>';
     }).join("");
 
-    renderPagination(orders.length);
+    return '<div style="padding:8px 16px;">'
+      + '<div style="font-size:11px; color:var(--muted); margin-bottom:6px; font-weight:600;">주문 이력</div>'
+      + '<table style="width:100%; font-size:12px;">'
+      + '<thead><tr style="color:var(--muted);">'
+      + '<th style="text-align:left; padding:4px 12px; font-weight:400;">시간</th>'
+      + '<th style="text-align:left; padding:4px 12px; font-weight:400;">구분</th>'
+      + '<th style="text-align:right; padding:4px 12px; font-weight:400;">수량</th>'
+      + '<th style="text-align:right; padding:4px 12px; font-weight:400;">가격</th>'
+      + '<th style="text-align:left; padding:4px 12px; font-weight:400;">상태</th>'
+      + '<th style="text-align:left; padding:4px 12px; font-weight:400;">사유</th>'
+      + '<th style="text-align:left; padding:4px 12px; font-weight:400;">KIS 주문번호</th>'
+      + '</tr></thead>'
+      + '<tbody>' + rows + '</tbody>'
+      + '</table></div>';
   }
 
+  /* ── 종목 row 펼치기/접기 ── */
+  function stToggleDetail(rowKey) {
+    var detailRow = document.getElementById("detail-" + rowKey);
+    if (!detailRow) return;
+    if (stExpandedRows.has(rowKey)) {
+      stExpandedRows.delete(rowKey);
+      detailRow.style.display = "none";
+    } else {
+      stExpandedRows.add(rowKey);
+      detailRow.style.display = "table-row";
+    }
+  }
+
+  /* ── 페이지네이션 ── */
   function renderPagination(totalCount) {
     var container = document.getElementById("st-pagination");
     if (!container) return;
-    if (totalCount <= ST_PAGE_SIZE) {
-      container.innerHTML = '';
-      return;
-    }
+    if (totalCount <= ST_PAGE_SIZE) { container.innerHTML = ""; return; }
     var totalPages = Math.ceil(totalCount / ST_PAGE_SIZE);
-    var html = '<div style="display:flex; gap:6px; align-items:center; justify-content:center; padding:12px 0;">';
-    html += '<button type="button" class="btn" ' + (stCurrentPage <= 1 ? 'disabled' : '') + ' onclick="stGoPage(' + (stCurrentPage - 1) + ')">이전</button>';
-    html += '<span style="color:var(--muted); font-size:13px;">' + stCurrentPage + ' / ' + totalPages + '페이지 (총 ' + totalCount + '건)</span>';
-    html += '<button type="button" class="btn" ' + (stCurrentPage >= totalPages ? 'disabled' : '') + ' onclick="stGoPage(' + (stCurrentPage + 1) + ')">다음</button>';
-    html += '</div>';
-    container.innerHTML = html;
+    container.innerHTML = '<div style="display:flex; gap:6px; align-items:center; justify-content:center; padding:12px 0;">'
+      + '<button type="button" class="btn" ' + (stCurrentPage <= 1 ? "disabled" : "") + ' onclick="stGoPage(' + (stCurrentPage - 1) + ')">이전</button>'
+      + '<span style="color:var(--muted); font-size:13px;">' + stCurrentPage + " / " + totalPages + "페이지 (총 " + totalCount + "건)</span>"
+      + '<button type="button" class="btn" ' + (stCurrentPage >= totalPages ? "disabled" : "") + ' onclick="stGoPage(' + (stCurrentPage + 1) + ')">다음</button>'
+      + '</div>';
   }
 
   function stGoPage(page) {
     stCurrentPage = page;
-    renderOrdersTable(stCurrentOrders);
+    stExpandedRows.clear();
+    renderTradePairs(stCurrentPairs);
   }
 
-  async function loadStatisticsDetail(tradeDate) {
-    if (!tradeDate) return;
-    var sfDate = document.getElementById("sf-date");
-    if (sfDate) sfDate.value = tradeDate;
-    var tbody = document.getElementById("st-orders-tbody");
-    var title = document.getElementById("st-table-title");
-    var sourceEl = document.getElementById("st-table-source");
-    if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">로딩중...</td></tr>';
-    if (title) title.textContent = tradeDate + " 주문 내역";
+  /* ── 초기 로드 (screen 진입 시 호출) ── */
+  async function loadStatistics() {
+    await loadTradePairs();
+  }
 
-    try {
-      var data = await fetchJson("/api/v1/trades/history/" + tradeDate);
-      var p = data.payload || {};
-      var orders = p.orders || [];
-      var signals = p.signals || [];
-      stCurrentOrders = orders.concat(signals);
-      stCurrentPage = 1;
-      renderOrdersTable(stCurrentOrders, "해당 날짜 주문 없음");
-    } catch (e) {
-      console.error("[ERROR]", "loadStatisticsDetail", "-", e.message);
-      if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>';
-    }
+  /* ── 하위 호환: 기존 loadAllOrders 호출부 대응 ── */
+  async function loadAllOrders() {
+    await loadTradePairs();
   }
 
   /* ── Today Control: Daily Plan Status ── */

@@ -1,4 +1,4 @@
-"""Dividend management routes for account and dividend history."""
+"""Dividend management routes for account, stock, and dividend history."""
 
 from __future__ import annotations
 
@@ -25,12 +25,19 @@ class DividendAccountCreate(BaseModel):
 class BulkDeleteIds(BaseModel):
     ids: list[str]
 
+class DividendStockCreate(BaseModel):
+    name: str
+    code: str
+    next_ex_date: str | None = None  # PM 직접 입력 (YYYY-MM-DD)
+
 class DividendEntryCreate(BaseModel):
     account_id: str
+    stock_id: str | None = None
     dividend_date: str
     amount: float
     tax: float
     net_amount: float
+    dividend_rate: float | None = None
     memo: str = ""
 
 
@@ -113,6 +120,102 @@ async def bulk_delete_dividend_accounts(payload: BulkDeleteIds):
     return {"ok": True, "count": res.rowcount}
 
 
+# ─── Routes: Stocks ──────────────────────────────────────────────────────────
+
+@router.post("/stocks")
+async def create_dividend_stock(payload: DividendStockCreate):
+    """종목 등록. 배당락일은 PM이 직접 입력한다."""
+    stock_id = str(uuid.uuid4())
+    now = _now_iso()
+    code = payload.code.strip().zfill(6)
+    next_ex_date = payload.next_ex_date or None
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                """INSERT INTO dividend_stocks (id, name, code, next_ex_date, last_fetched_at, notification_muted, is_active, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, 0, 1, ?, ?)""",
+                (stock_id, payload.name.strip(), code, next_ex_date, now, now, now),
+            )
+        return {"ok": True, "stock_id": stock_id, "next_ex_date": next_ex_date}
+    except Exception as exc:
+        if "UNIQUE constraint failed" in str(exc):
+            raise HTTPException(status_code=400, detail="이미 등록된 종목코드입니다.")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/stocks")
+async def list_dividend_stocks():
+    """등록된 배당 종목 목록 반환."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM dividend_stocks WHERE is_active = 1 ORDER BY name ASC"
+        ).fetchall()
+    return {"ok": True, "stocks": [dict(r) for r in rows]}
+
+
+class UpdateExDatePayload(BaseModel):
+    next_ex_date: str  # YYYY-MM-DD
+
+
+@router.put("/stocks/{stock_id}/ex-date")
+async def update_ex_date(stock_id: str, payload: UpdateExDatePayload):
+    """배당락일 수동 업데이트."""
+    from datetime import date
+    try:
+        date.fromisoformat(payload.next_ex_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="날짜 형식이 올바르지 않습니다 (YYYY-MM-DD).")
+    now = _now_iso()
+    with get_connection() as conn:
+        res = conn.execute(
+            "UPDATE dividend_stocks SET next_ex_date = ?, last_fetched_at = ?, updated_at = ? WHERE id = ?",
+            (payload.next_ex_date, now, now, stock_id),
+        )
+        if res.rowcount == 0:
+            raise HTTPException(status_code=404, detail="종목을 찾을 수 없습니다.")
+    return {"ok": True, "next_ex_date": payload.next_ex_date}
+
+
+@router.post("/stocks/{stock_id}/mute")
+async def mute_stock_notification(stock_id: str):
+    """배당락일 알림 끄기."""
+    now = _now_iso()
+    with get_connection() as conn:
+        res = conn.execute(
+            "UPDATE dividend_stocks SET notification_muted = 1, updated_at = ? WHERE id = ?",
+            (now, stock_id),
+        )
+        if res.rowcount == 0:
+            raise HTTPException(status_code=404, detail="종목을 찾을 수 없습니다.")
+    return {"ok": True}
+
+
+@router.post("/stocks/{stock_id}/unmute")
+async def unmute_stock_notification(stock_id: str):
+    """배당락일 알림 다시 켜기."""
+    now = _now_iso()
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE dividend_stocks SET notification_muted = 0, updated_at = ? WHERE id = ?",
+            (now, stock_id),
+        )
+    return {"ok": True}
+
+
+@router.delete("/stocks/{stock_id}")
+async def delete_dividend_stock(stock_id: str):
+    """종목 삭제 (soft delete)."""
+    now = _now_iso()
+    with get_connection() as conn:
+        res = conn.execute(
+            "UPDATE dividend_stocks SET is_active = 0, updated_at = ? WHERE id = ?",
+            (now, stock_id),
+        )
+        if res.rowcount == 0:
+            raise HTTPException(status_code=404, detail="종목을 찾을 수 없습니다.")
+    return {"ok": True}
+
+
 # ─── Routes: Dividends ───────────────────────────────────────────────────────
 
 @router.post("/entries")
@@ -128,10 +231,12 @@ async def create_dividend_entry(payload: DividendEntryCreate):
         
         conn.execute(
             """
-            INSERT INTO dividends (id, account_id, dividend_date, amount, tax, net_amount, memo, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO dividends (id, account_id, stock_id, dividend_date, amount, tax, net_amount, dividend_rate, memo, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (entry_id, payload.account_id, payload.dividend_date, payload.amount, payload.tax, payload.net_amount, payload.memo, now, now),
+            (entry_id, payload.account_id, payload.stock_id or None,
+             payload.dividend_date, payload.amount, payload.tax, payload.net_amount,
+             payload.dividend_rate, payload.memo, now, now),
         )
     return {"ok": True, "entry_id": entry_id}
 
@@ -139,9 +244,11 @@ async def create_dividend_entry(payload: DividendEntryCreate):
 async def list_dividend_history(account_id: str | None = None, start_date: str | None = None, end_date: str | None = None):
     """Return dividend history with optional filters."""
     query = """
-        SELECT d.*, a.bank_name, a.account_number, a.owner_name
+        SELECT d.*, a.bank_name, a.account_number, a.owner_name,
+               s.name AS stock_name, s.code AS stock_code
         FROM dividends d
         JOIN dividend_accounts a ON d.account_id = a.id
+        LEFT JOIN dividend_stocks s ON d.stock_id = s.id
         WHERE 1=1
     """
     params = []
@@ -168,11 +275,13 @@ async def update_dividend_entry(entry_id: str, payload: DividendEntryCreate):
     with get_connection() as conn:
         res = conn.execute(
             """
-            UPDATE dividends 
-            SET account_id = ?, dividend_date = ?, amount = ?, tax = ?, net_amount = ?, memo = ?, updated_at = ?
+            UPDATE dividends
+            SET account_id = ?, stock_id = ?, dividend_date = ?, amount = ?, tax = ?, net_amount = ?, dividend_rate = ?, memo = ?, updated_at = ?
             WHERE id = ?
             """,
-            (payload.account_id, payload.dividend_date, payload.amount, payload.tax, payload.net_amount, payload.memo, now, entry_id),
+            (payload.account_id, payload.stock_id or None,
+             payload.dividend_date, payload.amount, payload.tax, payload.net_amount,
+             payload.dividend_rate, payload.memo, now, entry_id),
         )
         if res.rowcount == 0:
             raise HTTPException(status_code=404, detail="Entry not found.")
@@ -226,7 +335,7 @@ async def get_dividend_stats(year: int | None = None):
         # Account breakdown
         account_rows = conn.execute(
             """
-            SELECT a.bank_name, a.account_number, SUM(d.net_amount) as total_net
+            SELECT a.bank_name, a.owner_name, a.account_number, SUM(d.net_amount) as total_net
             FROM dividends d
             JOIN dividend_accounts a ON d.account_id = a.id
             WHERE d.dividend_date LIKE ?

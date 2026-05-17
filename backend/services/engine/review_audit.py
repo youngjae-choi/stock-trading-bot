@@ -44,50 +44,157 @@ def _json_loads(value: str | None, default: Any) -> Any:
 
 
 def _build_review_markdown(result: dict[str, Any]) -> str:
-    """Render the S10 review payload into a readable markdown artifact."""
+    """Render the S10 review payload into a diary-style markdown artifact."""
     trade_date = str(result.get("trade_date") or "")
-    lines = [
-        f"# SYSTEM AUDIT {trade_date}",
+    market_tone = result.get("market_tone") or "-"
+    rulepack_id = result.get("rulepack_id") or "-"
+    realized_pnl = _safe_float(result.get("realized_pnl"))
+    realized_pnl_pct = _safe_float(result.get("realized_pnl_pct"))
+    pnl_sign = "+" if realized_pnl >= 0 else ""
+    pnl_pct_sign = "+" if realized_pnl_pct >= 0 else ""
+
+    lines: list[str] = [
+        f"# 트레이딩 복기 — {trade_date}",
         "",
-        "## Summary",
-        f"- total_trades: {result.get('total_trades', 0)}",
-        f"- total_orders: {result.get('total_orders', 0)}",
-        f"- buy_orders: {result.get('buy_orders', 0)}",
-        f"- sell_orders: {result.get('sell_orders', 0)}",
-        f"- failed_orders: {result.get('failed_orders', 0)}",
-        f"- realized_pnl: {result.get('realized_pnl', 0)}",
-        f"- realized_pnl_pct: {result.get('realized_pnl_pct', 0)}",
-        f"- pnl_status: {result.get('pnl_status', '')}",
-        f"- pnl_source: {result.get('pnl_source', '')}",
+        "---",
         "",
-        "## Counts",
-        f"- missed_entries: {result.get('missed_entries_count', 0)}",
-        f"- false_positives: {result.get('false_positive_count', 0)}",
-        f"- no_trade_count: {result.get('no_trade_count', 0)}",
-        f"- integrity_warnings: {len(result.get('integrity_warnings', []) or [])}",
+        "## 📊 오늘 거래 요약",
+        "",
+        "| 항목 | 값 |",
+        "|------|-----|",
+        f"| 거래일 | {trade_date} |",
+        f"| 시장 톤 | {market_tone} |",
+        f"| RulePack | {rulepack_id} |",
+        f"| 총 주문 | {result.get('total_orders', 0)}건 |",
+        f"| 매수 / 매도 / 실패 | {result.get('buy_orders', 0)} / {result.get('sell_orders', 0)} / {result.get('failed_orders', 0)}건 |",
+        f"| 실현 손익 | {pnl_sign}{realized_pnl:,.0f}원 ({pnl_pct_sign}{realized_pnl_pct:.2f}%) |",
+        f"| 손익 검증 | {result.get('pnl_status', '-')} ({result.get('pnl_source', '-')}) |",
+        f"| 놓친 기회 | {result.get('missed_entries_count', 0)}건 |",
+        f"| 손실 거래 | {result.get('false_positive_count', 0)}건 |",
+        "",
     ]
 
-    warnings = result.get("integrity_warnings", []) or []
+    # ── 거래 상세 ────────────────────────────────────────────────────────────
+    trade_pairs = result.get("trade_pairs") or []
+    lines.extend(["## 📈 거래 상세", ""])
+    if trade_pairs:
+        completed = [p for p in trade_pairs if p.get("status") == "매도완료"]
+        in_progress = [p for p in trade_pairs if p.get("status") != "매도완료"]
+
+        if completed:
+            lines.extend(["### 완료된 거래", ""])
+            lines.append("| 종목 | 매수가 | 매도가 | 수익률 | 금액 | 청산사유 |")
+            lines.append("|------|--------|--------|--------|------|---------|")
+            for p in completed:
+                pnl_pct = p.get("pnl_pct")
+                pnl_amt = p.get("pnl_amount")
+                pnl_pct_str = f"{pnl_pct:+.2f}%" if pnl_pct is not None else "-"
+                pnl_amt_str = f"{pnl_amt:+,.0f}원" if pnl_amt is not None else "-"
+                buy_p = p.get("buy_price") or 0
+                sell_p = p.get("sell_price") or 0
+                lines.append(
+                    f"| **{p.get('name', '')}** ({p.get('symbol', '')}) "
+                    f"| {buy_p:,.0f}원 | {sell_p:,.0f}원 "
+                    f"| {pnl_pct_str} | {pnl_amt_str} "
+                    f"| {p.get('exit_reason', '-')} |"
+                )
+            lines.append("")
+
+        if in_progress:
+            lines.extend(["### 보유 중 / 매수 완료", ""])
+            for p in in_progress:
+                buy_p = p.get("buy_price") or 0
+                lines.append(
+                    f"- **{p.get('name', '')}** ({p.get('symbol', '')}) "
+                    f"— 상태: {p.get('status', '-')}, 매수가: {buy_p:,.0f}원"
+                )
+            lines.append("")
+    else:
+        lines.extend(["거래 데이터 없음", ""])
+
+    # ── 놓친 기회 ────────────────────────────────────────────────────────────
+    missed = result.get("missed_entries") or []
+    lines.extend(["## ❌ 놓친 기회", ""])
+    if missed:
+        lines.append("| 종목 | 단계 | 사유 |")
+        lines.append("|------|------|------|")
+        for m in missed[:15]:
+            symbol = m.get("symbol") or m.get("name") or "-"
+            stage = m.get("missed_stage") or m.get("source") or "-"
+            reason = (m.get("reason") or m.get("missed_reason") or "-")[:80]
+            lines.append(f"| {symbol} | {stage} | {reason} |")
+        lines.append("")
+    else:
+        lines.extend(["없음 — 모든 기회를 포착했거나 아직 데이터가 없습니다.", ""])
+
+    # ── 손실 분석 ────────────────────────────────────────────────────────────
+    fp_list = result.get("false_positives") or []
+    lines.extend(["## ⚠️ 손실 거래 분석 (False Positive)", ""])
+    if fp_list:
+        lines.append("| 종목 | 유형 | 매수가→매도가 | 손실률 | 손실 원인 |")
+        lines.append("|------|------|-------------|--------|---------|")
+        for fp in fp_list:
+            name_str = f"{fp.get('symbol_name', '')} ({fp.get('symbol', '')})"
+            fp_type = fp.get("false_positive_type", "-")
+            buy_p = fp.get("buy_price")
+            sell_p = fp.get("sell_price")
+            price_str = f"{buy_p:,.0f}→{sell_p:,.0f}원" if buy_p and sell_p else "-"
+            pnl_pct_v = fp.get("pnl_pct")
+            pnl_str = f"{pnl_pct_v:+.1f}%" if pnl_pct_v is not None else "-"
+            loss_r = (fp.get("loss_reason") or fp.get("exit_reason") or "-")[:60]
+            lines.append(f"| {name_str} | {fp_type} | {price_str} | {pnl_str} | {loss_r} |")
+        lines.append("")
+    else:
+        lines.extend(["없음 — 손실 거래가 없습니다.", ""])
+
+    # ── 무결성 경고 ──────────────────────────────────────────────────────────
+    warnings = result.get("integrity_warnings") or []
     if warnings:
-        lines.extend(["", "## Integrity Warnings"])
-        for warning in warnings:
-            lines.append(f"- {warning}")
+        lines.extend(["## ⚡ 무결성 경고", ""])
+        for w in warnings:
+            lines.append(f"- {w}")
+        lines.append("")
 
-    for section_name, key in (("Missed Entries", "missed_entries"), ("False Positives", "false_positives")):
-        rows = result.get(key, []) or []
-        lines.extend(["", f"## {section_name}"])
-        if not rows:
-            lines.append("- 없음")
-            continue
-        for row in rows[:20]:
-            if isinstance(row, dict):
-                symbol = row.get("symbol") or row.get("name") or "-"
-                reason = row.get("reason") or row.get("loss_reason") or row.get("entry_reason") or ""
-                lines.append(f"- {symbol}: {reason}")
-            else:
-                lines.append(f"- {row}")
+    # ── 내일 전략 방향 ───────────────────────────────────────────────────────
+    exit_summary = result.get("exit_summary") or {}
+    fp_count = len(fp_list)
+    missed_count = len(missed)
+    recommendations: list[str] = []
 
-    return "\n".join(lines) + "\n"
+    if realized_pnl < 0:
+        recommendations.append(f"⚠️ 오늘 손실 ({realized_pnl_pct:+.2f}%) — 내일 포지션 크기 축소 또는 매매 유보 검토")
+    elif realized_pnl_pct > 5:
+        recommendations.append(f"✅ 오늘 수익 ({realized_pnl_pct:+.2f}%) — 현재 전략 유지")
+    else:
+        recommendations.append(f"📊 손익 {realized_pnl_pct:+.2f}% — 현재 전략 유지하며 모니터링")
+
+    if fp_count >= 2:
+        recommendations.append(f"⚠️ 손실 거래 {fp_count}건 — 진입 조건 confidence 임계값 상향 또는 종목 필터 강화 검토")
+    elif fp_count == 1:
+        recommendations.append("📌 손실 거래 1건 — 단발 변수 가능성, 진입 조건 재확인")
+
+    if missed_count > 3:
+        recommendations.append(f"📌 놓친 기회 {missed_count}건 — S3/S4 필터 조건 일부 완화 또는 RulePack 조정 검토")
+    elif missed_count > 0:
+        recommendations.append(f"📌 놓친 기회 {missed_count}건 — 원인 확인 후 필요 시 조건 조정")
+
+    eod_count = (exit_summary.get("eod") or {}).get("count", 0)
+    trailing_count = (exit_summary.get("trailing_stop") or {}).get("count", 0)
+    if eod_count > 0 and eod_count > trailing_count:
+        recommendations.append("📌 EOD 청산 비중 높음 — 트레일링 파라미터 점검 또는 장중 청산 조건 추가 검토")
+
+    if warnings:
+        recommendations.append(f"🔴 무결성 경고 {len(warnings)}건 — 체결 검증 후 오더북 정리 필요")
+
+    if not recommendations:
+        recommendations.append("✅ 특이사항 없음 — 현재 설정 유지")
+
+    lines.extend(["## 🔮 내일 전략 방향", ""])
+    for rec in recommendations:
+        lines.append(f"- {rec}")
+    lines.extend(["", "---", "", "*S10 자동 생성 복기 보고서*", ""])
+
+    return "\n".join(lines)
 
 
 def _review_markdown_path(trade_date: str) -> Path:
@@ -181,6 +288,56 @@ def _load_review_signals(trade_date: str) -> list[dict[str, Any]]:
             (trade_date,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def _load_daily_plan_context(trade_date: str) -> dict[str, Any]:
+    """Load daily_trading_plans + market_tone_results for rich context.
+
+    Returns a dict with keys: daily_plan, tone_analysis.
+    """
+    result: dict[str, Any] = {"daily_plan": None, "tone_analysis": None}
+    with get_connection() as conn:
+        # daily_trading_plans
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='daily_trading_plans'").fetchone():
+            row = conn.execute(
+                """SELECT trade_date, market_tone, trading_intensity, base_rulepack_id,
+                          risk_profile_pack_id, new_entry_allowed, daily_overrides,
+                          symbol_assignments, excluded_symbols, llm_summary,
+                          status, creation_mode, activated_at
+                   FROM daily_trading_plans WHERE trade_date = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (trade_date,),
+            ).fetchone()
+            if row:
+                d = dict(row)
+                for key in ("daily_overrides", "symbol_assignments", "excluded_symbols"):
+                    raw = d.get(key)
+                    if isinstance(raw, str):
+                        try:
+                            d[key] = json.loads(raw)
+                        except Exception:
+                            d[key] = []
+                result["daily_plan"] = d
+
+        # market_tone_results
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_tone_results'").fetchone():
+            row = conn.execute(
+                """SELECT trade_date, tone, confidence, summary, key_factors, risk_factors
+                   FROM market_tone_results WHERE trade_date = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (trade_date,),
+            ).fetchone()
+            if row:
+                d = dict(row)
+                for key in ("key_factors", "risk_factors"):
+                    raw = d.get(key)
+                    if isinstance(raw, str):
+                        try:
+                            d[key] = json.loads(raw)
+                        except Exception:
+                            d[key] = []
+                result["tone_analysis"] = d
+    return result
 
 
 def _load_daily_trade_summary(trade_date: str) -> dict[str, Any]:
@@ -313,7 +470,8 @@ def _load_false_positives(trade_date: str) -> list[dict[str, Any]]:
             """
             SELECT id, symbol, symbol_name, false_positive_type, original_score,
                    original_confidence, assigned_profile, entry_reason, loss_reason,
-                   exit_reason, suggested_penalty, created_at
+                   exit_reason, suggested_penalty, created_at,
+                   buy_price, sell_price, pnl_amount, pnl_pct
             FROM false_positive_cases
             WHERE trade_date = ?
             ORDER BY created_at DESC
@@ -582,6 +740,26 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
             ),
         )
 
+    # 시장 톤 · RulePack — 마크다운 포함을 위해 미리 로드
+    daily_summary = _load_daily_trade_summary(trade_date)
+
+    # trade_pairs — 완료/진행 중 거래 상세 (마크다운 + 화면 표시용)
+    trade_pairs: list[dict[str, Any]] = []
+    try:
+        from .trade_pairs import get_trade_pairs as _get_pairs
+        from datetime import timedelta
+
+        _dt = datetime.fromisoformat(trade_date)
+        _start = (_dt - timedelta(days=7)).strftime("%Y-%m-%d")
+        _all_pairs = _get_pairs(_start, trade_date)
+        trade_pairs = [
+            p for p in _all_pairs
+            if p.get("trade_date") == trade_date
+            or any(o.get("trade_date") == trade_date for o in p.get("orders", []))
+        ]
+    except Exception as _tp_exc:
+        logger.warning("WARN: [S10] trade_pairs load failed reason=%s", _tp_exc)
+
     result = {
         "ok": True,
         "trade_date": trade_date,
@@ -597,8 +775,8 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
         "win_count": win_count,
         "loss_count": loss_count,
         "total_pnl": total_pnl,
-        "realized_pnl": total_pnl,
-        "realized_pnl_pct": 0.0,
+        "realized_pnl": _safe_float(daily_summary.get("realized_pnl") or total_pnl),
+        "realized_pnl_pct": _safe_float(daily_summary.get("realized_pnl_pct")),
         "pnl_status": integrity.get("pnl_status", "unverified"),
         "pnl_source": integrity.get("pnl_source", "orders_without_fills"),
         "integrity_warnings": integrity.get("warnings", []),
@@ -616,6 +794,10 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
         "missed_entries_count": len(missed_entries),
         "false_positive_count": len(false_positives),
         "no_trade_count": no_trade_count,
+        "market_tone": daily_summary.get("market_tone", ""),
+        "rulepack_id": daily_summary.get("rulepack_id", ""),
+        "trade_pairs": trade_pairs,
+        **_load_daily_plan_context(trade_date),
     }
     logger.info(
         "SUCCESS: [S10] Review & Audit trade_date=%s trades=%d orders=%d missed=%d fp=%d pnl=%.4f pnl_status=%s",
@@ -692,6 +874,9 @@ def get_review_report(trade_date: str) -> dict[str, Any] | None:
     payload["symbols_traded"] = daily_summary.get("symbols_traded") or orders.get("symbols_traded", [])
     payload["market_tone"] = daily_summary.get("market_tone", "")
     payload["rulepack_id"] = daily_summary.get("rulepack_id", "")
+    ctx = _load_daily_plan_context(trade_date)
+    payload["daily_plan"] = ctx.get("daily_plan")
+    payload["tone_analysis"] = ctx.get("tone_analysis")
     payload["profile_performance"] = []
     for row in profile_rows:
         profile_row = dict(row)
@@ -715,5 +900,67 @@ def get_review_report(trade_date: str) -> dict[str, Any] | None:
         for row in exit_rows
     ]
     payload["trailing_quality_daily"] = dict(trailing_row) if trailing_row else None
+
+    # trade_pairs — 화면 표시용 (조회 시점에 최신 fill 상태 반영)
+    try:
+        from .trade_pairs import get_trade_pairs as _get_pairs
+        from datetime import timedelta
+
+        _dt = datetime.fromisoformat(trade_date)
+        _start = (_dt - timedelta(days=7)).strftime("%Y-%m-%d")
+        _all_pairs = _get_pairs(_start, trade_date)
+        payload["trade_pairs"] = [
+            p for p in _all_pairs
+            if p.get("trade_date") == trade_date
+            or any(o.get("trade_date") == trade_date for o in p.get("orders", []))
+        ]
+    except Exception as _tp_exc:
+        logger.warning("WARN: [S10] get_review_report trade_pairs load failed reason=%s", _tp_exc)
+        payload["trade_pairs"] = []
+
     logger.info("SUCCESS: [S10] get_review_report trade_date=%s", trade_date)
     return payload
+
+
+def apply_next_day_overrides(trade_date: str, overrides: dict[str, Any]) -> dict[str, Any]:
+    """다음 거래일 daily_trading_plans.daily_overrides에 파라미터 추천값을 1회성으로 저장한다.
+
+    trade_date가 존재하면 UPDATE, 없으면 빈 플랜 레코드를 INSERT 후 저장한다.
+
+    Args:
+        trade_date: 적용 대상 거래일 YYYY-MM-DD (다음 거래일).
+        overrides: {param_key: value} 딕셔너리.
+
+    Returns:
+        {"applied": True, "trade_date": trade_date, "overrides": overrides}
+    """
+    logger.info("START: apply_next_day_overrides trade_date=%s overrides=%s", trade_date, overrides)
+    overrides_json = json.dumps(overrides, ensure_ascii=False, separators=(",", ":"))
+    with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT id, daily_overrides FROM daily_trading_plans WHERE trade_date = ? ORDER BY created_at DESC LIMIT 1",
+            (trade_date,),
+        ).fetchone()
+        if existing:
+            # 기존 override와 머지
+            existing_overrides = _json_loads(existing["daily_overrides"], {})
+            existing_overrides.update(overrides)
+            merged_json = json.dumps(existing_overrides, ensure_ascii=False, separators=(",", ":"))
+            conn.execute(
+                "UPDATE daily_trading_plans SET daily_overrides = ? WHERE id = ?",
+                (merged_json, existing["id"]),
+            )
+            logger.info("INFO: apply_next_day_overrides UPDATE id=%s trade_date=%s", existing["id"], trade_date)
+        else:
+            # 새 플랜 레코드 생성 (override 전용 최소 레코드)
+            plan_id = str(uuid.uuid4())
+            conn.execute(
+                """INSERT INTO daily_trading_plans
+                   (id, trade_date, status, daily_overrides, created_at)
+                   VALUES (?, ?, 'override_pending', ?, ?)""",
+                (plan_id, trade_date, overrides_json, _now_kst_iso()),
+            )
+            logger.info("INFO: apply_next_day_overrides INSERT id=%s trade_date=%s", plan_id, trade_date)
+        conn.commit()
+    logger.info("SUCCESS: apply_next_day_overrides trade_date=%s", trade_date)
+    return {"applied": True, "trade_date": trade_date, "overrides": overrides}

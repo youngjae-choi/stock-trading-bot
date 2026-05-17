@@ -18,6 +18,7 @@ from .expert_knowledge import build_knowledge_prompt_snippet, get_active_knowled
 from .hybrid_screening import get_today_screening
 from .learning_memory import get_active_memories
 from .market_tone import get_today_market_tone
+from .missed_opportunity import record_missed_opportunity
 from .pipeline_audit import finish_pipeline_run, normalize_trigger_source, start_pipeline_run
 from .prompt_loader import render_prompt
 
@@ -484,6 +485,32 @@ async def run_daily_plan_generation(
         )
         logger.error("FAIL: [S5] Daily Plan save failed trade_date=%s reason=%s", trade_date, exc)
         raise
+
+    # S5 미배정 종목 Missed Opportunities 기록
+    assigned_codes = {a.get("code") for a in plan_data.get("symbol_assignments", []) if a.get("code")}
+    excluded_list = plan_data.get("excluded_symbols", [])
+    excluded_codes = {e.get("code") or e if isinstance(e, str) else "" for e in excluded_list}
+    for cand in candidates:
+        sym = cand.get("symbol") or cand.get("ticker") or ""
+        if not sym or sym in assigned_codes:
+            continue
+        if sym in excluded_codes:
+            ex = next((e for e in excluded_list if (e.get("code") if isinstance(e, dict) else e) == sym), {})
+            reason = f"S5_NOT_ASSIGNED: excluded — {ex.get('reason', '') if isinstance(ex, dict) else ''}"
+        else:
+            reason = "S5_NOT_ASSIGNED: 플랜 미배정"
+        try:
+            record_missed_opportunity(
+                trade_date=trade_date,
+                symbol=sym,
+                symbol_name=cand.get("name", ""),
+                missed_stage="S5_DAILY_PLAN",
+                missed_reason=reason,
+                price_at_missed=float(cand.get("price", 0)),
+                improvement_candidate=sym in excluded_codes,
+            )
+        except Exception as _mo_exc:
+            logger.warning("WARN: [S5] missed_opportunity 기록 실패 symbol=%s reason=%s", sym, _mo_exc)
 
     # dry_run 외 생성은 저장 직후 validated 또는 validation_failed/active 상태로 전환한다.
     if creation_mode != "dry_run":

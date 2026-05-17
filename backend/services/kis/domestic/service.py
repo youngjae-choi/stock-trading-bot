@@ -83,12 +83,12 @@ async def get_daily_order_inquiry(date_str: str, side: str = "buy") -> Dict[str,
             "INQR_DVSN": "00",
             "PDNO": "",
             "CCLD_DVSN": "01",
-            "ORDER_GNO_BRNO": "",
+            "ORD_GNO_BRNO": "",
             "ODNO": "",
             "INQR_DVSN_3": "00",
             "INQR_DVSN_1": "",
-            "CTX_AREA_FK200": "",
-            "CTX_AREA_NK200": "",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
         },
     )
 
@@ -331,8 +331,30 @@ def _extract_trading_day_state(resp: Dict[str, Any]) -> tuple[TradingDayState, s
     return "unknown", f"unknown_tr_day_yn={tr_day_yn or '-'}"
 
 
+_KIS_SERVICE_NOT_FOUND_MSGS = ("서비스를 찾을수 없습니다", "서비스를 찾을 수 없습니다", "service not found")
+
+
+def _weekday_trading_day_fallback(date_str: str) -> dict[str, str]:
+    """KIS API 미지원 환경(모의투자 등)에서 요일 기반으로 거래일 여부를 판단한다.
+
+    토·일은 closed, 평일은 trading으로 간주한다.
+    한국 공휴일은 구분하지 않으므로 일부 오탐이 있을 수 있다.
+    """
+    try:
+        dt = datetime.strptime(date_str, "%Y%m%d")
+        weekday = dt.weekday()  # 0=월 … 4=금, 5=토, 6=일
+        if weekday >= 5:
+            return {"status": "closed", "reason": f"weekday_fallback:weekend(wd={weekday})", "date": date_str}
+        return {"status": "trading", "reason": f"weekday_fallback:weekday(wd={weekday})", "date": date_str}
+    except ValueError:
+        return {"status": "unknown", "reason": "weekday_fallback:invalid_date", "date": date_str}
+
+
 async def get_trading_day_status(date_str: str) -> dict[str, str]:
     """KIS API로 해당 날짜의 거래일 여부를 trading/closed/unknown으로 확인한다.
+
+    모의투자 환경에서는 chk-holiday API가 지원되지 않을 수 있으며,
+    이 경우 요일 기반 폴백(주말=closed, 평일=trading)을 사용한다.
 
     Args:
         date_str: YYYYMMDD 형식의 확인 대상 일자.
@@ -345,6 +367,19 @@ async def get_trading_day_status(date_str: str) -> dict[str, str]:
             tr_id="CTCA0903R",
             params={"BASS_DT": date_str},
         )
+
+        # 모의투자 서버에서 "서비스를 찾을수 없습니다" → 요일 폴백
+        rt_cd = str(resp.get("rt_cd") or "").strip()
+        msg1 = str(resp.get("msg1") or "").strip()
+        if rt_cd != "0" and any(s in msg1 for s in _KIS_SERVICE_NOT_FOUND_MSGS):
+            result = _weekday_trading_day_fallback(date_str)
+            logger.warning(
+                "WARN: KIS chk-holiday 미지원(모의투자) — 요일 폴백 사용 date=%s status=%s",
+                date_str,
+                result["status"],
+            )
+            return result
+
         status, reason = _extract_trading_day_state(resp)
         if status == "unknown":
             logger.warning("WARN: KIS trading-day status unknown date=%s reason=%s", date_str, reason)

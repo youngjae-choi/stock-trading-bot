@@ -43,6 +43,17 @@ tone: {tone}
   "llm_summary": "오늘 시장 톤과 종목 배정에 대한 간략한 요약"
 }
 
+## excluded_symbols 배정 기준
+
+다음 조건 중 하나 이상 해당하면 `excluded_symbols`에 넣는다:
+- 당일 서킷브레이커 또는 투자경고 발동 종목
+- 공시 의혹·감리·상장폐지 심사 중 종목
+- 거래 정지 또는 단기 과열 지정 종목
+- Risk Guard가 이전 판단에서 false_positive로 기록한 종목 (당일 재진입 금지)
+- S3 유니버스에서 거래대금 기준 미달로 제외된 종목이 S4에서 재등장한 경우
+
+조건에 해당하지 않으면 `excluded_symbols`는 빈 배열로 유지한다.
+
 ## 실패 시
 - 후보가 없으면 symbol_assignments는 빈 배열로 둔다.
 - 불확실하면 trading_intensity="normal", new_entry_allowed=true, MID_VOL 중심으로 보수 배정한다.

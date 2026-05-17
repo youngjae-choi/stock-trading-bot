@@ -31,10 +31,10 @@
         var latest = items[0];
         var summEl = document.getElementById("review-latest-summary");
         var toneEl = document.getElementById("review-latest-tone");
-        var rpEl = document.getElementById("review-latest-rulepack");
+        var rpEl   = document.getElementById("review-latest-rulepack");
         if (summEl) summEl.textContent = latest.trade_date + " · 주문 " + (latest.total_orders || 0) + "건 · 손익 " + (latest.realized_pnl_pct || 0).toFixed(2) + "%";
         if (toneEl) toneEl.textContent = latest.market_tone || "(없음)";
-        if (rpEl) rpEl.textContent = latest.rulepack_id || "(없음)";
+        if (rpEl)   rpEl.textContent   = latest.rulepack_id  || "(없음)";
       }
 
       var tbody = document.getElementById("review-history-tbody");
@@ -73,69 +73,49 @@
     }
   }
 
-  // Review & Audit — 데이터 로드
-  async function loadReviewAuditData() {
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      // S10 리뷰 결과
-      const reviewRes = await fetch('/api/v1/review-audit/today');
-      if (reviewRes.ok) {
-        const reviewData = await reviewRes.json();
-        const p = reviewData.payload || {};
-        if (p.profile_summary) renderProfilePerformance(p.profile_summary);
-        if (p.exit_summary) renderExitReason(p.exit_summary);
-        if (p.trailing_quality) renderTrailingQuality(p.trailing_quality);
-        
-        // Update Rule Context if available
-        if (p.base_rulepack_ver) document.getElementById('ra-rulepack-ver').textContent = p.base_rulepack_ver;
-        if (p.risk_profile_pack_ver) document.getElementById('ra-profile-pack-ver').textContent = p.risk_profile_pack_ver;
-        if (p.daily_plan_id) document.getElementById('ra-daily-plan-id').textContent = p.daily_plan_id;
-      }
-      // S11 메모리 결과
-      const memRes = await fetch('/api/v1/learning-memory/today');
-      if (memRes.ok) {
-        const memData = await memRes.json();
-        const memories = memData.payload || [];
-        renderLearningMemory(memories);
-      }
-    } catch (e) {
-      console.warn('loadReviewAuditData error', e);
-    }
-  }
+  // ── Review & Audit ─────────────────────────────────────────────────────────
 
-  var _raCurrentReport = null;
+  var _raCurrentReport      = null;
+  var _raRecommendedOverrides = {};   // _nlTomorrow()가 채움 → applyNextDayOverrides()가 읽음
 
-  /* Show the Review/Audit empty panel with the operator-facing status category and detail. */
   function setReviewAuditEmptyState(statusText, detailText) {
-    var emptyEl = document.getElementById('ra-empty');
-    if (!emptyEl) return;
+    var emptyEl  = document.getElementById('ra-empty');
+    var reportEl = document.getElementById('ra-report');
+    if (emptyEl)  emptyEl.style.display  = '';
+    if (reportEl) reportEl.style.display = 'none';
     var statusEl = document.getElementById('ra-empty-status');
     var detailEl = document.getElementById('ra-empty-detail');
     if (statusEl) statusEl.textContent = statusText;
     if (detailEl) detailEl.textContent = detailText;
-    emptyEl.style.display = '';
   }
 
-  /* Load today's Review & Audit report and keep the date picker aligned with the selected report date. */
   async function loadReviewAuditScreen() {
     var today = new Date();
-    var todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+    var todayStr = today.getFullYear() + '-'
+      + String(today.getMonth() + 1).padStart(2, '0') + '-'
+      + String(today.getDate()).padStart(2, '0');
     var input = document.getElementById('ra-date-input');
     if (input) input.value = todayStr;
-    await loadReviewByDate();
+    await _loadReviewByDateStr(todayStr);
   }
 
-  /* Fetch a Review & Audit report for a specific YYYY-MM-DD date and route empty/error states to the empty panel. */
-  async function loadReviewByDate(dateStr) {
-    var emptyEl = document.getElementById('ra-empty');
+  /* 날짜 피커 값을 읽어 조회 — console-actions.js에서 호출 */
+  async function loadReviewByDate() {
+    var input = document.getElementById('ra-date-input');
+    var dateStr = input ? input.value : '';
+    if (!dateStr) { await loadReviewAuditScreen(); return; }
+    await _loadReviewByDateStr(dateStr);
+  }
+
+  async function _loadReviewByDateStr(dateStr) {
+    var emptyEl  = document.getElementById('ra-empty');
     var reportEl = document.getElementById('ra-report');
-    if (emptyEl) emptyEl.style.display = 'none';
+    if (emptyEl)  emptyEl.style.display  = 'none';
     if (reportEl) reportEl.style.display = 'none';
 
-    console.info('[INFO] ReviewAudit - load start', dateStr || 'today');
     try {
       var url = dateStr ? '/api/v1/review-audit/' + encodeURIComponent(dateStr) : '/api/v1/review-audit/today';
-      var res = await fetch(url);
+      var res  = await fetch(url);
       var data = await res.json();
       var report = (data.payload && typeof data.payload === 'object') ? data.payload : null;
 
@@ -143,227 +123,675 @@
         _raCurrentReport = null;
         setReviewAuditEmptyState(
           res.ok ? '미수집·대기: S10 Review & Audit 미실행' : '데이터 없음: 해당 날짜 보고서 없음',
-          res.ok ? 'Backend audit 기준으로 아직 오늘 S10 결과가 없습니다. 실행 후 DB 원본과 MD 백업이 생성됩니다.' : '선택한 날짜에 저장된 Review/Audit DB 원본 또는 MD 백업이 없습니다.'
+          res.ok ? 'S10 실행 버튼을 눌러 보고서를 생성하세요.' : '선택한 날짜에 저장된 보고서가 없습니다.'
         );
-        console.warn('[WARN] ReviewAudit - report empty', dateStr || 'today');
         return;
       }
 
       _raCurrentReport = report;
-      // md_content만 있고 DB 보고서 없는 경우: 카드는 숨기고 팝업 직접 오픈 버튼만 표시
       if (!report.trade_date && report.md_content) {
-        if (reportEl) {
-          reportEl.style.display = '';
-          // 요약 카드는 데이터 없음으로 처리
-          document.getElementById('ra-report-title') && (document.getElementById('ra-report-title').textContent = dateStr ? new Date(dateStr+'T00:00:00').toLocaleDateString('ko-KR',{month:'long',day:'numeric'}) + ' 시스템 점검 보고서' : '점검 보고서');
-          document.getElementById('ra-report-subtitle') && (document.getElementById('ra-report-subtitle').textContent = '수동 작성 MD 파일 — 자세히 보기를 클릭하세요');
-        }
+        // MD 전용 — 헤더만 표시
+        if (reportEl) reportEl.style.display = '';
+        var titleEl = document.getElementById('ra-report-title');
+        if (titleEl) titleEl.textContent = (dateStr || '복기') + ' 보고서';
+        var subEl = document.getElementById('ra-report-subtitle');
+        if (subEl) subEl.textContent = 'MD 파일 전용 — 자세히 보기를 눌러주세요';
       } else {
         renderReviewReport(report);
         if (reportEl) reportEl.style.display = '';
       }
-      console.info('[INFO] ReviewAudit - load complete', report.trade_date);
     } catch (e) {
       _raCurrentReport = null;
-      setReviewAuditEmptyState('실행 실패: Review/Audit 조회 실패', '서버 응답 또는 네트워크 오류로 감사 보고서를 불러오지 못했습니다: ' + (e.message || 'unknown'));
-      console.error('[ERROR] ReviewAudit - load failed', e.message);
+      setReviewAuditEmptyState('오류: 보고서 조회 실패', e.message || 'unknown');
     }
   }
 
-  /* Render the selected Review & Audit payload into summary cards and the two performance tables. */
+  /* 모든 섹션을 한번에 렌더링 — 자연어 5블록 */
   function renderReviewReport(r) {
-    var setEl = function(id, val) {
-      var el = document.getElementById(id);
-      if (el) el.textContent = val != null ? val : '-';
-    };
-    var setHtml = function(id, html) {
-      var el = document.getElementById(id);
-      if (el) el.innerHTML = html;
-    };
-    var num = function(value, fallback) {
-      var parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : (fallback || 0);
-    };
-    var countOf = function(row) {
-      return num(row.total_orders != null ? row.total_orders : (row.trade_count != null ? row.trade_count : row.count), 0);
-    };
-    var avgPnlOf = function(row) {
-      if (row.avg_pnl_pct != null) return num(row.avg_pnl_pct, 0);
-      if (row.avg_pnl != null) return num(row.avg_pnl, 0);
-      return null;
-    };
+    var setEl   = function(id, val) { var el = document.getElementById(id); if (el) el.textContent = val != null ? val : '-'; };
+    var setHtml = function(id, html) { var el = document.getElementById(id); if (el) el.innerHTML = html; };
 
-    var d = new Date(r.trade_date + 'T00:00:00');
-    var title = (d.getMonth() + 1) + '월 ' + d.getDate() + '일 시스템 점검 보고서';
-    setEl('ra-report-title', title);
-    setEl('ra-report-subtitle', '시장톤: ' + (r.market_tone || '-') + ' | RulePack: ' + (r.rulepack_id || '-'));
+    // 헤더
+    var d = new Date((r.trade_date || '') + 'T00:00:00');
+    setEl('ra-report-title', (d.getMonth() + 1) + '월 ' + d.getDate() + '일 복기 보고서');
+    var dp = r.daily_plan || {};
+    var ta = r.tone_analysis || {};
+    var toneLabel = _toneKr(ta.tone || r.market_tone);
+    var intensityLabel = _intensityKr(dp.trading_intensity);
+    var rpLabel = dp.base_rulepack_id || r.rulepack_id || '미설정';
+    setEl('ra-report-subtitle',
+      '시장톤: ' + toneLabel
+      + (intensityLabel ? ' | 매매강도: ' + intensityLabel : '')
+      + ' | RulePack: ' + rpLabel
+    );
 
-    setEl('ra-total-orders', num(r.total_orders, r.total_trades || 0) + '건');
-    setEl('ra-orders-detail', '매수' + num(r.buy_orders, 0) + ' / 매도' + num(r.sell_orders, 0) + ' / 실패' + num(r.failed_orders, 0));
+    // 자연어 5블록
+    setHtml('ra-nl-context',  _nlContext(r));
+    setHtml('ra-nl-result',   _nlResult(r));
+    setHtml('ra-nl-missed',   _nlMissed(r));
+    setHtml('ra-nl-loss',     _nlLoss(r));
+    setHtml('ra-nl-tomorrow', _nlTomorrow(r));
+  }
 
-    var pnl = r.realized_pnl;
-    var pnlEl = document.getElementById('ra-pnl');
-    if (pnlEl) {
-      pnlEl.textContent = pnl != null ? Number(pnl).toLocaleString() + '원' : '-';
-      pnlEl.className = 'metric ' + (pnl > 0 ? 'good' : pnl < 0 ? 'bad' : '');
-    }
-    var pct = r.realized_pnl_pct;
-    setEl('ra-pnl-pct', pct != null ? (pct >= 0 ? '+' : '') + Number(pct).toFixed(2) + '%' : '-');
+  /* 시장 톤 한국어 변환 */
+  function _toneKr(tone) {
+    return {
+      bullish: '강세장', bearish: '약세장', mixed: '혼조세', volatile: '변동성 장세',
+      negative: '부정적', positive: '긍정적', neutral: '중립'
+    }[tone] || (tone || '파악 불가');
+  }
 
-    var exitSummary = r.exit_summary || {};
-    var topExit = Object.entries(exitSummary).sort(function(a, b) {
-      return num((b[1] || {}).count, 0) - num((a[1] || {}).count, 0);
-    })[0];
-    setEl('ra-top-exit', topExit ? topExit[0].replace(/_/g, ' ') + ' (' + num((topExit[1] || {}).count, 0) + '건)' : '-');
+  /* 매매 강도 한국어 변환 */
+  function _intensityKr(intensity) {
+    return {
+      aggressive: '공격적', moderate: '보통', defensive: '수비적',
+      conservative: '보수적', reduced: '축소', normal: '정상'
+    }[intensity] || (intensity || null);
+  }
 
-    var tq = r.trailing_quality || {};
-    setEl('ra-trailing', tq.quality_grade || '-');
-    setEl('ra-trailing-detail', tq.early_exit_rate != null ? '조기청산 ' + Number(tq.early_exit_rate * 100).toFixed(0) + '%' : '-');
+  /* 수익률 문자열 (부호 포함) */
+  function _pctStr(v) {
+    var n = Number(v);
+    if (!Number.isFinite(n)) return null;
+    return (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+  }
 
-    var profiles = r.profile_performance || [];
-    if (profiles.length) {
-      setHtml('ra-profile-tbody', profiles.map(function(p) {
-        var total = countOf(p);
-        var filled = num(p.filled_orders != null ? p.filled_orders : p.win_count, 0);
-        var fillRate = total > 0 ? Math.round(filled / total * 100) : 0;
-        var avgPnl = avgPnlOf(p);
-        var pnlPct = avgPnl != null ? (avgPnl >= 0 ? '+' : '') + Number(avgPnl).toFixed(2) + '%' : '-';
-        var color = (avgPnl || 0) >= 0 ? 'var(--green)' : 'var(--red)';
-        return '<tr>'
-          + '<td><strong>' + escapeHtml(p.profile || '') + '</strong></td>'
-          + '<td>' + total + '건</td>'
-          + '<td>' + fillRate + '%</td>'
-          + '<td style="color:' + color + ';">' + pnlPct + '</td>'
-          + '<td>' + escapeHtml(p.evaluation || '-') + '</td>'
-          + '</tr>';
-      }).join(''));
+  /* ── BLOCK 1 — 오늘의 전략 컨텍스트 ── */
+  function _nlContext(r) {
+    var ta    = r.tone_analysis || {};
+    var dp    = r.daily_plan   || {};
+    var total = Number(r.total_orders  || 0);
+    var buy   = Number(r.buy_orders    || 0);
+    var sell  = Number(r.sell_orders   || 0);
+    var pairs = r.trade_pairs        || [];
+    var warns = r.integrity_warnings || [];
+    var lines = [];
+
+    // 장 시황 — AI 생성 요약 우선, 없으면 tone 코드로 폴백
+    if (ta.summary) {
+      lines.push('<p><strong>📊 장 시황:</strong> ' + escapeHtml(ta.summary) + '</p>');
     } else {
-      setHtml('ra-profile-tbody', '<tr><td colspan="5" class="muted" style="text-align:center;">데이터 없음</td></tr>');
+      var toneLabel = _toneKr(ta.tone || r.market_tone);
+      lines.push('<p>오늘 시장은 <strong>' + escapeHtml(toneLabel) + '</strong>이었습니다.</p>');
     }
 
-    var exits = r.exit_reason_performance || [];
-    if (exits.length) {
-      setHtml('ra-exit-tbody', exits.map(function(e) {
-        var avgPnl = avgPnlOf(e);
-        var pnlPct = avgPnl != null ? (avgPnl >= 0 ? '+' : '') + Number(avgPnl).toFixed(2) + '%' : '-';
-        var color = (avgPnl || 0) >= 0 ? 'var(--green)' : 'var(--red)';
-        return '<tr>'
-          + '<td>' + escapeHtml((e.exit_reason || '').replace(/_/g, ' ')) + '</td>'
-          + '<td>' + countOf(e) + '건</td>'
-          + '<td style="color:' + color + ';">' + pnlPct + '</td>'
-          + '</tr>';
-      }).join(''));
+    // 주요 요인
+    var kf = ta.key_factors || [];
+    if (kf.length) {
+      lines.push('<p><em>주요 요인:</em> ' + kf.map(function(f) { return escapeHtml(f); }).join(' / ') + '</p>');
+    }
+
+    // 전략 설정 — AI llm_summary 우선, 없으면 intensity+rulepack 폴백
+    if (dp.llm_summary) {
+      lines.push('<p><strong>🎯 오늘의 전략:</strong> ' + escapeHtml(dp.llm_summary) + '</p>');
     } else {
-      setHtml('ra-exit-tbody', '<tr><td colspan="3" class="muted" style="text-align:center;">데이터 없음</td></tr>');
+      var intensity = _intensityKr(dp.trading_intensity);
+      var baseRp    = dp.base_rulepack_id || r.rulepack_id;
+      if (intensity || baseRp) {
+        lines.push('<p>전략 강도: <strong>' + (intensity || '기본') + '</strong>'
+          + (baseRp ? ' · 기본 RulePack: <strong>' + escapeHtml(baseRp) + '</strong>' : '') + '</p>');
+      }
+    }
+
+    // 파라미터 조정 (daily_overrides)
+    var overrides = dp.daily_overrides || {};
+    var oKeys = Object.keys(overrides);
+    if (oKeys.length) {
+      var oDesc = oKeys.map(function(k) {
+        return '<code>' + escapeHtml(k) + '</code>: ' + escapeHtml(String(overrides[k]));
+      }).join(', ');
+      lines.push('<p>⚙️ 오늘 적용된 파라미터 조정: ' + oDesc + '</p>');
+    }
+
+    // 주문 현황
+    if (total > 0) {
+      lines.push('<p>시스템은 <strong>' + pairs.length + '개 종목</strong>에 매매를 실행했습니다. '
+        + '매수 ' + buy + '건 / 매도 ' + sell + '건 처리됨.</p>');
+    } else {
+      lines.push('<p>오늘은 <strong>주문이 없었습니다.</strong> 스크리닝 조건 충족 종목 없거나 Daily Plan 미활성화.</p>');
+    }
+
+    if (warns.length) {
+      lines.push('<p style="color:var(--yellow,#e3b341)">⚠ 체결 데이터 무결성 경고 ' + warns.length + '건 — 손익 수치가 부정확할 수 있습니다.</p>');
+    }
+
+    return lines.join('');
+  }
+
+  /* ── BLOCK 2 — 매수 판단 결과 ── */
+  function _nlResult(r) {
+    var pairs       = r.trade_pairs || [];
+    var dp          = r.daily_plan  || {};
+    var assignments = dp.symbol_assignments || [];
+
+    if (!pairs.length && !assignments.length) {
+      return '<p class="muted">오늘 거래한 종목이 없습니다.</p>';
+    }
+
+    // symbol → assignment 맵 (AI 진입 판단 이유)
+    var assignMap = {};
+    assignments.forEach(function(a) { if (a.symbol) assignMap[a.symbol] = a; });
+
+    var completed  = pairs.filter(function(p) { return p.status === '매도완료'; });
+    var inProgress = pairs.filter(function(p) { return p.status !== '매도완료'; });
+    var winners    = completed.filter(function(p) { return (p.pnl_pct || 0) > 0; });
+    var losers     = completed.filter(function(p) { return (p.pnl_pct || 0) < 0; });
+
+    var _avg = function(arr) {
+      return arr.length ? arr.reduce(function(s, p) { return s + (p.pnl_pct || 0); }, 0) / arr.length : null;
+    };
+    var avgWin  = _avg(winners);
+    var avgLoss = _avg(losers);
+    var winRate = completed.length > 0 ? Math.round(winners.length / completed.length * 100) : 0;
+    var sorted  = completed.slice().sort(function(a, b) { return (b.pnl_pct || 0) - (a.pnl_pct || 0); });
+    var best    = sorted[0];
+    var worst   = sorted[sorted.length - 1];
+
+    var lines = [];
+
+    // 요약 한 줄
+    if (completed.length > 0) {
+      var summary;
+      if (winners.length > 0 && losers.length > 0) {
+        summary = '<span class="good"><strong>' + winners.length + '건 수익</strong>'
+          + (avgWin  != null ? ' (평균 +' + avgWin.toFixed(1) + '%)' : '') + '</span>'
+          + ', <span class="bad"><strong>' + losers.length + '건 손실</strong>'
+          + (avgLoss != null ? ' (평균 ' + avgLoss.toFixed(1) + '%)' : '') + '</span>'
+          + '로 마감했습니다.';
+      } else if (winners.length > 0) {
+        summary = '<span class="good"><strong>전 건 수익</strong>'
+          + (avgWin != null ? ' (평균 +' + avgWin.toFixed(1) + '%)' : '') + '</span>으로 마감했습니다.';
+      } else if (losers.length > 0) {
+        summary = '<span class="bad"><strong>전 건 손실</strong>'
+          + (avgLoss != null ? ' (평균 ' + avgLoss.toFixed(1) + '%)' : '') + '</span>로 마감했습니다.';
+      } else {
+        summary = '손익 데이터가 아직 집계되지 않았습니다.';
+      }
+      lines.push('<p>완료 <strong>' + completed.length + '건</strong> 중 ' + summary + '</p>');
+    }
+
+    if (best && worst && best !== worst) {
+      lines.push('<p>'
+        + '최고: <strong>' + escapeHtml(best.name || best.symbol) + '</strong>'
+        + (_pctStr(best.pnl_pct) ? ' <span class="good">' + _pctStr(best.pnl_pct) + '</span>' : '')
+        + ' &nbsp;/&nbsp; '
+        + '최저: <strong>' + escapeHtml(worst.name || worst.symbol) + '</strong>'
+        + (_pctStr(worst.pnl_pct) ? ' <span class="bad">' + _pctStr(worst.pnl_pct) + '</span>' : '')
+        + '</p>');
+    }
+
+    // 종목별 AI 진입 판단 → 실제 결과
+    var allPairs = completed.concat(inProgress);
+    if (allPairs.length > 0) {
+      lines.push('<p style="margin-top:10px;font-size:12px;color:var(--muted)">종목별 내역 (AI 진입 판단 → 실제 결과):</p>');
+      allPairs.forEach(function(p) {
+        var a      = assignMap[p.symbol] || {};
+        var reason = a.reason || a.entry_reason || null;
+        var pctStr = _pctStr(p.pnl_pct);
+        var pctSpan = pctStr
+          ? ' <span class="' + ((p.pnl_pct || 0) >= 0 ? 'good' : 'bad') + '">' + pctStr + '</span>'
+          : (p.status !== '매도완료' ? ' <span class="muted">(보유중)</span>' : '');
+        lines.push('<p style="font-size:12px;padding-left:12px">'
+          + '· <strong>' + escapeHtml(p.name || p.symbol) + '</strong>' + pctSpan
+          + (reason ? '<br><span style="color:var(--muted);padding-left:8px">AI 판단: ' + escapeHtml(reason.slice(0, 120)) + '</span>' : '')
+          + '</p>');
+      });
+    }
+
+    // 승률 평가
+    if (completed.length > 0) {
+      var evalLine;
+      if (winRate >= 70)      evalLine = '<span class="good">✓ 승률 ' + winRate + '% — 진입 판단이 전반적으로 좋았습니다.</span>';
+      else if (winRate >= 50) evalLine = '<span style="color:var(--yellow,#e3b341)">△ 승률 ' + winRate + '% — 개선 여지가 있습니다.</span>';
+      else                    evalLine = '<span class="bad">✗ 승률 ' + winRate + '% — 진입 기준을 재검토할 필요가 있습니다.</span>';
+      lines.push('<p>' + evalLine + '</p>');
+    }
+
+    if (inProgress.length > 0) {
+      lines.push('<p style="color:var(--muted);font-size:12px">※ 미청산 보유 ' + inProgress.length + '건: '
+        + inProgress.map(function(p) { return escapeHtml(p.name || p.symbol); }).join(', ') + '</p>');
+    }
+
+    return lines.join('');
+  }
+
+  /* ── BLOCK 3 — 걸러낸 종목 ── */
+  function _nlMissed(r) {
+    var missed   = r.missed_entries    || [];
+    var dp       = r.daily_plan        || {};
+    var excluded = dp.excluded_symbols || [];
+
+    if (!missed.length && !excluded.length) {
+      return '<p>오늘은 걸러낸 종목이 없었습니다. 후보 전원이 매매로 이어졌거나 스크리닝 단계에서 후보가 없었습니다.</p>';
+    }
+
+    var lines = [];
+
+    // AI 사전 제외 종목 (daily_plan.excluded_symbols — 장 시작 전 AI 판단)
+    if (excluded.length) {
+      lines.push('<p><strong>📋 장 시작 전 AI 제외 종목 (' + excluded.length + '건):</strong></p>');
+      excluded.forEach(function(e) {
+        var reason = e.reason || e.excluded_reason || null;
+        lines.push('<p style="font-size:12px;padding-left:12px">'
+          + '· <strong>' + escapeHtml(e.name || e.symbol || '-') + '</strong>'
+          + (reason ? ' — ' + escapeHtml(reason.slice(0, 120)) : '')
+          + '</p>');
+      });
+    }
+
+    // 런타임 미진입 (스크리닝 통과 후 실제 주문 미체결)
+    if (missed.length) {
+      lines.push('<p style="margin-top:10px"><strong>⏱ 스크리닝 통과 후 미진입 (' + missed.length + '건):</strong></p>');
+      var byStage = {};
+      missed.forEach(function(m) {
+        var s = m.missed_stage || m.source || '미분류';
+        if (!byStage[s]) byStage[s] = [];
+        byStage[s].push(m);
+      });
+      Object.keys(byStage).forEach(function(stage) {
+        var items = byStage[stage];
+        var names = items.slice(0, 5).map(function(m) {
+          return '<strong>' + escapeHtml(m.symbol || m.name || '-') + '</strong>';
+        }).join(', ') + (items.length > 5 ? ' 외 ' + (items.length - 5) + '건' : '');
+        lines.push('<p style="font-size:12px;padding-left:12px"><em>' + escapeHtml(stage) + '</em>: ' + names + '</p>');
+        var reason = (items[0] || {}).reason || (items[0] || {}).missed_reason;
+        if (reason) {
+          lines.push('<p style="color:var(--muted);font-size:12px;padding-left:24px">주요 사유: ' + escapeHtml(reason.slice(0, 120)) + '</p>');
+        }
+      });
+    }
+
+    lines.push('<p style="color:var(--yellow,#e3b341);margin-top:8px">✍ 반성: 제외된 종목의 실제 등락을 확인하고, 진입 조건이 너무 좁게 설정된 것은 아닌지 검토하세요.</p>');
+    return lines.join('');
+  }
+
+  /* ── BLOCK 4 — 손실 패턴 분석 ── */
+  function _nlLoss(r) {
+    var fp          = r.false_positives || [];
+    var dp          = r.daily_plan      || {};
+    var assignments = dp.symbol_assignments || [];
+
+    if (!fp.length) {
+      return '<p class="good">✓ 오늘은 손실 거래가 없었습니다.</p>';
+    }
+
+    // symbol → AI 진입 판단 맵
+    var assignMap = {};
+    assignments.forEach(function(a) { if (a.symbol) assignMap[a.symbol] = a; });
+
+    var typeMap = { entry_fail: '진입 실패', early_exit: '조기 청산', wrong_profile: '프로파일 오류' };
+    var byType  = {};
+    fp.forEach(function(f) { var t = f.false_positive_type || '기타'; (byType[t] = byType[t] || []).push(f); });
+
+    var byExit = {};
+    fp.forEach(function(f) { var e = f.exit_reason || '미기록'; byExit[e] = (byExit[e] || 0) + 1; });
+
+    var confArr = fp.filter(function(f) { return f.original_confidence != null; }).map(function(f) { return f.original_confidence; });
+    var avgConf = confArr.length ? confArr.reduce(function(a, b) { return a + b; }, 0) / confArr.length : null;
+    var minConf = confArr.length ? Math.min.apply(null, confArr) : null;
+
+    var lines = [];
+    lines.push('<p><strong>' + fp.length + '건</strong>의 손실 거래가 발생했습니다.</p>');
+
+    var typeDesc = Object.keys(byType).map(function(t) {
+      return (typeMap[t] || t) + ' ' + byType[t].length + '건';
+    }).join(' / ');
+    lines.push('<p>유형: ' + typeDesc + '</p>');
+
+    if (avgConf != null) {
+      lines.push('<p>진입 시점 평균 confidence: <strong>' + (avgConf * 100).toFixed(1) + '%</strong>'
+        + (minConf != null ? ' (최저 ' + (minConf * 100).toFixed(1) + '%)' : '') + ' — '
+        + (avgConf < 0.45
+          ? '<span class="bad">낮은 confidence에서 진입한 케이스가 많습니다.</span>'
+          : '비교적 높은 confidence에서도 손실이 발생했습니다. 시장 외부 변수를 검토하세요.')
+        + '</p>');
+    }
+
+    var exitDesc = Object.keys(byExit).map(function(e) { return e + ' ' + byExit[e] + '건'; }).join(' / ');
+    lines.push('<p>청산 사유: ' + exitDesc + '</p>');
+
+    // 개별 종목 — AI 진입 판단 + 실제 손실 이유 함께 표시
+    lines.push('<p style="margin-top:10px;font-size:12px;color:var(--muted)">종목별 손실 내역 (AI 진입 판단 → 실제 손실 원인):</p>');
+    fp.forEach(function(f) {
+      var a           = assignMap[f.symbol] || {};
+      var entryReason = a.reason || a.entry_reason || null;
+      var lossReason  = f.loss_reason || null;
+      var pctStr = f.pnl_pct != null ? ' <span class="bad">' + _pctStr(f.pnl_pct) + '</span>' : '';
+      lines.push('<p style="font-size:12px;padding-left:12px">'
+        + '· <strong>' + escapeHtml(f.symbol_name || f.symbol) + '</strong>' + pctStr
+        + (entryReason ? '<br><span style="color:var(--muted);padding-left:8px">AI 진입 판단: ' + escapeHtml(entryReason.slice(0, 100)) + '</span>' : '')
+        + (lossReason  ? '<br><span style="color:var(--red,#f85149);padding-left:8px">손실 원인: '  + escapeHtml(lossReason.slice(0, 100))  + '</span>' : '')
+        + '</p>');
+    });
+
+    // 반성 포인트
+    var allEntryFail = Object.keys(byType).length === 1 && byType['entry_fail'];
+    var allEod       = Object.keys(byExit).length === 1 && byExit['eod'];
+    var lowConf      = avgConf != null && avgConf < 0.45;
+    var reflections  = [];
+    if (allEntryFail) reflections.push('손실 전 건이 진입 실패 유형 — 진입 조건 자체를 재검토하세요.');
+    if (allEod)       reflections.push('전 건 EOD 청산 — 장중 손절(-5~8%) 조건을 추가하면 손실을 줄일 수 있습니다.');
+    if (lowConf)      reflections.push('confidence가 낮은 종목을 진입하고 있습니다 — 임계값 상향을 권장합니다.');
+    if (!reflections.length) reflections.push('패턴이 뚜렷하지 않습니다 — AI 진입 판단과 실제 결과의 괴리를 분석하세요.');
+
+    lines.push('<p style="color:var(--red,#f85149);margin-top:8px">✍ 반성 포인트: ' + reflections.join(' / ') + '</p>');
+    return lines.join('');
+  }
+
+  /* 다음 거래일(월~금 기준) 계산 */
+  function _nextTradingDay(fromDateStr) {
+    var d = new Date(fromDateStr + 'T00:00:00');
+    do { d.setDate(d.getDate() + 1); } while (d.getDay() === 0 || d.getDay() === 6);
+    return d.getFullYear() + '-'
+      + String(d.getMonth() + 1).padStart(2, '0') + '-'
+      + String(d.getDate()).padStart(2, '0');
+  }
+
+  /* ── BLOCK 5 — 다음 거래일 액션 플랜 ── */
+  function _nlTomorrow(r) {
+    var fp       = r.false_positives    || [];
+    var missed   = r.missed_entries     || [];
+    var pairs    = r.trade_pairs        || [];
+    var warns    = r.integrity_warnings || [];
+    var dp       = r.daily_plan         || {};
+    var ta       = r.tone_analysis      || {};
+
+    var overrides    = dp.daily_overrides  || {};
+    var riskFactors  = ta.risk_factors     || [];
+    var completed    = pairs.filter(function(p) { return p.status === '매도완료'; });
+    var winners      = completed.filter(function(p) { return (p.pnl_pct || 0) > 0; });
+    var winRate      = completed.length > 0 ? winners.length / completed.length : 0;
+    var eodAll       = completed.length > 0 && completed.every(function(p) { return p.exit_reason === 'eod'; });
+
+    var confArr = fp.filter(function(f) { return f.original_confidence != null; }).map(function(f) { return f.original_confidence; });
+    var avgConf = confArr.length ? confArr.reduce(function(a, b) { return a + b; }, 0) / confArr.length : null;
+
+    // 다음 거래일 계산
+    var nextDay = r.trade_date ? _nextTradingDay(r.trade_date) : null;
+
+    // 추천 override 누적 (버튼 적용용)
+    _raRecommendedOverrides = {};
+    function recommend(key, value) { _raRecommendedOverrides[key] = value; }
+
+    var items = [];
+    var n = 0;
+    function add(html) { n++; items.push('<p><strong>' + n + '.</strong> ' + html + '</p>'); }
+
+    // 다음 거래일 표시
+    if (nextDay) {
+      items.push('<p style="color:var(--muted);font-size:12px;margin-bottom:8px">적용 대상: <strong>' + nextDay + '</strong> (다음 거래일)</p>');
+    }
+
+    // 오늘 daily_overrides 효과 평가
+    var oKeys = Object.keys(overrides);
+    if (oKeys.length) {
+      var oDesc = oKeys.map(function(k) {
+        return '<code>' + escapeHtml(k) + '=' + escapeHtml(String(overrides[k])) + '</code>';
+      }).join(', ');
+      if (winRate >= 0.6) {
+        add('✅ <strong>오늘 파라미터 조정 효과 확인</strong> — ' + oDesc
+          + ' 설정으로 승률 ' + Math.round(winRate * 100) + '% 달성. 다음 거래일도 유지 권장.');
+        // 유효했던 override 그대로 추천
+        oKeys.forEach(function(k) { recommend(k, overrides[k]); });
+      } else if (completed.length > 0 && winRate < 0.5) {
+        add('⚙️ <strong>파라미터 조정 재검토</strong> — 오늘 적용한 ' + oDesc
+          + ' 에도 불구하고 승률 ' + Math.round(winRate * 100) + '%. 원래 설정 복원 검토.');
+      }
+    }
+
+    // 리스크 요인 (정보성, override 없음)
+    if (riskFactors.length) {
+      add('⚠️ <strong>다음 거래일 리스크 요인:</strong> '
+        + riskFactors.map(function(f) { return escapeHtml(f); }).join(' / '));
+    }
+
+    // FP confidence 기반 → min_confidence 추천
+    if (fp.length >= 3 && avgConf != null && avgConf < 0.5) {
+      var rec = Math.ceil((avgConf + 0.07) * 20) * 5 / 100;  // 0.xx 형태
+      recommend('min_confidence', rec);
+      add('⚙️ <strong>confidence 임계값 상향</strong> — 손실 ' + fp.length + '건 평균 진입 confidence <strong>'
+        + (avgConf * 100).toFixed(0) + '%</strong>. <code>min_confidence → '
+        + (rec * 100).toFixed(0) + '%</code> 적용 권장.');
+    } else if (fp.length >= 2) {
+      add('🔍 <strong>진입 필터 재검토</strong> — 손실 ' + fp.length + '건. S3/S4 파라미터 점검 필요.');
+    } else if (fp.length === 1) {
+      add('📌 <strong>손실 종목 개별 확인</strong> — 단발 변수 가능성. 종목 뉴스·재무지표 재검토.');
+    }
+
+    // EOD 청산 집중 → stop_loss_pct 추천
+    if (eodAll && fp.length > 0) {
+      recommend('stop_loss_pct', -0.06);
+      add('⚙️ <strong>장중 손절 조건 추가</strong> — 손실 전 건 EOD 청산. <code>stop_loss_pct → -6%</code> 적용 권장.');
+    } else if (eodAll && completed.length > 3) {
+      add('⚙️ <strong>익절 조건 점검</strong> — 완료 거래 전 건 EOD 청산. <code>take_profit_pct</code> 재확인 권장.');
+    }
+
+    // 놓친 기회
+    if (missed.length > 3) {
+      add('🔍 <strong>스크리닝 조건 완화 검토</strong> — 미진입 ' + missed.length + '건. S3/S4 필터 재검토.');
+    }
+
+    // 좋은 성과 — override 없음
+    if (fp.length === 0 && winRate >= 0.7) {
+      add('✅ <strong>현재 전략 유지</strong> — 승률 ' + Math.round(winRate * 100) + '%, 손실 없음. 변경 불필요.');
+    } else if (fp.length <= 1 && winRate >= 0.5) {
+      add('📊 <strong>전략 유지 + 모니터링</strong> — 승률 ' + Math.round(winRate * 100) + '% 양호. 추가 데이터 축적 중.');
+    }
+
+    // 무결성 경고
+    if (warns.length) {
+      add('🔴 <strong>체결 데이터 점검 필수</strong> — 무결성 경고 ' + warns.length + '건. fills 테이블 / KIS 체결 대조 후 재집계.');
+    }
+
+    if (!items.length) {
+      items.push('<p class="good">✅ 특이사항 없음 — 현재 설정을 유지하세요.</p>');
+    }
+
+    // 적용 버튼 표시 여부 결정
+    var applyBtn = document.getElementById('ra-apply-btn');
+    if (applyBtn) {
+      if (Object.keys(_raRecommendedOverrides).length > 0 && nextDay) {
+        applyBtn.style.display = '';
+        applyBtn.dataset.nextDay = nextDay;
+      } else {
+        applyBtn.style.display = 'none';
+      }
+    }
+
+    return items.join('');
+  }
+
+  /* "다음 거래일에 적용" 버튼 핸들러 */
+  async function applyNextDayOverrides() {
+    var overrides = _raRecommendedOverrides;
+    var btn = document.getElementById('ra-apply-btn');
+    var nextDay = btn ? btn.dataset.nextDay : null;
+
+    if (!nextDay || !Object.keys(overrides).length) {
+      alert('적용할 파라미터 추천값이 없습니다.');
+      return;
+    }
+
+    var desc = Object.keys(overrides).map(function(k) {
+      return k + ' = ' + overrides[k];
+    }).join('\n');
+    if (!confirm(nextDay + ' 거래일에 아래 파라미터를 적용할까요?\n\n' + desc)) return;
+
+    try {
+      btn.disabled = true;
+      btn.textContent = '적용 중...';
+      var res = await fetch('/api/v1/review-audit/apply-overrides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trade_date: nextDay, overrides: overrides }),
+      });
+      var data = await res.json();
+      if (res.ok && data.ok) {
+        btn.textContent = '✓ 적용 완료';
+        btn.disabled = true;
+        showToast(nextDay + ' 파라미터 override 저장 완료');
+      } else {
+        btn.disabled = false;
+        btn.textContent = '다음 거래일에 적용 ↗';
+        showToast('적용 실패: ' + (data.detail || 'unknown'), 'error');
+      }
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = '다음 거래일에 적용 ↗';
+      showToast('오류: ' + e.message, 'error');
     }
   }
 
-  /* Open the Review & Audit detail modal.
-     MD 파일이 있으면 그 내용을 우선 표시하고, 없으면 DB 기반 요약 텍스트를 생성한다. */
+  /* 간이 Markdown → HTML 변환기 */
+  function _mdToHtml(md) {
+    if (!md) return '<p class="muted">내용 없음</p>';
+    var lines  = md.split('\n');
+    var html   = [];
+    var inTable = false;
+    var inUl    = false;
+
+    function closeList() { if (inUl) { html.push('</ul>'); inUl = false; } }
+    function closeTable() { if (inTable) { html.push('</tbody></table>'); inTable = false; } }
+
+    function inlineRender(text) {
+      return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`([^`]+)`/g, '<code style="background:var(--panel-2);padding:1px 4px;border-radius:3px">$1</code>');
+    }
+
+    lines.forEach(function(raw) {
+      var line = raw;
+      // 수평선
+      if (/^---+$/.test(line.trim())) {
+        closeList(); closeTable();
+        html.push('<hr style="border:none;border-top:1px solid var(--line);margin:12px 0">');
+        return;
+      }
+      // 표 행
+      if (/^\|/.test(line)) {
+        if (!inTable) { closeList(); html.push('<table style="width:100%;border-collapse:collapse;font-size:12px"><tbody>'); inTable = true; }
+        if (/^\|[-| ]+\|$/.test(line.trim())) return; // 구분선 skip
+        var cells = line.replace(/^\||\|$/g, '').split('|').map(function(c) { return c.trim(); });
+        html.push('<tr>' + cells.map(function(c) {
+          return '<td style="padding:4px 8px;border:1px solid var(--line)">' + inlineRender(c) + '</td>';
+        }).join('') + '</tr>');
+        return;
+      }
+      closeTable();
+      // 제목
+      if (/^### /.test(line)) { closeList(); html.push('<h4 style="margin:14px 0 6px;font-size:13px">' + inlineRender(line.slice(4)) + '</h4>'); return; }
+      if (/^## /. test(line)) { closeList(); html.push('<h3 style="margin:18px 0 8px;font-size:15px">' + inlineRender(line.slice(3)) + '</h3>'); return; }
+      if (/^# /.  test(line)) { closeList(); html.push('<h2 style="margin:20px 0 10px;font-size:17px;border-bottom:1px solid var(--line);padding-bottom:6px">' + inlineRender(line.slice(2)) + '</h2>'); return; }
+      // 목록
+      if (/^- /.test(line)) {
+        if (!inUl) { html.push('<ul style="margin:4px 0 8px;padding-left:18px">'); inUl = true; }
+        html.push('<li style="margin:2px 0">' + inlineRender(line.slice(2)) + '</li>');
+        return;
+      }
+      closeList();
+      // 빈 줄
+      if (line.trim() === '') { html.push('<div style="height:6px"></div>'); return; }
+      // 일반 문단
+      html.push('<p style="margin:4px 0">' + inlineRender(line) + '</p>');
+    });
+    closeList();
+    closeTable();
+    return html.join('');
+  }
+
+  /* "자세히 보기" 모달 — 마크다운 렌더링 */
   function openReviewDetailModal() {
-    if (!_raCurrentReport) return;
-    var modal = document.getElementById('ra-detail-modal');
-    var content = document.getElementById('ra-detail-content');
-    var title = document.getElementById('ra-modal-title');
-    if (!modal || !content) return;
+    if (!_raCurrentReport) {
+      alert('먼저 날짜를 선택하고 조회하거나 S10을 실행하세요.');
+      return;
+    }
+    var modal   = document.getElementById('ra-detail-modal');
+    var viewer  = document.getElementById('ra-md-viewer');
+    var titleEl = document.getElementById('ra-modal-title');
+    if (!modal || !viewer) return;
 
     var r = _raCurrentReport;
     var d = new Date((r.trade_date || '') + 'T00:00:00');
     var dateLabel = r.trade_date ? ((d.getMonth() + 1) + '월 ' + d.getDate() + '일') : '-';
-    if (title) title.textContent = dateLabel + ' 점검 보고서 전문';
+    if (titleEl) titleEl.textContent = dateLabel + ' 복기 보고서 전문';
 
-    // MD 파일 내용이 있으면 그대로 표시
-    if (r.md_content) {
-      content.textContent = r.md_content;
-      modal.style.display = '';
-      return;
+    var md = r.md_content || '';
+    if (!md && r.trade_date) {
+      // md_content가 없으면 DB 데이터 기반으로 직접 마크다운 생성
+      md = _buildFallbackMd(r);
     }
-
-    // DB 기반 요약 텍스트 생성 (MD 없을 때 fallback)
-    var lines = [];
-    var countOf = function(row) {
-      var value = row.total_orders != null ? row.total_orders : (row.trade_count != null ? row.trade_count : row.count);
-      var parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : 0;
-    };
-    var avgPnlOf = function(row) {
-      var value = row.avg_pnl_pct != null ? row.avg_pnl_pct : row.avg_pnl;
-      var parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : null;
-    };
-    lines.push('===================================');
-    lines.push('  ' + dateLabel + ' 시스템 점검 보고서');
-    lines.push('  (DB 자동 생성 — 수동 점검 파일 없음)');
-    lines.push('===================================');
-    lines.push('');
-    lines.push('[기본 정보]');
-    lines.push('  거래일     : ' + (r.trade_date || '-'));
-    lines.push('  시장 톤    : ' + (r.market_tone || '-'));
-    lines.push('  RulePack   : ' + (r.rulepack_id || '-'));
-    lines.push('');
-    lines.push('[주문 요약]');
-    lines.push('  총 주문    : ' + (r.total_orders || 0) + '건');
-    lines.push('  매수       : ' + (r.buy_orders || 0) + '건');
-    lines.push('  매도       : ' + (r.sell_orders || 0) + '건');
-    lines.push('  실패       : ' + (r.failed_orders || 0) + '건');
-    lines.push('');
-    lines.push('[손익]');
-    lines.push('  실현 손익  : ' + (r.realized_pnl != null ? Number(r.realized_pnl).toLocaleString() + '원' : '-'));
-    lines.push('  손익률     : ' + (r.realized_pnl_pct != null ? (r.realized_pnl_pct >= 0 ? '+' : '') + Number(r.realized_pnl_pct).toFixed(2) + '%' : '-'));
-    lines.push('');
-    lines.push('[Risk Profile별 성과]');
-    var profiles = r.profile_performance || [];
-    if (profiles.length) {
-      profiles.forEach(function(p) {
-        var avgPnl = avgPnlOf(p);
-        lines.push('  ' + (p.profile || '-').padEnd(16) + ' | 주문 ' + countOf(p) + '건 | 평균 손익 ' + (avgPnl != null ? (avgPnl >= 0 ? '+' : '') + avgPnl.toFixed(2) + '%' : '-'));
-      });
-    } else {
-      lines.push('  데이터 없음');
-    }
-    lines.push('');
-    lines.push('[청산 사유별 성과]');
-    var exits = r.exit_reason_performance || [];
-    if (exits.length) {
-      exits.forEach(function(e) {
-        var avgPnl = avgPnlOf(e);
-        lines.push('  ' + (e.exit_reason || '-').replace(/_/g, ' ').padEnd(20) + ' | ' + countOf(e) + '건 | ' + (avgPnl != null ? (avgPnl >= 0 ? '+' : '') + avgPnl.toFixed(2) + '%' : '-'));
-      });
-    } else {
-      lines.push('  데이터 없음');
-    }
-    lines.push('');
-    lines.push('[트레일링 품질]');
-    var tq = r.trailing_quality || {};
-    lines.push('  등급       : ' + (tq.quality_grade || '-'));
-    lines.push('  조기청산율 : ' + (tq.early_exit_rate != null ? (tq.early_exit_rate * 100).toFixed(0) + '%' : '-'));
-    lines.push('');
-    lines.push('----------------------------------- 끝');
-
-    content.textContent = lines.join('\n');
+    viewer.innerHTML = _mdToHtml(md);
     modal.style.display = '';
   }
 
-  /* Close the Review & Audit detail modal without mutating the loaded report. */
+  function _buildFallbackMd(r) {
+    var lines = [
+      '# 복기 보고서 — ' + (r.trade_date || '-'),
+      '',
+      '## 요약',
+      '| 항목 | 값 |',
+      '|------|-----|',
+      '| 시장 톤 | ' + (r.market_tone || '-') + ' |',
+      '| RulePack | ' + (r.rulepack_id || '-') + ' |',
+      '| 총 주문 | ' + (r.total_orders || 0) + '건 |',
+      '| 실현 손익 | ' + (r.realized_pnl != null ? Number(r.realized_pnl).toLocaleString() + '원' : '-') + ' |',
+      '| 놓친 기회 | ' + (r.missed_entries_count || 0) + '건 |',
+      '| 손실 거래 | ' + (r.false_positive_count || 0) + '건 |',
+      '',
+      '> DB 보고서 전용 — S10 재실행 시 전체 마크다운 파일이 생성됩니다.',
+    ];
+    return lines.join('\n');
+  }
+
   function closeReviewDetailModal() {
     var modal = document.getElementById('ra-detail-modal');
     if (modal) modal.style.display = 'none';
   }
 
-  /* Request Review & Audit generation for the selected date, then reload the Review screen state. */
   async function runReviewAudit() {
-    console.info('[INFO] ReviewAudit - generate start');
+    var input = document.getElementById('ra-date-input');
+    var today = new Date();
+    var defaultDate = today.getFullYear() + '-'
+      + String(today.getMonth() + 1).padStart(2, '0') + '-'
+      + String(today.getDate()).padStart(2, '0');
+    var targetDate = (input && input.value) ? input.value : defaultDate;
+
+    if (!confirm(targetDate + ' S10 Review & Audit + S11 Learning Memory를 실행할까요?')) return;
     try {
-      var today = new Date();
-      var defaultDate = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
-      var input = document.getElementById('ra-date-input');
-      var targetDate = input && input.value ? input.value : defaultDate;
-      await fetch('/api/v1/review-audit/run', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({date: targetDate})});
-      await loadReviewByDate(targetDate);
-      console.info('[INFO] ReviewAudit - generate complete', targetDate);
+      // S10 실행
+      await fetch('/api/v1/review-audit/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: targetDate }),
+      });
+      // S11 실행 (실패해도 S10 결과는 표시)
+      try {
+        await fetch('/api/v1/learning-memory/build', { method: 'POST' });
+      } catch (e11) {
+        console.warn('S11 Learning Memory 실행 실패 (무시):', e11.message);
+      }
+      await _loadReviewByDateStr(targetDate);
     } catch (e) {
-      console.error('[ERROR] ReviewAudit - generate failed', e.message);
-      alert('생성 실패: ' + e.message);
+      alert('실행 실패: ' + e.message);
+    }
+  }
+
+  // 레거시 — loadReviewAuditData는 이전 layout용. 현재 screen-review에서는 loadReviewAuditScreen 사용
+  async function loadReviewAuditData() {
+    try {
+      const reviewRes = await fetch('/api/v1/review-audit/today');
+      if (reviewRes.ok) {
+        const reviewData = await reviewRes.json();
+        const p = reviewData.payload || {};
+        if (p.profile_summary) renderProfilePerformance(p.profile_summary);
+        if (p.exit_summary) renderExitReason(p.exit_summary);
+      }
+    } catch (e) {
+      console.warn('loadReviewAuditData error', e);
     }
   }
 
@@ -371,14 +799,9 @@
     const tbody = document.getElementById('ra-profile-tbody');
     if (!tbody) return;
     const entries = Object.entries(summary);
-    if (!entries.length) {
-      tbody.innerHTML = '<tr><td colspan="4" class="muted">데이터 없음</td></tr>';
-      return;
-    }
+    if (!entries.length) { tbody.innerHTML = '<tr><td colspan="4" class="muted">데이터 없음</td></tr>'; return; }
     tbody.innerHTML = entries.map(([profile, data]) => {
-      const wr = data.win_count && data.trade_count
-        ? ((data.win_count / data.trade_count) * 100).toFixed(0) + '%'
-        : '—';
+      const wr  = data.win_count && data.trade_count ? ((data.win_count / data.trade_count) * 100).toFixed(0) + '%' : '—';
       const pnl = data.avg_pnl != null ? (data.avg_pnl * 100).toFixed(2) + '%' : '—';
       return `<tr><td>${profile}</td><td>${data.trade_count || 0}</td><td>${wr}</td><td>${pnl}</td></tr>`;
     }).join('');
@@ -388,67 +811,24 @@
     const tbody = document.getElementById('ra-exit-tbody');
     if (!tbody) return;
     const entries = Object.entries(summary);
-    if (!entries.length) {
-      tbody.innerHTML = '<tr><td colspan="3" class="muted">데이터 없음</td></tr>';
-      return;
-    }
+    if (!entries.length) { tbody.innerHTML = '<tr><td colspan="3" class="muted">데이터 없음</td></tr>'; return; }
     tbody.innerHTML = entries.map(([reason, data]) => {
       const pnl = data.avg_pnl != null ? (data.avg_pnl * 100).toFixed(2) + '%' : '—';
       return `<tr><td>${reason}</td><td>${data.count || 0}</td><td>${pnl}</td></tr>`;
     }).join('');
   }
 
-  function renderTrailingQuality(tq) {
-    const r = document.getElementById('ra-trailing-recovery');
-    const e = document.getElementById('ra-trailing-early');
-    const c = document.getElementById('ra-trailing-count');
-    if (r) r.textContent = tq.avg_recovery_rate != null ? (tq.avg_recovery_rate * 100).toFixed(1) + '%' : '—';
-    if (e) e.textContent = tq.early_exit_rate != null ? (tq.early_exit_rate * 100).toFixed(1) + '%' : '—';
-    if (c) c.textContent = tq.total_trailing_exits ?? '—';
-  }
-
-  function renderLearningMemory(memories) {
-    const total = memories.length;
-    const auto = memories.filter(m => m.auto_apply_allowed).length;
-    const approval = memories.filter(m => m.requires_approval).length;
-    const s3 = memories.filter(m => m.scope === 'S3_UNIVERSE_FILTER').length;
-    const s4 = memories.filter(m => m.scope === 'S4_HYBRID_SCREENING').length;
-    const s5 = memories.filter(m => m.scope === 'S5_DAILY_PLAN').length;
-
-    const setEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-    setEl('ra-mem-total', total);
-    setEl('ra-mem-auto', auto);
-    setEl('ra-mem-approval', approval);
-    setEl('ra-mem-s3', `S3: ${s3}건`);
-    setEl('ra-mem-s4', `S4: ${s4}건`);
-    setEl('ra-mem-s5', `S5: ${s5}건`);
-
-    const list = document.getElementById('ra-mem-list');
-    if (!list) return;
-    if (!total) { list.innerHTML = '<p class="muted">생성된 메모리 없음</p>'; return; }
-    list.innerHTML = memories.map(m => `
-      <div class="memory-item" style="border-left:3px solid var(--accent);padding:8px 12px;margin-bottom:8px">
-        <div><strong>[${m.scope}]</strong> ${m.summary}</div>
-        <div class="muted" style="font-size:0.85em">
-          auto: ${m.auto_apply_allowed ? 'Yes' : 'No'} |
-          approval: ${m.requires_approval ? 'Yes' : 'No'} |
-          status: ${m.status}
-        </div>
-      </div>
-    `).join('');
-  }
-
   async function buildLearningMemory() {
     const btn = document.getElementById('ra-build-memory-btn');
     if (btn) { btn.disabled = true; btn.textContent = '생성 중...'; }
     try {
-      const res = await fetch('/api/v1/learning-memory/build', { method: 'POST' });
+      const res  = await fetch('/api/v1/learning-memory/build', { method: 'POST' });
       const data = await res.json();
       if (res.ok && data.ok) {
         showToast('Learning Memory 생성 완료');
         await loadReviewAuditData();
       } else {
-        showToast('생성 실패: ' + (data.detail || data.payload?.reason || 'unknown'), 'error');
+        showToast('생성 실패: ' + (data.detail || (data.payload && data.payload.reason) || 'unknown'), 'error');
       }
     } catch (e) {
       showToast('오류: ' + e.message, 'error');
@@ -461,7 +841,7 @@
     const result = document.getElementById('test-s11-result');
     if (result) { result.style.display = 'block'; result.textContent = '실행 중...'; }
     try {
-      const res = await fetch('/api/v1/learning-memory/build', { method: 'POST' });
+      const res  = await fetch('/api/v1/learning-memory/build', { method: 'POST' });
       const data = await res.json();
       if (result) result.textContent = JSON.stringify(data.payload || data, null, 2);
     } catch (e) {

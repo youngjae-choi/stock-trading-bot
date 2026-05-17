@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dantabot Control Console v1.0</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/console.css">
 </head>
 
@@ -72,8 +74,8 @@
         <option value="data">System Status</option>
         <option value="engine-test">System Diagnostics</option>
         <option value="settings">Settings</option>
-        <option value="dividends">Dividend Management</option>
-        <option value="dividend-stats">Dividend Stats</option>
+        <option value="dividends">Dividend Entry</option>
+        <option value="dividend-stats">Statistics</option>
       </select>
 
       <div class="top-actions">
@@ -106,9 +108,9 @@
           <button type="button" data-screen="engine-test">System Diagnostics <small>diag</small></button>
           <button type="button" data-screen="settings">Settings <small>admin</small></button>
 
-          <div class="menu-label">Portfolio</div>
-          <button type="button" data-screen="dividends">Dividend Mgmt <small>div</small></button>
-          <button type="button" data-screen="dividend-stats">Dividend Stats <small>stats</small></button>
+          <div class="menu-label">Dividend</div>
+          <button type="button" data-screen="dividends">Dividend Entry <small>div</small></button>
+          <button type="button" data-screen="dividend-stats">Statistics <small>stats</small></button>
         </nav>
 
         <div class="sidebar-footer">
@@ -268,6 +270,11 @@
               <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
                 <span>계좌 정보 <span style="font-size:11px; color:var(--muted); font-weight:400;" id="tm-account-no"></span></span>
                 <button type="button" class="btn" style="font-size:11px; padding:2px 8px;" data-action="loadAccountBalance">새로고침</button>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:11px;">
+                <span id="tm-sync-status" style="display:inline-flex; align-items:center; gap:4px; padding:2px 7px; border-radius:10px; background:var(--panel-2); color:var(--muted);">— 동기화 대기</span>
+                <span style="color:var(--muted);">조회:</span>
+                <span id="tm-sync-time" style="color:var(--muted);">-</span>
               </div>
               <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
                 <div style="background:var(--panel-2); border-radius:6px; padding:8px 10px;">
@@ -748,20 +755,53 @@
           <div class="page-head">
             <div>
               <h1 class="page-title">False Positive</h1>
-              <p class="page-desc">진입 후 손실이 난 종목의 원인을 분석합니다.</p>
+              <p class="page-desc">매도 후 손실이 난 종목의 원인을 분석합니다.</p>
             </div>
-            <button type="button" class="btn" data-action="loadFalsePositive">새로고침</button>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <input type="date" id="fp-start-date" class="input" style="width:140px;">
+              <span style="color:var(--muted)">~</span>
+              <input type="date" id="fp-end-date" class="input" style="width:140px;">
+              <button type="button" class="btn secondary" data-action="searchFalsePositive">조회</button>
+              <button type="button" class="btn" data-action="generateFalsePositive">손실 분석 실행</button>
+            </div>
+          </div>
+
+          <div class="card" id="fp-summary-card" style="display:none;padding:16px 20px;">
+            <div style="display:flex;gap:32px;align-items:center;">
+              <div>
+                <div class="muted" style="font-size:11px;margin-bottom:2px">손실 종목</div>
+                <div id="fp-count" style="font-size:1.5em;font-weight:700;color:var(--red,#f85149)">-</div>
+              </div>
+              <div>
+                <div class="muted" style="font-size:11px;margin-bottom:2px">평균 손실률</div>
+                <div id="fp-avg-pnl" style="font-size:1.5em;font-weight:700">-</div>
+              </div>
+              <div>
+                <div class="muted" style="font-size:11px;margin-bottom:2px">총 손실액</div>
+                <div id="fp-total-pnl" style="font-size:1.5em;font-weight:700">-</div>
+              </div>
+            </div>
           </div>
 
           <div class="card">
-            <div class="card-title">오늘 False Positive 목록</div>
+            <div class="card-title">손실 거래 목록</div>
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>종목</th><th>유형</th><th>원점수</th><th>Confidence</th><th>진입 이유</th><th>손실 이유</th></tr>
+                  <tr>
+                    <th>매도일</th>
+                    <th>종목</th>
+                    <th>유형</th>
+                    <th style="text-align:right">매수가</th>
+                    <th style="text-align:right">매도가</th>
+                    <th style="text-align:right">손익</th>
+                    <th style="text-align:center">Confidence</th>
+                    <th>손실 원인</th>
+                    <th>진입 조건</th>
+                  </tr>
                 </thead>
                 <tbody id="fp-list-tbody">
-                  <tr><td colspan="6" class="muted" style="text-align:center">새로고침을 눌러 불러오기</td></tr>
+                  <tr><td colspan="9" class="muted" style="text-align:center">날짜를 선택하고 조회하거나 손실 분석 실행을 눌러주세요</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1146,92 +1186,88 @@
           <div class="page-head">
             <div>
               <h1 class="page-title">Trade Review</h1>
-              <p class="page-desc">일별 매매 결과 점검 보고서입니다.</p>
+              <p class="page-desc">당일 매매 결과를 종합 복기합니다.</p>
             </div>
-            <div style="display:flex; gap:8px; align-items:center;">
-              <input type="date" id="ra-date-input" style="padding:5px; border-radius:5px; background:var(--panel-2); color:var(--text); border:1px solid var(--line);" data-action="loadReviewByDate">
-              <button type="button" class="btn" data-action="loadReviewAuditScreen">오늘</button>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <input type="date" id="ra-date-input" class="input" style="width:150px;">
+              <button type="button" class="btn secondary" data-action="loadReviewByDate">조회</button>
+              <button type="button" class="btn secondary" data-action="loadReviewAuditScreen">오늘</button>
+              <button type="button" class="btn" data-action="runReviewAudit">S10+S11 실행</button>
             </div>
           </div>
 
+          <!-- 빈 상태 -->
           <div id="ra-empty" style="display:none;">
-            <div class="card" style="text-align:center; padding:40px;">
-              <div class="muted" id="ra-empty-status">미수집·대기: 해당 날짜의 점검 보고서가 없습니다.</div>
-              <div class="muted" id="ra-empty-detail" style="margin-top:8px; font-size:12px;">S10 Review & Audit이 실행되면 보고서가 생성됩니다.</div>
-              <button type="button" class="btn" style="margin-top:16px;" data-action="runReviewAudit">지금 생성</button>
+            <div class="card" style="text-align:center;padding:40px;">
+              <div class="muted" id="ra-empty-status">해당 날짜의 복기 보고서가 없습니다.</div>
+              <div class="muted" id="ra-empty-detail" style="margin-top:8px;font-size:12px;">
+                날짜를 입력하고 <strong>조회</strong>를 누르거나, 오늘 데이터를 생성하려면 <strong>S10 실행</strong>을 누르세요.<br>
+                <span style="color:var(--yellow,#e3b341)">※ 거래가 발생한 날짜만 의미있는 데이터가 표시됩니다.</span>
+              </div>
             </div>
           </div>
 
+          <!-- 보고서 본문 -->
           <div id="ra-report" style="display:none;">
-            <div class="card" style="margin-bottom:16px; background:var(--panel-2);">
-              <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+
+            <!-- 헤더 카드 -->
+            <div class="card" style="margin-bottom:16px;background:var(--panel-2);">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
                 <div>
-                  <div style="font-size:18px; font-weight:700;" id="ra-report-title">OO월 OO일 시스템 점검 보고서</div>
-                  <div style="font-size:12px; color:var(--muted); margin-top:4px;" id="ra-report-subtitle">시장톤: - | RulePack: -</div>
+                  <div style="font-size:18px;font-weight:700;" id="ra-report-title">OO월 OO일 복기 보고서</div>
+                  <div style="font-size:12px;color:var(--muted);margin-top:4px;" id="ra-report-subtitle">시장톤: - | RulePack: -</div>
                 </div>
                 <button type="button" class="btn" data-action="openReviewDetailModal">자세히 보기 ↗</button>
               </div>
             </div>
 
-            <div class="grid cols-4" style="margin-bottom:16px;">
-              <div class="card compact">
-                <div class="card-title">총 주문</div>
-                <div class="metric" id="ra-total-orders">-</div>
-                <div class="muted" id="ra-orders-detail">매수- / 매도- / 실패-</div>
-              </div>
-              <div class="card compact">
-                <div class="card-title">실현 손익</div>
-                <div class="metric" id="ra-pnl">-</div>
-                <div class="muted" id="ra-pnl-pct">수익률 -</div>
-              </div>
-              <div class="card compact">
-                <div class="card-title">청산 방식</div>
-                <div class="metric" id="ra-top-exit">-</div>
-                <div class="muted">가장 많은 청산 사유</div>
-              </div>
-              <div class="card compact">
-                <div class="card-title">트레일링 품질</div>
-                <div class="metric" id="ra-trailing">-</div>
-                <div class="muted" id="ra-trailing-detail">조기청산율 -</div>
-              </div>
-            </div>
-
+            <!-- BLOCK 1: 오늘의 전략 컨텍스트 -->
             <div class="card" style="margin-bottom:16px;">
-              <div class="card-title">Risk Profile별 성과</div>
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr><th>Profile</th><th>주문수</th><th>체결율</th><th>평균 손익률</th><th>평가</th></tr>
-                  </thead>
-                  <tbody id="ra-profile-tbody">
-                    <tr><td colspan="5" class="muted" style="text-align:center;">데이터 없음</td></tr>
-                  </tbody>
-                </table>
-              </div>
+              <div class="card-title">📋 오늘의 전략 컨텍스트</div>
+              <div id="ra-nl-context" class="ra-nl"></div>
             </div>
 
+            <!-- BLOCK 2: 매수 판단 결과 -->
+            <div class="card" style="margin-bottom:16px;">
+              <div class="card-title">📈 매수 판단 결과</div>
+              <div id="ra-nl-result" class="ra-nl"></div>
+            </div>
+
+            <!-- BLOCK 3: 걸러낸 종목 -->
+            <div class="card" style="margin-bottom:16px;">
+              <div class="card-title">🔍 걸러낸 종목</div>
+              <div id="ra-nl-missed" class="ra-nl"></div>
+            </div>
+
+            <!-- BLOCK 4: 손실 패턴 분석 -->
+            <div class="card" style="margin-bottom:16px;">
+              <div class="card-title">⚠️ 손실 패턴 분석</div>
+              <div id="ra-nl-loss" class="ra-nl"></div>
+            </div>
+
+            <!-- BLOCK 5: 내일 액션 플랜 -->
             <div class="card">
-              <div class="card-title">청산 사유별 성과</div>
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr><th>청산 사유</th><th>건수</th><th>평균 손익률</th></tr>
-                  </thead>
-                  <tbody id="ra-exit-tbody">
-                    <tr><td colspan="3" class="muted" style="text-align:center;">데이터 없음</td></tr>
-                  </tbody>
-                </table>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <div class="card-title" style="margin-bottom:0">🔮 다음 거래일 액션 플랜</div>
+                <button type="button" id="ra-apply-btn" class="btn secondary" style="display:none;font-size:12px;" data-action="applyNextDayOverrides">다음 거래일에 적용 ↗</button>
               </div>
+              <div id="ra-nl-tomorrow" class="ra-nl"></div>
             </div>
-          </div>
 
-          <div id="ra-detail-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; overflow:auto; padding:20px;">
-            <div style="max-width:800px; margin:0 auto; background:var(--bg); border-radius:12px; padding:24px; position:relative;">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; gap:12px;">
-                <div style="font-size:16px; font-weight:700;" id="ra-modal-title">점검 보고서 전문</div>
+          </div><!-- /ra-report -->
+
+          <!-- Markdown 자세히 보기 모달 -->
+          <div id="ra-detail-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:1000;overflow:auto;padding:20px;">
+            <div style="max-width:860px;margin:0 auto;background:var(--bg);border-radius:12px;padding:28px;position:relative;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;gap:12px;">
+                <div style="font-size:16px;font-weight:700;" id="ra-modal-title">복기 보고서 전문</div>
                 <button type="button" class="btn" data-action="closeReviewDetailModal">닫기 ✕</button>
               </div>
-              <pre id="ra-detail-content" style="font-size:12px; line-height:1.6; white-space:pre-wrap; color:var(--text); background:var(--panel-2); padding:16px; border-radius:8px; max-height:70vh; overflow-y:auto;"></pre>
+              <!-- 마크다운 렌더링 영역 -->
+              <div id="ra-md-viewer"
+                   style="font-size:13px;line-height:1.7;color:var(--text);background:var(--panel-2);
+                          padding:20px;border-radius:8px;max-height:72vh;overflow-y:auto;">
+              </div>
             </div>
           </div>
         </section>
@@ -1240,7 +1276,7 @@
           <div class="page-head">
             <div>
               <h1 class="page-title">Trade History</h1>
-              <p class="page-desc">기간별 주문 내역을 조회하는 읽기 전용 화면입니다. 체결·미체결 모두 확인할 수 있습니다.</p>
+              <p class="page-desc">날짜×종목 기준 매수→매도 거래 결과를 확인합니다. 종목명을 클릭하면 주문 이력이 펼쳐집니다.</p>
             </div>
             <button type="button" class="btn" data-action="loadAllOrders">새로고침</button>
           </div>
@@ -1263,26 +1299,27 @@
 
           <div class="card">
             <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-              <span><span id="st-table-title">주문 내역</span><span class="muted" id="st-table-source" style="margin-left:8px; font-size:12px;">trading_orders 전체 주문 이벤트</span></span>
+              <span><span id="st-table-title">거래 결과</span></span>
               <button type="button" class="btn" data-action="loadAllOrders">새로고침</button>
             </div>
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>시간</th>
-                    <th>종목명</th>
-                    <th>코드</th>
-                    <th>구분</th>
-                    <th>수량</th>
-                    <th>가격</th>
+                    <th>날짜</th>
+                    <th>종목</th>
+                    <th style="text-align:right;">매수가</th>
+                    <th style="text-align:right;">매수수량</th>
+                    <th style="text-align:right;">매도가</th>
+                    <th style="text-align:right;">매도수량</th>
+                    <th style="text-align:right;">손익금액</th>
+                    <th style="text-align:right;">손익률</th>
+                    <th>매도사유</th>
                     <th>상태</th>
-                    <th>Risk Profile</th>
-                    <th>청산 사유</th>
                   </tr>
                 </thead>
                 <tbody id="st-orders-tbody">
-                  <tr><td colspan="9" class="muted" style="text-align:center;">로딩중...</td></tr>
+                  <tr><td colspan="10" class="muted" style="text-align:center;">로딩중...</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1677,13 +1714,14 @@
         <section class="screen" id="screen-dividends">
           <div class="page-head">
             <div>
-              <h1 class="page-title">Dividend Management</h1>
+              <h1 class="page-title">Dividend Entry</h1>
               <p class="page-desc">배당금 수령 계좌를 관리하고 새로운 배당 내역을 입력합니다.</p>
             </div>
             <button type="button" class="btn" data-action="refreshDividends">새로고침</button>
           </div>
 
-          <div class="grid cols-2">
+          <!-- Row 1: 계좌 등록 | 등록 계좌 -->
+          <div style="display:grid;grid-template-columns:5fr 8fr;gap:20px;margin-bottom:20px;align-items:start;">
             <!-- 계좌 등록 -->
             <div class="card">
               <div class="card-title">계좌 등록 <span>Register Account</span></div>
@@ -1704,56 +1742,16 @@
               </form>
             </div>
 
-            <!-- 배당금 입력 -->
+            <!-- 등록 계좌 -->
             <div class="card">
-              <div class="card-title">배당금 입력 <span>Record Dividend</span></div>
-              <form id="dividendEntryForm" style="margin-top:15px;">
-                <div class="field">
-                  <label>계좌 선택</label>
-                  <select id="divEntryAccId" required>
-                    <option value="">계좌를 먼저 등록하세요</option>
-                  </select>
-                </div>
-                <div class="grid cols-2" style="gap:10px;">
-                  <div class="field">
-                    <label>배당일</label>
-                    <input type="date" id="divEntryDate" required>
-                  </div>
-                  <div class="field">
-                    <label>배당금 (세전)</label>
-                    <input type="number" id="divEntryAmount" step="0.01" value="0" required>
-                  </div>
-                </div>
-                <div class="grid cols-2" style="gap:10px;">
-                  <div class="field">
-                    <label>세금</label>
-                    <input type="number" id="divEntryTax" step="0.01" value="0" required>
-                  </div>
-                  <div class="field">
-                    <label>순 수익금 (자동계산)</label>
-                    <input type="number" id="divEntryNet" step="0.01" value="0" readonly>
-                  </div>
-                </div>
-                <div class="field">
-                  <label>메모</label>
-                  <input type="text" id="divEntryMemo" placeholder="종목명 등 자유 입력">
-                </div>
-                <button type="submit" class="btn primary" style="width:100%; margin-top:16px;">배당금 기록</button>
-              </form>
-            </div>
-          </div>
-
-          <div class="grid cols-2" style="margin-top:20px;">
-            <!-- 계좌 목록 -->
-            <div class="card">
-              <div class="card-header-actions" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
                 <div class="card-title" style="margin:0;">등록 계좌 <span>Account List</span></div>
                 <div class="flex-row" style="gap:8px;">
                   <button class="btn compact" onclick="handleEditSelectedAccount()">수정</button>
                   <button class="btn compact danger" onclick="handleBulkDeleteAccounts()">삭제</button>
                 </div>
               </div>
-              <div class="table-wrap" style="max-height: 400px; overflow-y: auto;">
+              <div class="table-wrap" style="max-height:260px;overflow-y:auto;">
                 <table id="dividendAccountsTable">
                   <thead>
                     <tr>
@@ -1767,26 +1765,121 @@
                 </table>
               </div>
             </div>
+          </div>
+
+          <!-- Row 2: 종목 등록 | 등록 종목 -->
+          <div style="display:grid;grid-template-columns:5fr 8fr;gap:20px;margin-bottom:20px;align-items:start;">
+            <!-- 종목 등록 -->
+            <div class="card">
+              <div class="card-title">종목 등록 <span>Dividend Stocks</span></div>
+              <form id="dividendStockForm" style="margin-top:15px;">
+                <div class="field">
+                  <label>종목명</label>
+                  <input type="text" id="divStockName" placeholder="예: 삼성전자" required>
+                </div>
+                <div class="field">
+                  <label>종목코드</label>
+                  <input type="text" id="divStockCode" placeholder="005930" maxlength="6" required>
+                </div>
+                <div class="field">
+                  <label>다음 배당락일</label>
+                  <input type="date" id="divStockExDate">
+                </div>
+                <button type="submit" class="btn primary" style="width:100%;margin-top:16px;">종목 등록</button>
+              </form>
+            </div>
+
+            <!-- 등록 종목 -->
+            <div class="card">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <div class="card-title" style="margin:0;">등록 종목 <span>Stock List</span></div>
+                <button class="btn compact danger" onclick="deleteDividendStock()">삭제</button>
+              </div>
+              <div class="table-wrap" style="max-height:260px;overflow-y:auto;">
+                <table id="dividendStocksTable">
+                  <thead>
+                    <tr>
+                      <th style="width:24px;"><input type="checkbox" id="divStockSelectAll" onchange="toggleSelectAll('dividendStocksTableBody', this.checked)"></th>
+                      <th>종목명</th><th>코드</th><th>예상 배당락일</th><th>D-day</th><th>알림</th><th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="dividendStocksTableBody">
+                    <tr><td colspan="7" class="muted" style="text-align:center;">종목을 등록해 주세요.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Row 3: 배당금 입력 | 최근 배당 이력 -->
+          <div style="display:grid;grid-template-columns:5fr 8fr;gap:20px;margin-bottom:20px;align-items:start;">
+            <!-- 배당금 입력 -->
+            <div class="card">
+              <div class="card-title">배당금 입력 <span>Record Dividend</span></div>
+              <form id="dividendEntryForm" style="margin-top:15px;">
+                <div class="field">
+                  <label>종목 선택 <span style="color:var(--muted);font-size:11px;">(선택사항)</span></label>
+                  <select id="divEntryStockId">
+                    <option value="">종목 선택 안함</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>계좌 선택</label>
+                  <select id="divEntryAccId" required>
+                    <option value="">계좌를 먼저 등록하세요</option>
+                  </select>
+                </div>
+                <div class="grid cols-2" style="gap:10px;">
+                  <div class="field">
+                    <label>배당일</label>
+                    <input type="date" id="divEntryDate" required>
+                  </div>
+                  <div class="field">
+                    <label>배당율 (%)</label>
+                    <input type="number" id="divEntryRate" step="0.01" placeholder="예: 2.50">
+                  </div>
+                </div>
+                <div class="grid cols-2" style="gap:10px;">
+                  <div class="field">
+                    <label>배당금 (세전)</label>
+                    <input type="number" id="divEntryAmount" step="0.01" value="0" required>
+                  </div>
+                  <div class="field">
+                    <label>세금</label>
+                    <input type="number" id="divEntryTax" step="0.01" value="0" required>
+                  </div>
+                </div>
+                <div class="field">
+                  <label>순 수익금 (자동계산)</label>
+                  <input type="number" id="divEntryNet" step="0.01" value="0" readonly>
+                </div>
+                <div class="field">
+                  <label>메모</label>
+                  <input type="text" id="divEntryMemo" placeholder="자유 입력">
+                </div>
+                <button type="submit" class="btn primary" style="width:100%; margin-top:16px;">배당금 기록</button>
+              </form>
+            </div>
 
             <!-- 최근 배당 이력 -->
             <div class="card">
-              <div class="card-header-actions" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
                 <div class="card-title" style="margin:0;">최근 배당 이력 <span>Recent History</span></div>
                 <div class="flex-row" style="gap:8px;">
                   <button class="btn compact" onclick="handleEditSelectedEntry()">수정</button>
                   <button class="btn compact danger" onclick="handleBulkDeleteEntries()">삭제</button>
                 </div>
               </div>
-              <div class="table-wrap" style="max-height: 400px; overflow-y: auto;">
+              <div class="table-wrap" style="max-height:400px;overflow-y:auto;">
                 <table id="dividendHistoryTable">
                   <thead>
                     <tr>
                       <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll('dividendHistoryTableBody', this.checked)"></th>
-                      <th>날짜</th><th>금융사</th><th>순수익</th><th>메모</th>
+                      <th>날짜</th><th>종목</th><th>금융사</th><th>소유자</th><th>배당율</th><th>순수익</th>
                     </tr>
                   </thead>
                   <tbody id="dividendHistoryTableBody">
-                    <tr><td colspan="5" class="muted">이력 정보를 불러오는 중...</td></tr>
+                    <tr><td colspan="7" class="muted">이력 정보를 불러오는 중...</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -1799,7 +1892,7 @@
         <section class="screen" id="screen-dividend-stats">
           <div class="page-head">
             <div>
-              <h1 class="page-title">Dividend Statistics</h1>
+              <h1 class="page-title">Statistics</h1>
               <p class="page-desc">지급받은 배당금을 기간별, 계좌별로 분석하고 시각화합니다.</p>
             </div>
             <div class="flex-row" style="gap:10px;">
@@ -1831,7 +1924,7 @@
             <!-- 월별 배당 차트 -->
             <div class="card">
               <div class="card-title">월별 배당금 추이 <span>Monthly Trend</span></div>
-              <div id="dividendMonthlyChartContainer" style="height: 300px; display: flex; align-items: flex-end; gap: 10px; padding: 20px 0;">
+              <div id="dividendMonthlyChartContainer" style="padding: 8px 0;">
                 <!-- JS에서 막대 그래프 생성 예정 -->
                 <div class="muted" style="width:100%; text-align:center;">데이터를 분석 중입니다...</div>
               </div>
@@ -1843,10 +1936,10 @@
               <div class="table-wrap">
                 <table>
                   <thead>
-                    <tr><th>금융사</th><th>계좌번호</th><th>누적 순수익</th><th>비중</th></tr>
+                    <tr><th>금융사</th><th>소유자</th><th>계좌번호</th><th>누적 순수익</th><th>비중</th></tr>
                   </thead>
                   <tbody id="divStatAccountTableBody">
-                    <tr><td colspan="4" class="muted">데이터 없음</td></tr>
+                    <tr><td colspan="5" class="muted">데이터 없음</td></tr>
                   </tbody>
                 </table>
               </div>

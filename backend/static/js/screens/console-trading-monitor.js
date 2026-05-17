@@ -53,6 +53,21 @@
     } catch(e) { console.warn("loadTradingMonitor status error", e); }
 
     // 계좌 정보 로드
+    var _setSyncStatus = function(ok, msg) {
+      var el = document.getElementById('tm-sync-status');
+      var timeEl = document.getElementById('tm-sync-time');
+      if (el) {
+        el.textContent = ok ? '● KIS 연결됨' : '✕ ' + (msg || '연결 실패');
+        el.style.background = ok ? 'rgba(63,185,80,0.15)' : 'rgba(248,81,73,0.15)';
+        el.style.color = ok ? 'var(--green)' : 'var(--red, #f85149)';
+      }
+      if (timeEl) {
+        var now = new Date();
+        timeEl.textContent = now.getHours().toString().padStart(2,'0') + ':' +
+          now.getMinutes().toString().padStart(2,'0') + ':' +
+          now.getSeconds().toString().padStart(2,'0');
+      }
+    };
     try {
       var accountData = await fetchJson("/api/v1/account/balance");
       if (accountData && accountData.ok && accountData.payload) {
@@ -60,6 +75,7 @@
         var setEl = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
         var fmtWon = function(v) { return v != null ? Number(v).toLocaleString() + '원' : '-'; };
 
+        _setSyncStatus(true);
         setEl('tm-account-no', acct.account_no ? '· ' + acct.account_no : '');
 
         // 주문가능 예수금 (nxdy_excc_amt 기반, buyable_cash)
@@ -92,8 +108,13 @@
         // 당일 매수/매도
         setEl('tm-today-buy', fmtWon(acct.today_buy_amt));
         setEl('tm-today-sell', fmtWon(acct.today_sell_amt));
+      } else {
+        _setSyncStatus(false, accountData && accountData.error ? accountData.error : 'API 오류');
       }
-    } catch(e) { console.warn("loadTradingMonitor account error", e); }
+    } catch(e) {
+      _setSyncStatus(false, 'KIS 연결 오류');
+      console.warn("loadTradingMonitor account error", e);
+    }
 
     // 오늘 적용 정책 로드
     try {

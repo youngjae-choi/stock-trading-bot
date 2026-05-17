@@ -53,6 +53,7 @@ from .api.routes.symbol_override import router as symbol_override_router
 from .api.routes.trading_monitor import router as trading_monitor_router
 from .api.routes.universe import router as universe_router, filter_router as universe_filter_router
 from .api.routes.dividends import router as dividends_router
+from .api.routes.telegram_webhook import router as telegram_webhook_router
 from .config import settings, validate_config
 from .services.auth_service import initialize_auth
 from .services.db import initialize_database
@@ -179,6 +180,7 @@ app.include_router(funnel_router)
 app.include_router(symbol_override_router)
 app.include_router(trading_monitor_router)
 app.include_router(dividends_router)
+app.include_router(telegram_webhook_router)
 
 
 if __name__ == "__main__":

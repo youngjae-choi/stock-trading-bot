@@ -14,6 +14,7 @@ from ..db import get_connection
 from ..kis.realtime_ws import realtime_ws_manager
 from .hybrid_screening import get_today_screening
 from .rule_cache import load_daily_rules, get_rule, clear_cache, get_meta
+from .shadow_trading import create_shadow_trade
 
 logger = logging.getLogger("DecisionEngine")
 
@@ -558,6 +559,25 @@ class DecisionEngine:
 
         fill_poller.stop()
         position_manager.deactivate()
+
+        # 감시했으나 매수 신호를 보내지 않은 종목 → shadow_trades 기록
+        today = _today_kst()
+        now_iso = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
+        for symbol, cand in self._candidates.items():
+            if symbol in self._signal_sent:
+                continue
+            try:
+                create_shadow_trade(
+                    trade_date=today,
+                    symbol=symbol,
+                    symbol_name=cand.get("name", ""),
+                    missed_stage="S6_NO_SIGNAL",
+                    entry_price=float(cand.get("price") or cand.get("trigger_price") or 0),
+                    entry_time=now_iso,
+                )
+            except Exception as _st_exc:
+                logger.warning("WARN: [S6] shadow_trade 기록 실패 symbol=%s reason=%s", symbol, _st_exc)
+
         clear_cache()
         await realtime_ws_manager.stop()
         logger.info("SUCCESS: [S6] Decision Engine 비활성화")
