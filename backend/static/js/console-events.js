@@ -110,7 +110,7 @@
 
   /* Apply the saved console theme before authenticated data loads. */
   function initTheme() {
-    var savedTheme = localStorage.getItem("dantabot_theme");
+    var savedTheme = localStorage.getItem("kairos_theme");
     if (savedTheme === "light") {
       setTheme("light");
       return;

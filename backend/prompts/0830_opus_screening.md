@@ -14,10 +14,16 @@
 ## 입력 데이터
 
 ### 후보 종목
+각 종목의 필드: symbol(코드), name(이름), price(현재가), change_rate(등락률%), volume_rank(거래량 순위, 낮을수록 상위), trade_rank(거래대금 순위, null=미수신), score(정량점수), rank(전체 순위)
+
 {candidates_json}
 
 ### 시장 톤
 {market_tone_json}
+
+### 아침 시장 컨텍스트
+S2가 저장한 정량 데이터 기반 구조화 판단이다. 후보 종목 점수와 entry_rules 판단 시 참고하되, 입력 후보 외 종목은 추가하지 않는다.
+{morning_context_json}
 
 {memory_section}
 {knowledge_section}
@@ -54,14 +60,19 @@
 }
 
 ## entry_rules 설정 기준
-| 시장톤 | min_ai_confidence | min_price_change_pct | max_price_change_pct |
-|---|---:|---:|---:|
-| positive | 0.60 | 0.8 | 6.0 |
-| neutral | 0.65 | 1.0 | 5.0 |
-| negative | 0.72 | 1.5 | 4.0 |
-| mixed | 0.65 | 1.0 | 5.0 |
+| 시장톤 | overall_confidence | min_ai_confidence | min_price_change_pct | max_price_change_pct |
+|---|:---:|---:|---:|---:|
+| positive | ≥ 0.5 | 0.60 | 0.8 | 6.0 |
+| positive | < 0.5 | 0.45 | 0.8 | 6.0 |
+| neutral | ≥ 0.5 | 0.65 | 1.0 | 5.0 |
+| neutral | < 0.5 | 0.50 | 1.0 | 5.0 |
+| negative | ≥ 0.5 | 0.72 | 1.5 | 4.0 |
+| negative | < 0.5 | 0.60 | 1.5 | 4.0 |
+| mixed | ≥ 0.5 | 0.65 | 1.0 | 5.0 |
+| mixed | < 0.5 | 0.50 | 1.0 | 5.0 |
 
-- 시장 톤 confidence < 0.4이면 임계값을 보수적으로 조정한다.
+- overall_confidence가 낮을수록 min_ai_confidence를 완화해 진입 기회를 확보한다.
+- suitability_score 자체를 인위적으로 낮추지 않는다. 낮은 시장 신뢰도는 임계값 완화로만 반영한다.
 - min_ai_confidence는 0.40~0.85 범위만 허용한다.
 - 실제 주문 여부는 S6 Rule Engine과 Preflight가 별도로 판단한다.
 
@@ -73,4 +84,4 @@
 
 ## 실패 시
 - 입력 종목 데이터가 부족하면 skipped에 넣고 reason을 명시한다.
-- 시장 톤 confidence < 0.4이면 모든 suitability_score를 0.5 이하로 보수적으로 평가한다.
+- 종목 데이터(change_rate, volume_rank 등)가 있으면 반드시 점수 근거에 반영한다.

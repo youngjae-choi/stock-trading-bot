@@ -21,6 +21,9 @@
 - `take_profit_rate`: 0.30 초과 금지 (L1 절대한도)
 
 ## 입력
+0. 오늘 아침 시장 컨텍스트 (정량 데이터 + 분석)
+{morning_context}
+
 1. 오늘의 시장 톤 (`market_tone_*.json`)
 2. Opus 스크리닝 결과 (`screening_*.json`)
 3. 어제의 RulePack (`rulepack_active_YYYYMMDD-1.json`) — 변동폭 비교용
@@ -41,7 +44,9 @@
   },
   "market_context": {
     "tone_score": 0.0,
-    "tone_label": "risk_on | neutral | risk_off",
+    "tone_label": "risk_on | neutral | risk_off | volatile",
+    "regime": "risk_on | neutral | risk_off | volatile",
+    "risk_level": "low | normal | high | extreme",
     "confidence": 0.0
   },
   "risk_limits": {

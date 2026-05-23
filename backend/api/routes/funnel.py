@@ -75,6 +75,15 @@ def _build_empty_reason(
     return ""
 
 
+@router.get("/intraday-refresh")
+async def get_intraday_refresh_status(date: str = None):
+    """특정 날짜 장중 재선별 이력 조회 (date 미지정 시 오늘)."""
+    from ...services.engine.intraday_refresh import get_today_refresh_status
+    trade_date = date or _today_kst()
+    history = get_today_refresh_status(trade_date)
+    return {"ok": True, "payload": {"trade_date": trade_date, "history": history}}
+
+
 @router.get("/summary")
 async def get_funnel_summary():
     """Return today's Funnel stage counts from persisted DB data."""
@@ -110,13 +119,9 @@ async def get_funnel_summary():
                     (today,),
                 ).fetchone()
 
-            # Step 3: Count today's BUY signals and currently tracked positions.
+            # Step 3: Count today's BUY signals.
             sig_count = conn.execute(
                 "SELECT COUNT(*) FROM trading_signals WHERE trade_date = ? AND signal_type = 'BUY'",
-                (today,),
-            ).fetchone()[0]
-            pos_count = conn.execute(
-                "SELECT COUNT(*) FROM position_stop_states WHERE date(last_updated_at) = ?",
                 (today,),
             ).fetchone()[0]
 
@@ -127,6 +132,14 @@ async def get_funnel_summary():
                 " ORDER BY created_at DESC LIMIT 1",
                 (today,),
             ).fetchone()
+
+        # position_manager가 실시간 보유 종목 수를 관리 (position_stop_states는 전체 추적 기록이라 부적합)
+        pos_count = 0
+        try:
+            from ..services.engine.position_manager import position_manager
+            pos_count = len(position_manager.get_positions())
+        except Exception:
+            pass
 
         profile_counts = _empty_profile_counts()
         if plan_row:
@@ -153,6 +166,14 @@ async def get_funnel_summary():
             for row in (uf_row, sc_row, plan_row)
             if row is not None and row["created_at"]
         ]
+        # 장중 재선별 이력 (system_settings 저장값)
+        intraday_history = []
+        try:
+            from ...services.engine.intraday_refresh import get_today_refresh_status
+            intraday_history = get_today_refresh_status(today)
+        except Exception:
+            pass
+
         payload = {
             "trade_date": today,
             "total_universe": total_universe,
@@ -176,6 +197,7 @@ async def get_funnel_summary():
                 layer2_count=layer2_count,
             ),
             "last_updated_at": max(updated_candidates) if updated_candidates else "",
+            "intraday_refresh_history": intraday_history,
         }
         logger.info("SUCCESS: GET %s payload=%s", endpoint, payload)
         return {"ok": True, "payload": payload}

@@ -1,8 +1,4 @@
-"""S10 Review & Audit — deterministic 당일 매매 결과 분석 서비스.
-
-1600_opus_review.md는 향후/수동 LLM 복기 템플릿이며, 이 서비스는 배포 안전을
-우선해 외부 LLM을 새로 호출하지 않고 DB 집계 기반 리포트를 생성한다.
-"""
+"""S10 Review & Audit service with deterministic DB aggregation and LLM review."""
 
 from __future__ import annotations
 
@@ -10,7 +6,7 @@ import json
 import logging
 import uuid
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -41,6 +37,111 @@ def _json_loads(value: str | None, default: Any) -> Any:
         return json.loads(value)
     except (TypeError, json.JSONDecodeError):
         return default
+
+
+def _setting_value_type(value: Any) -> str:
+    """Return the system_settings value_type that matches an LLM override value.
+
+    Args:
+        value: LLM-proposed setting value to persist.
+    """
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    return "json"
+
+
+def _build_review_context_md(result: dict[str, Any], trade_date: str) -> str:
+    """LLM에게 전달할 오늘 매매 컨텍스트 MD를 조립한다.
+
+    Args:
+        result: S10 deterministic review aggregation payload.
+        trade_date: YYYY-MM-DD trade date to analyze.
+    """
+    lines: list[str] = []
+
+    with get_connection() as conn:
+        mc = conn.execute(
+            "SELECT regime, risk_level, market_data FROM morning_context WHERE trade_date=?",
+            (trade_date,),
+        ).fetchone()
+        app = conn.execute(
+            """
+            SELECT set_name, set_id, regime_label, vix_value, kospi_change_pct,
+                   match_reason, applied_settings
+            FROM regime_set_applications
+            WHERE trade_date=? AND current_flag=1
+            ORDER BY applied_at DESC LIMIT 1
+            """,
+            (trade_date,),
+        ).fetchone()
+
+    lines.append(f"# {trade_date} 매매 복기")
+    lines.append("\n## 시장 상황")
+    if mc:
+        mc_dict = dict(mc)
+        lines.append(f"- 레짐: {mc_dict.get('regime')} / 리스크레벨: {mc_dict.get('risk_level')}")
+        market_data = _json_loads(mc_dict.get("market_data"), {})
+        vix = (market_data.get("vix") or {}).get("price")
+        kospi = (market_data.get("kospi") or {}).get("change_pct")
+        if vix:
+            lines.append(f"- VIX: {vix}")
+        if kospi:
+            lines.append(f"- KOSPI 등락: {kospi}%")
+
+    lines.append("\n## 선택된 레짐 SET")
+    if app:
+        app_dict = dict(app)
+        lines.append(f"- SET: {app_dict.get('set_name')} ({app_dict.get('set_id')})")
+        lines.append(f"- 레짐 라벨: {app_dict.get('regime_label')}")
+        lines.append(f"- 선택 이유: {app_dict.get('match_reason', '-')}")
+        settings = _json_loads(app_dict.get("applied_settings"), {})
+        if settings:
+            lines.append(
+                "- 적용 파라미터: "
+                f"max_positions={settings.get('max_positions')}, "
+                f"stop_loss={settings.get('stop_loss_rate')}, "
+                f"take_profit={settings.get('take_profit_rate')}"
+            )
+
+    lines.append("\n## 매매 결과")
+    lines.append(f"- 총 거래: {result.get('total_trades', 0)}건")
+    lines.append(f"- 승/패: {result.get('win_count', 0)}/{result.get('loss_count', 0)}")
+    pnl = _safe_float(result.get("total_pnl"))
+    pnl_pct = _safe_float(result.get("realized_pnl_pct"))
+    lines.append(f"- 총 손익: {pnl:.0f}원 ({pnl_pct:+.2f}%)")
+
+    profile_summary = result.get("profile_summary") or {}
+    if profile_summary:
+        lines.append("\n## Risk Profile별 성과")
+        for profile, data in profile_summary.items():
+            count = _safe_int(data.get("count"))
+            win_rate = _safe_int(data.get("win")) / count * 100 if count else 0
+            lines.append(f"- {profile}: {count}건, 승률 {win_rate:.0f}%, PnL {_safe_float(data.get('pnl')):+.0f}원")
+
+    false_positives = result.get("false_positives") or []
+    if false_positives:
+        lines.append(f"\n## 손실 종목 ({len(false_positives)}건)")
+        for fp in false_positives[:5]:
+            lines.append(
+                f"- {fp.get('symbol', '-')}: {_safe_float(fp.get('pnl_pct')):+.2f}% / "
+                f"진입이유: {fp.get('entry_reason', '-')}"
+            )
+
+    missed = result.get("missed_entries") or []
+    if missed:
+        lines.append(f"\n## 걸러낸 종목 중 상승 ({len(missed)}건)")
+        for item in missed[:5]:
+            stage = item.get("filtered_at_stage") or item.get("missed_stage") or item.get("source") or "-"
+            actual_change = item.get("actual_change_pct")
+            if actual_change is None:
+                actual_change = item.get("max_return_until_eod") or item.get("max_return_eod") or 0
+            lines.append(f"- {item.get('symbol', '-')}: {stage} 단계 탈락, 실제 등락 {_safe_float(actual_change):+.2f}%")
+
+    return "\n".join(lines)
 
 
 def _build_review_markdown(result: dict[str, Any]) -> str:
@@ -515,6 +616,293 @@ def _replace_daily_rows(table_name: str, trade_date: str, rows: list[tuple[Any, 
             )
 
 
+def _sync_realized_pnl_from_trade_pairs(trade_date: str) -> None:
+    """Update BUY trading_signals realized_pnl from completed trade pair fills.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date whose completed pairs should be synced.
+    """
+    if "realized_pnl" not in _table_columns("trading_signals"):
+        logger.warning("WARN: [S10] trading_signals.realized_pnl column missing, pnl sync skipped")
+        return
+
+    try:
+        from .trade_pairs import get_trade_pairs as _get_pairs
+        from .technical_indicators import update_signal_outcome as _update_signal_outcome
+
+        start_date = (datetime.fromisoformat(trade_date) - timedelta(days=7)).strftime("%Y-%m-%d")
+        pairs = _get_pairs(start_date, trade_date)
+        updated_count = 0
+        outcome_updates: list[tuple[str, float, float]] = []
+        with get_connection() as conn:
+            for pair in pairs:
+                if (
+                    pair.get("status") != "매도완료"
+                    or pair.get("trade_date") != trade_date
+                    or pair.get("pnl_amount") is None
+                ):
+                    continue
+                buy_date = _pair_buy_date(pair) or trade_date
+                cursor = conn.execute(
+                    """
+                    UPDATE trading_signals
+                    SET realized_pnl = ?
+                    WHERE symbol = ?
+                      AND trade_date = ?
+                      AND signal_type = 'BUY'
+                    """,
+                    (pair["pnl_amount"], pair["symbol"], buy_date),
+                )
+                updated_count += cursor.rowcount
+                if pair.get("pnl_pct") is None:
+                    continue
+
+                sig = conn.execute(
+                    """
+                    SELECT id
+                    FROM trading_signals
+                    WHERE symbol = ?
+                      AND trade_date = ?
+                      AND signal_type = 'BUY'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (pair["symbol"], buy_date),
+                ).fetchone()
+                if sig:
+                    outcome_updates.append((sig["id"], float(pair["pnl_pct"]), _pair_hold_minutes(pair)))
+        outcome_count = sum(
+            1 for signal_id, pnl_pct, hold_minutes in outcome_updates
+            if _update_signal_outcome(signal_id, pnl_pct, hold_minutes)
+        )
+        logger.info(
+            "INFO: [S10] trading_signals.realized_pnl 업데이트 완료 pairs=%d updated=%d sti_outcomes=%d",
+            len(pairs),
+            updated_count,
+            outcome_count,
+        )
+    except Exception as pnl_exc:
+        logger.warning("WARN: [S10] trading_signals.realized_pnl 업데이트 실패 reason=%s", pnl_exc)
+
+
+def _pair_buy_date(pair: dict[str, Any]) -> str | None:
+    """Return the earliest buy order date from a trade pair.
+
+    Args:
+        pair: Trade pair dictionary returned by get_trade_pairs().
+    """
+    buy_dates = [
+        str(order.get("trade_date"))
+        for order in pair.get("orders", [])
+        if order.get("side") == "buy" and order.get("trade_date")
+    ]
+    return min(buy_dates) if buy_dates else None
+
+
+def _pair_hold_minutes(pair: dict[str, Any]) -> float:
+    """Calculate holding minutes from the first buy order to the last sell order.
+
+    Args:
+        pair: Trade pair dictionary returned by get_trade_pairs().
+    """
+    buy_times: list[datetime] = []
+    sell_times: list[datetime] = []
+    for order in pair.get("orders", []):
+        created_at = order.get("created_at")
+        if not created_at:
+            continue
+        try:
+            parsed = datetime.fromisoformat(str(created_at))
+        except ValueError:
+            continue
+        if order.get("side") == "buy":
+            buy_times.append(parsed)
+        elif order.get("side") == "sell":
+            sell_times.append(parsed)
+
+    if not buy_times or not sell_times:
+        return 0.0
+    hold_seconds = (max(sell_times) - min(buy_times)).total_seconds()
+    return round(max(hold_seconds, 0.0) / 60, 2)
+
+
+async def _send_action_plan_for_approval(result: dict[str, Any]) -> None:
+    """LLM으로 복기 분석 후 Settings 자동 반영 + 텔레그램 통보."""
+    from ..settings_store import upsert_setting
+    from .llm_router import call_llm
+
+    trade_date = str(result.get("trade_date") or "")
+    now_iso = _now_kst_iso()
+
+    context_md = _build_review_context_md(result, trade_date)
+
+    try:
+        from .prompt_loader import load_prompt_template
+
+        template = load_prompt_template("1600_opus_review.md", include_common_guard=False)
+    except Exception:
+        prompt_path = Path(__file__).resolve().parents[2] / "prompts" / "1600_opus_review.md"
+        template = prompt_path.read_text(encoding="utf-8")
+
+    prompt = template.replace("{context_md}", context_md)
+
+    llm_result: dict[str, Any] = {"ok": False, "raw": ""}
+    llm_response: dict[str, Any] = {}
+    try:
+        import re
+
+        llm_result = await call_llm(prompt, task_name="s10_review")
+        raw = str(llm_result.get("raw") or llm_result.get("response") or "")
+        json_match = re.search(r"\{[\s\S]*\}", raw)
+        if json_match:
+            parsed = json.loads(json_match.group())
+            if isinstance(parsed, dict):
+                llm_response = parsed
+        parsed_regime_eval = llm_response.get("regime_evaluation")
+        parsed_eval = parsed_regime_eval.get("evaluation") if isinstance(parsed_regime_eval, dict) else None
+        logger.info(
+            "INFO: [S10-LLM] 복기 분석 완료 provider=%s regime_eval=%s",
+            llm_result.get("provider", "none"),
+            parsed_eval,
+        )
+    except Exception as exc:
+        logger.warning("WARN: [S10-LLM] LLM 호출 실패 - fallback to empty reason=%s", exc)
+
+    regime_eval = llm_response.get("regime_evaluation") or {}
+    if not isinstance(regime_eval, dict):
+        regime_eval = {}
+    evaluation = str(regime_eval.get("evaluation") or "neutral")
+    if evaluation not in {"good", "neutral", "bad"}:
+        evaluation = "neutral"
+
+    try:
+        with get_connection() as conn:
+            table_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='regime_set_feedback'"
+            ).fetchone()
+            if table_exists:
+                app_row = conn.execute(
+                    """
+                    SELECT set_id, regime_label, vix_value, kospi_change_pct
+                    FROM regime_set_applications
+                    WHERE trade_date=? AND current_flag=1
+                    ORDER BY applied_at DESC LIMIT 1
+                    """,
+                    (trade_date,),
+                ).fetchone()
+                if app_row:
+                    app = dict(app_row)
+                    total = _safe_int(result.get("total_trades"))
+                    win = _safe_int(result.get("win_count"))
+                    win_rate = win / total if total else 0.0
+                    conn.execute(
+                        """
+                        INSERT INTO regime_set_feedback
+                            (id, trade_date, set_id, regime_label, vix_value, kospi_change_pct,
+                             win_rate, total_pnl, trades_count, evaluation, reason, next_action, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            trade_date,
+                            app["set_id"],
+                            app["regime_label"],
+                            app.get("vix_value"),
+                            app.get("kospi_change_pct"),
+                            win_rate,
+                            _safe_float(result.get("total_pnl")),
+                            total,
+                            evaluation,
+                            regime_eval.get("reason", ""),
+                            regime_eval.get("next_regime_hint", "same"),
+                            now_iso,
+                        ),
+                    )
+                    logger.info("INFO: [S10-LLM] regime_set_feedback saved trade_date=%s eval=%s", trade_date, evaluation)
+    except Exception as exc:
+        logger.warning("WARN: [S10-LLM] regime_set_feedback 저장 실패 reason=%s", exc)
+
+    settings_overrides = llm_response.get("settings_overrides") or {}
+    if not isinstance(settings_overrides, dict):
+        settings_overrides = {}
+    settings_reasoning = llm_response.get("settings_reasoning") or {}
+    if not isinstance(settings_reasoning, dict):
+        settings_reasoning = {}
+
+    applied_settings: list[str] = []
+    for key, new_val in settings_overrides.items():
+        reason = str(settings_reasoning.get(key) or "S10 LLM 자동 반영")
+        try:
+            upsert_setting(
+                key=str(key),
+                value=new_val,
+                value_type=_setting_value_type(new_val),
+                description=reason,
+                actor="s10_llm",
+            )
+            applied_settings.append(f"{key} -> {new_val} ({reason})")
+            logger.info("INFO: [S10-LLM] setting applied key=%s value=%s", key, new_val)
+        except Exception as exc:
+            logger.warning("WARN: [S10-LLM] setting apply failed key=%s reason=%s", key, exc)
+
+    narrative = str(llm_response.get("narrative") or "")
+    payload_json = json.dumps(
+        {
+            "trade_date": trade_date,
+            "regime_evaluation": regime_eval,
+            "settings_overrides": settings_overrides,
+            "applied_settings": applied_settings,
+            "narrative": narrative,
+            "llm_confidence": llm_response.get("confidence", 0),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+    with get_connection() as conn:
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='human_approval_queue'"
+        ).fetchone()
+        if table_exists:
+            conn.execute(
+                """
+                INSERT INTO human_approval_queue
+                    (id, change_type, title, description, payload_json, status, created_at)
+                VALUES (?, 'next_day_action_plan', ?, ?, ?, 'auto_applied', ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    f"[{trade_date}] 다음 거래일 액션 플랜",
+                    narrative[:200] if narrative else "LLM 복기 완료",
+                    payload_json,
+                    now_iso,
+                ),
+            )
+
+    result["llm_review"] = {
+        "narrative": narrative,
+        "regime_evaluation": regime_eval,
+        "settings_overrides": settings_overrides,
+        "applied_settings": applied_settings,
+        "patterns": llm_response.get("patterns") if isinstance(llm_response.get("patterns"), dict) else {},
+        "applied_at": now_iso,
+    }
+
+    try:
+        from ..alert_service import send_telegram_alert
+
+        pnl_pct = _safe_float(result.get("realized_pnl_pct"))
+        sign = "+" if pnl_pct >= 0 else ""
+        body = f"손익: {sign}{pnl_pct:.2f}% | 레짐 평가: {evaluation}\n"
+        if applied_settings:
+            body += "설정 자동 반영:\n" + "\n".join(f"  - {item}" for item in applied_settings[:3])
+        else:
+            body += "설정 변경 없음"
+        await send_telegram_alert(f"매매봇 S10 복기 완료 [{trade_date}]", body)
+    except Exception as exc:
+        logger.warning("WARN: [S10-LLM] 텔레그램 통보 실패 reason=%s", exc)
+
+
 async def run_review_audit(trade_date: str) -> dict[str, Any]:
     """Run S10 daily review aggregation and persist the report.
 
@@ -527,6 +915,7 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
     )
     _ensure_review_integrity_columns()
     now_iso = _now_kst_iso()
+    _sync_realized_pnl_from_trade_pairs(trade_date)
     signals = _load_review_signals(trade_date)
     orders = _order_summary(trade_date)
     integrity = summarize_order_integrity(trade_date)
@@ -797,6 +1186,7 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
         "market_tone": daily_summary.get("market_tone", ""),
         "rulepack_id": daily_summary.get("rulepack_id", ""),
         "trade_pairs": trade_pairs,
+        "llm_review": {},
         **_load_daily_plan_context(trade_date),
     }
     logger.info(
@@ -810,6 +1200,11 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
         integrity.get("pnl_status"),
     )
     result["md_path"] = _write_review_markdown(result)
+    # 액션 플랜 승인 요청 전송 (비동기, 실패해도 리뷰 결과에 영향 없음)
+    try:
+        await _send_action_plan_for_approval(result)
+    except Exception as _ap_exc:
+        logger.warning("WARN: [S10] action plan approval send failed reason=%s", _ap_exc)
     return result
 
 
@@ -877,6 +1272,39 @@ def get_review_report(trade_date: str) -> dict[str, Any] | None:
     ctx = _load_daily_plan_context(trade_date)
     payload["daily_plan"] = ctx.get("daily_plan")
     payload["tone_analysis"] = ctx.get("tone_analysis")
+
+    with get_connection() as conn:
+        queue_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='human_approval_queue'"
+        ).fetchone()
+        aq_row = None
+        if queue_exists:
+            aq_row = conn.execute(
+                """
+                SELECT payload_json, created_at FROM human_approval_queue
+                WHERE change_type='next_day_action_plan' AND title LIKE ?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (f"[{trade_date}]%",),
+            ).fetchone()
+    if aq_row:
+        aq_dict = dict(aq_row)
+        llm_payload = _json_loads(aq_dict.get("payload_json"), {})
+        if not isinstance(llm_payload, dict):
+            llm_payload = {}
+        payload["llm_review"] = {
+            "narrative": llm_payload.get("narrative", ""),
+            "regime_evaluation": llm_payload.get("regime_evaluation", {}),
+            "settings_overrides": llm_payload.get("settings_overrides", {}),
+            "applied_settings": llm_payload.get("applied_settings", []),
+            "applied_at": aq_dict.get("created_at", ""),
+            "patterns": llm_payload.get("patterns", {}),
+            # 구형식 fallback — LLM 미실행 시 rules-based recommendations 표시용
+            "recommendations": llm_payload.get("recommendations", []),
+        }
+    else:
+        payload["llm_review"] = {}
+
     payload["profile_performance"] = []
     for row in profile_rows:
         profile_row = dict(row)

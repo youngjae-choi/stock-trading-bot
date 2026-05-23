@@ -83,6 +83,8 @@
         var confStr = f.original_confidence != null
           ? (f.original_confidence * 100).toFixed(1) + '%' : '-';
 
+        var reviewBtn = '<button class="btn-sm" style="font-size:11px;padding:2px 8px;" '
+          + 'onclick="reviewFalsePositive(\'' + escapeHtml(f.id) + '\')" title="확인 완료 처리 — 목록에서 숨김">확인</button>';
         return '<tr>'
           + '<td style="white-space:nowrap">' + escapeHtml(f.trade_date || '-') + '</td>'
           + '<td><strong>' + escapeHtml(f.symbol_name || f.symbol) + '</strong>'
@@ -96,6 +98,7 @@
           + escapeHtml(f.loss_reason  || '-') + '</td>'
           + '<td style="font-size:0.82em;color:var(--muted)">'
           + escapeHtml(f.entry_reason || '-') + '</td>'
+          + '<td style="text-align:center">' + reviewBtn + '</td>'
           + '</tr>';
       }).join('');
     }
@@ -147,12 +150,23 @@
       await searchFalsePositive();
     }
 
+    async function reviewFpCase(fpId) {
+      try {
+        await fetchJson('/api/v1/false-positive/' + fpId + '/review', { method: 'PATCH' });
+        await searchFalsePositive();
+      } catch (ex) {
+        alert('처리 실패: ' + ex.message);
+      }
+    }
+
     // 전역 노출
     window._fpSearch   = searchFalsePositive;
     window._fpGenerate = generateFalsePositive;
     window._fpLoad     = loadFalsePositive;
+    window._fpReview   = reviewFpCase;
   }());
 
   function searchFalsePositive()  { return window._fpSearch();   }
   function generateFalsePositive() { return window._fpGenerate(); }
   function loadFalsePositive()    { return window._fpLoad();     }
+  function reviewFalsePositive(id) { return window._fpReview(id); }

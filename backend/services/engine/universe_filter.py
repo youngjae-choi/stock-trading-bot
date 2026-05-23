@@ -244,8 +244,11 @@ def _score_and_rank(items: list[dict[str, Any]], total: int, weights: dict[str, 
 
     scored = []
     for item in items:
-        trade_score = (total - item.get("trade_rank", total) + 1) / total
-        volume_score = (total - item.get("volume_rank", total) + 1) / total
+        # trade_rank가 total을 초과하면(KIS 거래대금 미수신 시 sentinel 9999) 0점 처리
+        raw_trade_rank = item.get("trade_rank", total)
+        trade_score = (total - raw_trade_rank + 1) / total if raw_trade_rank <= total else 0.0
+        raw_volume_rank = item.get("volume_rank", total)
+        volume_score = (total - raw_volume_rank + 1) / total if raw_volume_rank <= total else 0.0
         change_normalized = (item.get("change_rate", 0.0) + 30.0) / 60.0
         change_normalized = max(0.0, min(1.0, change_normalized))
 

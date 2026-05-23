@@ -27,11 +27,11 @@ def _today_kst() -> str:
 
 
 @router.get("/today")
-def get_today():
-    """Return today's Daily Plan without treating a missing plan as success."""
-    trade_date = _today_kst()
-    plan = get_today_daily_plan(trade_date)
-    return build_pipeline_read_envelope(payload=plan, result=plan, trade_date=trade_date)
+def get_today(trade_date: str | None = Query(default=None)):
+    """Return today's Daily Plan. trade_date를 전달하면 해당 날짜 기준으로 조회한다."""
+    target = trade_date or _today_kst()
+    plan = get_today_daily_plan(target)
+    return build_pipeline_read_envelope(payload=plan, result=plan, trade_date=target)
 
 
 @router.get("/{date}")

@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import copy
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 from .db import get_connection
+
+# KIS 잔고 PnL 캐시 — KIS 토큰 rate limit(1회/분) 대응
+# 90초 TTL: 동일 분 내 중복 호출 시 이전 성공 값 반환
+_pnl_cache: dict = {"pct": None, "ts": 0.0}
 logger = logging.getLogger("BackendConsoleState")
 _API_LOG_LIMIT = 50
 
@@ -266,23 +271,56 @@ def _has_pipeline_data_for_date(trade_date: str) -> bool:
 
 
 def _latest_pipeline_data_date(today: str, *, include_today: bool = True) -> str | None:
-    """Return the latest available pipeline date on or before today for display fallback.
+    """Return the latest actual trading day on or before today for display fallback.
+
+    Priority:
+    1. Latest date with actual trading activity (trading_signals or daily_review_reports)
+    2. Fallback: latest date with any pipeline data (market_tone, screening, plan)
+
+    This ensures non-trading days (weekends/holidays) where S1/S2 ran briefly
+    but stopped early do NOT appear as the basis date.
 
     Args:
         today: YYYY-MM-DD KST date used as the upper bound so future test data is ignored.
         include_today: False when today's scheduler is skipped and display should stay on a prior trading day.
     """
-    table_names = (
+    operator = "<=" if include_today else "<"
+
+    # 1순위: 실제 거래 활동이 있는 날 (trading_signals 또는 daily_review_reports)
+    actual_trading_tables = (
+        "trading_signals",
+        "daily_review_reports",
+    )
+    try:
+        with get_connection() as conn:
+            for table_name in actual_trading_tables:
+                try:
+                    row = conn.execute(
+                        f"SELECT MAX(trade_date) AS trade_date FROM {table_name} WHERE trade_date {operator} ?",
+                        (today,),
+                    ).fetchone()
+                    row_date = str(row["trade_date"] or "") if row else ""
+                    if row_date:
+                        logger.info(
+                            "INFO: console_state last actual trading day=%s source=%s", row_date, table_name
+                        )
+                        return row_date
+                except Exception:
+                    continue
+    except Exception as exc:
+        logger.warning("WARN: console_state actual trading date lookup failed today=%s reason=%s", today, exc)
+
+    # 2순위 fallback: 파이프라인 데이터가 있는 날
+    fallback_tables = (
         "market_tone_results",
         "universe_filter_results",
         "hybrid_screening_results",
         "daily_trading_plans",
     )
-    operator = "<=" if include_today else "<"
     latest_date = None
     try:
         with get_connection() as conn:
-            for table_name in table_names:
+            for table_name in fallback_tables:
                 try:
                     row = conn.execute(
                         f"SELECT MAX(trade_date) AS trade_date FROM {table_name} WHERE trade_date {operator} ?",
@@ -499,19 +537,56 @@ def get_console_overview() -> dict[str, Any]:
     except Exception as exc:
         logger.warning("WARN: console_state.get_console_overview trading signal summary failed - %s", exc)
 
-    # 7. Today's realized PnL percentage
+    # 7. Today's PnL — KIS 실시간 잔고 우선, 캐시(90s) → DB fallback
+    # KIS: pnl_rate = 자산증감수익률(당일 평가손익 / 전일 자산)
+    # DB: daily_trade_summary.realized_pnl_pct = S10 이후 확정 손익
+    global _pnl_cache
     pnl_pct = 0.0
-    try:
-        with get_connection() as conn:
-            row = conn.execute(
-                """SELECT realized_pnl_pct FROM daily_trade_summary
-                   WHERE trade_date=? ORDER BY created_at DESC LIMIT 1""",
-                (display_date,),
-            ).fetchone()
-        if row:
-            pnl_pct = float(row["realized_pnl_pct"] or 0.0)
-    except Exception as exc:
-        logger.warning("WARN: console_state.get_console_overview pnl summary unavailable - %s", exc)
+    pnl_source = "db"
+    now_ts = time.time()
+
+    # 90초 내 캐시가 있으면 재사용 (KIS 토큰 rate-limit 1회/분 대응)
+    if _pnl_cache["pct"] is not None and (now_ts - _pnl_cache["ts"]) < 90:
+        pnl_pct = _pnl_cache["pct"]
+        pnl_source = "kis_cached"
+    else:
+        try:
+            import asyncio as _asyncio
+            from ..api.routes.account import _build_balance_payload
+            from ..services.kis.domestic.service import get_balance as _get_kis_balance
+            # sync context에서 async KIS 호출 — 이미 실행 중인 event loop 활용
+            try:
+                loop = _asyncio.get_running_loop()
+                import concurrent.futures as _cf
+                future = _asyncio.run_coroutine_threadsafe(_get_kis_balance(), loop)
+                kis_data = future.result(timeout=3.0)
+            except RuntimeError:
+                kis_data = _asyncio.run(_get_kis_balance())
+            if kis_data:
+                balance = _build_balance_payload(kis_data)
+                # pnl_rate(asst_icdc_erng_rt=자산증감수익률)는 값이 불안정 →
+                # evlu_pfls_smtl_amt / pchs_amt_smtl_amt 로 직접 계산 (Trading Monitor 기준)
+                pnl_total = balance.get("pnl_total") or 0
+                purchase_total = balance.get("purchase_total") or 0
+                if purchase_total > 0:
+                    pnl_pct = round(pnl_total / purchase_total * 100, 2)
+                    pnl_source = "kis_realtime"
+                    _pnl_cache = {"pct": pnl_pct, "ts": now_ts}
+        except Exception as exc:
+            logger.debug("DEBUG: console_state KIS balance unavailable, falling back to DB - %s", exc)
+
+    if pnl_source == "db":
+        try:
+            with get_connection() as conn:
+                row = conn.execute(
+                    """SELECT realized_pnl_pct FROM daily_trade_summary
+                       WHERE trade_date=? ORDER BY created_at DESC LIMIT 1""",
+                    (display_date,),
+                ).fetchone()
+            if row:
+                pnl_pct = float(row["realized_pnl_pct"] or 0.0)
+        except Exception as exc:
+            logger.warning("WARN: console_state.get_console_overview pnl summary unavailable - %s", exc)
 
     # 8. Funnel aggregation from persisted pipeline outputs
     market_total = 0
@@ -600,7 +675,6 @@ def get_console_overview() -> dict[str, Any]:
     postprocess_time = _schedule_time("schedule_postprocess_time", "15:20")
     backup_time = _schedule_time("schedule_backup_time", "18:00")
     s11_time = _schedule_time("schedule_s11_time", "22:00")
-    us_watch_time = _schedule_time("schedule_us_watch_time", "22:00")
     trade_prep_done = s2_done and s3_done and s4_done and s5_done
 
     timeline = [
@@ -609,7 +683,6 @@ def get_console_overview() -> dict[str, Any]:
         {"time": postprocess_time, "name": "후처리 프로세스(S9~S10)", "status": _tl_status(postprocess_time, False)},
         {"time": backup_time, "name": "데이터 백업", "status": _tl_status(backup_time, False)},
         {"time": s11_time, "name": "S11 Learning Memory", "status": _tl_status(s11_time, False)},
-        {"time": us_watch_time, "name": "미국장 야간 관찰", "status": _tl_status(us_watch_time, False)},
     ]
 
     schedule_order = [
@@ -618,7 +691,6 @@ def get_console_overview() -> dict[str, Any]:
         (postprocess_time, "후처리 프로세스"),
         (backup_time, "데이터 백업"),
         (s11_time, "S11 Learning Memory"),
-        (us_watch_time, "미국장 야간 관찰"),
     ]
     next_job = {"time": "-", "name": "-"}
     for scheduled_time, name in sorted(schedule_order):

@@ -55,7 +55,6 @@
       runReviewAudit: function() { return runReviewAudit(); },
       openReviewDetailModal: function() { return openReviewDetailModal(); },
       closeReviewDetailModal: function() { return closeReviewDetailModal(); },
-      applyNextDayOverrides: function() { return applyNextDayOverrides(); },
       loadAllOrders: function() { return loadAllOrders(); },
       setStatsFilter: function() { return setStatsFilter(element.dataset.filter); },
       engineTestClearAll: function() { return engineTestClearAll(); },
@@ -72,7 +71,8 @@
       approveKnowledge: function() { return approveKnowledge(element.dataset.id); },
       rejectKnowledge: function() { return rejectKnowledge(element.dataset.id); },
       saveSchedulerSetting: function() { return saveSchedulerSetting(element.dataset.key); },
-      saveExitOverrideSetting: function() { return saveExitOverrideSetting(element.dataset.key); }
+      saveExitOverrideSetting: function() { return saveExitOverrideSetting(element.dataset.key); },
+      loadDailyResults: function() { return loadDailyResults(); }
     };
     if (actionMap[action]) return actionMap[action]();
     return undefined;

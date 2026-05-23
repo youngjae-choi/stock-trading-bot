@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 
 from ...api.routes.account import _build_balance_payload
@@ -20,7 +21,13 @@ from ...services.kis.domestic.service import get_balance as get_kis_balance
 from ...services.kis.realtime_ws import realtime_ws_manager
 from ...services.db import get_connection
 
+# KIS balance 캐시 — Trading Monitor 화면 폴링이 rate limit을 소진하지 않도록 10초 TTL
+_balance_cache: dict[str, Any] = {}
+_balance_cache_at: float = 0.0
+_BALANCE_CACHE_TTL = 10.0  # seconds
+
 router = APIRouter(prefix="/api/v1/trading-monitor", tags=["trading-monitor"])
+admin_router = APIRouter(prefix="/api/v1/trading", tags=["trading-admin"])
 logger = logging.getLogger("TradingMonitorAPI")
 
 
@@ -29,13 +36,19 @@ def _today_kst() -> str:
     return datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
 
 
-def _compute_buy_readiness(candidate: dict[str, Any], rule: dict[str, Any] | None) -> dict[str, Any]:
+def _compute_buy_readiness(
+    candidate: dict[str, Any],
+    rule: dict[str, Any] | None,
+    tick: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """매수 준비도 계산.
 
     조건 목록과 임계치는 rule + candidate에서 동적으로 구성한다.
+    tick이 제공되면 realtime 등락률·거래량 배수를 우선 사용한다.
     각 조건은 {name, label, current_value, threshold_label, score_pct, met} 형태.
     score_pct: 0.0~100.0 (조건 근접 정도)
     """
+    tick = tick or {}
     conditions: list[dict[str, Any]] = []
 
     # AI 신뢰도
@@ -51,33 +64,44 @@ def _compute_buy_readiness(candidate: dict[str, Any], rule: dict[str, Any] | Non
         "met": ai_conf >= ai_min,
     })
 
-    # 거래량 배수 (candidate에 volume_ratio 있으면 사용)
-    vol_ratio = float(candidate.get("volume_ratio") or candidate.get("vol_ratio") or 0.0)
+    # 거래량 배수 — realtime tick (prev_volume_ratio) 우선, S4 정적값 폴백
+    # 조건이 0이어도 항상 표시 (숨기면 100% 오표시 발생)
+    vol_ratio = float(tick.get("prev_volume_ratio") or 0.0)
+    if vol_ratio == 0.0:
+        vol_ratio = float(candidate.get("volume_ratio") or candidate.get("vol_ratio") or 0.0)
     vol_min = float((rule or {}).get("volume_ratio_min", 2.0))
-    if vol_ratio > 0:
-        vol_score = min(vol_ratio / vol_min, 1.0) * 100 if vol_min > 0 else 100.0
-        conditions.append({
-            "name": "volume_ratio",
-            "label": "거래량 배수",
-            "current_value": round(vol_ratio, 2),
-            "threshold_label": f">= {vol_min:.1f}x",
-            "score_pct": round(vol_score, 1),
-            "met": vol_ratio >= vol_min,
-        })
+    vol_score = min(vol_ratio / vol_min, 1.0) * 100 if vol_min > 0 and vol_ratio > 0 else 0.0
+    conditions.append({
+        "name": "volume_ratio",
+        "label": "거래량 배수",
+        "current_value": round(vol_ratio, 2),
+        "threshold_label": f">= {vol_min:.1f}x",
+        "score_pct": round(vol_score, 1),
+        "met": vol_ratio >= vol_min,
+    })
 
-    # 등락률 (과도한 급등은 제외)
-    change_rate = float(candidate.get("change_rate") or candidate.get("chg_rate") or 0.0)
-    if change_rate != 0:
-        # 양수 등락이 좋지만 너무 높으면 리스크 (>15% 이상이면 위험)
-        rate_score = max(0.0, min(change_rate / 10.0, 1.0)) * 100 if change_rate > 0 else 0.0
-        conditions.append({
-            "name": "change_rate",
-            "label": "등락률",
-            "current_value": round(change_rate, 2),
-            "threshold_label": "0% ~ 15%",
-            "score_pct": round(rate_score, 1),
-            "met": 0 < change_rate < 15,
-        })
+    # 등락률 — realtime tick 우선, S4 정적값 폴백
+    # 기준은 rule의 min/max_price_change_pct (AI가 시장톤 반영해 설정)
+    change_rate = float(tick.get("change_rate") or 0.0)
+    if change_rate == 0.0:
+        change_rate = float(candidate.get("change_rate") or candidate.get("chg_rate") or 0.0)
+    rate_min = float((rule or {}).get("min_price_change_pct", 0.8))
+    rate_max = float((rule or {}).get("max_price_change_pct", 6.0))
+    rate_met = rate_min <= change_rate <= rate_max
+    # score: 범위 중간값에 가까울수록 100
+    rate_mid = (rate_min + rate_max) / 2
+    if change_rate > 0 and rate_max > rate_min:
+        rate_score = max(0.0, 1.0 - abs(change_rate - rate_mid) / ((rate_max - rate_min) / 2)) * 100
+    else:
+        rate_score = 0.0
+    conditions.append({
+        "name": "change_rate",
+        "label": "등락률",
+        "current_value": round(change_rate, 2),
+        "threshold_label": f"{rate_min:.1f}% ~ {rate_max:.1f}%",
+        "score_pct": round(rate_score, 1),
+        "met": rate_met,
+    })
 
     # VWAP (candidate에 vwap_position 있으면 표시)
     vwap_pos = candidate.get("vwap_position")
@@ -472,7 +496,7 @@ def get_candidates():
         if overrides.get("volume_filter_multiplier"):
             rule["volume_ratio_min"] = overrides["volume_filter_multiplier"]
 
-        readiness = _compute_buy_readiness(c, rule)
+        readiness = _compute_buy_readiness(c, rule, latest_tick)
         result.append({
             "code": code,
             "name": c.get("name") or "",
@@ -496,13 +520,29 @@ def get_candidates():
     }}
 
 
+async def _get_cached_balance() -> dict[str, Any]:
+    """Return KIS balance using a 10-second server-side cache.
+
+    Trading Monitor UI polls this endpoint every ~1 second.
+    Without caching this causes EGW00201 rate-limit errors that also corrupt
+    concurrent sell order responses (ODNO missing from output).
+    """
+    global _balance_cache, _balance_cache_at
+    now = time.monotonic()
+    if now - _balance_cache_at > _BALANCE_CACHE_TTL or not _balance_cache:
+        _balance_cache = await get_kis_balance()
+        _balance_cache_at = now
+        logger.info("INFO: TradingMonitor balance cache refreshed")
+    return _balance_cache
+
+
 @router.get("/positions")
 async def get_positions():
     """Return actual KIS holdings with persisted trailing-stop state."""
     endpoint = "/api/v1/trading-monitor/positions"
     logger.info("START: GET %s", endpoint)
     try:
-        account_payload = _build_balance_payload(await get_kis_balance())
+        account_payload = _build_balance_payload(await _get_cached_balance())
         account_positions = account_payload.get("positions", [])
     except Exception as exc:
         logger.warning("WARN: TradingMonitor KIS holdings lookup failed reason=%s", exc)
@@ -681,3 +721,238 @@ async def stream_monitor_events():
             "Connection": "keep-alive",
         },
     )
+
+
+@router.get("/daily-results")
+def get_daily_results(start_date: str | None = None, end_date: str | None = None):
+    """일자별 매매결과 — daily_review_reports + daily_trade_summary 조인.
+
+    start_date / end_date (YYYY-MM-DD): 범위 지정 시 해당 구간만 반환. 미지정 시 전체 반환.
+    """
+    from collections import defaultdict
+    with get_connection() as conn:
+        # P&L은 daily_trade_summary(주문 가격 기반 계산)가 더 정확함
+        base_select = """
+                SELECT
+                    drr.trade_date,
+                    drr.missed_entries_count,
+                    drr.integrity_warnings,
+                    drr.false_positive_count,
+                    COALESCE(dts.buy_orders, drr.total_trades, 0) AS trade_count,
+                    COALESCE(dts.realized_pnl, 0.0) AS total_pnl,
+                    COALESCE(dts.realized_pnl_pct, 0.0) AS pnl_rate,
+                    dts.net_pnl,
+                    dts.net_pnl_pct,
+                    COALESCE(dts.pnl_status, drr.pnl_status, 'unverified') AS pnl_status,
+                    mtr.tone AS market_tone,
+                    mtr.confidence AS tone_confidence
+                FROM daily_review_reports drr
+                LEFT JOIN daily_trade_summary dts ON drr.trade_date = dts.trade_date
+                LEFT JOIN market_tone_results mtr ON drr.trade_date = mtr.trade_date
+                """
+        if start_date and end_date:
+            rows = conn.execute(
+                base_select + "WHERE drr.trade_date >= ? AND drr.trade_date <= ? ORDER BY drr.trade_date DESC",
+                (start_date, end_date),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                base_select + "ORDER BY drr.trade_date DESC",
+            ).fetchall()
+
+        dates = [r["trade_date"] for r in rows]
+        order_rows: list[Any] = []
+        if dates:
+            placeholders = ",".join("?" * len(dates))
+            order_rows = conn.execute(
+                f"""
+                SELECT trade_date, symbol, side, price, qty, status
+                FROM trading_orders
+                WHERE trade_date IN ({placeholders})
+                  AND status IN ('filled', 'submitted', 'submitted_without_order_no')
+                ORDER BY trade_date, symbol, side
+                """,
+                dates,
+            ).fetchall()
+
+    # 심볼별 매수/매도 쌍으로 승/패 계산
+    date_wins: dict[str, int] = defaultdict(int)
+    date_losses: dict[str, int] = defaultdict(int)
+    by_date_symbol: dict[str, dict[str, dict]] = defaultdict(
+        lambda: defaultdict(lambda: {"buys": [], "sells": []})
+    )
+    for o in order_rows:
+        od = dict(o)
+        by_date_symbol[od["trade_date"]][od["symbol"]][od["side"] + "s"].append(od)
+
+    for trade_date, symbols in by_date_symbol.items():
+        for symbol, sides in symbols.items():
+            buys = sides.get("buys", [])
+            sells = sides.get("sells", [])
+            if not buys or not sells:
+                continue
+            avg_buy = sum(float(b.get("price") or 0) for b in buys) / len(buys)
+            valid_sell_prices = [
+                float(s.get("price") or 0)
+                for s in sells
+                if float(s.get("price") or 0) > 0
+            ]
+            if not valid_sell_prices or avg_buy == 0:
+                continue
+            avg_sell = sum(valid_sell_prices) / len(valid_sell_prices)
+            if avg_sell > avg_buy:
+                date_wins[trade_date] += 1
+            else:
+                date_losses[trade_date] += 1
+
+    result = []
+    for row in rows:
+        d = dict(row)
+        td = d["trade_date"]
+        wins = date_wins.get(td, 0)
+        losses = date_losses.get(td, 0)
+        total_closed = wins + losses
+        d["win_count"] = wins
+        d["loss_count"] = losses
+        d["win_rate"] = round(wins / total_closed * 100, 1) if total_closed > 0 else 0
+        result.append(d)
+    return {"ok": True, "payload": result}
+
+
+@router.get("/intraday-refresh-status")
+def get_intraday_refresh_status():
+    """오늘 장중 재선별 이력 반환 (Trading Monitor UI용)."""
+    from ...services.engine.intraday_refresh import get_today_refresh_status
+    logs = get_today_refresh_status()
+    return {"ok": True, "payload": logs}
+
+
+def _backfill_sell_order_names(trade_date: str) -> int:
+    """Fill missing sell order names from the local symbols master table.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date whose sell orders should be repaired.
+    """
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE trading_orders
+            SET name = COALESCE(
+                (
+                    SELECT symbols.name
+                    FROM symbols
+                    WHERE symbols.symbol = trading_orders.symbol
+                      AND symbols.name IS NOT NULL
+                      AND symbols.name != ''
+                    LIMIT 1
+                ),
+                (
+                    SELECT source_orders.name
+                    FROM trading_orders AS source_orders
+                    WHERE source_orders.trade_date = trading_orders.trade_date
+                      AND source_orders.symbol = trading_orders.symbol
+                      AND source_orders.name IS NOT NULL
+                      AND source_orders.name != ''
+                    ORDER BY CASE WHEN source_orders.side = 'buy' THEN 0 ELSE 1 END, source_orders.created_at DESC
+                    LIMIT 1
+                ),
+                (
+                    SELECT trading_signals.name
+                    FROM trading_signals
+                    WHERE trading_signals.symbol = trading_orders.symbol
+                      AND trading_signals.name IS NOT NULL
+                      AND trading_signals.name != ''
+                    ORDER BY trading_signals.created_at DESC
+                    LIMIT 1
+                ),
+                ''
+            )
+            WHERE trade_date = ?
+              AND side = 'sell'
+              AND (name IS NULL OR name = '')
+              AND EXISTS (
+                  SELECT 1
+                  FROM trading_orders AS buy_orders
+                  WHERE buy_orders.trade_date = trading_orders.trade_date
+                    AND buy_orders.symbol = trading_orders.symbol
+                    AND buy_orders.name IS NOT NULL
+                    AND buy_orders.name != ''
+                  UNION
+                  SELECT 1
+                  FROM symbols
+                  WHERE symbols.symbol = trading_orders.symbol
+                    AND symbols.name IS NOT NULL
+                    AND symbols.name != ''
+                  UNION
+                  SELECT 1
+                  FROM trading_signals
+                  WHERE trading_signals.symbol = trading_orders.symbol
+                    AND trading_signals.name IS NOT NULL
+                    AND trading_signals.name != ''
+              )
+            """,
+            (trade_date,),
+        )
+        updated = int(cursor.rowcount or 0)
+    return updated
+
+
+@admin_router.post("/admin/recover-fills")
+@router.post("/admin/recover-fills")
+async def recover_fills(trade_date: str | None = Query(None, description="YYYY-MM-DD (기본값: 오늘)")):
+    """오늘 submitted 매도주문 fill 재폴링 + S10 재실행.
+
+    Args:
+        trade_date: Optional YYYY-MM-DD trade date. Defaults to today's KST date.
+
+    장 종료 후 fill_poller가 sell 주문 체결을 놓쳤을 때 수동으로 복구한다.
+    """
+    from ...services.engine.fill_poller import poll_once
+    from ...services.scheduler import job_review_audit
+
+    today = trade_date or datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+    logger.info("START: POST /api/v1/trading/admin/recover-fills date=%s", today)
+
+    try:
+        names_updated = _backfill_sell_order_names(today)
+        logger.info("SUCCESS: recover-fills sell order names backfilled updated=%d date=%s", names_updated, today)
+    except Exception as exc:
+        names_updated = 0
+        logger.warning("WARN: recover-fills sell order name backfill failed date=%s reason=%s", today, exc)
+
+    try:
+        fill_result = await poll_once(today)
+        logger.info("SUCCESS: recover-fills fill 폴링 완료 filled=%d", fill_result.get("filled", 0))
+    except Exception as exc:
+        logger.warning("WARN: recover-fills fill 폴링 실패 (S10 계속) reason=%s", exc)
+        fill_result = {"filled": 0, "error": str(exc)}
+
+    try:
+        from ...services.engine.daily_summary import run_daily_summary
+
+        summary_result = await run_daily_summary(today)
+        logger.info(
+            "SUCCESS: recover-fills Daily Summary 재실행 완료 orders=%d pnl_status=%s",
+            summary_result.get("total_orders", 0),
+            summary_result.get("pnl_status", "unknown"),
+        )
+    except Exception as exc:
+        logger.warning("WARN: recover-fills Daily Summary 재실행 실패 (S10 계속) reason=%s", exc)
+        summary_result = {"ok": False, "error": str(exc)}
+
+    try:
+        await job_review_audit()
+        logger.info("SUCCESS: recover-fills S10 재실행 완료")
+        s10_ok = True
+    except Exception as exc:
+        logger.error("FAIL: recover-fills S10 재실행 실패 reason=%s", exc)
+        s10_ok = False
+
+    return {
+        "ok": True,
+        "trade_date": today,
+        "names_updated": names_updated,
+        "fill_result": fill_result,
+        "daily_summary": summary_result,
+        "s10_rerun": s10_ok,
+    }

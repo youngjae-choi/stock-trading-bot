@@ -7,75 +7,79 @@ async function refreshDividendStats() {
     const grossEl = document.getElementById('divStatGross');
     const taxEl = document.getElementById('divStatTax');
     const netEl = document.getElementById('divStatNet');
-    const chartContainer = document.getElementById('dividendMonthlyChartContainer');
+    const monthlyTbody = document.getElementById('divStatMonthlyTableBody');
     const accountTbody = document.getElementById('divStatAccountTableBody');
+
+    const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
     try {
         const data = await fetchJson(`/api/v1/dividends/stats/summary?year=${year}`);
 
-        if (data.ok) {
-            // Update Summary Cards
-            grossEl.innerText = data.total.gross.toLocaleString();
-            taxEl.innerText = data.total.tax.toLocaleString();
-            netEl.innerText = data.total.net.toLocaleString();
+        if (!data.ok) return;
 
-            // Render Monthly Chart — SVG
-            if (data.monthly.length === 0) {
-                chartContainer.innerHTML = '<div class="muted" style="width:100%;text-align:center;padding:60px 0;">선택한 연도의 데이터가 없습니다.</div>';
-            } else {
-                const isDark = document.body.classList.contains('dark') || !document.body.classList.contains('light');
-                const BAR_COLOR = isDark ? '#35b779' : '#188a58';   // --green light/dark
-                const LABEL_COLOR = isDark ? '#8b949e' : '#6e7681'; // --muted
+        // ── 요약 카드 ──────────────────────────────────────────────────
+        grossEl.innerText = data.total.gross.toLocaleString();
+        taxEl.innerText   = data.total.tax.toLocaleString();
+        netEl.innerText   = data.total.net.toLocaleString();
 
-                const W = 560, H = 200, PAD_T = 32, PAD_B = 24, BAR_GAP = 8;
-                const barW = Math.floor((W - BAR_GAP * 13) / 12);
-                const barAreaH = H - PAD_T - PAD_B;
-                const maxVal = Math.max(...data.monthly.map(m => m.total_net), 1);
-                const totalNet = data.monthly.reduce((s, m) => s + m.total_net, 0);
-                const totalKw = Math.round(totalNet / 1000).toLocaleString();
+        // ── 월별 표 ────────────────────────────────────────────────────
+        const totalNet = data.total.net || 1;
+        if (data.monthly.length === 0) {
+            monthlyTbody.innerHTML = '<tr><td colspan="5" class="muted" style="text-align:center;">선택한 연도의 데이터가 없습니다.</td></tr>';
+        } else {
+            let rows = '';
+            let sumGross = 0, sumTax = 0, sumNet = 0;
 
-                // 상단 합계
-                const header = `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="600" fill="${BAR_COLOR}">합계 ${totalKw}천원</text>`;
+            for (let i = 0; i < 12; i++) {
+                const monthStr = (i + 1).toString().padStart(2, '0');
+                const m = data.monthly.find(d => d.month === monthStr);
+                const gross = m ? (m.total_gross || 0) : 0;
+                const tax   = m ? (m.total_tax   || 0) : 0;
+                const net   = m ? (m.total_net   || 0) : 0;
+                sumGross += gross; sumTax += tax; sumNet += net;
 
-                let bars = '', labels = '', valLabels = '';
-                for (let i = 0; i < 12; i++) {
-                    const monthStr = (i + 1).toString().padStart(2, '0');
-                    const monthData = data.monthly.find(m => m.month === monthStr);
-                    const val = monthData ? monthData.total_net : 0;
-                    const barH = val > 0 ? Math.max(Math.round(val / maxVal * barAreaH), 4) : 0;
-                    const x = BAR_GAP + i * (barW + BAR_GAP);
-                    const y = PAD_T + barAreaH - barH;
-                    const cx = x + barW / 2;
-                    if (barH > 0) {
-                        bars += `<rect x="${x}" y="${y}" width="${barW}" height="${barH}" rx="3" fill="${BAR_COLOR}" opacity="0.85"><title>${Math.round(val / 1000).toLocaleString()}천원</title></rect>`;
-                        // 막대 위 금액 (값이 충분히 클 때만)
-                        if (barH >= 18) {
-                            valLabels += `<text x="${cx}" y="${y - 3}" text-anchor="middle" font-size="9" fill="${BAR_COLOR}">${Math.round(val / 1000)}k</text>`;
-                        }
-                    }
-                    labels += `<text x="${cx}" y="${H - 5}" text-anchor="middle" font-size="10" fill="${LABEL_COLOR}">${i + 1}월</text>`;
-                }
-                chartContainer.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" xmlns="http://www.w3.org/2000/svg">${header}${bars}${valLabels}${labels}</svg>`;
+                const share = net > 0 ? (net / totalNet * 100).toFixed(1) + '%' : '-';
+                const netCls = net > 0 ? 'good' : net < 0 ? 'bad' : 'muted';
+                const isEmpty = gross === 0 && net === 0;
+
+                rows += `<tr${isEmpty ? ' style="color:var(--muted);"' : ''}>
+                    <td style="font-weight:500;">${MONTH_NAMES[i]}</td>
+                    <td style="text-align:right;">${gross > 0 ? gross.toLocaleString() : '-'}</td>
+                    <td style="text-align:right; color:var(--red);">${tax > 0 ? tax.toLocaleString() : '-'}</td>
+                    <td style="text-align:right;" class="${netCls}">${net > 0 ? net.toLocaleString() : '-'}</td>
+                    <td style="text-align:right; font-size:12px;">${share}</td>
+                </tr>`;
             }
 
-            // Update Account Table
-            if (data.by_account.length === 0) {
-                accountTbody.innerHTML = '<tr><td colspan="5" class="muted" style="text-align:center;">데이터 없음</td></tr>';
-            } else {
-                const totalNet = data.total.net || 1;
-                accountTbody.innerHTML = data.by_account.map(acc => `
-                    <tr>
-                        <td>${escapeHtml(acc.bank_name)}</td>
-                        <td class="muted" style="font-size:12px;">${escapeHtml(acc.owner_name || '-')}</td>
-                        <td class="muted" style="font-size:12px;">${escapeHtml(acc.account_number)}</td>
-                        <td class="good">${acc.total_net.toLocaleString()}</td>
-                        <td>${(acc.total_net / totalNet * 100).toFixed(1)}%</td>
-                    </tr>
-                `).join('');
-            }
+            // 합계 행
+            rows += `<tr style="border-top:2px solid var(--line); font-weight:600;">
+                <td>Total</td>
+                <td style="text-align:right;">${sumGross.toLocaleString()}</td>
+                <td style="text-align:right; color:var(--red);">${sumTax.toLocaleString()}</td>
+                <td style="text-align:right;" class="good">${sumNet.toLocaleString()}</td>
+                <td style="text-align:right;">100%</td>
+            </tr>`;
+
+            monthlyTbody.innerHTML = rows;
         }
+
+        // ── 계좌별 표 ──────────────────────────────────────────────────
+        if (data.by_account.length === 0) {
+            accountTbody.innerHTML = '<tr><td colspan="5" class="muted" style="text-align:center;">데이터 없음</td></tr>';
+        } else {
+            accountTbody.innerHTML = data.by_account.map(acc => `
+                <tr>
+                    <td>${escapeHtml(acc.bank_name)}</td>
+                    <td class="muted" style="font-size:12px;">${escapeHtml(acc.owner_name || '-')}</td>
+                    <td class="muted" style="font-size:12px;">${escapeHtml(acc.account_number)}</td>
+                    <td style="text-align:right;" class="good">${acc.total_net.toLocaleString()}</td>
+                    <td style="text-align:right;">${(acc.total_net / (data.total.net || 1) * 100).toFixed(1)}%</td>
+                </tr>
+            `).join('');
+        }
+
     } catch (e) {
-        chartContainer.innerHTML = `<div class="bad">통계 로드 실패: ${escapeHtml(e.message)}</div>`;
+        if (monthlyTbody) monthlyTbody.innerHTML = `<tr><td colspan="5" class="bad">로드 실패: ${escapeHtml(e.message)}</td></tr>`;
     }
 }
 

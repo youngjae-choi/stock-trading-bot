@@ -72,8 +72,8 @@ test('backend console routes respond with html', async ({ request }) => {
 
   expect(rootResponse.ok()).toBeTruthy();
   expect(consoleResponse.ok()).toBeTruthy();
-  expect(await rootResponse.text()).toContain('Dantabot Control Console');
-  expect(await consoleResponse.text()).toContain('Dantabot Control Console');
+  expect(await rootResponse.text()).toContain('Kairos Control Console');
+  expect(await consoleResponse.text()).toContain('Kairos Control Console');
 });
 
 test('closed trading day S2 skips market tone analysis', async () => {

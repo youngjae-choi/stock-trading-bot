@@ -200,6 +200,7 @@ async def run_eod_liquidation() -> dict[str, Any]:
             qty=qty,
             price=0,
             reason="eod",
+            name=str(pos.get("name") or ""),
         )
         results.append(result)
         _classify_sell_result(result, summary)

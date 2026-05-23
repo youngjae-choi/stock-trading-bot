@@ -10,6 +10,38 @@
     }
   }
 
+  async function loadSettingsMapFull() {
+    try {
+      var res = await fetchJson("/api/v1/settings");
+      var settingsItems = res.payload.items || [];
+      var map = {};
+      settingsItems.forEach(function(s) {
+        map[s.key] = {
+          value: s.value,
+          updated_at: s.updated_at || null,
+          updated_by: s.updated_by || null,
+        };
+      });
+      return map;
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function _fmtSettingTs(isoStr, updatedBy) {
+    if (!isoStr) return '';
+    try {
+      var d = new Date(isoStr);
+      var dt = d.toLocaleString('ko-KR', {
+        timeZone: 'Asia/Seoul',
+        month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false
+      }).replace(/\. /g, '-').replace('. ', ' ');
+      var by = updatedBy ? (' · ' + escapeHtml(updatedBy)) : '';
+      return '<span class="muted" style="font-size:10px;">' + dt + by + '</span>';
+    } catch(e) { return ''; }
+  }
+
   function applyOperationMetadata(settingsMap) {
     OPS_STEPS.forEach(function(step) {
       var titleEl = document.getElementById("et-title-" + step.id);
@@ -39,7 +71,6 @@
       { id: 's8', call: () => fetchJson('/api/v1/orders/positions').then(r => (r.payload?.positions?.length > 0) ? r : {ok:false}) },
       { id: 's9', call: () => fetchJson('/api/v1/orders/today').then(r => ({ ok: false, payload: r.payload })) },
       { id: 's10', call: () => fetchJson('/api/v1/review-audit/today').then(r => r.payload ? r : {ok:false}).catch(() => ({ok:false})) },
-      { id: 's11', call: () => fetchJson('/api/v1/learning-memory/today').then(r => (r.payload?.length > 0) ? r : {ok:false}).catch(() => ({ok:false})) },
     ];
 
     for (var step of steps) {
@@ -154,7 +185,6 @@
         s8: "/api/v1/orders/positions",
         s9: "/api/v1/orders/liquidate-all",
         s10: "/api/v1/review-audit/run",
-        s11: "/api/v1/learning-memory/build"
       };
       var stepUrl = STEP_URLS[step];
       if (!stepUrl) {

@@ -1,6 +1,9 @@
   var tmEventSource = null;
   var tmRealtimeRefreshTimer = null;
   var tmLastRealtimeRefresh = 0;
+  var tmBalanceTimer = null;
+  var tmLastBalanceRefresh = 0;
+  var TM_BALANCE_INTERVAL = 15000; // 15초마다 예수금 갱신
 
   /* Render one Trading Monitor approach bar for a symbol with a 0-100 proximity rate. */
   function _tmApproachBar(label, code, rate, colorFn) {
@@ -52,69 +55,8 @@
       }
     } catch(e) { console.warn("loadTradingMonitor status error", e); }
 
-    // 계좌 정보 로드
-    var _setSyncStatus = function(ok, msg) {
-      var el = document.getElementById('tm-sync-status');
-      var timeEl = document.getElementById('tm-sync-time');
-      if (el) {
-        el.textContent = ok ? '● KIS 연결됨' : '✕ ' + (msg || '연결 실패');
-        el.style.background = ok ? 'rgba(63,185,80,0.15)' : 'rgba(248,81,73,0.15)';
-        el.style.color = ok ? 'var(--green)' : 'var(--red, #f85149)';
-      }
-      if (timeEl) {
-        var now = new Date();
-        timeEl.textContent = now.getHours().toString().padStart(2,'0') + ':' +
-          now.getMinutes().toString().padStart(2,'0') + ':' +
-          now.getSeconds().toString().padStart(2,'0');
-      }
-    };
-    try {
-      var accountData = await fetchJson("/api/v1/account/balance");
-      if (accountData && accountData.ok && accountData.payload) {
-        var acct = accountData.payload;
-        var setEl = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
-        var fmtWon = function(v) { return v != null ? Number(v).toLocaleString() + '원' : '-'; };
-
-        _setSyncStatus(true);
-        setEl('tm-account-no', acct.account_no ? '· ' + acct.account_no : '');
-
-        // 주문가능 예수금 (nxdy_excc_amt 기반, buyable_cash)
-        var buyable = acct.buyable_cash != null ? acct.buyable_cash : acct.available_cash;
-        setEl('tm-buyable-cash', fmtWon(buyable));
-        setEl('tm-deposit-limit', '한도 ' + fmtWon(acct.deposit));
-
-        // 주식 평가금액
-        setEl('tm-stock-eval', fmtWon(acct.stock_eval != null ? acct.stock_eval : acct.purchase_total));
-        var holdings = acct.positions || acct.holdings || [];
-        setEl('tm-holdings-count', '보유 ' + holdings.length + '종목');
-
-        // 총평가금액
-        setEl('tm-total-eval', fmtWon(acct.total_eval));
-
-        // 평가손익 / 수익률
-        var pnlEl = document.getElementById('tm-pnl-today');
-        var pnlRateEl = document.getElementById('tm-pnl-rate');
-        var pnlVal = acct.pnl_total;
-        if (pnlEl) {
-          pnlEl.textContent = fmtWon(pnlVal);
-          pnlEl.style.color = pnlVal > 0 ? 'var(--green)' : pnlVal < 0 ? 'var(--red, #f85149)' : '';
-        }
-        if (pnlRateEl && acct.pnl_rate != null) {
-          var rate = Number(acct.pnl_rate);
-          pnlRateEl.textContent = (rate >= 0 ? '+' : '') + rate.toFixed(2) + '%';
-          pnlRateEl.style.color = rate > 0 ? 'var(--green)' : rate < 0 ? 'var(--red, #f85149)' : 'var(--muted)';
-        }
-
-        // 당일 매수/매도
-        setEl('tm-today-buy', fmtWon(acct.today_buy_amt));
-        setEl('tm-today-sell', fmtWon(acct.today_sell_amt));
-      } else {
-        _setSyncStatus(false, accountData && accountData.error ? accountData.error : 'API 오류');
-      }
-    } catch(e) {
-      _setSyncStatus(false, 'KIS 연결 오류');
-      console.warn("loadTradingMonitor account error", e);
-    }
+    // 계좌 정보 로드 (초기 + 주기적 갱신은 refreshTradingMonitorBalance()로 위임)
+    await refreshTradingMonitorBalance();
 
     // 오늘 적용 정책 로드
     try {
@@ -138,10 +80,39 @@
       }
     } catch(e) { console.warn("loadPolicySummary error", e); }
 
+    // 장중 재선별 상태 로드
+    await loadIntradayRefreshStatus();
     // 매수 대기 후보 로드
     await loadTradingCandidates();
     // 보유 포지션 로드
     await loadTradingPositions();
+  }
+
+  async function loadIntradayRefreshStatus() {
+    var el = document.getElementById('tm-intraday-refresh-status');
+    if (!el) return;
+    try {
+      var d = await fetchJson('/api/v1/trading-monitor/intraday-refresh-status');
+      var logs = (d && d.payload) ? d.payload : [];
+      if (logs.length === 0) {
+        el.innerHTML = '<span style="color:var(--muted); font-size:12px;">재선별 없음</span>';
+        return;
+      }
+      var parts = logs.map(function(log) {
+        var slot = escapeHtml(log.slot || '?');
+        if (log.triggered) {
+          var avgStr = log.avg_change != null ? (log.avg_change >= 0 ? '+' : '') + log.avg_change.toFixed(1) + '%' : '';
+          var newCount = (log.reselection && log.reselection.s6) ? (log.reselection.s6.new_count || '?') : '?';
+          return '<span class="status ok" title="' + escapeHtml(log.reason || '') + '">♻️ ' + slot + ' ' + avgStr + ' →' + newCount + '종목</span>';
+        } else if (log.ran) {
+          return '<span class="status" style="color:var(--muted); font-size:11px;" title="' + escapeHtml(log.reason || '') + '">' + slot + ' 스킵</span>';
+        }
+        return '';
+      }).filter(Boolean);
+      el.innerHTML = parts.join(' ');
+    } catch(e) {
+      el.innerHTML = '';
+    }
   }
 
   async function loadTradingCandidates() {
@@ -161,6 +132,14 @@
       var currentCodes = Array.from(container.querySelectorAll('[data-code]')).map(el => el.getAttribute('data-code'));
       var newCodes = candidates.map(c => c.code);
 
+      // 현재 열려 있는 detail 목록 저장 (갱신 후 복원용)
+      var openDetails = {};
+      container.querySelectorAll('[id^="cand-detail-"]').forEach(function(el) {
+        if (el.style.display !== 'none') {
+          openDetails[el.id] = true;
+        }
+      });
+
       // Remove gone
       currentCodes.forEach(code => {
         if (!newCodes.includes(code)) {
@@ -175,7 +154,7 @@
         var existing = container.querySelector('[data-code="' + c.code + '"]');
         if (existing) {
           if (existing.innerHTML !== html) {
-             existing.innerHTML = html;
+            existing.innerHTML = html;
           }
         } else {
           var div = document.createElement('div');
@@ -183,6 +162,12 @@
           div.innerHTML = html;
           container.appendChild(div);
         }
+      });
+
+      // 열려 있던 detail 복원
+      Object.keys(openDetails).forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.style.display = 'block';
       });
     } catch(e) {
       console.warn("loadTradingCandidates error", e);
@@ -273,6 +258,74 @@
     detailEl.style.display = detailEl.style.display === 'none' ? 'block' : 'none';
   }
 
+  /* 계좌 잔고(예수금) 갱신 — 초기 로드 및 15초 타이머에서 호출 */
+  async function refreshTradingMonitorBalance() {
+    var _setSyncStatus = function(ok, msg) {
+      var el = document.getElementById('tm-sync-status');
+      var timeEl = document.getElementById('tm-sync-time');
+      if (el) {
+        el.textContent = ok ? '● KIS 연결됨' : '✕ ' + (msg || '연결 실패');
+        el.style.background = ok ? 'rgba(63,185,80,0.15)' : 'rgba(248,81,73,0.15)';
+        el.style.color = ok ? 'var(--green)' : 'var(--red, #f85149)';
+      }
+      if (timeEl) {
+        var now = new Date();
+        timeEl.textContent = now.getHours().toString().padStart(2,'0') + ':' +
+          now.getMinutes().toString().padStart(2,'0') + ':' +
+          now.getSeconds().toString().padStart(2,'0');
+      }
+    };
+    try {
+      var accountData = await fetchJson("/api/v1/account/balance");
+      if (accountData && accountData.ok && accountData.payload) {
+        var acct = accountData.payload;
+        var setEl = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
+        var fmtWon = function(v) { return v != null ? Number(v).toLocaleString() + '원' : '-'; };
+
+        _setSyncStatus(true);
+        setEl('tm-account-no', acct.account_no ? '· ' + acct.account_no : '');
+
+        // 주문가능 예수금 (nxdy_excc_amt 기반, buyable_cash)
+        var buyable = acct.buyable_cash != null ? acct.buyable_cash : acct.available_cash;
+        setEl('tm-buyable-cash', fmtWon(buyable));
+        setEl('tm-deposit-limit', '한도 ' + fmtWon(acct.deposit));
+
+        // 주식 평가금액
+        setEl('tm-stock-eval', fmtWon(acct.stock_eval != null ? acct.stock_eval : acct.purchase_total));
+        var holdings = acct.positions || acct.holdings || [];
+        setEl('tm-holdings-count', '보유 ' + holdings.length + '종목');
+
+        // 총평가금액
+        setEl('tm-total-eval', fmtWon(acct.total_eval));
+
+        // 평가손익 / 수익률
+        var pnlEl = document.getElementById('tm-pnl-today');
+        var pnlRateEl = document.getElementById('tm-pnl-rate');
+        var pnlVal = acct.pnl_total;
+        if (pnlEl) {
+          pnlEl.textContent = fmtWon(pnlVal);
+          pnlEl.style.color = pnlVal > 0 ? 'var(--green)' : pnlVal < 0 ? 'var(--red, #f85149)' : '';
+        }
+        if (pnlRateEl && acct.pnl_rate != null) {
+          var rate = Number(acct.pnl_rate);
+          pnlRateEl.textContent = (rate >= 0 ? '+' : '') + rate.toFixed(2) + '%';
+          pnlRateEl.style.color = rate > 0 ? 'var(--green)' : rate < 0 ? 'var(--red, #f85149)' : 'var(--muted)';
+        }
+
+        // 당일 매수/매도
+        setEl('tm-today-buy', fmtWon(acct.today_buy_amt));
+        setEl('tm-today-sell', fmtWon(acct.today_sell_amt));
+
+        tmLastBalanceRefresh = Date.now();
+      } else {
+        _setSyncStatus(false, accountData && accountData.error ? accountData.error : 'API 오류');
+      }
+    } catch(e) {
+      _setSyncStatus(false, 'KIS 연결 오류');
+      console.warn("refreshTradingMonitorBalance error", e);
+    }
+  }
+
   function stopTradingMonitorStream() {
     if (tmEventSource) {
       tmEventSource.close();
@@ -281,6 +334,10 @@
     if (tmRealtimeRefreshTimer) {
       clearTimeout(tmRealtimeRefreshTimer);
       tmRealtimeRefreshTimer = null;
+    }
+    if (tmBalanceTimer) {
+      clearInterval(tmBalanceTimer);
+      tmBalanceTimer = null;
     }
   }
 
@@ -299,6 +356,11 @@
 
   function startTradingMonitorStream() {
     stopTradingMonitorStream();
+    // 예수금 15초 주기 갱신 타이머 (SSE tick과 독립)
+    tmBalanceTimer = setInterval(function() {
+      refreshTradingMonitorBalance();
+    }, TM_BALANCE_INTERVAL);
+
     if (!window.EventSource) {
       if (window._tmRefreshInterval) clearInterval(window._tmRefreshInterval);
       window._tmRefreshInterval = setInterval(function() {
@@ -367,10 +429,94 @@
           container.appendChild(div);
         }
       });
+
+      // 모바일이면 카드 표시, 아니면 숨김
+      var isMobile = window.innerWidth <= 860;
+      var cardList = document.getElementById('tmCardList');
+      if (cardList) {
+        cardList.style.display = isMobile ? 'flex' : 'none';
+        // 기존 리스트는 모바일에서 숨김
+        container.style.display = isMobile ? 'none' : 'flex';
+      }
+      if (isMobile) renderPositionCards(positions);
+
     } catch(e) {
       console.warn("loadTradingPositions error", e);
     }
   }
+
+  /**
+   * 모바일 카드 렌더 — 860px 이하에서만 표시
+   */
+  function renderPositionCards(positions) {
+    var container = document.getElementById('tmCardList');
+    if (!container) return;
+
+    if (!positions || positions.length === 0) {
+      container.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px;">보유 포지션 없음</div>';
+      return;
+    }
+
+    container.innerHTML = positions.map(function(p) {
+      // 데이터 매핑
+      var entry = p.entry_price || 0;
+      var current = p.market_price || entry;
+      var pnlPct = entry > 0 ? ((current - entry) / entry) : 0;
+      var stopLoss = p.active_stop_price || p.stop_loss_price || 0;
+      var qty = p.qty || 0;
+
+      var pnlPctDisp = pnlPct * 100;
+      var pnlClass = pnlPctDisp >= 0 ? 'positive' : 'negative';
+      var pnlSign = pnlPctDisp >= 0 ? '+' : '';
+
+      // 손절 게이지: current 가 entry 에서 stop_loss 까지 얼마나 왔는지
+      var stopFillPct = 0;
+      var stopClass = 'safe';
+      if (entry && stopLoss && current) {
+        var range = entry - stopLoss;
+        var gone = entry - current;
+        stopFillPct = range > 0 ? Math.min(100, Math.max(0, (gone / range) * 100)) : 0;
+        stopClass = stopFillPct > 80 ? 'danger' : stopFillPct > 50 ? 'warn' : 'safe';
+      }
+
+      var badgeClass = (p.status === 'sell' || p.status === 'closing') ? 'sell' : 'hold';
+      var badgeLabel = badgeClass === 'sell' ? '매도중' : '보유';
+
+      return [
+        '<div class="tm-card">',
+          '<div class="tm-card-header">',
+            '<div>',
+              '<div class="tm-card-symbol">' + (p.symbol || '') + '</div>',
+              '<div class="tm-card-name">' + (p.name || '') + '</div>',
+            '</div>',
+            '<div class="tm-card-pnl ' + pnlClass + '">' + pnlSign + pnlPctDisp.toFixed(2) + '%</div>',
+          '</div>',
+          '<span class="tm-card-badge ' + badgeClass + '">' + badgeLabel + '</span>',
+          '<div class="tm-card-meta">',
+            '<span>평균가 <strong>' + fmtPrice(entry) + '</strong></span>',
+            '<span>현재가 <strong>' + fmtPrice(current) + '</strong></span>',
+            '<span>수량 <strong>' + (qty || 0) + '주</strong></span>',
+            '<span>손절가 <strong>' + fmtPrice(stopLoss) + '</strong></span>',
+          '</div>',
+          '<div class="tm-stop-bar-wrap">',
+            '<div class="tm-stop-bar-label">',
+              '<span>손절 여유</span>',
+              '<span>' + (100 - stopFillPct).toFixed(0) + '%</span>',
+            '</div>',
+            '<div class="tm-stop-bar">',
+              '<div class="tm-stop-bar-fill ' + stopClass + '" style="width:' + stopFillPct.toFixed(1) + '%"></div>',
+            '</div>',
+          '</div>',
+        '</div>'
+      ].join('');
+    }).join('');
+  }
+
+  function fmtPrice(v) {
+    if (v == null) return '-';
+    return Number(v).toLocaleString('ko-KR') + '원';
+  }
+
 
   function renderPositionRow(p) {
     var entry = p.entry_price || 0;

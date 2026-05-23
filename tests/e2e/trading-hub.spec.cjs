@@ -121,6 +121,6 @@ test.describe('[E] 스윙', () => {
 test.describe('[UI] Console', () => {
   test('정적 콘솔 타이틀 표시', async ({ page }) => {
     await page.goto(`${API}/console`, { waitUntil: 'networkidle', timeout: 20000 });
-    await expect(page.getByText('Dantabot Control Console')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('Kairos Control Console')).toBeVisible({ timeout: 10000 });
   });
 });

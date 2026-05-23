@@ -21,9 +21,21 @@ _SYMBOLS = {
     "oil_wti": "CL=F",
     "usdkrw": "USDKRW=X",
     "us_10y_yield": "^TNX",
+    "vix": "^VIX",
+    "nikkei": "^N225",
+    "hangseng": "^HSI",
+    "shanghai": "000001.SS",
+    "kospi": "^KS11",
+    "sector_tech": "XLK",
+    "sector_finance": "XLF",
+    "sector_energy": "XLE",
+    "sector_health": "XLV",
+    "sector_industry": "XLI",
+    "kr_semiconductor": "005930.KS",
+    "kr_battery": "373220.KS",
 }
 _YAHOO_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=2d&interval=1d"
-_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; DantabotMarketFetcher/1.0)"}
+_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; KairosMarketFetcher/1.0)"}
 
 
 async def _fetch_symbol(client: httpx.AsyncClient, key: str, symbol: str) -> tuple[str, dict[str, Any] | None]:
@@ -87,13 +99,25 @@ def format_for_prompt(market_data: dict[str, Any]) -> str:
     """Convert fetched market data into compact Korean text for the LLM prompt."""
     lines = ["[전날 밤 해외 시장 현황]"]
     labels = {
-        "sp500": "S&P 500 (미국)",
-        "nasdaq": "NASDAQ (미국 기술주)",
-        "ftse100": "FTSE 100 (영국)",
-        "dax": "DAX (독일)",
-        "oil_wti": "WTI 원유 (달러/배럴)",
-        "usdkrw": "USD/KRW 환율 (원)",
-        "us_10y_yield": "미국 10년 국채금리 (%)",
+        "sp500": "S&P 500",
+        "nasdaq": "NASDAQ",
+        "ftse100": "FTSE 100",
+        "dax": "DAX",
+        "oil_wti": "WTI 원유",
+        "usdkrw": "USD/KRW",
+        "us_10y_yield": "미국 10년 국채금리(%)",
+        "vix": "VIX 공포지수",
+        "nikkei": "닛케이",
+        "hangseng": "항셍",
+        "shanghai": "상하이종합",
+        "kospi": "KOSPI",
+        "sector_tech": "미국 기술섹터 XLK",
+        "sector_finance": "미국 금융섹터 XLF",
+        "sector_energy": "미국 에너지섹터 XLE",
+        "sector_health": "미국 헬스케어 XLV",
+        "sector_industry": "미국 산업섹터 XLI",
+        "kr_semiconductor": "삼성전자(반도체 프록시)",
+        "kr_battery": "LG에너지솔루션(배터리 프록시)",
     }
     arrows = {"up": "▲", "down": "▼", "flat": "━"}
     for key, label in labels.items():

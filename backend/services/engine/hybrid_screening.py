@@ -52,6 +52,7 @@ def _ensure_table() -> None:
 def _build_prompt(
     candidates_30: list[dict[str, Any]],
     market_tone: dict[str, Any] | None,
+    morning_context: dict[str, Any] | None = None,
     memories: list[dict[str, Any]] | None = None,
     knowledge_items: list[dict[str, Any]] | None = None,
 ) -> str:
@@ -60,27 +61,47 @@ def _build_prompt(
     Args:
         candidates_30: S3에서 선별된 최대 30개 후보 종목.
         market_tone: S2 시장 톤 결과.
+        morning_context: S2 시장 수치와 구조화 판단 결과.
         memories: S4_HYBRID_SCREENING 범위의 활성 Learning Memory 목록.
         knowledge_items: S4_HYBRID_SCREENING/ALL 범위의 승인된 Expert Knowledge 목록.
     """
     if market_tone is None:
         market_tone = {"tone": "neutral", "confidence": 0.5, "summary": "데이터 없음"}
 
-    # candidates_30에서 필요한 필드만 추출
+    # candidates_30에서 필요한 필드만 추출 (volume_rank/trade_rank 포함 — LLM 점수 근거 제공)
     candidates_fields = []
     for item in candidates_30:
-        candidates_fields.append({
+        entry: dict[str, Any] = {
             "symbol": item.get("symbol", ""),
             "name": item.get("name", ""),
             "price": item.get("price", 0),
             "change_rate": item.get("change_rate", 0.0),
             "trade_amount": item.get("trade_amount", 0),
+            "volume_rank": item.get("volume_rank"),   # 거래량 순위 (숫자 낮을수록 상위)
+            "trade_rank": item.get("trade_rank"),     # 거래대금 순위 (9999=미수신)
             "score": item.get("score", 0.0),
             "rank": item.get("rank", 0),
-        })
+        }
+        # 미수신 sentinel 제거 — LLM이 오해하지 않도록
+        if entry["trade_rank"] is not None and entry["trade_rank"] > 100:
+            entry["trade_rank"] = None
+        candidates_fields.append(entry)
 
     candidates_json = json.dumps(candidates_fields, ensure_ascii=False, indent=2)
     market_tone_json = json.dumps(market_tone, ensure_ascii=False, indent=2)
+    morning_context = morning_context or {}
+    morning_context_json = json.dumps(
+        {
+            "regime": morning_context.get("regime", "neutral"),
+            "risk_level": morning_context.get("risk_level", "normal"),
+            "stock_character": morning_context.get("stock_character", ""),
+            "rulepack_hint": morning_context.get("rulepack_hint", ""),
+            "key_factors": morning_context.get("key_factors", []),
+            "risk_factors": morning_context.get("risk_factors", []),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
     news_summary = "뉴스 데이터 미제공 — 이번 버전 제외"
     if memories:
         memory_lines = []
@@ -99,6 +120,7 @@ def _build_prompt(
         {
             "candidates_json": candidates_json,
             "market_tone_json": market_tone_json,
+            "morning_context_json": morning_context_json,
             "memory_section": memory_section,
             "knowledge_section": knowledge_section,
             "news_summary": news_summary,
@@ -153,6 +175,28 @@ def _parse_screening_response(raw: str) -> dict[str, Any]:
         "skipped": data.get("skipped", []),
         "overall_confidence": float(data.get("overall_confidence", 0.0)),
     }
+
+
+def _load_trading_cost_threshold() -> float:
+    """system_settings에서 거래 비용 기반 최소 순수익률(%)을 반환한다.
+
+    trading.min_net_return_pct == 0 이면 수수료×2 + 거래세로 자동 계산.
+    반환값: 퍼센트 단위 (예: 0.35 → 0.35%)
+    """
+    try:
+        with get_connection() as conn:
+            def _setting(key: str, default: float) -> float:
+                row = conn.execute("SELECT value_json FROM system_settings WHERE key=?", (key,)).fetchone()
+                return float(json.loads(row["value_json"]) or default) if row else default
+
+            min_net = _setting("trading.min_net_return_pct", 0.0)
+            if min_net > 0:
+                return min_net
+            commission = _setting("trading.commission_rate", 0.015)
+            tax = _setting("trading.transaction_tax_rate", 0.20)
+            return commission * 2 + tax          # 왕복 수수료 + 거래세 (%)
+    except Exception:
+        return 0.015 * 2 + 0.20                  # 기본값: 0.23%
 
 
 def _save_daily_rulepack_from_screening(
@@ -341,6 +385,7 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
 
     # 시장 톤 조회
     market_tone = None
+    morning_context = {}
     try:
         with get_connection() as conn:
             row = conn.execute(
@@ -352,9 +397,22 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
     except Exception as exc:
         logger.warning("WARN: HybridScreening 시장 톤 조회 실패 — %s", exc)
 
+    try:
+        from .market_tone import get_today_morning_context
+
+        morning_context = get_today_morning_context(today) or {}
+    except Exception as exc:
+        logger.warning("WARN: HybridScreening morning_context 조회 실패 — %s", exc)
+
     # 프롬프트 빌드 및 LLM 호출
     try:
-        prompt = _build_prompt(items, market_tone, memories=memories, knowledge_items=knowledge_items)
+        prompt = _build_prompt(
+            items,
+            market_tone,
+            morning_context=morning_context,
+            memories=memories,
+            knowledge_items=knowledge_items,
+        )
     except Exception as exc:
         finish_pipeline_run(
             run_id=run_audit_id,
@@ -399,6 +457,33 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
             )
 
     provider = llm_result.get("provider", "none")
+
+    # 거래 비용 기반 하드 필터: 예상 수익률이 비용 합계에 못 미치는 후보 제거
+    cost_threshold_pct = _load_trading_cost_threshold()
+    if candidates and cost_threshold_pct > 0:
+        cost_passed: list[dict[str, Any]] = []
+        cost_filtered: list[dict[str, Any]] = []
+        for cand in candidates:
+            expected_return = float(cand.get("expected_return_pct") or cand.get("target_return_pct") or 0.0)
+            if expected_return > 0 and expected_return < cost_threshold_pct:
+                cost_filtered.append(cand)
+                skipped.append({
+                    **cand,
+                    "reason": f"예상 수익률 {expected_return:.2f}% < 거래 비용 {cost_threshold_pct:.2f}% — 비용 회수 불가",
+                })
+                logger.info(
+                    "INFO: HybridScreening 비용 필터 제거 symbol=%s expected_return=%.2f%% cost_threshold=%.2f%%",
+                    cand.get("symbol"), expected_return, cost_threshold_pct,
+                )
+            else:
+                # expected_return == 0 은 LLM이 수익률을 제공하지 않은 경우 — 필터 통과
+                cost_passed.append(cand)
+        if cost_filtered:
+            logger.info(
+                "INFO: HybridScreening 비용 필터 결과 before=%d after=%d filtered=%d threshold=%.2f%%",
+                len(candidates), len(cost_passed), len(cost_filtered), cost_threshold_pct,
+            )
+        candidates = cost_passed
 
     # DB 저장
     record_id = str(uuid.uuid4())

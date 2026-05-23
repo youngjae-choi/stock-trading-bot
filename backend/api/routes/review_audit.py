@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Body, HTTPException, Query
 
 from ...services.engine.review_audit import apply_next_day_overrides, get_review_report, run_review_audit
+from ...services.settings_store import get_settings_changes_for_date
 
 # docs/ 디렉토리 기준 경로 (backend/api/routes/ → 프로젝트 루트/docs/)
 _DOCS_DIR = Path(__file__).resolve().parents[3] / "docs"
@@ -107,6 +108,7 @@ def get_today() -> dict[str, Any]:
         payload["md_content"] = md_content
         payload["md_path"] = str(_DOCS_DIR / f"SYSTEM_AUDIT_{compact}.md")
         payload["md_backup_exists"] = True
+    payload["settings_changes"] = get_settings_changes_for_date(trade_date)
     logger.info("SUCCESS: GET /api/v1/review-audit/today trade_date=%s md=%s", trade_date, bool(md_content))
     return {"ok": True, "payload": payload}
 
@@ -130,5 +132,6 @@ def get_by_date(date: str) -> dict[str, Any]:
         payload["md_content"] = md_content
         payload["md_path"] = str(_DOCS_DIR / f"SYSTEM_AUDIT_{compact}.md")
         payload["md_backup_exists"] = True
+    payload["settings_changes"] = get_settings_changes_for_date(date)
     logger.info("SUCCESS: GET /api/v1/review-audit/%s md=%s", date, bool(md_content))
     return {"ok": True, "payload": payload}

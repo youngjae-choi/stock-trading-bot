@@ -246,6 +246,32 @@ class OrderExecutor:
             finally:
                 await asyncio.sleep(0.2)
             kis_order_no = self._extract_order_no(response)
+
+            # KIS 모의투자 환경에서 rate-limit 부하 시 ODNO가 응답에서 빠지는 경우가 있다.
+            # 주문 자체는 HTTP 200으로 접수됐을 가능성이 높으므로 체결내역 재조회로 주문번호를 보정한다.
+            if not kis_order_no:
+                logger.warning(
+                    "WARN: [S7] buy response missing ODNO — fallback to inquire-daily-ccld symbol=%s",
+                    symbol,
+                )
+                try:
+                    from ..kis.domestic.service import get_daily_order_inquiry
+                    date_str = today.replace("-", "")
+                    ccld = await get_daily_order_inquiry(date_str, side="buy")
+                    for row in (ccld.get("output1") or []):
+                        if str(row.get("pdno") or "") == symbol:
+                            candidate = str(row.get("odno") or "").strip()
+                            if candidate:
+                                kis_order_no = candidate
+                                logger.info(
+                                    "INFO: [S7] buy ODNO recovered from ccld symbol=%s odno=%s",
+                                    symbol,
+                                    kis_order_no,
+                                )
+                                break
+                except Exception as ccld_exc:
+                    logger.warning("WARN: [S7] buy ccld fallback failed symbol=%s reason=%s", symbol, ccld_exc)
+
             order_id = self._save_order(
                 trade_date=today,
                 signal_id=signal_id,
@@ -257,12 +283,15 @@ class OrderExecutor:
                 price=price,
                 kis_order_no=kis_order_no,
                 status="submitted",
-                reason="",
+                reason="" if kis_order_no else "submit_uncertain",
             )
             self._update_signal_status(signal_id, "executed")
 
             position_manager.add_position(symbol=symbol, name=name, qty=qty, entry_price=price, final_rule=final_rule)
-            logger.info("SUCCESS: [S7] buy order submitted order_id=%s symbol=%s qty=%d", order_id, symbol, qty)
+            logger.info(
+                "SUCCESS: [S7] buy order submitted order_id=%s symbol=%s qty=%d kis_order_no=%s",
+                order_id, symbol, qty, kis_order_no or "(missing)",
+            )
             return {"ok": True, "order_id": order_id, "symbol": symbol, "qty": qty, "kis_order_no": kis_order_no}
         except Exception as exc:
             order_id = self._save_order(
@@ -293,7 +322,14 @@ class OrderExecutor:
             logger.info("INFO: [S7] balance cache reused")
         return self._balance_cache
 
-    async def execute_sell(self, symbol: str, qty: int, price: float = 0, reason: str = "manual") -> dict[str, Any]:
+    async def execute_sell(
+        self,
+        symbol: str,
+        qty: int,
+        price: float = 0,
+        reason: str = "manual",
+        name: str = "",
+    ) -> dict[str, Any]:
         """Submit a SELL order for stop-loss, take-profit, manual, or EOD liquidation.
 
         Args:
@@ -301,9 +337,11 @@ class OrderExecutor:
             qty: Quantity to sell.
             price: Limit price. A value of 0 submits a market order.
             reason: Exit reason saved in trading_orders.reason.
+            name: Optional stock display name from KIS holdings or local state.
         """
         _ensure_orders_table()
         safe_symbol = str(symbol or "").strip()
+        safe_name = str(name or "").strip()
         safe_qty = int(qty or 0)
         safe_price = _to_float(price)
         order_type = "market" if safe_price <= 0 else "limit"
@@ -317,7 +355,7 @@ class OrderExecutor:
                 trade_date=today,
                 signal_id="",
                 symbol=safe_symbol,
-                name="",
+                name=safe_name,
                 side="sell",
                 order_type=order_type,
                 qty=safe_qty,
@@ -369,21 +407,65 @@ class OrderExecutor:
             }
 
         try:
-            response = await order_cash(
-                side="sell",
-                symbol=safe_symbol,
-                qty=safe_qty,
-                price=self._price_text(safe_price) if order_type == "limit" else "0",
-                ord_dvsn=ord_dvsn,
-            )
+            try:
+                response = await order_cash(
+                    side="sell",
+                    symbol=safe_symbol,
+                    qty=safe_qty,
+                    price=self._price_text(safe_price) if order_type == "limit" else "0",
+                    ord_dvsn=ord_dvsn,
+                )
+            except Exception as first_exc:
+                # 매도 1차 실패 — 2초 대기 후 시장가로 재시도 1회
+                logger.warning(
+                    "WARN: [S8/S9] sell 1차 실패, 시장가 재시도 symbol=%s reason=%s",
+                    safe_symbol, first_exc,
+                )
+                await asyncio.sleep(2.0)
+                response = await order_cash(
+                    side="sell",
+                    symbol=safe_symbol,
+                    qty=safe_qty,
+                    price="0",
+                    ord_dvsn="01",  # 시장가
+                )
+                order_type = "market"
+                safe_price = 0.0
+                logger.info("INFO: [S8/S9] sell 시장가 재시도 성공 symbol=%s", safe_symbol)
+            await asyncio.sleep(0.2)
             kis_order_no = self._extract_order_no(response)
+
+            # KIS 모의투자 환경에서 rate-limit 부하 시 output에 ODNO가 빠지는 경우가 있다.
+            # 주문 자체는 HTTP 200으로 접수됐으므로, 체결내역 재조회로 주문번호를 보정한다.
+            if not kis_order_no:
+                logger.warning(
+                    "WARN: [S8/S9] sell response missing ODNO — fallback to inquire-daily-ccld symbol=%s",
+                    safe_symbol,
+                )
+                try:
+                    from ..kis.domestic.service import get_daily_order_inquiry
+                    ccld = await get_daily_order_inquiry(today, side="sell")
+                    for row in (ccld.get("output1") or []):
+                        if str(row.get("pdno") or "") == safe_symbol:
+                            candidate = str(row.get("odno") or "").strip()
+                            if candidate:
+                                kis_order_no = candidate
+                                logger.info(
+                                    "INFO: [S8/S9] ODNO recovered from ccld symbol=%s odno=%s",
+                                    safe_symbol,
+                                    kis_order_no,
+                                )
+                                break
+                except Exception as ccld_exc:
+                    logger.warning("WARN: [S8/S9] ccld fallback failed symbol=%s reason=%s", safe_symbol, ccld_exc)
+
             status = "submitted" if kis_order_no else "submitted_without_order_no"
             saved_reason = reason if kis_order_no else f"{reason}:submit_uncertain"
             order_id = self._save_order(
                 trade_date=today,
                 signal_id="",
                 symbol=safe_symbol,
-                name="",
+                name=safe_name,
                 side="sell",
                 order_type=order_type,
                 qty=safe_qty,
@@ -399,6 +481,8 @@ class OrderExecutor:
                     safe_symbol,
                     safe_qty,
                 )
+                # 주문은 접수됐을 가능성이 높으므로 포지션에서 제거해 중복 매도 방지
+                position_manager.remove_position(safe_symbol)
                 return {
                     "ok": False,
                     "order_id": order_id,
@@ -424,7 +508,7 @@ class OrderExecutor:
                 trade_date=today,
                 signal_id="",
                 symbol=safe_symbol,
-                name="",
+                name=safe_name,
                 side="sell",
                 order_type=order_type,
                 qty=safe_qty,
@@ -538,6 +622,42 @@ class OrderExecutor:
         """
         order_id = str(uuid.uuid4())
         with get_connection() as conn:
+            resolved_name = str(name or "").strip()
+            if symbol and not resolved_name:
+                row = conn.execute(
+                    "SELECT name FROM symbols WHERE symbol = ? LIMIT 1",
+                    (symbol,),
+                ).fetchone()
+                resolved_name = str(row["name"] or "").strip() if row else ""
+            if symbol and not resolved_name:
+                row = conn.execute(
+                    """
+                    SELECT name
+                    FROM trading_orders
+                    WHERE trade_date = ?
+                      AND symbol = ?
+                      AND name IS NOT NULL
+                      AND name != ''
+                    ORDER BY CASE WHEN side = 'buy' THEN 0 ELSE 1 END, created_at DESC
+                    LIMIT 1
+                    """,
+                    (trade_date, symbol),
+                ).fetchone()
+                resolved_name = str(row["name"] or "").strip() if row else ""
+            if symbol and not resolved_name:
+                row = conn.execute(
+                    """
+                    SELECT name
+                    FROM trading_signals
+                    WHERE symbol = ?
+                      AND name IS NOT NULL
+                      AND name != ''
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (symbol,),
+                ).fetchone()
+                resolved_name = str(row["name"] or "").strip() if row else ""
             conn.execute(
                 """
                 INSERT INTO trading_orders
@@ -550,7 +670,7 @@ class OrderExecutor:
                     trade_date,
                     signal_id,
                     symbol,
-                    name,
+                    resolved_name,
                     side,
                     order_type,
                     int(qty),

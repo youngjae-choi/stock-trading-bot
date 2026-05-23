@@ -1,18 +1,23 @@
   function setTheme(mode) {
+    var lightLogo = "/static/img/kairos-logo.svg";
+    var darkLogo  = "/static/img/kairos-logo-dark.svg";
+    function swapLogos(src) {
+      ["brandLogo","loginLogo"].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.src = src;
+      });
+    }
     if (mode === "light") {
       document.body.classList.add("light");
-      if (themeBtn) {
-        themeBtn.textContent = "Dark";
-      }
-      localStorage.setItem("dantabot_theme", "light");
+      if (themeBtn) themeBtn.textContent = "Dark";
+      localStorage.setItem("kairos_theme", "light");
+      swapLogos(lightLogo);
       return;
     }
-
     document.body.classList.remove("light");
-    if (themeBtn) {
-      themeBtn.textContent = "Light";
-    }
-    localStorage.setItem("dantabot_theme", "dark");
+    if (themeBtn) themeBtn.textContent = "Light";
+    localStorage.setItem("kairos_theme", "dark");
+    swapLogos(darkLogo);
   }
 
   function isClockTime(timeText) {
@@ -238,7 +243,6 @@
         s8: isOk(7) && statusResults[7].value.payload.positions && statusResults[7].value.payload.positions.length > 0 ? 'completed' : 'pending',
         s9: 'pending',
         s10: 'pending',
-        s11: 'pending',
       };
 
       // Special logic for Running state if not already set
@@ -396,6 +400,10 @@
     if (dataBasisPill) {
       dataBasisPill.classList.remove("good", "warn", "info");
       dataBasisPill.classList.add(isToday ? "good" : "warn");
+    }
+    var mobileDateLabel = document.getElementById("mobileDateLabel");
+    if (mobileDateLabel) {
+      mobileDateLabel.textContent = displayDate || "-";
     }
   }
 

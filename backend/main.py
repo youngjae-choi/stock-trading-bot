@@ -13,8 +13,12 @@ from fastapi.staticfiles import StaticFiles
 from .api.routes.alerts import router as alerts_router
 from .api.routes.account import router as account_router
 from .api.routes.auth import router as auth_router
+from .api.routes.backtest import router as backtest_router
 from .api.routes.scheduler import router as scheduler_router
 from .api.routes.market_tone import router as market_tone_router
+from .api.routes.morning_context import router as morning_context_router
+from .api.routes.regime_analytics import router as regime_analytics_router
+from .api.routes.regime_sets import router as regime_sets_router
 from .api.routes.orders import router as orders_router
 from .api.routes.pipeline import router as pipeline_router
 from .api.routes.autotrade import router as autotrade_router
@@ -50,7 +54,7 @@ from .api.routes.false_positive import router as false_positive_router
 from .api.routes.confidence_calibration import router as confidence_calibration_router
 from .api.routes.funnel import router as funnel_router
 from .api.routes.symbol_override import router as symbol_override_router
-from .api.routes.trading_monitor import router as trading_monitor_router
+from .api.routes.trading_monitor import admin_router as trading_admin_router, router as trading_monitor_router
 from .api.routes.universe import router as universe_router, filter_router as universe_filter_router
 from .api.routes.dividends import router as dividends_router
 from .api.routes.telegram_webhook import router as telegram_webhook_router
@@ -139,6 +143,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(console_router)
 app.include_router(auth_router)
 app.include_router(health_router)
+app.include_router(backtest_router)
 app.include_router(account_router)
 app.include_router(alerts_router)
 app.include_router(meta_router)
@@ -161,6 +166,9 @@ app.include_router(trades_router)
 app.include_router(trading_data_router)
 app.include_router(scheduler_router)
 app.include_router(market_tone_router)
+app.include_router(morning_context_router)
+app.include_router(regime_analytics_router)
+app.include_router(regime_sets_router)
 app.include_router(decision_router)
 app.include_router(orders_router)
 app.include_router(pipeline_router)
@@ -179,6 +187,7 @@ app.include_router(confidence_calibration_router)
 app.include_router(funnel_router)
 app.include_router(symbol_override_router)
 app.include_router(trading_monitor_router)
+app.include_router(trading_admin_router)
 app.include_router(dividends_router)
 app.include_router(telegram_webhook_router)
 

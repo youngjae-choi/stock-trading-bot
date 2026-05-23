@@ -151,7 +151,61 @@
         + '<td>' + candiBadge + '</td>'
         + '</tr>';
     }).join('');
+
+    // 모바일 카드 렌더링
+    var isMobile = window.innerWidth <= 860;
+    var cardContainer = document.getElementById("missedCardList");
+    if (cardContainer) {
+      cardContainer.style.display = isMobile ? "flex" : "none";
+      var tableWrap = cardContainer.previousElementSibling;
+      if (tableWrap && tableWrap.classList.contains('table-wrap')) {
+        tableWrap.style.display = isMobile ? "none" : "block";
+      }
+    }
+    if (isMobile) {
+      renderMissedCards(rows);
+    }
   }
+
+  function renderMissedCards(rows) {
+    var container = document.getElementById("missedCardList");
+    if (!container) return;
+    if (!rows || rows.length === 0) {
+      container.innerHTML = '<div style="padding:20px; text-align:center; color:var(--muted);">미진입 항목 없음</div>';
+      return;
+    }
+
+    var fmtPctRaw = function(v) {
+      if (v == null) return '-';
+      var n = parseFloat(v);
+      if (isNaN(n)) return '-';
+      var color = n > 0 ? '#22c55e' : n < 0 ? '#ef4444' : 'var(--muted)';
+      return '<span style="color:' + color + '; font-weight:700;">' + (n >= 0 ? '+' : '') + n.toFixed(2) + '%</span>';
+    };
+
+    container.innerHTML = rows.map(function(r) {
+      return [
+        '<div class="missed-card">',
+          '<div class="missed-card-top">',
+            '<div>',
+              '<div class="missed-card-symbol">' + escapeHtml(r.symbol) + '</div>',
+              '<div style="font-size:11px; color:var(--muted);">' + escapeHtml(r.symbol_name) + '</div>',
+            '</div>',
+            '<div class="missed-card-pnl">' + fmtPctRaw(r.ret_eod) + '</div>',
+          '</div>',
+          '<div style="font-size:11px; margin-bottom:8px;">',
+            '<span style="color:var(--primary); font-weight:600;">' + escapeHtml(r.missed_stage) + '</span> · ',
+            '<span>' + escapeHtml(r.missed_reason || '-') + '</span>',
+          '</div>',
+          '<div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:11px; color:var(--muted);">',
+            '<span>10m: ' + fmtPctRaw(r.ret_10m) + '</span>',
+            '<span>30m: ' + fmtPctRaw(r.ret_30m) + '</span>',
+          '</div>',
+        '</div>'
+      ].join('');
+    }).join('');
+  }
+
 
   /* Preserve legacy callers by routing the old Shadow Trading refresh into the unified screen. */
   async function loadShadowTrading() {

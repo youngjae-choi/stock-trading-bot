@@ -91,6 +91,42 @@
     return item ? (item.symbol || item.ticker || item.code || '') : '';
   }
 
+  /* ISO timestamp → HH:MM (KST) */
+  function _toHHMM(isoStr) {
+    if (!isoStr) return '-';
+    try {
+      var d = new Date(isoStr);
+      return d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Seoul' });
+    } catch (e) { return '-'; }
+  }
+
+  /* 장중 재선별 이력 렌더링 */
+  function renderIntradayRefreshHistory(history) {
+    var tbody = document.getElementById('funnel-intraday-tbody');
+    if (!tbody) return;
+    var allSlots = ['09:30', '10:30', '11:30'];
+    var logMap = {};
+    (history || []).forEach(function(h) { if (h.slot) logMap[h.slot] = h; });
+    var rows = allSlots.map(function(slot) {
+      var h = logMap[slot];
+      if (!h) {
+        return '<tr><td>' + escapeHtml(slot) + '</td><td><span class="status info">미실행</span></td><td>-</td><td style="text-align:left; color:var(--muted);">-</td><td style="text-align:right;">-</td></tr>';
+      }
+      var ranBadge = h.ran ? '<span class="status ok">실행</span>' : '<span class="status info">미실행</span>';
+      var trigBadge = h.triggered ? '<span class="status warn">재선별</span>' : '<span style="color:var(--muted);">-</span>';
+      var avg = h.avg_change != null ? (h.avg_change >= 0 ? '+' : '') + h.avg_change.toFixed(2) + '%' : '-';
+      var reason = escapeHtml(h.reason || '-');
+      return '<tr>'
+        + '<td style="font-weight:600;">' + escapeHtml(slot) + '</td>'
+        + '<td>' + ranBadge + '</td>'
+        + '<td>' + trigBadge + '</td>'
+        + '<td style="text-align:left; font-size:11px; color:var(--muted);">' + reason + '</td>'
+        + '<td style="text-align:right; font-size:12px;">' + escapeHtml(avg) + '</td>'
+        + '</tr>';
+    }).join('');
+    tbody.innerHTML = rows;
+  }
+
   /* Update Layer 1 rejection details without inventing unavailable breakdowns. */
   function renderFunnelLayer1Breakdown(summary) {
     var tbody = document.getElementById('funnel-layer1-reasons-tbody');
@@ -173,7 +209,7 @@
         if (l2DetailEl) l2DetailEl.textContent = (fp.has_s4 ? "S4 결과 있음" : "S4 결과 없음") + " / " + (fp.has_s5 ? "S5 결과 있음" : "S5 결과 없음");
         if (candEl2 && fp.signals_count != null) candEl2.textContent = fp.signals_count;
         var candDetailEl = document.getElementById('funnel-candidates-detail');
-        if (candDetailEl) candDetailEl.textContent = fp.signals_count > 0 ? 'S4 결과 기준 매수대기 후보' : '데이터 없음: 현재 매수대기 후보 없음';
+        if (candDetailEl) candDetailEl.textContent = fp.signals_count > 0 ? '오늘 생성된 BUY 신호 수' : '데이터 없음: 오늘 BUY 신호 없음';
         if (emptyReasonEl) {
           emptyReasonEl.textContent = fp.empty_reason || "";
           emptyReasonEl.style.display = fp.empty_reason ? "block" : "none";
@@ -181,6 +217,7 @@
         if (lastUpdatedEl) lastUpdatedEl.textContent = fp.last_updated_at ? "마지막 Funnel 결과 시각: " + fp.last_updated_at : "오늘 저장된 Funnel 결과 시각 없음";
         renderFunnelLayer1Breakdown(fp);
         renderFunnelQuality(fp);
+        renderIntradayRefreshHistory(fp.intraday_refresh_history || []);
         // Risk Profile별 배정 수
         var pc = fp.profile_counts || {};
         var setPC = function(id, key) { var el = document.getElementById(id); if (el) el.textContent = pc[key] || 0; };
@@ -207,6 +244,7 @@
         if (candEl) candEl.textContent = sc.output_count != null ? sc.output_count : "-";
 
         var tbody = document.getElementById("funnel-candidates-tbody");
+        var batchTime = _toHHMM(sc.created_at);  // S4 배치 실행 시각
         var candidates = sc.candidates;
         if (tbody && Array.isArray(candidates) && candidates.length > 0) {
           tbody.innerHTML = candidates.map(function(c) {
@@ -225,6 +263,7 @@
               + '<td>-</td><td>-</td>'
               + '<td>' + score + '</td>'
               + '<td>' + conf + '</td>'
+              + '<td style="font-size:12px; color:var(--accent); text-align:center;">' + escapeHtml(batchTime) + '</td>'
               + '<td><span class="status info">감시중</span></td>'
               + '<td>' + escapeHtml(c.reason || "") + '</td>'
               + '<td>' + escapeHtml(profileName) + '</td>'
@@ -233,7 +272,7 @@
               + '</tr>';
           }).join("");
         } else if (tbody && sc.output_count === 0) {
-          tbody.innerHTML = '<tr><td colspan="12" class="muted" style="text-align:center;">데이터 없음: 오늘 스크리닝 통과 후보 없음</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="13" class="muted" style="text-align:center;">데이터 없음: 오늘 스크리닝 통과 후보 없음</td></tr>';
         }
       }
     } catch (e) {

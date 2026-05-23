@@ -55,6 +55,8 @@ def _ensure_tables() -> None:
                 "integrity_warnings",
                 "ALTER TABLE daily_trade_summary ADD COLUMN integrity_warnings TEXT NOT NULL DEFAULT '[]'",
             ),
+            ("net_pnl", "ALTER TABLE daily_trade_summary ADD COLUMN net_pnl REAL NOT NULL DEFAULT 0.0"),
+            ("net_pnl_pct", "ALTER TABLE daily_trade_summary ADD COLUMN net_pnl_pct REAL NOT NULL DEFAULT 0.0"),
         ]
         for column, statement in migrations:
             if column not in columns:
@@ -102,9 +104,27 @@ async def run_daily_summary(trade_date: str | None = None) -> dict[str, Any]:
     sell_list = [o for o in orders if o.get("side") == "sell"]
     failed_list = [o for o in orders if o.get("status") == "failed"]
 
-    # 실현 손익 계산 (매도 주문 기준)
-    realized_pnl = 0.0
+    # 거래 비용 설정 로드
+    commission_rate = 0.0
+    transaction_tax_rate = 0.0
+    try:
+        with get_connection() as conn:
+            def _read_setting(key: str, default: float) -> float:
+                row = conn.execute("SELECT value_json FROM system_settings WHERE key=?", (key,)).fetchone()
+                if row:
+                    import json as _j
+                    return float(_j.loads(row["value_json"]) or default)
+                return default
+            commission_rate = _read_setting("trading.commission_rate", 0.015) / 100.0
+            transaction_tax_rate = _read_setting("trading.transaction_tax_rate", 0.20) / 100.0
+    except Exception as _cost_exc:
+        logger.warning("WARN: DailySummary 거래 비용 설정 로드 실패, 기본값 사용 reason=%s", _cost_exc)
+
+    # 실현 손익 계산 (gross = 비용 미차감, net = 비용 차감)
+    gross_pnl = 0.0
+    net_pnl = 0.0
     realized_pnl_pcts: list[float] = []
+    net_pnl_pcts: list[float] = []
     for sell in sell_list:
         sym = sell.get("symbol")
         sell_price = float(sell.get("price") or 0)
@@ -112,12 +132,23 @@ async def run_daily_summary(trade_date: str | None = None) -> dict[str, Any]:
         buys = [o for o in buy_list if o.get("symbol") == sym]
         if buys and sell_price > 0 and qty > 0:
             avg_buy = sum(float(b.get("price", 0)) for b in buys) / len(buys)
-            pnl = (sell_price - avg_buy) * qty
+            gross = (sell_price - avg_buy) * qty
+            # 비용: 매수 수수료 + 매도 수수료 + 매도 거래세
+            buy_amount = avg_buy * qty
+            sell_amount = sell_price * qty
+            cost = buy_amount * commission_rate + sell_amount * (commission_rate + transaction_tax_rate)
+            net = gross - cost
+            gross_pnl += gross
+            net_pnl += net
             pnl_pct = (sell_price - avg_buy) / avg_buy * 100 if avg_buy > 0 else 0
-            realized_pnl += pnl
+            net_pnl_pct = pnl_pct - (commission_rate * 2 + transaction_tax_rate) * 100
             realized_pnl_pcts.append(pnl_pct)
+            net_pnl_pcts.append(net_pnl_pct)
 
+    # realized_pnl = gross (기존 컬럼 유지, 하위호환), net_pnl 별도
+    realized_pnl = gross_pnl
     avg_pnl_pct = sum(realized_pnl_pcts) / len(realized_pnl_pcts) if realized_pnl_pcts else 0.0
+    avg_net_pnl_pct = sum(net_pnl_pcts) / len(net_pnl_pcts) if net_pnl_pcts else 0.0
     symbols_traded = list({o.get("symbol") for o in orders if o.get("symbol")})
     integrity = summarize_order_integrity(trade_date)
 
@@ -150,13 +181,14 @@ async def run_daily_summary(trade_date: str | None = None) -> dict[str, Any]:
             conn.execute(
                 """UPDATE daily_trade_summary SET
                    total_orders=?, buy_orders=?, sell_orders=?, failed_orders=?,
-                   realized_pnl=?, realized_pnl_pct=?, symbols_traded=?,
-                   market_tone=?, rulepack_id=?, pnl_status=?, pnl_source=?,
+                   realized_pnl=?, realized_pnl_pct=?, net_pnl=?, net_pnl_pct=?,
+                   symbols_traded=?, market_tone=?, rulepack_id=?, pnl_status=?, pnl_source=?,
                    integrity_warnings=?, updated_at=?
                    WHERE trade_date=?""",
                 (
                     len(orders), len(buy_list), len(sell_list), len(failed_list),
-                    realized_pnl, avg_pnl_pct, json.dumps(symbols_traded),
+                    realized_pnl, avg_pnl_pct, net_pnl, avg_net_pnl_pct,
+                    json.dumps(symbols_traded),
                     market_tone, rulepack_id,
                     integrity.get("pnl_status", "unverified"),
                     integrity.get("pnl_source", "orders_without_fills"),
@@ -168,13 +200,15 @@ async def run_daily_summary(trade_date: str | None = None) -> dict[str, Any]:
             conn.execute(
                 """INSERT INTO daily_trade_summary
                    (id, trade_date, total_orders, buy_orders, sell_orders, failed_orders,
-                    realized_pnl, realized_pnl_pct, symbols_traded, market_tone, rulepack_id,
+                    realized_pnl, realized_pnl_pct, net_pnl, net_pnl_pct,
+                    symbols_traded, market_tone, rulepack_id,
                     pnl_status, pnl_source, integrity_warnings, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     summary_id, trade_date,
                     len(orders), len(buy_list), len(sell_list), len(failed_list),
-                    realized_pnl, avg_pnl_pct, json.dumps(symbols_traded),
+                    realized_pnl, avg_pnl_pct, net_pnl, avg_net_pnl_pct,
+                    json.dumps(symbols_traded),
                     market_tone, rulepack_id,
                     integrity.get("pnl_status", "unverified"),
                     integrity.get("pnl_source", "orders_without_fills"),
@@ -214,6 +248,9 @@ async def run_daily_summary(trade_date: str | None = None) -> dict[str, Any]:
         "failed_orders": len(failed_list),
         "realized_pnl": realized_pnl,
         "realized_pnl_pct": avg_pnl_pct,
+        "net_pnl": net_pnl,
+        "net_pnl_pct": avg_net_pnl_pct,
+        "trading_cost_rate_pct": round((commission_rate * 2 + transaction_tax_rate) * 100, 4),
         "pnl_status": integrity.get("pnl_status", "unverified"),
         "pnl_source": integrity.get("pnl_source", "orders_without_fills"),
         "integrity_warnings": integrity.get("warnings", []),

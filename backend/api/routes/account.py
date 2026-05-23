@@ -99,31 +99,43 @@ def _build_balance_payload(data: dict[str, Any]) -> dict[str, Any]:
     summary_rows = _as_list(data.get("output2"))
     summary = summary_rows[0] if summary_rows else {}
 
-    # 주문 가능 예수금 우선순위:
-    #   ord_psbl_cash   — 실계좌에서 제공되는 주문가능금액 (가상계좌에는 없을 수 있음)
-    #   nxdy_excc_amt   — 익일정산금 = 매수 후 차감된 실제 주문 가능 현금 (가상계좌 기준)
-    #   prvs_rcdl_excc_amt — 전일정산금 (nxdy_excc_amt 없을 때 fallback)
-    #   dnca_tot_amt    — 예탁금 총액 (가상계좌 한도 1억 고정 — 최후 수단)
-    buyable_cash = 0
-    for key in ("ord_psbl_cash", "nxdy_excc_amt", "prvs_rcdl_excc_amt", "dnca_tot_amt"):
-        candidate = _to_int(summary.get(key))
-        if candidate > 0:
-            buyable_cash = candidate
-            break
-
     # deposit: 예탁금 총액 (계좌 한도 표시용)
     deposit = _to_int(summary.get("dnca_tot_amt"))
+
+    # 주문 가능 예수금 계산:
+    #   실계좌: ord_psbl_cash — KIS가 직접 제공하는 주문가능현금 (정확)
+    #   모의투자: ord_psbl_cash = 0 이므로 사용 불가.
+    #     nxdy_excc_amt / prvs_rcdl_excc_amt 는 익일/전일 정산금으로 당일 매수를 즉시 반영하지 않아
+    #     예탁금 총액(1억)과 동일하게 나타남 → "남은 현금" 과 괴리 발생.
+    #   따라서: total_eval - stock_eval = 현금 잔액으로 근사 계산 (가장 실시간에 가까움)
+    #     실계좌에서도 ord_psbl_cash 가 0일 경우 동일 로직 적용.
+    total_eval = _to_int(summary.get("tot_evlu_amt"))
+    stock_eval = _to_int(summary.get("scts_evlu_amt"))
+    ord_psbl_cash = _to_int(summary.get("ord_psbl_cash"))
+    if ord_psbl_cash > 0:
+        buyable_cash = ord_psbl_cash
+    elif total_eval > 0 and stock_eval >= 0:
+        # 현금 = 총평가금액 - 주식평가금액
+        buyable_cash = max(0, total_eval - stock_eval)
+    else:
+        # 최후 수단: nxdy_excc_amt → prvs_rcdl_excc_amt → dnca_tot_amt
+        buyable_cash = 0
+        for key in ("nxdy_excc_amt", "prvs_rcdl_excc_amt", "dnca_tot_amt"):
+            candidate = _to_int(summary.get(key))
+            if candidate > 0:
+                buyable_cash = candidate
+                break
 
     account_no = f"{settings.KIS_CANO}{settings.KIS_ACNT_PRDT_CD}"
     return {
         "account_no": account_no,
-        "deposit": deposit,                           # 예탁금 총액 (한도)
-        "buyable_cash": buyable_cash,                 # 주문 가능 예수금 (실시간)
+        "deposit": deposit,                           # 예탁금 총액 (계좌 한도)
+        "buyable_cash": buyable_cash,                 # 주문 가능 예수금 (현금 잔액)
         "available_cash": buyable_cash,
-        "total_eval": _to_int(summary.get("tot_evlu_amt")),
+        "total_eval": total_eval,                     # 총평가금액 (현금 + 주식)
         "purchase_total": _to_int(summary.get("pchs_amt_smtl_amt")),
         "pnl_total": _to_int(summary.get("evlu_pfls_smtl_amt")),
-        "stock_eval": _to_int(summary.get("scts_evlu_amt")),        # 주식 평가금액
+        "stock_eval": stock_eval,                     # 주식 평가금액
         "pnl_rate": _to_float(summary.get("asst_icdc_erng_rt")),    # 자산증감수익률
         "prev_buy_amt": _to_int(summary.get("bfdy_buy_amt")),       # 전일 매수금액
         "today_buy_amt": _to_optional_int(summary.get("thdt_buy_amt")),      # 당일 매수금액

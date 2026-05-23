@@ -62,7 +62,6 @@ class SchedulerMarketOpenGuardTest(unittest.TestCase):
             "postprocess": "15:20",
             "s11": "22:00",
             "backup": "18:00",
-            "us_watch": "22:00",
         })
 
         self.assertEqual(guarded["trade_prep"], "09:01")

@@ -8,6 +8,7 @@ S2~S13 단계에서 placeholder job들이 실 구현으로 교체된다.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 from datetime import datetime
@@ -21,6 +22,19 @@ from .kis.common.client import kis_client
 
 logger = logging.getLogger("Scheduler")
 TRADING_DAY_SETTING_DESCRIPTION = "오늘 S2~S6 자동 스케줄 스킵 여부 (KST 당일 값만 유효)"
+_STEP_LABELS = {
+    "S1": "S1 토큰/시장 확인",
+    "S2": "S2 시장 시황 분석",
+    "S3": "S3 유니버스 필터",
+    "S4": "S4 하이브리드 스크리닝",
+    "S5": "S5 데일리 플랜 생성",
+    "S5-A": "S5-A 플랜 활성화",
+    "S6": "S6 Decision Engine",
+    "S9": "S9 당일 청산",
+    "S10": "S10 Review & Audit",
+    "POSTPROCESS": "후처리 파이프라인",
+}
+_STATUS_KR = {"success": "완료", "failed": "실패", "skipped": "스킵", "blocked": "차단"}
 
 # ---------------------------------------------------------------------------
 # Job 함수
@@ -150,7 +164,7 @@ def _audit_step_finish(
         )
 
         # ── 텔레그램 알림 자동 전송 (Phase 5B 추가) ───────────────────────────
-        # S1, S5-A, S6, S9, S10, S11 등 주요 단계 종료 시 알림 전송
+        # S1, S5-A, S6, S9, S10 등 주요 단계 종료 시 알림 전송
         try:
             from .alert_service import send_telegram_alert
             from .engine.pipeline_audit import get_connection
@@ -161,20 +175,33 @@ def _audit_step_finish(
                 step = row["step"] if row else "Unknown"
 
             # 알림 대상 단계 필터링
-            NOTIFY_STEPS = {"S1", "S2", "S3", "S4", "S5", "S5-A", "S6", "S9", "S10", "S11", "POSTPROCESS"}
+            NOTIFY_STEPS = {"S1", "S2", "S3", "S4", "S5", "S5-A", "S6", "S9", "S10", "POSTPROCESS"}
             if step in NOTIFY_STEPS or status == "failed":
                 emoji = "✅" if status == "success" else "⚠️" if status == "skipped" else "❌"
-                title = f"BOT {step} {status.upper()} {emoji}"
-                body = f"Message: {message}\nDate: {_today_kst()}"
-                
+                step_label = _STEP_LABELS.get(step, step)
+                status_kr = _STATUS_KR.get(status, status)
+                title = f"[매매봇] {step_label} {status_kr} {emoji}"
+                body = f"내용: {message}\n날짜: {_today_kst()}"
+
                 # 특정 단계 상세 정보 추가
                 if step == "S1" and metadata and "s1" in metadata:
                     s1 = metadata["s1"]
-                    body += f"\nToken: {s1.get('token_status')}\nMarket: {s1.get('trading_day_status')}"
+                    token_kr = {"ok": "정상", "renewed": "갱신됨", "error": "오류"}.get(
+                        str(s1.get("token_status", "")), s1.get("token_status", "-")
+                    )
+                    market_kr = {"trading_day": "거래일", "holiday": "휴장일", "unknown": "확인불가"}.get(
+                        str(s1.get("trading_day_status", "")), s1.get("trading_day_status", "-")
+                    )
+                    body += f"\n토큰: {token_kr}\n시장: {market_kr}"
                 elif step == "S9" and metadata and "s9" in metadata:
                     s9 = metadata["s9"]
-                    body += f"\nLiquidated: {s9.get('liquidation', {}).get('liquidated', 0)} items"
-
+                    liq_count = s9.get("liquidation", {}).get("liquidated", 0)
+                    body += f"\n청산: {liq_count}건"
+                elif step == "S10" and metadata:
+                    pnl = metadata.get("total_pnl") or metadata.get("realized_pnl")
+                    if pnl is not None:
+                        pnl_value = float(pnl)
+                        body += f"\n오늘 손익: {'+' if pnl_value >= 0 else ''}{pnl_value:,.0f}원"
                 import asyncio
                 # 동기 환경(APScheduler worker)에서 비동기 함수 호출
                 asyncio.create_task(send_telegram_alert(title, body))
@@ -834,17 +861,48 @@ async def job_review_audit() -> None:
     """Job S10 Review & Audit (16:00 KST): 당일 매매 결과를 분석한다."""
     today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
     logger.info("START: [Job ReviewAudit] S10 Review & Audit (%s KST)", today)
+
+    # ── Step 0: 손실 거래 자동 분석 → false_positive_cases 테이블 저장
+    # run_review_audit()가 _load_false_positives()로 이 데이터를 읽으므로 반드시 먼저 실행
+    try:
+        from .engine.false_positive import generate_false_positives_for_date
+
+        fp_result = generate_false_positives_for_date(today)
+        logger.info(
+            "SUCCESS: [Job ReviewAudit] 손실 자동 분석 완료 — losing=%d saved=%d skipped=%d",
+            fp_result.get("total_losing", 0),
+            len(fp_result.get("saved", [])),
+            len(fp_result.get("skipped", [])),
+        )
+    except Exception as exc:
+        logger.error("FAIL: [Job ReviewAudit] 손실 자동 분석 실패 (review 계속 진행) — reason=%s", exc)
+
+    # ── Step 1: Review & Audit 실행 (report.false_positives에 위 데이터 포함됨)
     try:
         from .engine.review_audit import run_review_audit
 
         result = await run_review_audit(today)
         logger.info(
-            "SUCCESS: [Job ReviewAudit] 완료 trades=%d pnl=%.4f",
+            "SUCCESS: [Job ReviewAudit] 완료 trades=%d pnl=%.4f fp=%d",
             result.get("total_trades", 0),
             result.get("total_pnl", 0.0),
+            result.get("false_positive_count", 0),
         )
     except Exception as exc:
         logger.error("FAIL: [Job ReviewAudit] 실패 — reason=%s", exc)
+
+    # 미진입 종목 수익률 소급 계산 (S10 후처리)
+    try:
+        from .engine.missed_opportunity import update_missed_returns
+
+        mo_result = await update_missed_returns(today)
+        logger.info(
+            "SUCCESS: [Job ReviewAudit] 미진입 수익률 업데이트 완료 updated=%d errors=%d",
+            mo_result.get("updated", 0),
+            mo_result.get("errors", 0),
+        )
+    except Exception as exc:
+        logger.error("FAIL: [Job ReviewAudit] 미진입 수익률 업데이트 실패 — reason=%s", exc)
 
 
 async def job_postprocess_pipeline() -> None:
@@ -881,6 +939,34 @@ async def job_postprocess_pipeline() -> None:
             )
             logger.error("FAIL: [PostProcess] S9 당일 청산 실패 — S10 review continued reason=%s", exc)
 
+        logger.info("START: [PostProcess] S9 후 fill 폴링 (30초 대기 후)")
+        await asyncio.sleep(30)
+        try:
+            _today_pp = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+            from .engine.fill_poller import poll_once as _poll_once
+
+            _fill_result = await _poll_once(_today_pp)
+            logger.info(
+                "SUCCESS: [PostProcess] fill 폴링 완료 filled=%d unchanged=%d",
+                _fill_result.get("filled", 0),
+                _fill_result.get("unchanged", 0),
+            )
+        except Exception as _fill_exc:
+            logger.warning("WARN: [PostProcess] fill 폴링 실패 (S10 계속 진행) reason=%s", _fill_exc)
+
+        logger.info("START: [PostProcess] S10 Daily Summary")
+        try:
+            from .engine.daily_summary import run_daily_summary
+
+            _summary_result = await run_daily_summary()
+            logger.info(
+                "SUCCESS: [PostProcess] S10 Daily Summary 완료 orders=%d pnl_status=%s",
+                _summary_result.get("total_orders", 0),
+                _summary_result.get("pnl_status", "unknown"),
+            )
+        except Exception as _summary_exc:
+            logger.warning("WARN: [PostProcess] S10 Daily Summary 실패 (Review 계속 진행) reason=%s", _summary_exc)
+
         logger.info("START: [PostProcess] S10 Review & Audit")
         await job_review_audit()
         logger.info("SUCCESS: [PostProcess] S10 Review & Audit 호출 완료")
@@ -911,37 +997,47 @@ async def job_postprocess_pipeline() -> None:
         logger.error("FAIL: [PostProcess] 후처리 프로세스 중단 reason=%s", exc)
 
 
-async def job_learning_memory() -> None:
-    """Job S11 Learning Memory Builder (16:30 KST): 리뷰 결과를 학습 메모리로 저장한다."""
-    today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
-    logger.info("START: [Job LearningMemory] S11 Learning Memory Builder (%s KST)", today)
-    try:
-        from .engine.learning_memory import run_learning_memory_builder
+async def job_intraday_refresh(slot: str) -> None:
+    """장중 시장 재평가 & 후보 재선별 (09:30 / 10:30 / 11:30 KST).
 
-        result = await run_learning_memory_builder(today)
+    각 슬롯에서 거래량 상위 종목 평균 등락률을 확인해
+    아침 플랜 대비 시장 변화가 감지되면 S3→S4→S5→S6 순서로 재실행한다.
+    """
+    logger.info("START: [IntradayRefresh] slot=%s", slot)
+    try:
+        from .engine.intraday_refresh import check_and_refresh
+        result = await check_and_refresh(slot)
+        if result.get("triggered"):
+            logger.info(
+                "SUCCESS: [IntradayRefresh] 재선별 완료 slot=%s avg_change=%s reason=%s",
+                slot,
+                result.get("avg_change"),
+                result.get("reason"),
+            )
+        else:
+            logger.info(
+                "INFO: [IntradayRefresh] 재선별 스킵 slot=%s reason=%s",
+                slot,
+                result.get("reason"),
+            )
+    except Exception as exc:
+        logger.error("FAIL: [IntradayRefresh] 실패 slot=%s reason=%s", slot, exc)
+
+
+async def job_intraday_regime_monitor(slot: str) -> None:
+    """장중 레짐 SET 모니터링 Job: 30분 간격으로 활성 SET 전환 여부를 확인한다."""
+    logger.info("START: [IntradayRegimeMonitor] slot=%s", slot)
+    try:
+        from .engine.intraday_regime_monitor import check_intraday_regime
+
+        result = await check_intraday_regime(slot=slot)
         logger.info(
-            "SUCCESS: [Job LearningMemory] 완료 ok=%s memories=%d",
-            result.get("ok"),
-            result.get("memory_count", 0),
+            "SUCCESS: [IntradayRegimeMonitor] slot=%s action=%s",
+            slot,
+            result.get("action"),
         )
     except Exception as exc:
-        logger.error("FAIL: [Job LearningMemory] 실패 — reason=%s", exc)
-
-
-async def job_us_market_watch() -> None:
-    """Job S11 (22:00 KST): 미국 장중 지표 수집 + DB 저장."""
-    logger.info("START: [Job S11] 미국장 관찰 (22:00 KST)")
-    try:
-        from .engine.us_market_watch import run_us_market_watch
-        result = await run_us_market_watch()
-        logger.info(
-            "SUCCESS: [Job S11] 완료 sp500=%s nasdaq=%s usdkrw=%s",
-            result.get("sp500_chg_pct"),
-            result.get("nasdaq_chg_pct"),
-            result.get("usdkrw_rate"),
-        )
-    except Exception as exc:
-        logger.error("FAIL: [Job S11] 실패 — reason=%s", exc)
+        logger.error("FAIL: [IntradayRegimeMonitor] slot=%s reason=%s", slot, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -959,9 +1055,7 @@ def _build_scheduler() -> AsyncIOScheduler:
         "trade_prep": "07:45",
         "s6": "09:45",
         "postprocess": "15:20",
-        "s11": "22:00",
         "backup": "18:00",
-        "us_watch": "22:00",
     }
     try:
         from .settings_store import list_settings
@@ -975,7 +1069,6 @@ def _build_scheduler() -> AsyncIOScheduler:
             "trade_prep": "schedule_trade_prep_time",
             "s6": "schedule_s6_time",
             "postprocess": "schedule_postprocess_time",
-            "s11": "schedule_s11_time",
         }
         for key, db_key in key_map.items():
             if isinstance(saved.get(db_key), str):
@@ -1005,9 +1098,7 @@ def _build_scheduler() -> AsyncIOScheduler:
                 "trade_prep": (7, 45),
                 "s6": (9, 45),
                 "postprocess": (15, 20),
-                "s11": (22, 0),
                 "backup": (18, 0),
-                "us_watch": (22, 0),
             }
             return fallback[setting_key]
 
@@ -1045,23 +1136,6 @@ def _build_scheduler() -> AsyncIOScheduler:
         name="데이터 백업",
         replace_existing=True,
     )
-    hour, minute = _parse_time("s11")
-    scheduler.add_job(
-        job_learning_memory,
-        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
-        id="job_learning_memory",
-        name="S11 Learning Memory Builder",
-        replace_existing=True,
-    )
-    hour, minute = _parse_time("us_watch")
-    scheduler.add_job(
-        job_us_market_watch,
-        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
-        id="job_us_market_watch",
-        name="야간 미국장 관찰",
-        replace_existing=True,
-    )
-
     # 배당락일 D-2 알림 — 하루 2회 (08:00, 13:00 KST)
     scheduler.add_job(
         job_dividend_ex_date_alert,
@@ -1077,6 +1151,43 @@ def _build_scheduler() -> AsyncIOScheduler:
         name="배당락일 알림 (오후)",
         replace_existing=True,
     )
+
+    # 장중 시장 재평가 & 후보 재선별 — 09:30 / 10:30 / 11:30 KST
+    for _slot_hhmm, _slot_id in [("09:30", "0930"), ("10:30", "1030"), ("11:30", "1130")]:
+        _sh, _sm = int(_slot_hhmm.split(":")[0]), int(_slot_hhmm.split(":")[1])
+        scheduler.add_job(
+            functools.partial(job_intraday_refresh, slot=_slot_hhmm),
+            CronTrigger(hour=_sh, minute=_sm, timezone="Asia/Seoul"),
+            id=f"job_intraday_refresh_{_slot_id}",
+            name=f"장중 재평가 {_slot_hhmm}",
+            replace_existing=True,
+        )
+
+    # 장중 레짐 SET 모니터링 — 09:30~15:00, 30분 간격
+    _regime_monitor_slots = [
+        "09:30",
+        "10:00",
+        "10:30",
+        "11:00",
+        "11:30",
+        "12:00",
+        "12:30",
+        "13:00",
+        "13:30",
+        "14:00",
+        "14:30",
+        "15:00",
+    ]
+    for _slot_hhmm in _regime_monitor_slots:
+        _sh, _sm = int(_slot_hhmm.split(":")[0]), int(_slot_hhmm.split(":")[1])
+        scheduler.add_job(
+            functools.partial(job_intraday_regime_monitor, slot=_slot_hhmm),
+            CronTrigger(hour=_sh, minute=_sm, timezone="Asia/Seoul"),
+            id=f"job_intraday_regime_monitor_{_slot_hhmm.replace(':', '')}",
+            name=f"장중 레짐 SET 모니터링 {_slot_hhmm}",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
 
     return scheduler
 

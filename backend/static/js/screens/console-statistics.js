@@ -250,9 +250,10 @@
   }
 
   /* ── Today Control: Daily Plan Status ── */
-  async function loadTodayPlanStatus() {
+  async function loadTodayPlanStatus(tradeDate) {
     try {
-      var r = await fetch('/api/v1/daily-plan/today');
+      var planUrl = tradeDate ? '/api/v1/daily-plan/today?trade_date=' + tradeDate : '/api/v1/daily-plan/today';
+      var r = await fetch(planUrl);
       var d = await r.json();
       var plan = d.payload || {};
       var el;

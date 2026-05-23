@@ -31,12 +31,6 @@
       default: "15:20",
       description: "S9 당일 청산 -> S10 Review & Audit 순차 실행"
     },
-    {
-      key: "schedule_s11_time",
-      label: "S11 Learning Memory 시간",
-      default: "22:00",
-      description: "기존 S11 Learning Memory Builder 스케줄 유지"
-    }
   ];
 
   var exitOverrideKeys = [
@@ -45,6 +39,91 @@
     { key: "override_trailing_activate_rate", label: "트레일링 활성기준", placeholder: "0.02", example: "예: 0.02 = +2% 도달 시 활성화" },
     { key: "override_trailing_stop_rate", label: "트레일링 손절률", placeholder: "0.01", example: "예: 0.01 = 고점 -1% 시 청산" }
   ];
+
+  /* 거래 비용 합계 미리보기 업데이트 */
+  function _updateCostSummary() {
+    var comm = parseFloat(document.getElementById('cost-commission-rate')?.value || 0);
+    var tax  = parseFloat(document.getElementById('cost-transaction-tax')?.value || 0);
+    var minNet = parseFloat(document.getElementById('cost-min-net-return')?.value || 0);
+    var total = comm * 2 + tax;
+    var effective = minNet > 0 ? minNet : total;
+    var label = document.getElementById('cost-summary-label');
+    if (label) {
+      label.textContent = '왕복 비용 합계: ' + total.toFixed(3) + '%'
+        + ' (수수료 ' + comm.toFixed(3) + '%×2 + 거래세 ' + tax.toFixed(2) + '%)'
+        + ' · S4 필터 기준: ' + (minNet > 0 ? minNet.toFixed(2) + '% (수동)' : effective.toFixed(3) + '% (자동)');
+    }
+  }
+
+  /* 각 input 아래에 타임스탬프 span 동적 삽입 유틸 */
+  function _insertSettingTs(inputId, settingKey, fullMap) {
+    var el = document.getElementById(inputId);
+    if (!el) return;
+    var existing = document.getElementById('ts-' + inputId);
+    if (existing) existing.remove();
+    var item = fullMap[settingKey];
+    if (!item || !item.updated_at) return;
+    var span = document.createElement('span');
+    span.id = 'ts-' + inputId;
+    span.style.cssText = 'display:block; font-size:10px; color:var(--muted); margin-top:2px;';
+    span.innerHTML = _fmtSettingTs(item.updated_at, item.updated_by);
+    el.parentNode.insertBefore(span, el.nextSibling);
+  }
+
+  /* 거래 비용 설정 로드 */
+  async function loadTradingCostSettings() {
+    try {
+      var settingsMap = await loadSettingsMap();
+      var comm = document.getElementById('cost-commission-rate');
+      var tax  = document.getElementById('cost-transaction-tax');
+      var minNet = document.getElementById('cost-min-net-return');
+      if (comm) comm.value = settingsMap['trading.commission_rate'] ?? '0.015';
+      if (tax)  tax.value  = settingsMap['trading.transaction_tax_rate'] ?? '0.20';
+      if (minNet) minNet.value = settingsMap['trading.min_net_return_pct'] ?? '0';
+      _updateCostSummary();
+      // 실시간 미리보기
+      [comm, tax, minNet].forEach(function(el) {
+        if (el) el.addEventListener('input', _updateCostSummary);
+      });
+    } catch (e) {
+      console.error('Failed to load trading cost settings', e);
+    }
+  }
+
+  /* 거래 비용 설정 저장 */
+  async function saveTradingCostSettings() {
+    var comm   = parseFloat(document.getElementById('cost-commission-rate')?.value);
+    var tax    = parseFloat(document.getElementById('cost-transaction-tax')?.value);
+    var minNet = parseFloat(document.getElementById('cost-min-net-return')?.value || 0);
+
+    if (!Number.isFinite(comm) || comm < 0 || comm > 1) {
+      alert('수수료율은 0~1 사이 숫자로 입력하세요 (예: 0.015).'); return;
+    }
+    if (!Number.isFinite(tax) || tax < 0 || tax > 1) {
+      alert('거래세율은 0~1 사이 숫자로 입력하세요 (예: 0.20).'); return;
+    }
+    if (!Number.isFinite(minNet) || minNet < 0) {
+      alert('최소 순수익률은 0 이상 숫자로 입력하세요.'); return;
+    }
+    var items = [
+      { key: 'trading.commission_rate',    value: comm,   value_type: 'number' },
+      { key: 'trading.transaction_tax_rate', value: tax,  value_type: 'number' },
+      { key: 'trading.min_net_return_pct', value: minNet, value_type: 'number' },
+    ];
+    try {
+      await Promise.all(items.map(function(item) {
+        return fetchJson('/api/v1/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(item),
+        });
+      }));
+      _updateCostSummary();
+      alert('거래 비용 설정이 저장되었습니다.');
+    } catch (e) {
+      alert('저장 실패: ' + e.message);
+    }
+  }
 
   /* Load editable global risk settings into the Settings form. */
   async function loadRiskSettings() {
@@ -63,6 +142,14 @@
       if (riskMode) riskMode.value = settingsMap["engine.mode"] || "MONITOR";
       if (cutoffTime) cutoffTime.value = settingsMap["risk.new_entry_cutoff_time"] || "15:10";
       if (forceExitTime) forceExitTime.value = settingsMap["risk.force_exit_time"] || "15:20";
+
+      var fm = await loadSettingsMapFull();
+      _insertSettingTs('risk-daily-loss', 'risk.daily_loss_limit_percent', fm);
+      _insertSettingTs('risk-max-positions', 'risk.max_positions', fm);
+      _insertSettingTs('risk-position-size', 'risk.max_position_rate_per_stock', fm);
+      _insertSettingTs('risk-mode', 'engine.mode', fm);
+      _insertSettingTs('setting-cutoff-time', 'risk.new_entry_cutoff_time', fm);
+      _insertSettingTs('setting-force-exit-time', 'risk.force_exit_time', fm);
     } catch (e) {
       console.error("Failed to load risk settings", e);
     }
@@ -130,10 +217,16 @@
       var res = await fetchJson("/api/v1/settings");
       var settings = res.payload.items || [];
       var settingsMap = {};
-      settings.forEach(function(s) { settingsMap[s.key] = s.value; });
+      var settingsMetaMap = {};
+      settings.forEach(function(s) {
+        settingsMap[s.key] = s.value;
+        settingsMetaMap[s.key] = { updated_at: s.updated_at, updated_by: s.updated_by };
+      });
 
       var html = schedulerKeys.map(function(k) {
         var current = settingsMap[k.key] || k.default;
+        var meta = settingsMetaMap[k.key] || {};
+        var tsHtml = _fmtSettingTs(meta.updated_at, meta.updated_by) || '<span class="muted">-</span>';
         var inputHtml = k.readOnly
           ? '<span class="muted">' + escapeHtml(current) + '</span>'
           : '<input type="text" id="input-' + k.key + '" value="' + escapeHtml(current) + '" style="width: 80px; padding: 5px; border-radius: 5px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);">';
@@ -145,6 +238,7 @@
           + '  <td>' + k.label + '</td>'
           + '  <td class="muted">' + escapeHtml(k.description || k.key) + '</td>'
           + '  <td>' + escapeHtml(current) + '</td>'
+          + '  <td>' + tsHtml + '</td>'
           + '  <td>' + inputHtml + '</td>'
           + '  <td>' + buttonHtml + '</td>'
           + '</tr>';
@@ -154,7 +248,7 @@
     } catch (e) {
       console.error("Failed to load scheduler settings", e);
       var tbody = document.getElementById("schedulerSettingsTableBody");
-      if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="muted">설정 로드 실패: ' + escapeHtml(e.message) + '</td></tr>';
+      if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="muted">설정 로드 실패: ' + escapeHtml(e.message) + '</td></tr>';
     }
   }
 
@@ -186,11 +280,17 @@
       var res = await fetchJson("/api/v1/settings");
       var settings = res.payload.items || [];
       var settingsMap = {};
-      settings.forEach(function(s) { settingsMap[s.key] = s.value; });
+      var settingsMetaMap = {};
+      settings.forEach(function(s) {
+        settingsMap[s.key] = s.value;
+        settingsMetaMap[s.key] = { updated_at: s.updated_at, updated_by: s.updated_by };
+      });
 
       var html = exitOverrideKeys.map(function(k) {
         var current = settingsMap[k.key] == null ? "" : String(settingsMap[k.key]);
         var currentLabel = current === "" ? "-" : current;
+        var meta = settingsMetaMap[k.key] || {};
+        var tsHtml = _fmtSettingTs(meta.updated_at, meta.updated_by) || '<span class="muted">-</span>';
         return ''
           + '<tr>'
           + '  <td>' + k.label + '</td>'
@@ -198,6 +298,7 @@
           + '  <td><input type="text" id="input-' + k.key + '" value="' + escapeHtml(current) + '" placeholder="' + escapeHtml(k.placeholder) + '" style="width: 120px; padding: 5px; border-radius: 5px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);"></td>'
           + '  <td><button class="btn primary" data-action="saveExitOverrideSetting" data-key="' + escapeHtml(k.key) + '">저장</button></td>'
           + '  <td class="muted">' + k.example + '</td>'
+          + '  <td>' + tsHtml + '</td>'
           + '</tr>';
       }).join("");
       var tbody = document.getElementById("exitOverrideSettingsTableBody");
@@ -205,7 +306,7 @@
     } catch (e) {
       console.error("Failed to load exit override settings", e);
       var tbody = document.getElementById("exitOverrideSettingsTableBody");
-      if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="muted">설정 로드 실패: ' + escapeHtml(e.message) + '</td></tr>';
+      if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="muted">설정 로드 실패: ' + escapeHtml(e.message) + '</td></tr>';
     }
   }
 
@@ -238,10 +339,10 @@
         fetchJson('/api/v1/screening/today').catch(() => null)
       ]);
 
-      var settings = {};
+      var settingsMeta = {};
       (settingsData?.payload?.items || []).forEach(function(s) {
-        settings[s.key] = s.value;
-      });      
+        settingsMeta[s.key] = { value: s.value, updated_at: s.updated_at, updated_by: s.updated_by };
+      });
       var aiEntryRules = screeningData?.payload?.screening?.entry_rules || screeningData?.payload?.entry_rules || {};
       
       var rows = [
@@ -266,7 +367,9 @@
       ];
       
       var html = rows.map(function(row) {
-        var guardVal = settings[row.guardKey] ?? '-';
+        var guardMeta = settingsMeta[row.guardKey] || {};
+        var guardVal = guardMeta.value ?? '-';
+        var tsHtml = _fmtSettingTs(guardMeta.updated_at, guardMeta.updated_by);
         return '<tr style="border-bottom:1px solid var(--border);">'
           + '<td style="padding:8px 0;">' + escapeHtml(row.label) + '</td>'
           + '<td style="padding:8px 4px; font-weight:600; color:var(--blue);">' + row.aiValue + '</td>'
@@ -274,6 +377,7 @@
           + '<input type="number" step="0.01" value="' + guardVal + '" '
           + 'data-action="saveGuardrail" data-key="' + escapeHtml(row.guardKey) + '" '
           + 'style="width:70px; padding:4px; border-radius:4px; background:var(--panel-2); color:var(--text); border:1px solid var(--border);">'
+          + (tsHtml ? '<div style="font-size:10px;margin-top:2px;">' + tsHtml + '</div>' : '')
           + '</td>'
           + '<td style="padding:8px 4px; font-size:11px; color:var(--muted);">' + escapeHtml(row.desc) + '</td>'
           + '</tr>';
@@ -510,6 +614,120 @@
     loadSchedulerSettings();
     loadExitOverrideSettings();
     loadSettingsProfiles();
+    loadTradingCostSettings();
+    loadRegimeSets();
+  }
+
+  async function loadRegimeSets() {
+    var container = document.getElementById('regime-sets-list');
+    if (!container) return;
+    try {
+      var r = await fetch('/api/v1/regime/sets?active_only=false');
+      var d = await r.json();
+      if (!d.ok || !d.items) { container.innerHTML = '<div class="muted">불러오기 실패</div>'; return; }
+      
+      var REGIME_COLORS = {risk_on:'#3fb950', neutral:'#8b9bb4', risk_off:'#f85149', volatile:'#d29922'};
+      var REGIME_LABELS = {risk_on:'Risk On', neutral:'중립', risk_off:'Risk Off', volatile:'변동성'};
+      
+      container.innerHTML = d.items.map(function(set) {
+        var tc = set.trigger_conditions || {};
+        var sc = set.settings || {};
+        var regimeLabel = tc.regime_label || '-';
+        var regimeColor = REGIME_COLORS[regimeLabel] || '#8b9bb4';
+        var isPrebuilt = set.is_prebuilt;
+        
+        return '<div class="regime-set-item" id="rset-' + escapeHtml(set.id) + '" style="border:1px solid var(--border); border-radius:8px; margin-bottom:8px; overflow:hidden;">'
+          + '<div style="display:flex; align-items:center; gap:10px; padding:12px 14px; cursor:pointer; background:var(--bg2);" onclick="toggleRegimeSetEdit(\'' + escapeHtml(set.id) + '\')">'
+            + '<span style="width:10px; height:10px; border-radius:50%; background:' + regimeColor + '; flex-shrink:0; display:inline-block;"></span>'
+            + '<div style="flex:1;">'
+              + '<span style="font-weight:600; font-size:13px;">' + escapeHtml(set.name) + '</span>'
+              + (isPrebuilt ? ' <span style="font-size:10px; background:#d29922; color:#000; border-radius:3px; padding:1px 5px; margin-left:4px;">예측 SET</span>' : '')
+              + '<div style="font-size:11px; color:var(--muted); margin-top:2px;">'
+                + escapeHtml(set.description || '')
+              + '</div>'
+            + '</div>'
+            + '<div style="font-size:11px; color:var(--muted); text-align:right; white-space:nowrap;">'
+              + '포지션 ' + (sc.max_positions || '-') + '개<br>'
+              + '손절 ' + ((sc.stop_loss_rate || 0) * 100).toFixed(1) + '%'
+            + '</div>'
+            + '<span style="color:var(--muted); font-size:14px; margin-left:8px;">▼</span>'
+          + '</div>'
+          + '<div id="rset-edit-' + escapeHtml(set.id) + '" style="display:none; padding:14px; border-top:1px solid var(--border);">'
+            + '<div class="form-grid" style="grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:10px; margin-bottom:12px;">'
+              + _regimeSetField('최대 포지션', 'rset-max_positions-' + set.id, sc.max_positions, 'number', '1', '20')
+              + _regimeSetField('손절선 (%)', 'rset-stop_loss_rate-' + set.id, ((sc.stop_loss_rate || 0) * 100).toFixed(2), 'number', '-20', '0')
+              + _regimeSetField('목표 익절 (%)', 'rset-take_profit_rate-' + set.id, ((sc.take_profit_rate || 0) * 100).toFixed(2), 'number', '0', '30')
+              + _regimeSetField('트레일링 발동 (%)', 'rset-trailing_activate_profit-' + set.id, ((sc.trailing_activate_profit || 0) * 100).toFixed(2), 'number', '0', '30')
+              + _regimeSetField('트레일링 폭 (%)', 'rset-trailing_stop_rate-' + set.id, ((sc.trailing_stop_rate || 0) * 100).toFixed(2), 'number', '0', '10')
+            + '</div>'
+            + '<div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">'
+              + '<label style="font-size:12px; display:flex; align-items:center; gap:6px; cursor:pointer;">'
+                + '<input type="checkbox" id="rset-new_entry_allowed-' + set.id + '"' + (sc.new_entry_allowed ? ' checked' : '') + '>'
+                + '신규매수 허용'
+              + '</label>'
+            + '</div>'
+            + '<div style="display:flex; gap:8px;">'
+              + '<button type="button" class="btn primary" onclick="saveRegimeSet(\'' + escapeHtml(set.id) + '\')">저장</button>'
+              + '<button type="button" class="btn" onclick="toggleRegimeSetEdit(\'' + escapeHtml(set.id) + '\')">취소</button>'
+            + '</div>'
+            + '<div id="rset-save-msg-' + escapeHtml(set.id) + '" style="font-size:12px; margin-top:8px;"></div>'
+          + '</div>'
+        + '</div>';
+      }).join('');
+    } catch(e) {
+      container.innerHTML = '<div class="muted">오류: ' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  function _regimeSetField(label, id, value, type, min, max) {
+    return '<div class="field">'
+      + '<label style="font-size:11px;">' + label + '</label>'
+      + '<input id="' + id + '" type="' + type + '" value="' + value + '"'
+      + (min ? ' min="' + min + '"' : '') + (max ? ' max="' + max + '"' : '')
+      + ' style="width:100%;">'
+      + '</div>';
+  }
+
+  function toggleRegimeSetEdit(setId) {
+    var panel = document.getElementById('rset-edit-' + setId);
+    if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  }
+
+  async function saveRegimeSet(setId) {
+    var msgEl = document.getElementById('rset-save-msg-' + setId);
+    if (msgEl) msgEl.textContent = '저장 중...';
+    
+    var maxPos = document.getElementById('rset-max_positions-' + setId);
+    var stopRate = document.getElementById('rset-stop_loss_rate-' + setId);
+    var tpRate = document.getElementById('rset-take_profit_rate-' + setId);
+    var trailActivate = document.getElementById('rset-trailing_activate_profit-' + setId);
+    var trailStop = document.getElementById('rset-trailing_stop_rate-' + setId);
+    var newEntry = document.getElementById('rset-new_entry_allowed-' + setId);
+    
+    var settings = {};
+    if (maxPos) settings.max_positions = parseInt(maxPos.value);
+    if (stopRate) settings.stop_loss_rate = parseFloat(stopRate.value) / 100;
+    if (tpRate) settings.take_profit_rate = parseFloat(tpRate.value) / 100;
+    if (trailActivate) settings.trailing_activate_profit = parseFloat(trailActivate.value) / 100;
+    if (trailStop) settings.trailing_stop_rate = parseFloat(trailStop.value) / 100;
+    if (newEntry) settings.new_entry_allowed = newEntry.checked;
+    
+    try {
+      var r = await fetch('/api/v1/regime/sets/' + encodeURIComponent(setId), {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({settings: settings})
+      });
+      var d = await r.json();
+      if (d.ok) {
+        if (msgEl) { msgEl.style.color = 'var(--green)'; msgEl.textContent = '✓ 저장됨'; }
+        setTimeout(function() { loadRegimeSets(); }, 1000);
+      } else {
+        if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = '저장 실패'; }
+      }
+    } catch(e) {
+      if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = '오류: ' + e.message; }
+    }
   }
 
   /* Bootstrap the console after all classic scripts have loaded. */

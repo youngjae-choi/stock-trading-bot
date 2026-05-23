@@ -55,6 +55,18 @@
   var apiLogsMode = document.getElementById("apiLogsMode");
   var apiLogsNote = document.getElementById("apiLogsNote");
   var apiLogsTableBody = document.getElementById("apiLogsTableBody");
+  var mobileDateLabel = document.getElementById("mobileDateLabel");
+
+  /* Initialize mobile date label with today's KST date immediately on load */
+  (function() {
+    if (!mobileDateLabel) return;
+    var parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit"
+    }).formatToParts(new Date());
+    var p = {};
+    parts.forEach(function(x) { p[x.type] = x.value; });
+    mobileDateLabel.textContent = p.year + "-" + p.month + "-" + p.day;
+  })();
 
   var isHalted = false;
   var currentUser = null;
@@ -73,13 +85,11 @@
     { id: 's8', label: 'S8 Position Manager', defaultTime: '실시간', settingKey: 'schedule_s8_time', detail: 'WS tick -> 손절/트레일링/강제청산 감시' },
     { id: 's9', label: 'S9 당일 청산', defaultTime: '15:20', settingKey: 'schedule_postprocess_time', detail: '후처리 프로세스 하위 단계 · 전량 시장가 청산' },
     { id: 's10', label: 'S10 Review & Audit', defaultTime: '15:20', settingKey: 'schedule_postprocess_time', detail: '후처리 프로세스 하위 단계 · review_audit -> daily_review_reports' },
-    { id: 's11', label: 'S11 Learning Memory Builder', defaultTime: '22:00', settingKey: 'schedule_s11_time', detail: 'Trade Review -> Learning Memory' },
   ];
   var SCHEDULED_OPERATIONS = [
     { id: 'trade-prep', label: '거래준비 프로세스 시작 (S1~S5-A 순차 실행)', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time' },
     { id: 's6', label: 'S6 Decision Engine 시간', defaultTime: '09:45', settingKey: 'schedule_s6_time' },
     { id: 'postprocess', label: '후처리 프로세스 시작 (S9~S10 순차 실행)', defaultTime: '15:20', settingKey: 'schedule_postprocess_time' },
-    { id: 's11', label: 'S11 Learning Memory 시간', defaultTime: '22:00', settingKey: 'schedule_s11_time' },
   ];
   var timeline = SCHEDULED_OPERATIONS
     .filter(function(step) { return /^\d{2}:\d{2}$/.test(step.defaultTime); })

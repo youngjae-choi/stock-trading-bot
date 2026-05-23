@@ -1,4 +1,5 @@
   async function refreshTodayControl() {
+    window._lastConsoleDataTs = Date.now();  // 수동 새로고침은 debounce 무시
     await Promise.allSettled([
       loadConsoleData(),
       loadTodayAlertSummary(),
@@ -27,9 +28,16 @@
     } catch (e) { console.warn('loadTodayAlertSummary error', e); }
   }
 
-  async function loadTodayOrders(limit) {
+  async function loadTodayOrders(limit, tradeDate) {
     try {
-      var url = limit ? "/api/v1/orders/recent?limit=" + limit : "/api/v1/orders/today";
+      var url;
+      if (limit) {
+        url = "/api/v1/orders/recent?limit=" + limit;
+      } else if (tradeDate) {
+        url = "/api/v1/orders/today?trade_date=" + tradeDate;
+      } else {
+        url = "/api/v1/orders/today";
+      }
       var data = await fetchJson(url);
       var hasLegacyTbody = Boolean(document.getElementById("orders-today-tbody"));
       var hasTradingTbody = Boolean(document.getElementById("tm-orders-tbody"));
@@ -83,6 +91,21 @@
       }
       setHtmlForIds(["orders-today-tbody"], legacyRowsHtml);
       setHtmlForIds(["tm-orders-tbody"], tradingRowsHtml);
+
+      // 모바일 주문 카드 렌더링
+      var isMobile = window.innerWidth <= 860;
+      var cardContainer = document.getElementById("todayOrderCards");
+      if (cardContainer) {
+        cardContainer.style.display = isMobile ? "grid" : "none";
+        // 테이블 래퍼 숨김/표시 (CSS가 display:none 처리하지만 JS에서도 확실히 함)
+        var tableWrap = cardContainer.previousElementSibling;
+        if (tableWrap && tableWrap.classList.contains('table-wrap')) {
+          tableWrap.style.display = isMobile ? "none" : "block";
+        }
+      }
+      if (isMobile) {
+        renderTodayOrderCards(orders);
+      }
     } catch (e) {
       setHtmlForIds(
         ["orders-today-tbody"],
@@ -94,4 +117,33 @@
       );
     }
   }
+
+  function renderTodayOrderCards(orders) {
+    var container = document.getElementById("todayOrderCards");
+    if (!container) return;
+    if (!orders || orders.length === 0) {
+      container.innerHTML = '<div style="grid-column: 1 / -1; padding:20px; text-align:center; color:var(--muted);">오늘 주문 없음</div>';
+      return;
+    }
+    container.innerHTML = orders.map(function(ord) {
+      var sideLabel = ord.side === "buy" ? "매수" : "매도";
+      var sideClass = ord.side === "buy" ? "toc-side-buy" : "toc-side-sell";
+      var timeStr = (ord.created_at || "").split("T")[1] || "";
+      if (timeStr.includes(".")) timeStr = timeStr.split(".")[0];
+      return [
+        '<div class="today-order-card">',
+          '<div class="toc-symbol">' + escapeHtml(ord.symbol) + '</div>',
+          '<div style="font-size:11px; margin-bottom:6px;">' + escapeHtml(ord.name || '') + '</div>',
+          '<div class="toc-meta">',
+            '<div class="' + sideClass + '" style="font-weight:700;">' + sideLabel + '</div>',
+            '<div>수량 ' + (ord.qty || 0).toLocaleString() + '</div>',
+            '<div>가격 ' + (ord.price || 0).toLocaleString() + '</div>',
+            '<div style="margin-top:4px; font-weight:600;">' + escapeHtml(ord.status) + '</div>',
+            '<div style="font-size:10px;">' + timeStr + '</div>',
+          '</div>',
+        '</div>'
+      ].join('');
+    }).join('');
+  }
+
 

@@ -49,7 +49,7 @@ test('fastapi console root serves html shell', async ({ request }) => {
   expect(response.ok()).toBeTruthy();
 
   const html = await response.text();
-  expect(html).toContain('Dantabot Control Console');
+  expect(html).toContain('Kairos Control Console');
   expect(html).toContain('id="loginForm"');
   expect(html).toContain('id="haltBtn"');
 });

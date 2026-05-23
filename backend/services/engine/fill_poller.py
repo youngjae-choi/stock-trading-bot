@@ -160,8 +160,6 @@ def _get_submitted_orders(trade_date: str) -> list[dict[str, Any]]:
             FROM trading_orders
             WHERE trade_date = ?
               AND status = 'submitted'
-              AND kis_order_no != ''
-              AND kis_order_no IS NOT NULL
               AND created_at >= ?
             """,
             (trade_date, cutoff),
@@ -191,6 +189,17 @@ def _mark_order_filled(order: dict[str, Any], kis_fill_data: dict[str, Any]) -> 
     order_id = str(order.get("id") or "")
     symbol = str(_kis_value(kis_fill_data, "pdno") or order.get("symbol") or "")
     qty = _to_int(_kis_value(kis_fill_data, "tot_ccld_qty", "ccld_qty") or order.get("qty"))
+    order_qty = _to_int(order.get("qty"))
+    if order_qty > 0 and qty > order_qty:
+        logger.warning(
+            "WARN: [FillPoller] fill quantity capped order_id=%s symbol=%s raw_qty=%d order_qty=%d source=%s",
+            order_id,
+            symbol,
+            qty,
+            order_qty,
+            kis_fill_data.get("_source") or "kis",
+        )
+        qty = order_qty
     price = _to_float(_kis_value(kis_fill_data, "avg_prvs", "avg_prc", "ord_unpr") or order.get("price"))
     side_code = str(_kis_value(kis_fill_data, "sll_buy_dvsn_cd") or "")
     side = "buy" if side_code == "02" else "sell" if side_code == "01" else str(order.get("side") or "")
@@ -242,12 +251,13 @@ def _mark_order_filled(order: dict[str, Any], kis_fill_data: dict[str, Any]) -> 
         )
 
 
-async def _fetch_symbol_output2(symbol: str, date_str: str) -> dict[str, Any]:
-    """종목+날짜 지정 KIS output2 조회 (모의투자 output1 미지원 환경 대응).
+async def _fetch_symbol_output2(symbol: str, date_str: str, order_no: str) -> dict[str, Any]:
+    """종목+날짜+주문번호 지정 KIS output2 조회 (모의투자 output1 미지원 환경 대응).
 
     Args:
         symbol: 종목코드 (PDNO).
         date_str: YYYYMMDD 형식 날짜.
+        order_no: KIS 주문번호 (ODNO).
     Returns:
         KIS output2 dict (tot_ccld_qty, tot_ccld_amt, pchs_avg_pric 등).
     """
@@ -268,14 +278,25 @@ async def _fetch_symbol_output2(symbol: str, date_str: str) -> dict[str, Any]:
             "PDNO": symbol,
             "CCLD_DVSN": "00",
             "ORD_GNO_BRNO": "",
-            "ODNO": "",
+            "ODNO": order_no,
             "INQR_DVSN_3": "00",
             "INQR_DVSN_1": "",
             "CTX_AREA_FK100": "",
             "CTX_AREA_NK100": "",
         },
     )
-    return resp.get("output2") or {}
+    output2 = resp.get("output2") or {}
+    if isinstance(output2, list):
+        for item in output2:
+            if isinstance(item, dict) and str(_kis_value(item, "odno")).strip() == order_no:
+                return item
+        return {}
+    if isinstance(output2, dict):
+        output_order_no = str(_kis_value(output2, "odno")).strip()
+        if output_order_no and output_order_no != order_no:
+            return {}
+        return output2
+    return {}
 
 
 def _make_output2_fill_data(order: dict[str, Any], out2: dict[str, Any]) -> dict[str, Any]:
@@ -285,6 +306,9 @@ def _make_output2_fill_data(order: dict[str, Any], out2: dict[str, Any]) -> dict
     sell/market 주문: output2.pchs_avg_pric 또는 tot_ccld_amt/tot_ccld_qty 사용.
     """
     fill_qty = _to_int(out2.get("tot_ccld_qty") or order.get("qty"))
+    order_qty = _to_int(order.get("qty"))
+    if order_qty > 0:
+        fill_qty = min(fill_qty, order_qty)
     side = str(order.get("side") or "")
     order_price = _to_float(order.get("price") or "0")
 
@@ -307,6 +331,43 @@ def _make_output2_fill_data(order: dict[str, Any], out2: dict[str, Any]) -> dict
         "sll_buy_dvsn_cd": sll_buy_dvsn_cd,
         "_source": "output2_fallback",
     }
+
+
+def _notify_buy_fill(order: dict[str, Any], kis_data: dict[str, Any], ccld_qty: int) -> None:
+    """매수 체결 성공을 텔레그램으로 비동기 알림 예약한다.
+
+    Args:
+        order: 로컬 trading_orders 행.
+        kis_data: KIS 체결 데이터 또는 output2 호환 변환 데이터.
+        ccld_qty: 확정 체결 수량.
+    """
+    if str(order.get("side", "")) != "buy":
+        return
+    try:
+        from ..alert_service import send_telegram_alert
+
+        symbol = str(_kis_value(kis_data, "pdno") or order.get("symbol") or "")
+        price = _to_float(_kis_value(kis_data, "avg_prvs", "avg_prc") or order.get("price"))
+        total = round(price * ccld_qty)
+        fill_date = _now_kst().strftime("%Y-%m-%d %H:%M")
+        asyncio.create_task(
+            send_telegram_alert(
+                "[매매봇] 매수 체결 ✅",
+                f"종목: {symbol}\n"
+                f"수량: {ccld_qty:,}주\n"
+                f"체결가: {price:,.0f}원\n"
+                f"체결금액: {total:,}원\n"
+                f"날짜: {fill_date}",
+            )
+        )
+        logger.info(
+            "INFO: [FillPoller] buy fill telegram alert scheduled symbol=%s qty=%d price=%.2f",
+            symbol,
+            ccld_qty,
+            price,
+        )
+    except Exception as exc:
+        logger.warning("WARN: [FillPoller] 매수 텔레그램 알림 실패 reason=%s", exc)
 
 
 async def poll_once(trade_date: str) -> dict[str, Any]:
@@ -369,6 +430,7 @@ async def poll_once(trade_date: str) -> dict[str, Any]:
             continue
 
         _mark_order_filled(order, kis_data)
+        _notify_buy_fill(order, kis_data, ccld_qty)
         filled_count += 1
         logger.info(
             "SUCCESS: [FillPoller] output1 filled order_id=%s symbol=%s qty=%d price=%.2f",
@@ -387,27 +449,37 @@ async def poll_once(trade_date: str) -> dict[str, Any]:
         for order in unmatched:
             order_id = str(order.get("id") or "")
             symbol = str(order.get("symbol") or "")
+            kis_order_no = str(order.get("kis_order_no") or "").strip()
             if not order_id or not symbol or _is_already_filled(order_id):
+                continue
+            if not kis_order_no:
+                logger.warning(
+                    "WARN: [FillPoller] output2 폴백 건너뜀 symbol=%s order_id=%s reason=missing_kis_order_no",
+                    symbol,
+                    order_id,
+                )
                 continue
             try:
                 await asyncio.sleep(0.12)  # KIS rate limit 여유
-                out2 = await _fetch_symbol_output2(symbol, date_str)
+                out2 = await _fetch_symbol_output2(symbol, date_str, kis_order_no)
                 ccld_qty = _to_int(out2.get("tot_ccld_qty") or "0")
                 if ccld_qty == 0:
                     logger.info(
-                        "INFO: [FillPoller] output2 미체결 symbol=%s tot_ccld_qty=0",
+                        "INFO: [FillPoller] output2 미체결 symbol=%s order_no=%s tot_ccld_qty=0",
                         symbol,
+                        kis_order_no,
                     )
                     continue
 
                 kis_data = _make_output2_fill_data(order, out2)
                 _mark_order_filled(order, kis_data)
+                _notify_buy_fill(order, kis_data, _to_int(kis_data.get("tot_ccld_qty") or "0"))
                 filled_count += 1
                 logger.info(
                     "SUCCESS: [FillPoller] output2 filled order_id=%s symbol=%s qty=%d price=%.2f",
                     order_id,
                     symbol,
-                    ccld_qty,
+                    _to_int(kis_data.get("tot_ccld_qty") or "0"),
                     _to_float(kis_data.get("avg_prvs") or "0"),
                 )
             except Exception as exc:

@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
 from ..config import settings
 
 logger = logging.getLogger("BackendDatabase")
+KST = timezone(timedelta(hours=9))
 
 
 def _db_path() -> Path:
@@ -42,6 +44,9 @@ def initialize_database() -> None:
     logger.info("START: db.initialize_database")
     with get_connection() as connection:
         _execute_many(connection, _schema_statements())
+        ensure_default_regime_sets(connection)
+        _migrate_regime_set_applications(connection)
+        _migrate_positions_entry_set(connection)
         _migrate_scheduler_process_settings(connection)
         _seed_system_settings(connection)
         _migrate_s10_review_schedule_setting(connection)
@@ -78,7 +83,179 @@ def initialize_database() -> None:
             if col_name not in dividend_cols:
                 connection.execute(alter_sql)
                 logger.info("DB migration: added column %s to dividends", col_name)
+        _migrate_regime_set_applications(connection)
+        _migrate_positions_entry_set(connection)
     logger.info("SUCCESS: db.initialize_database path=%s", _db_path())
+
+
+def ensure_default_regime_sets(connection: sqlite3.Connection | None = None) -> None:
+    """Seed baseline and 2026-05-26 prebuilt regime sets if they are missing.
+
+    Args:
+        connection: Optional existing SQLite connection. When omitted, the function
+            opens its own connection for standalone repair or test setup.
+    """
+    logger.info("START: db.ensure_default_regime_sets")
+    owns_connection = connection is None
+    conn = connection or get_connection()
+    now = datetime.now(KST).isoformat()
+    try:
+        for regime_set in _default_regime_sets():
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO regime_sets
+                    (id, name, description, trigger_conditions, settings,
+                     is_active, is_prebuilt, prebuilt_target_date, priority,
+                     created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    regime_set["id"],
+                    regime_set["name"],
+                    regime_set.get("description", ""),
+                    _json_dumps(regime_set.get("trigger_conditions", {})),
+                    _json_dumps(regime_set.get("settings", {})),
+                    1,
+                    1 if regime_set.get("is_prebuilt") else 0,
+                    regime_set.get("prebuilt_target_date"),
+                    int(regime_set.get("priority", 0)),
+                    now,
+                    now,
+                ),
+            )
+        if owns_connection:
+            conn.commit()
+        logger.info("SUCCESS: db.ensure_default_regime_sets count=%d", len(_default_regime_sets()))
+    except Exception as exc:
+        logger.error("FAIL: db.ensure_default_regime_sets error=%s", exc)
+        raise
+    finally:
+        if owns_connection:
+            conn.close()
+
+
+def _default_regime_sets() -> list[dict[str, Any]]:
+    """Return built-in regime set definitions inserted during DB initialization.
+
+    Philosophy (mock account — all new_entry_allowed=True to accumulate data):
+      Risk On   : 모멘텀 탑승 — 넓은 손절, 큰 목표, 최대 포지션
+      Neutral   : 표준 균형 — 기본 파라미터
+      Risk Off  : 자본 보존 — 타이트 손절, 빠른 익절, 포지션 축소
+      Volatile  : 생존 모드 — 극소 포지션, 초타이트 손절 (실계좌 전환 시 신규매수 차단 예정)
+    """
+    return [
+        {
+            "id": "SET-RISK_ON",
+            "name": "Risk On 모멘텀형",
+            "description": "VIX 낮고 상승 모멘텀 — 길게 들고 크게 먹기",
+            "trigger_conditions": {"regime_label": "risk_on", "vix_max": 22},
+            "settings": {
+                "max_positions": 12,
+                "stop_loss_rate": -0.035,        # -3.5% — 모멘텀이 흔들릴 여유 허용
+                "take_profit_rate": 0.08,         # +8.0% — 큰 수익 목표
+                "new_entry_allowed": True,
+                "trailing_activate_profit": 0.04, # +4% 이후 트레일링 발동
+                "trailing_stop_rate": 0.02,       # 2% 되돌리면 청산
+            },
+            "priority": 10,
+        },
+        {
+            "id": "SET-NEUTRAL",
+            "name": "중립 표준형",
+            "description": "방향성 불명확 — 균형잡힌 표준 설정",
+            "trigger_conditions": {"regime_label": "neutral"},
+            "settings": {
+                "max_positions": 7,
+                "stop_loss_rate": -0.02,          # -2.0% — 표준
+                "take_profit_rate": 0.045,        # +4.5%
+                "new_entry_allowed": True,
+                "trailing_activate_profit": 0.025,
+                "trailing_stop_rate": 0.012,
+            },
+            "priority": 10,
+        },
+        {
+            "id": "SET-RISK_OFF",
+            "name": "리스크 오프 방어형",
+            "description": "방어적 장세 — 자본 보존, 빠른 익절·타이트 손절",
+            "trigger_conditions": {"regime_label": "risk_off"},
+            "settings": {
+                "max_positions": 4,
+                "stop_loss_rate": -0.012,         # -1.2% — 손실 최소화
+                "take_profit_rate": 0.025,        # +2.5% — 빠르게 챙기기
+                "new_entry_allowed": True,         # 모의계좌: 허용 (실계좌: 실적 없으면 차단)
+                "trailing_activate_profit": 0.015,
+                "trailing_stop_rate": 0.008,
+            },
+            "priority": 10,
+        },
+        {
+            "id": "SET-VOLATILE",
+            "name": "변동성 생존형",
+            "description": "고변동성 — 극소 포지션, 초타이트 손절 (실계좌 전환 시 신규매수 차단 예정)",
+            "trigger_conditions": {"regime_label": "volatile", "vix_min": 25},
+            "settings": {
+                "max_positions": 2,
+                "stop_loss_rate": -0.008,         # -0.8% — 초타이트
+                "take_profit_rate": 0.02,         # +2.0% — 스캘핑 수준
+                "new_entry_allowed": True,         # 모의계좌: 허용 (실계좌: 실적 없으면 차단)
+                "trailing_activate_profit": 0.012,
+                "trailing_stop_rate": 0.006,
+            },
+            "priority": 10,
+        },
+        {
+            "id": "SET-PRE-0526-RECOVERY",
+            "name": "2026-05-26 반등 예측형",
+            "description": "주말 긍정 뉴스로 반등 시나리오 (VIX 하락, KOSPI +0.5% 이상)",
+            "trigger_conditions": {"regime_label": "risk_on", "vix_max": 20, "kospi_change_min": 0.5},
+            "settings": {
+                "max_positions": 12,
+                "stop_loss_rate": -0.035,
+                "take_profit_rate": 0.08,
+                "new_entry_allowed": True,
+                "trailing_activate_profit": 0.04,
+                "trailing_stop_rate": 0.02,
+            },
+            "is_prebuilt": True,
+            "prebuilt_target_date": "2026-05-26",
+            "priority": 20,
+        },
+        {
+            "id": "SET-PRE-0526-SIDEWAYS",
+            "name": "2026-05-26 횡보 예측형",
+            "description": "관망 심리 — KOSPI ±0.5% 범위 횡보 예상",
+            "trigger_conditions": {"regime_label": "neutral", "kospi_change_min": -0.5, "kospi_change_max": 0.5},
+            "settings": {
+                "max_positions": 6,
+                "stop_loss_rate": -0.018,
+                "take_profit_rate": 0.04,
+                "new_entry_allowed": True,
+                "trailing_activate_profit": 0.022,
+                "trailing_stop_rate": 0.011,
+            },
+            "is_prebuilt": True,
+            "prebuilt_target_date": "2026-05-26",
+            "priority": 20,
+        },
+        {
+            "id": "SET-PRE-0526-SELLOFF",
+            "name": "2026-05-26 하락 대비형",
+            "description": "지정학적 리스크 or 美증시 급락 반영 — 방어 모드",
+            "trigger_conditions": {"regime_label": "risk_off", "vix_min": 22, "kospi_change_max": -0.5},
+            "settings": {
+                "max_positions": 4,
+                "stop_loss_rate": -0.012,
+                "take_profit_rate": 0.025,
+                "new_entry_allowed": True,
+                "trailing_activate_profit": 0.015,
+                "trailing_stop_rate": 0.008,
+            },
+            "is_prebuilt": True,
+            "prebuilt_target_date": "2026-05-26",
+            "priority": 20,
+        },
+    ]
 
 
 def database_status() -> dict[str, Any]:
@@ -165,6 +342,24 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
         ("schedule_s11_time", "22:00", "string", "S11 Learning Memory Builder 실행 시간 (HH:MM)"),
         ("risk.force_exit_time", "15:20", "string", "당일 강제청산 시작 시간 (HH:MM)"),
         ("risk.new_entry_cutoff_time", "15:10", "string", "신규 매수 금지 시작 시간 (HH:MM)"),
+        (
+            "trading.commission_rate",
+            "0.015",
+            "number",
+            "브로커 수수료율 (%, 매수+매도 각각 적용). 모의투자=0, KIS 기본=0.015",
+        ),
+        (
+            "trading.transaction_tax_rate",
+            "0.20",
+            "number",
+            "증권거래세율 (%, 매도 시 1회 적용). 코스피=0.20, 코스닥=0.15",
+        ),
+        (
+            "trading.min_net_return_pct",
+            "0.0",
+            "number",
+            "S4 스크리닝 최소 순수익률 (%). 0이면 비용 자동 계산(수수료×2 + 거래세)으로 적용",
+        ),
     ]
     for key, value, value_type, description in defaults:
         connection.execute(
@@ -267,6 +462,137 @@ def _migrate_s10_review_schedule_setting(connection: sqlite3.Connection) -> None
             (_json_dumps("16:00"), "S10 Review & Audit 실행 시간 (HH:MM)", "migration_s10_review_audit"),
         )
         logger.info("DB migration: updated schedule_s10_time from daily summary default to Review Audit default")
+
+
+def _migrate_regime_set_applications(connection: sqlite3.Connection) -> None:
+    """Migrate regime_set_applications for multiple intraday SET transitions per date."""
+    logger.info("START: db._migrate_regime_set_applications")
+    table_row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'regime_set_applications'",
+    ).fetchone()
+    if table_row is None:
+        logger.info("SKIP: db._migrate_regime_set_applications table missing")
+        return
+
+    table_sql = str(table_row["sql"] or "")
+    needs_rebuild = "trade_date TEXT NOT NULL UNIQUE" in table_sql or "UNIQUE(trade_date)" in table_sql
+    existing = {str(row["name"]) for row in connection.execute("PRAGMA table_info(regime_set_applications)")}
+
+    if needs_rebuild:
+        logger.info("DB migration: rebuilding regime_set_applications without trade_date UNIQUE")
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute("ALTER TABLE regime_set_applications RENAME TO regime_set_applications_legacy")
+        connection.execute(
+            """
+            CREATE TABLE regime_set_applications (
+                id TEXT PRIMARY KEY,
+                trade_date TEXT NOT NULL,
+                applied_at TEXT NOT NULL,
+                set_id TEXT NOT NULL,
+                set_name TEXT NOT NULL DEFAULT '',
+                match_reason TEXT NOT NULL DEFAULT '',
+                match_score REAL NOT NULL DEFAULT 0.0,
+                applied_settings TEXT NOT NULL DEFAULT '{}',
+                regime_label TEXT,
+                vix_value REAL,
+                kospi_change_pct REAL,
+                trigger TEXT NOT NULL DEFAULT 'morning',
+                current_flag INTEGER NOT NULL DEFAULT 0,
+                total_trades INTEGER,
+                win_count INTEGER,
+                total_pnl REAL,
+                result_updated_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(set_id) REFERENCES regime_sets(id)
+            )
+            """
+        )
+        legacy_columns = {
+            str(row["name"]) for row in connection.execute("PRAGMA table_info(regime_set_applications_legacy)")
+        }
+        applied_at_expr = "COALESCE(NULLIF(applied_at, ''), created_at)" if "applied_at" in legacy_columns else "created_at"
+        trigger_expr = "COALESCE(NULLIF(trigger, ''), 'morning')" if "trigger" in legacy_columns else "'morning'"
+        current_expr = "COALESCE(current_flag, 0)" if "current_flag" in legacy_columns else "1"
+        connection.execute(
+            f"""
+            INSERT INTO regime_set_applications
+                (id, trade_date, applied_at, set_id, set_name, match_reason,
+                 match_score, applied_settings, regime_label, vix_value,
+                 kospi_change_pct, trigger, current_flag, total_trades,
+                 win_count, total_pnl, result_updated_at, created_at)
+            SELECT
+                id, trade_date, {applied_at_expr}, set_id, set_name, match_reason,
+                match_score, applied_settings, regime_label, vix_value,
+                kospi_change_pct, {trigger_expr}, {current_expr}, total_trades,
+                win_count, total_pnl, result_updated_at, created_at
+            FROM regime_set_applications_legacy
+            """
+        )
+        connection.execute("DROP TABLE regime_set_applications_legacy")
+        connection.execute("PRAGMA foreign_keys = ON")
+    else:
+        if "applied_at" not in existing:
+            connection.execute("ALTER TABLE regime_set_applications ADD COLUMN applied_at TEXT NOT NULL DEFAULT ''")
+            logger.info("DB migration: added column applied_at to regime_set_applications")
+        if "trigger" not in existing:
+            connection.execute("ALTER TABLE regime_set_applications ADD COLUMN trigger TEXT NOT NULL DEFAULT 'morning'")
+            logger.info("DB migration: added column trigger to regime_set_applications")
+        if "current_flag" not in existing:
+            connection.execute("ALTER TABLE regime_set_applications ADD COLUMN current_flag INTEGER NOT NULL DEFAULT 0")
+            logger.info("DB migration: added column current_flag to regime_set_applications")
+
+    connection.execute(
+        """
+        UPDATE regime_set_applications
+        SET applied_at = COALESCE(NULLIF(applied_at, ''), created_at)
+        WHERE applied_at = ''
+        """
+    )
+    connection.execute(
+        """
+        UPDATE regime_set_applications
+        SET current_flag = 0
+        WHERE trade_date IN (SELECT trade_date FROM regime_set_applications GROUP BY trade_date)
+        """
+    )
+    connection.execute(
+        """
+        UPDATE regime_set_applications
+        SET current_flag = 1
+        WHERE id IN (
+            SELECT id
+            FROM regime_set_applications AS latest
+            WHERE COALESCE(NULLIF(applied_at, ''), created_at) = (
+                SELECT MAX(COALESCE(NULLIF(inner_app.applied_at, ''), inner_app.created_at))
+                FROM regime_set_applications AS inner_app
+                WHERE inner_app.trade_date = latest.trade_date
+            )
+        )
+        """
+    )
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_regime_set_applications_trade_applied_at "
+        "ON regime_set_applications(trade_date, applied_at)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_regime_set_applications_set_id "
+        "ON regime_set_applications(set_id)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_regime_set_applications_created_at "
+        "ON regime_set_applications(created_at DESC)"
+    )
+    logger.info("SUCCESS: db._migrate_regime_set_applications")
+
+
+def _migrate_positions_entry_set(connection: sqlite3.Connection) -> None:
+    """Add positions.entry_set_id so future entries can retain their original SET."""
+    logger.info("START: db._migrate_positions_entry_set")
+    existing = {str(row["name"]) for row in connection.execute("PRAGMA table_info(positions)")}
+    if "entry_set_id" not in existing:
+        connection.execute("ALTER TABLE positions ADD COLUMN entry_set_id TEXT")
+        logger.info("DB migration: added column entry_set_id to positions")
+    logger.info("SUCCESS: db._migrate_positions_entry_set")
 
 
 def _seed_rule_system(connection: sqlite3.Connection) -> None:
@@ -493,6 +819,7 @@ def _schema_statements() -> list[str]:
             realized_pnl REAL NOT NULL DEFAULT 0,
             unrealized_pnl REAL NOT NULL DEFAULT 0,
             source TEXT NOT NULL DEFAULT 'system',
+            entry_set_id TEXT,
             captured_at TEXT NOT NULL,
             raw_json TEXT NOT NULL DEFAULT '{}'
         )
@@ -547,6 +874,105 @@ def _schema_statements() -> list[str]:
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_rulepacks_trade_date ON rulepacks(trade_date)",
+        """
+        CREATE TABLE IF NOT EXISTS morning_context (
+            id              TEXT PRIMARY KEY,
+            trade_date      TEXT NOT NULL UNIQUE,
+            market_data     TEXT NOT NULL DEFAULT '{}',
+            regime          TEXT NOT NULL DEFAULT 'neutral',
+            risk_level      TEXT NOT NULL DEFAULT 'normal',
+            stock_character TEXT NOT NULL DEFAULT '',
+            rulepack_hint   TEXT NOT NULL DEFAULT '',
+            key_factors     TEXT NOT NULL DEFAULT '[]',
+            risk_factors    TEXT NOT NULL DEFAULT '[]',
+            raw_response    TEXT NOT NULL DEFAULT '',
+            provider        TEXT NOT NULL DEFAULT 'none',
+            created_at      TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_morning_context_trade_date ON morning_context(trade_date)",
+        """
+        CREATE TABLE IF NOT EXISTS daily_context_snapshot (
+            trade_date           TEXT PRIMARY KEY,
+            regime               TEXT NOT NULL DEFAULT 'neutral',
+            risk_level           TEXT NOT NULL DEFAULT 'normal',
+            rulepack_id          TEXT NOT NULL DEFAULT '',
+            stop_loss_rate       REAL,
+            take_profit_rate     REAL,
+            max_positions        INTEGER,
+            max_position_size_rate REAL,
+            trailing_activate_profit REAL,
+            trailing_stop_rate   REAL,
+            new_entry_allowed    INTEGER DEFAULT 1,
+            raw_rulepack_json    TEXT NOT NULL DEFAULT '{}',
+            created_at           TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_daily_context_snapshot_trade_date ON daily_context_snapshot(trade_date)",
+        """
+        CREATE TABLE IF NOT EXISTS regime_sets (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            trigger_conditions TEXT NOT NULL DEFAULT '{}',
+            settings TEXT NOT NULL DEFAULT '{}',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            is_prebuilt INTEGER NOT NULL DEFAULT 0,
+            prebuilt_target_date TEXT,
+            priority INTEGER NOT NULL DEFAULT 0,
+            total_applications INTEGER NOT NULL DEFAULT 0,
+            win_count INTEGER NOT NULL DEFAULT 0,
+            total_pnl REAL NOT NULL DEFAULT 0.0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_regime_sets_active_priority ON regime_sets(is_active, priority DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_regime_sets_prebuilt_date ON regime_sets(is_prebuilt, prebuilt_target_date)",
+        """
+        CREATE TABLE IF NOT EXISTS regime_set_applications (
+            id TEXT PRIMARY KEY,
+            trade_date TEXT NOT NULL,
+            applied_at TEXT NOT NULL,
+            set_id TEXT NOT NULL,
+            set_name TEXT NOT NULL DEFAULT '',
+            match_reason TEXT NOT NULL DEFAULT '',
+            match_score REAL NOT NULL DEFAULT 0.0,
+            applied_settings TEXT NOT NULL DEFAULT '{}',
+            regime_label TEXT,
+            vix_value REAL,
+            kospi_change_pct REAL,
+            trigger TEXT NOT NULL DEFAULT 'morning',
+            current_flag INTEGER NOT NULL DEFAULT 0,
+            total_trades INTEGER,
+            win_count INTEGER,
+            total_pnl REAL,
+            result_updated_at TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(set_id) REFERENCES regime_sets(id)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_regime_set_applications_set_id ON regime_set_applications(set_id)",
+        "CREATE INDEX IF NOT EXISTS idx_regime_set_applications_created_at ON regime_set_applications(created_at DESC)",
+        """
+        CREATE TABLE IF NOT EXISTS regime_set_feedback (
+            id TEXT PRIMARY KEY,
+            trade_date TEXT NOT NULL,
+            set_id TEXT NOT NULL,
+            regime_label TEXT NOT NULL,
+            vix_value REAL,
+            kospi_change_pct REAL,
+            win_rate REAL,
+            total_pnl REAL,
+            trades_count INTEGER,
+            evaluation TEXT NOT NULL DEFAULT 'neutral',
+            reason TEXT,
+            next_action TEXT,
+            created_at TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_regime_set_feedback_set_id ON regime_set_feedback(set_id)",
+        "CREATE INDEX IF NOT EXISTS idx_regime_set_feedback_trade_date ON regime_set_feedback(trade_date)",
         "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_user_mfa_methods_user_id ON user_mfa_methods(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_mfa_challenges_user_id ON mfa_challenges(user_id)",
@@ -702,6 +1128,26 @@ CREATE TABLE IF NOT EXISTS trading_signals (
 )
 """,
         "CREATE INDEX IF NOT EXISTS idx_trading_signals_trade_date ON trading_signals(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS signal_technical_indicators (
+    id                  TEXT PRIMARY KEY,
+    signal_id           TEXT NOT NULL,
+    symbol              TEXT NOT NULL,
+    trade_date          TEXT NOT NULL,
+    price_change_pct    REAL,
+    price_vs_ma5_pct    REAL,
+    price_vs_ma20_pct   REAL,
+    rsi14               REAL,
+    momentum5d_pct      REAL,
+    volume_ratio        REAL,
+    kospi_change_pct    REAL,
+    outcome_pnl_pct     REAL,
+    outcome_hold_min    REAL,
+    created_at          TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_sti_symbol_date ON signal_technical_indicators(symbol, trade_date)",
+        "CREATE INDEX IF NOT EXISTS idx_sti_signal_id ON signal_technical_indicators(signal_id)",
         """
 CREATE TABLE IF NOT EXISTS order_preflight_checks (
     id            TEXT PRIMARY KEY,

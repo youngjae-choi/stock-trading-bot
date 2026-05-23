@@ -25,7 +25,7 @@ logger = logging.getLogger("MarketToneService")
 
 
 def _ensure_table() -> None:
-    """market_tone_results 테이블이 없으면 생성한다."""
+    """market_tone_results와 morning_context 테이블이 없으면 생성한다."""
     with get_connection() as conn:
         conn.execute(
             """
@@ -45,6 +45,27 @@ def _ensure_table() -> None:
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_market_tone_trade_date ON market_tone_results(trade_date)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS morning_context (
+                id              TEXT PRIMARY KEY,
+                trade_date      TEXT NOT NULL UNIQUE,
+                market_data     TEXT NOT NULL DEFAULT '{}',
+                regime          TEXT NOT NULL DEFAULT 'neutral',
+                risk_level      TEXT NOT NULL DEFAULT 'normal',
+                stock_character TEXT NOT NULL DEFAULT '',
+                rulepack_hint   TEXT NOT NULL DEFAULT '',
+                key_factors     TEXT NOT NULL DEFAULT '[]',
+                risk_factors    TEXT NOT NULL DEFAULT '[]',
+                raw_response    TEXT NOT NULL DEFAULT '',
+                provider        TEXT NOT NULL DEFAULT 'none',
+                created_at      TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_morning_context_trade_date ON morning_context(trade_date)"
         )
 
 
@@ -73,6 +94,14 @@ def _parse_tone_response(raw: str) -> dict[str, Any]:
     if tone not in ("positive", "neutral", "negative", "mixed"):
         tone = "neutral"
 
+    regime = str(data.get("regime", "neutral")).lower()
+    if regime not in ("risk_on", "neutral", "risk_off", "volatile"):
+        regime = "neutral"
+
+    risk_level = str(data.get("risk_level", "normal")).lower()
+    if risk_level not in ("low", "normal", "high", "extreme"):
+        risk_level = "normal"
+
     return {
         "tone": tone,
         "confidence": float(data.get("confidence", 0.0)),
@@ -80,6 +109,10 @@ def _parse_tone_response(raw: str) -> dict[str, Any]:
         "key_factors": data.get("key_factors", []),
         "risk_factors": data.get("risk_factors", []),
         "data_note": str(data.get("data_note", "")),
+        "regime": regime,
+        "risk_level": risk_level,
+        "stock_character": str(data.get("stock_character", ""))[:200],
+        "rulepack_hint": str(data.get("rulepack_hint", ""))[:200],
     }
 
 
@@ -124,6 +157,7 @@ async def run_market_tone_analysis(trigger_source: str = "api_manual") -> dict[s
         raise
 
     # 해외 시장 데이터를 먼저 수집하고 실패 시에도 LLM 분석 자체는 계속 진행한다.
+    market_data: dict[str, Any] = {}  # morning_context 저장용으로 스코프 유지
     try:
         from .market_data_fetcher import fetch_overnight_market_summary, format_for_prompt
 
@@ -138,6 +172,7 @@ async def run_market_tone_analysis(trigger_source: str = "api_manual") -> dict[s
 
             snapshot = get_latest_snapshot()
             if snapshot and snapshot.get("raw_data") and isinstance(snapshot["raw_data"], dict):
+                market_data = snapshot["raw_data"]
                 market_data_text = _fmt(snapshot["raw_data"])
                 market_data_text += (
                     f"\n[참고: S11 스냅샷 기준 {snapshot['snapshot_date']} "
@@ -193,6 +228,10 @@ async def run_market_tone_analysis(trigger_source: str = "api_manual") -> dict[s
                 "key_factors": [],
                 "risk_factors": ["파싱 오류"],
                 "data_note": str(parse_exc),
+                "regime": "neutral",
+                "risk_level": "normal",
+                "stock_character": "",
+                "rulepack_hint": "",
             }
     else:
         parsed = {
@@ -202,6 +241,10 @@ async def run_market_tone_analysis(trigger_source: str = "api_manual") -> dict[s
             "key_factors": [],
             "risk_factors": ["LLM 호출 실패"],
             "data_note": llm_result.get("error", "unknown"),
+            "regime": "neutral",
+            "risk_level": "normal",
+            "stock_character": "",
+            "rulepack_hint": "",
         }
 
     # DB 저장
@@ -240,6 +283,40 @@ async def run_market_tone_analysis(trigger_source: str = "api_manual") -> dict[s
         logger.error("FAIL: MarketToneService save failed trade_date=%s reason=%s", today, exc)
         raise
 
+    # morning_context 저장 (비치명적 — 실패해도 기존 흐름 유지)
+    morning_id = str(uuid.uuid4())
+    raw_numbers = {
+        k: v for k, v in market_data.items()
+        if k not in ("fetched_at", "errors") and isinstance(v, dict)
+    }
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO morning_context
+                    (id, trade_date, market_data, regime, risk_level,
+                     stock_character, rulepack_hint, key_factors, risk_factors,
+                     raw_response, provider, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    morning_id,
+                    today,
+                    json.dumps(raw_numbers, ensure_ascii=False),
+                    parsed.get("regime", "neutral"),
+                    parsed.get("risk_level", "normal"),
+                    parsed.get("stock_character", ""),
+                    parsed.get("rulepack_hint", ""),
+                    json.dumps(parsed["key_factors"], ensure_ascii=False),
+                    json.dumps(parsed["risk_factors"], ensure_ascii=False),
+                    llm_result.get("raw", ""),
+                    llm_result.get("provider", "none"),
+                    now,
+                ),
+            )
+    except Exception as mc_exc:
+        logger.warning("WARN: morning_context 저장 실패 (비치명) — %s", mc_exc)
+
     result = {
         "ok": True,
         "trade_date": today,
@@ -250,6 +327,10 @@ async def run_market_tone_analysis(trigger_source: str = "api_manual") -> dict[s
         "risk_factors": parsed["risk_factors"],
         "provider": llm_result.get("provider", "none"),
         "id": record_id,
+        "regime": parsed.get("regime", "neutral"),
+        "risk_level": parsed.get("risk_level", "normal"),
+        "stock_character": parsed.get("stock_character", ""),
+        "rulepack_hint": parsed.get("rulepack_hint", ""),
     }
     logger.info(
         "SUCCESS: MarketToneService trade_date=%s tone=%s provider=%s",
@@ -282,4 +363,24 @@ def get_today_market_tone(trade_date: str) -> dict[str, Any] | None:
                 d[field] = json.loads(d[field])
             except Exception:
                 d[field] = []
+    return d
+
+
+def get_today_morning_context(trade_date: str) -> dict[str, Any] | None:
+    """DB에서 특정 날짜의 morning_context를 조회한다."""
+    _ensure_table()
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM morning_context WHERE trade_date = ? ORDER BY created_at DESC LIMIT 1",
+            (trade_date,),
+        ).fetchone()
+    if row is None:
+        return None
+    d = dict(row)
+    for field in ("market_data", "key_factors", "risk_factors"):
+        if isinstance(d.get(field), str):
+            try:
+                d[field] = json.loads(d[field])
+            except Exception:
+                d[field] = {} if field == "market_data" else []
     return d

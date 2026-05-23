@@ -88,6 +88,134 @@
 
       var jsonEl = document.getElementById('dp-raw-json');
       if (jsonEl) jsonEl.textContent = JSON.stringify(plan, null, 2);
+
+      // ── 오늘의 Regime Set 카드 ──
+      try {
+        var setResp = await fetch('/api/v1/regime/today');
+        var setData = await setResp.json();
+        if (setData.ok && setData.application) {
+          var app = setData.application;
+          var setCard = document.getElementById('dp-regime-set-card');
+          if (setCard) {
+            var nameEl = document.getElementById('dp-set-name');
+            if (nameEl) nameEl.textContent = app.set_name || '-';
+            
+            var regimeEl = document.getElementById('dp-set-regime');
+            if (regimeEl) {
+              var regimeLabels = {risk_on:'Risk On', neutral:'중립', risk_off:'Risk Off', volatile:'변동성'};
+              var parts = [];
+              if (app.regime_label) parts.push(regimeLabels[app.regime_label] || app.regime_label);
+              if (app.vix_value != null) parts.push('VIX ' + app.vix_value.toFixed(1));
+              if (app.kospi_change_pct != null) {
+                var kp = app.kospi_change_pct;
+                parts.push('KOSPI ' + (kp >= 0 ? '+' : '') + kp.toFixed(2) + '%');
+              }
+              regimeEl.textContent = parts.join(' · ');
+            }
+            
+            var reasonEl = document.getElementById('dp-set-reason');
+            if (reasonEl) reasonEl.textContent = app.match_reason || '';
+            
+            var scoreEl = document.getElementById('dp-set-score');
+            if (scoreEl) scoreEl.textContent = app.match_score != null
+              ? '매칭 점수: ' + (app.match_score * 100).toFixed(0) + '%' : '';
+            
+            var badge = document.getElementById('dp-set-prebuilt-badge');
+            if (badge) badge.style.display = app.is_prebuilt ? 'inline' : 'none';
+            
+            // 적용된 설정값 표시
+            var settingsEl = document.getElementById('dp-set-settings');
+            if (settingsEl && app.applied_settings) {
+              var s = app.applied_settings;
+              var lines = [];
+              if (s.max_positions != null) lines.push('최대포지션: ' + s.max_positions + '개');
+              if (s.stop_loss_rate != null) lines.push('손절: ' + (s.stop_loss_rate * 100).toFixed(1) + '%');
+              if (s.take_profit_rate != null) lines.push('익절: +' + (s.take_profit_rate * 100).toFixed(1) + '%');
+              if (s.new_entry_allowed != null) lines.push('신규매수: ' + (s.new_entry_allowed ? '허용' : '차단'));
+              settingsEl.textContent = lines.join('\n');
+            }
+
+            // 추론 체인 렌더
+            var chainEl = document.getElementById('dp-set-chain');
+            if (chainEl && app) {
+              var regimeColors = {risk_on:'#3fb950', neutral:'#8b9bb4', risk_off:'#f85149', volatile:'#d29922'};
+              var regimeLabels = {risk_on:'Risk On', neutral:'중립', risk_off:'Risk Off', volatile:'변동성'};
+              var rLabel = regimeLabels[app.regime_label] || app.regime_label || '-';
+              var rColor = regimeColors[app.regime_label] || '#8b9bb4';
+              
+              var steps = [
+                {
+                  icon: '🌅',
+                  title: '아침 브리핑',
+                  lines: [
+                    app.vix_value != null ? 'VIX ' + app.vix_value.toFixed(1) : null,
+                    app.kospi_change_pct != null ? 'KOSPI ' + (app.kospi_change_pct >= 0 ? '+' : '') + app.kospi_change_pct.toFixed(2) + '%' : null
+                  ].filter(Boolean)
+                },
+                {
+                  icon: '📊',
+                  title: '레짐 판단',
+                  lines: ['<span style="color:' + rColor + '; font-weight:700;">' + rLabel + '</span>'],
+                  color: rColor
+                },
+                {
+                  icon: '🎯',
+                  title: 'SET 선택',
+                  lines: [
+                    '<span style="font-weight:600;">' + escapeHtml(app.set_name || '-') + '</span>',
+                    app.is_prebuilt ? '<span style="font-size:10px; background:#d29922; color:#000; border-radius:3px; padding:1px 5px;">예측 SET</span>' : ''
+                  ].filter(Boolean)
+                },
+                {
+                  icon: '⚙️',
+                  title: '적용 설정',
+                  lines: (function() {
+                    var s = app.applied_settings || {};
+                    var r = [];
+                    if (s.max_positions != null) r.push('포지션 최대 ' + s.max_positions + '개');
+                    if (s.stop_loss_rate != null) r.push('손절 ' + (s.stop_loss_rate * 100).toFixed(1) + '%');
+                    if (s.take_profit_rate != null) r.push('익절 +' + (s.take_profit_rate * 100).toFixed(1) + '%');
+                    return r;
+                  })()
+                }
+              ];
+              
+              chainEl.innerHTML = steps.map(function(step, i) {
+                var arrow = i < steps.length - 1
+                  ? '<div style="display:flex; align-items:center; padding:0 4px; color:var(--muted); font-size:16px;">→</div>'
+                  : '';
+                return '<div style="flex:1; min-width:120px; background:var(--bg2); border-radius:8px; padding:10px 12px; font-size:12px;">'
+                  + '<div style="font-size:10px; color:var(--muted); margin-bottom:4px;">' + step.icon + ' ' + step.title + '</div>'
+                  + step.lines.map(function(l) { return '<div>' + l + '</div>'; }).join('')
+                  + '</div>' + arrow;
+              }).join('');
+
+              // 전환 이력이 2개 이상이면 미니 타임라인 표시
+              var transitions = setData.transitions || [];
+              if (transitions.length > 1) {
+                var REGIME_COLORS = {risk_on:'#3fb950', neutral:'#8b9bb4', risk_off:'#f85149', volatile:'#d29922'};
+                var miniTimeline = '<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--line);">'
+                  + '<div style="font-size:10px; color:var(--muted); margin-bottom:6px;">오늘 전환 이력 (' + transitions.length + '회)</div>'
+                  + '<div style="display:flex; gap:6px; flex-wrap:wrap;">'
+                  + transitions.map(function(t) {
+                      var rc = REGIME_COLORS[t.regime_label] || '#8b9bb4';
+                      var timeStr = (t.applied_at || t.created_at || '').slice(11, 16);
+                      var isCurrent = t.current_flag === 1 || t.current_flag === true;
+                      return '<div style="font-size:11px; padding:3px 8px; border-radius:12px; '
+                        + 'border:1px solid ' + rc + '; color:' + rc + '; '
+                        + (isCurrent ? 'background:' + rc + '; color:#fff;' : '') + '">'
+                        + timeStr + ' ' + escapeHtml(t.set_name || '-')
+                        + '</div>';
+                    }).join('<span style="color:var(--muted); font-size:12px; align-self:center;">→</span>')
+                  + '</div></div>';
+                chainEl.insertAdjacentHTML('beforeend', miniTimeline);
+              }
+            }
+          }
+        }
+      } catch(e) {
+        console.warn('regime set card load failed:', e);
+      }
     } catch(e) {
       var toneEl = document.getElementById('dp-market-tone');
       var statusEl = document.getElementById('dp-plan-status');
@@ -166,6 +294,161 @@
     var el = document.getElementById('dp-raw-json');
     if (!el) return;
     el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  }
+
+  function loadMorningBrief(tradeDate) {
+    var card = document.getElementById('morningBriefCard');
+    if (!card) return;
+    var url = tradeDate ? '/api/v1/morning-context/today?trade_date=' + tradeDate : '/api/v1/morning-context/today';
+
+    fetch(url)
+      .then(function(res) { return res.json(); })
+      .then(function(json) {
+        if (!json.ok || !json.data) {
+          card.style.display = 'none';
+          return;
+        }
+        var d = json.data;
+        card.style.display = 'block';
+
+        // 날짜
+        var dateEl = document.getElementById('mbDate');
+        if (dateEl) dateEl.textContent = d.trade_date || '';
+
+        // 레짐 배지
+        var regimeEl = document.getElementById('mbRegime');
+        if (regimeEl) {
+          var regimeLabels = {
+            'risk_on': 'Risk On', 'risk_off': 'Risk Off',
+            'neutral': 'Neutral', 'volatile': 'Volatile'
+          };
+          regimeEl.textContent = regimeLabels[d.regime] || d.regime || '-';
+          regimeEl.setAttribute('data-val', d.regime || 'neutral');
+        }
+
+        // 리스크 배지
+        var riskEl = document.getElementById('mbRisk');
+        if (riskEl) {
+          var riskLabels = {
+            'low': 'Low Risk', 'normal': 'Normal',
+            'high': 'High Risk', 'extreme': 'Extreme'
+          };
+          riskEl.textContent = riskLabels[d.risk_level] || d.risk_level || '-';
+          riskEl.setAttribute('data-val', d.risk_level || 'normal');
+        }
+
+        // 시장 수치 그리드
+        var grid = document.getElementById('mbMarketGrid');
+        if (grid && d.market_data) {
+          var marketLabels = {
+            'nasdaq': 'NASDAQ', 'sp500': 'S&P500',
+            'vix': 'VIX', 'usdkrw': 'USD/KRW',
+            'nikkei': '닛케이', 'hangseng': '항셍',
+            'kospi': 'KOSPI', 'oil_wti': 'WTI'
+          };
+          var html = '';
+          var keys = ['nasdaq', 'sp500', 'vix', 'usdkrw', 'nikkei', 'hangseng', 'kospi', 'oil_wti'];
+          keys.forEach(function(k) {
+            var item = d.market_data[k];
+            if (!item) return;
+            var pct = item.change_pct;
+            var dir = pct > 0 ? 'up' : (pct < 0 ? 'down' : 'flat');
+            var arrow = pct > 0 ? '▲' : (pct < 0 ? '▼' : '━');
+            // VIX: 반대 색상 (높을수록 위험)
+            if (k === 'vix') { dir = pct > 0 ? 'down' : (pct < 0 ? 'up' : 'flat'); }
+            html += '<div class="mb-market-item">' +
+              '<span class="mb-market-label">' + (marketLabels[k] || k) + '</span>' +
+              '<span class="mb-market-value ' + dir + '">' +
+                arrow + (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' +
+              '</span>' +
+            '</div>';
+          });
+          grid.innerHTML = html;
+        }
+
+        // 분석 텍스트
+        var charEl = document.getElementById('mbStockChar');
+        if (charEl) charEl.textContent = d.stock_character || '-';
+
+        var hintEl = document.getElementById('mbRulepackHint');
+        if (hintEl) hintEl.textContent = d.rulepack_hint || '-';
+
+        var factorsEl = document.getElementById('mbKeyFactors');
+        if (factorsEl) {
+          var factors = Array.isArray(d.key_factors) ? d.key_factors : [];
+          factorsEl.textContent = factors.length ? factors.join(' · ') : '-';
+        }
+      })
+      .catch(function(err) {
+        console.warn('morning context load failed', err);
+        if (card) card.style.display = 'none';
+      });
+  }
+
+  async function loadTodayRegimeTimeline(tradeDate) {
+    var card = document.getElementById('tc-regime-timeline-card');
+    var timelineEl = document.getElementById('tc-regime-timeline');
+    var badgeEl = document.getElementById('tc-regime-current-badge');
+    if (!card || !timelineEl) return;
+
+    try {
+      var regimeUrl = tradeDate ? '/api/v1/regime/today?trade_date=' + tradeDate : '/api/v1/regime/today';
+      var r = await fetch(regimeUrl);
+      var d = await r.json();
+      if (!d.ok) { card.style.display = 'none'; return; }
+
+      var transitions = d.transitions || [];
+      var current = d.application;
+
+      if (!current && transitions.length === 0) {
+        card.style.display = 'none';
+        return;
+      }
+
+      card.style.display = 'block';
+
+      // 현재 SET 배지
+      if (badgeEl && current) {
+        badgeEl.textContent = current.set_name || '-';
+      }
+
+      // 타임라인
+      var REGIME_COLORS = {risk_on:'#3fb950', neutral:'#8b9bb4', risk_off:'#f85149', volatile:'#d29922'};
+      var TRIGGER_LABELS = {morning: '🌅 아침', intraday: '⚡ 장중'};
+
+      if (transitions.length === 0) {
+        timelineEl.innerHTML = '<div style="color:var(--muted);">전환 이력 없음 — 아침 SET 유지 중</div>';
+      } else {
+        timelineEl.innerHTML = transitions.map(function(t, i) {
+          var rc = REGIME_COLORS[t.regime_label] || '#8b9bb4';
+          var triggerLabel = TRIGGER_LABELS[t.trigger] || t.trigger;
+          var timeStr = (t.applied_at || t.created_at || '').slice(11, 16);  // HH:MM
+          var isCurrent = t.current_flag === 1 || t.current_flag === true;
+          var kp = t.kospi_change_pct;
+          var kpStr = kp != null ? ' KOSPI ' + (kp >= 0 ? '+' : '') + kp.toFixed(2) + '%' : '';
+          var vixStr = t.vix_value != null ? ' VIX ' + t.vix_value.toFixed(1) : '';
+
+          return '<div style="display:flex; gap:10px; align-items:flex-start; padding:6px 0;'
+            + (i < transitions.length - 1 ? ' border-bottom:1px solid var(--line);' : '') + '">'
+            + '<div style="width:40px; flex-shrink:0; font-size:11px; color:var(--muted); padding-top:1px;">' + timeStr + '</div>'
+            + '<div style="width:8px; height:8px; border-radius:50%; background:' + rc + '; flex-shrink:0; margin-top:4px;"></div>'
+            + '<div style="flex:1;">'
+              + '<span style="font-weight:' + (isCurrent ? '700' : '400') + '; color:' + (isCurrent ? 'var(--fg)' : 'var(--muted)') + ';">'
+                + escapeHtml(t.set_name || t.set_id || '-')
+              + '</span>'
+              + ' <span style="font-size:10px; color:' + rc + ';">' + escapeHtml(t.regime_label || '') + '</span>'
+              + (isCurrent ? ' <span style="font-size:10px; background:var(--accent); color:#fff; border-radius:3px; padding:1px 4px;">현재</span>' : '')
+              + '<div style="font-size:11px; color:var(--muted);">'
+                + triggerLabel + kpStr + vixStr
+              + '</div>'
+            + '</div>'
+            + '</div>';
+        }).join('');
+      }
+    } catch(e) {
+      card.style.display = 'none';
+      console.warn('regime timeline load failed:', e);
+    }
   }
 
   /* ── System Status ── */

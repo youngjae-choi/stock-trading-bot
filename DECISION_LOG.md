@@ -1,5 +1,5 @@
 # DECISION_LOG.md — 자동매매 시스템 Architecture Decision Records
-# Dantabot Auto-Trading System · 최종 수정: 2026-05-01
+# Kairos Auto-Trading System · 최종 수정: 2026-05-22
 
 AI Agent 준수 사항: 이 파일에 기록된 결정은 확정된 것이다.
 역방향 변경 시 반드시 PM 승인 후 신규 ADR을 추가한다. 임의 번복 금지.

@@ -32,15 +32,15 @@ def _today_kst() -> str:
 
 
 @router.get("/today")
-async def get_today_orders_api():
-    """오늘 발행된 주문 목록."""
-    trade_date = _today_kst()
+async def get_today_orders_api(trade_date: str | None = Query(default=None)):
+    """오늘 발행된 주문 목록. trade_date를 전달하면 해당 날짜 기준으로 조회한다."""
+    target = trade_date or _today_kst()
     endpoint = "/api/v1/orders/today"
-    logger.info("START: GET %s trade_date=%s", endpoint, trade_date)
+    logger.info("START: GET %s trade_date=%s", endpoint, target)
     try:
-        orders = get_today_orders(trade_date)
+        orders = get_today_orders(target)
         logger.info("SUCCESS: GET %s count=%d", endpoint, len(orders))
-        return {"ok": True, "payload": {"trade_date": trade_date, "orders": orders, "count": len(orders)}}
+        return {"ok": True, "payload": {"trade_date": target, "orders": orders, "count": len(orders)}}
     except Exception as exc:
         logger.error("FAIL: GET %s — %s", endpoint, exc)
         return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})

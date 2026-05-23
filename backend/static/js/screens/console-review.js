@@ -148,6 +148,85 @@
 
   /* 모든 섹션을 한번에 렌더링 — 자연어 5블록 */
   function renderReviewReport(r) {
+    // LLM 복기 카드
+    var llmCard = document.getElementById('ra-llm-review-card');
+    var llmReview = r.llm_review || {};
+    var regimeEval = llmReview.regime_evaluation || {};
+
+    if (llmCard) {
+      var narrative = llmReview.narrative || '';
+      var appliedAt = llmReview.applied_at || '';
+      var appliedSettings = llmReview.applied_settings || [];
+      var evaluation = regimeEval.evaluation || '';
+      var patterns = llmReview.patterns || {};
+      var recs = llmReview.recommendations || [];   // 구형식 fallback
+
+      if (narrative || evaluation || recs.length) {
+        llmCard.style.display = 'block';
+
+        // 적용 시각
+        var atEl = document.getElementById('ra-llm-applied-at');
+        if (atEl && appliedAt) {
+          atEl.textContent = '반영: ' + appliedAt.slice(11, 16) + ' KST';
+        }
+
+        // 레짐 평가 배지
+        var badgeEl = document.getElementById('ra-regime-eval-badge');
+        if (badgeEl) {
+          if (evaluation) {
+            var evalColors = { good: '#3fb950', neutral: '#8b9bb4', bad: '#f85149' };
+            var evalLabels = { good: '✅ 레짐 선택 적절', neutral: '📊 레짐 선택 보통', bad: '⚠️ 레짐 선택 부적절' };
+            var col = evalColors[evaluation] || '#8b9bb4';
+            var label = evalLabels[evaluation] || evaluation;
+            var reason = regimeEval.reason || '';
+            var hint = regimeEval.next_regime_hint || '';
+            badgeEl.innerHTML =
+              '<div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;">'
+              + '<span style="padding:4px 12px; border-radius:20px; background:' + col + '22; color:' + col + '; font-weight:700; font-size:13px;">' + escapeHtml(label) + '</span>'
+              + (hint && hint !== 'same' ? '<span style="font-size:12px; color:var(--muted); align-self:center;">내일 힌트: <strong style="color:var(--fg);">' + escapeHtml(hint) + '</strong></span>' : '')
+              + '</div>'
+              + (reason ? '<div style="font-size:12px; color:var(--muted); margin-top:6px;">' + escapeHtml(reason) + '</div>' : '');
+          } else if (!narrative) {
+            // 구형식: 레짐 평가 없음 안내
+            badgeEl.innerHTML = '<span style="font-size:12px; color:var(--muted);">S10 LLM 분석 전 — 아래 권장사항은 규칙 기반 분석 결과입니다.</span>';
+          }
+        }
+
+        // 서술 (LLM narrative 우선, 없으면 구형식 recommendations fallback)
+        var narrativeEl = document.getElementById('ra-llm-narrative');
+        if (narrativeEl) {
+          if (narrative) {
+            narrativeEl.innerHTML = narrative.split('\n').map(function(line) {
+              return '<div>' + escapeHtml(line) + '</div>';
+            }).join('');
+          } else if (recs.length) {
+            narrativeEl.innerHTML = recs.map(function(rec) {
+              return '<div style="padding:4px 0; border-bottom:1px solid var(--border-faint,#2a2a2a);">' + escapeHtml(rec) + '</div>';
+            }).join('');
+          }
+        }
+
+        // 패턴
+        var patternsEl = document.getElementById('ra-llm-patterns');
+        if (patternsEl) {
+          var winning = patterns.winning || [];
+          var losing = patterns.losing || [];
+          var html = '';
+          if (winning.length) {
+            html += '<div style="margin-bottom:8px;"><span style="color:#3fb950; font-size:11px; font-weight:600;">▲ 승리 패턴</span>'
+              + winning.map(function(p) { return '<div style="margin-left:10px; font-size:12px; color:var(--muted);">• ' + escapeHtml(p) + '</div>'; }).join('') + '</div>';
+          }
+          if (losing.length) {
+            html += '<div><span style="color:#f85149; font-size:11px; font-weight:600;">▼ 손실 패턴</span>'
+              + losing.map(function(p) { return '<div style="margin-left:10px; font-size:12px; color:var(--muted);">• ' + escapeHtml(p) + '</div>'; }).join('') + '</div>';
+          }
+          patternsEl.innerHTML = html;
+        }
+      } else {
+        llmCard.style.display = 'none';
+      }
+    }
+
     var setEl   = function(id, val) { var el = document.getElementById(id); if (el) el.textContent = val != null ? val : '-'; };
     var setHtml = function(id, html) { var el = document.getElementById(id); if (el) el.innerHTML = html; };
 
@@ -171,6 +250,96 @@
     setHtml('ra-nl-missed',   _nlMissed(r));
     setHtml('ra-nl-loss',     _nlLoss(r));
     setHtml('ra-nl-tomorrow', _nlTomorrow(r));
+
+    // BLOCK 6 — 시스템 반영 내역
+    setHtml('ra-nl-settings-applied', _nlSettingsApplied(r));
+
+    // 장중 재선별 이력 비동기 로드
+    if (r.trade_date) {
+      _loadIntradayRefreshForReview(r.trade_date);
+      loadRegimeEvalForReview(r.trade_date);
+    }
+  }
+
+  async function loadRegimeEvalForReview(tradeDate) {
+    var card = document.getElementById('ra-regime-eval');
+    var content = document.getElementById('ra-regime-eval-content');
+    if (!card || !content) return;
+    
+    try {
+      var r = await fetch('/api/v1/regime/day-detail?trade_date=' + encodeURIComponent(tradeDate));
+      var d = await r.json();
+      if (!d.ok || !d.regime_application) {
+        card.style.display = 'none';
+        return;
+      }
+      
+      card.style.display = 'block';
+      var app = d.regime_application;
+      var evalHtml = '';
+      
+      // 평가 내용 (자연어)
+      if (app.eval_summary) {
+        evalHtml += '<div style="margin-bottom:12px; line-height:1.6; color:var(--fg);">' + escapeHtml(app.eval_summary) + '</div>';
+      } else {
+        evalHtml += '<div style="margin-bottom:12px; color:var(--muted);">시스템이 판단한 레짐 적합성 평가가 없습니다.</div>';
+      }
+      
+      // 점수 및 배지
+      var score = Math.round((app.eval_score || 0) * 100);
+      var scoreCls = score >= 80 ? 'good' : (score >= 50 ? 'warn' : 'bad');
+      
+      evalHtml += '<div style="display:flex; align-items:center; gap:16px;">'
+        + '<div>'
+          + '<div style="font-size:11px; color:var(--muted); margin-bottom:2px;">적합성 점수</div>'
+          + '<div class="metric ' + scoreCls + '" style="font-size:24px;">' + score + '점</div>'
+        + '</div>'
+        + '<div style="flex:1; font-size:12px; border-left:1px solid var(--border); padding-left:16px;">'
+          + '<div style="margin-bottom:4px;">적용 SET: <strong>' + escapeHtml(app.set_name || '-') + '</strong></div>'
+          + '<div>판단 레짐: <strong>' + escapeHtml(app.regime_label || '-') + '</strong></div>'
+        + '</div>'
+        + '</div>';
+        
+      content.innerHTML = evalHtml;
+    } catch(e) {
+      console.warn('loadRegimeEvalForReview failed:', e);
+      card.style.display = 'none';
+    }
+  }
+
+  /* 리뷰 화면용 장중 재선별 이력 로드 */
+  async function _loadIntradayRefreshForReview(tradeDate) {
+    var el = document.getElementById('ra-nl-intraday');
+    if (!el) return;
+    try {
+      var res = await fetchJson('/api/v1/funnel/intraday-refresh?date=' + encodeURIComponent(tradeDate));
+      var history = (res.payload && res.payload.history) ? res.payload.history : [];
+      if (!history.length) {
+        el.innerHTML = '<p class="muted">해당 날짜 장중 재선별 이력이 없습니다.</p>';
+        el.closest('.card') && (el.closest('[data-ra-intraday]') || el.parentElement.parentElement).style && '';
+        return;
+      }
+      var triggered = history.filter(function(h) { return h.triggered; });
+      var ran = history.filter(function(h) { return h.ran; });
+      var summary = ran.length + '회 시도 / ' + triggered.length + '회 재선별 실행';
+      var rows = history.map(function(h) {
+        var trigBadge = h.triggered
+          ? '<span class="status warn">재선별</span>'
+          : (h.ran ? '<span class="status info">스킵</span>' : '<span style="color:var(--muted);">미실행</span>');
+        var avg = h.avg_change != null ? (h.avg_change >= 0 ? '+' : '') + h.avg_change.toFixed(2) + '%' : '-';
+        var resel = h.reselection;
+        var newCandidates = resel && resel.s4 ? resel.s4.output_count : null;
+        var detail = h.triggered && newCandidates != null ? ' 신규 후보 ' + newCandidates + '종목' : '';
+        return '<p style="font-size:12px; padding-left:8px;">'
+          + '· <strong>' + escapeHtml(h.slot || '-') + '</strong> ' + trigBadge
+          + ' <span style="color:var(--muted);">' + escapeHtml(avg) + (detail ? ' →' + detail : '') + '</span>'
+          + (h.reason ? '<br><span style="color:var(--muted);padding-left:12px;font-size:11px;">' + escapeHtml(h.reason.slice(0, 120)) + '</span>' : '')
+          + '</p>';
+      }).join('');
+      el.innerHTML = '<p>' + escapeHtml(summary) + '</p>' + rows;
+    } catch (e) {
+      el.innerHTML = '<p class="muted">재선별 이력 조회 실패: ' + escapeHtml(e.message || '') + '</p>';
+    }
   }
 
   /* 시장 톤 한국어 변환 */
@@ -209,7 +378,7 @@
 
     // 장 시황 — AI 생성 요약 우선, 없으면 tone 코드로 폴백
     if (ta.summary) {
-      lines.push('<p><strong>📊 장 시황:</strong> ' + escapeHtml(ta.summary) + '</p>');
+      lines.push('<p><strong>[장 시황]</strong> ' + escapeHtml(ta.summary) + '</p>');
     } else {
       var toneLabel = _toneKr(ta.tone || r.market_tone);
       lines.push('<p>오늘 시장은 <strong>' + escapeHtml(toneLabel) + '</strong>이었습니다.</p>');
@@ -223,7 +392,7 @@
 
     // 전략 설정 — AI llm_summary 우선, 없으면 intensity+rulepack 폴백
     if (dp.llm_summary) {
-      lines.push('<p><strong>🎯 오늘의 전략:</strong> ' + escapeHtml(dp.llm_summary) + '</p>');
+      lines.push('<p><strong>[오늘 전략]</strong> ' + escapeHtml(dp.llm_summary) + '</p>');
     } else {
       var intensity = _intensityKr(dp.trading_intensity);
       var baseRp    = dp.base_rulepack_id || r.rulepack_id;
@@ -240,7 +409,7 @@
       var oDesc = oKeys.map(function(k) {
         return '<code>' + escapeHtml(k) + '</code>: ' + escapeHtml(String(overrides[k]));
       }).join(', ');
-      lines.push('<p>⚙️ 오늘 적용된 파라미터 조정: ' + oDesc + '</p>');
+      lines.push('<p>오늘 적용된 파라미터 조정: ' + oDesc + '</p>');
     }
 
     // 주문 현황
@@ -252,7 +421,7 @@
     }
 
     if (warns.length) {
-      lines.push('<p style="color:var(--yellow,#e3b341)">⚠ 체결 데이터 무결성 경고 ' + warns.length + '건 — 손익 수치가 부정확할 수 있습니다.</p>');
+      lines.push('<p style="color:var(--yellow,#e3b341)">⚠ 무결성 경고 ' + warns.length + '건 — 손익 수치가 부정확할 수 있습니다.</p>');
     }
 
     return lines.join('');
@@ -369,7 +538,7 @@
 
     // AI 사전 제외 종목 (daily_plan.excluded_symbols — 장 시작 전 AI 판단)
     if (excluded.length) {
-      lines.push('<p><strong>📋 장 시작 전 AI 제외 종목 (' + excluded.length + '건):</strong></p>');
+      lines.push('<p><strong>[장전 AI 제외] (' + excluded.length + '건)</strong></p>');
       excluded.forEach(function(e) {
         var reason = e.reason || e.excluded_reason || null;
         lines.push('<p style="font-size:12px;padding-left:12px">'
@@ -381,7 +550,7 @@
 
     // 런타임 미진입 (스크리닝 통과 후 실제 주문 미체결)
     if (missed.length) {
-      lines.push('<p style="margin-top:10px"><strong>⏱ 스크리닝 통과 후 미진입 (' + missed.length + '건):</strong></p>');
+      lines.push('<p style="margin-top:10px"><strong>[미진입] 스크리닝 통과 후 미진입 (' + missed.length + '건)</strong></p>');
       var byStage = {};
       missed.forEach(function(m) {
         var s = m.missed_stage || m.source || '미분류';
@@ -401,7 +570,7 @@
       });
     }
 
-    lines.push('<p style="color:var(--yellow,#e3b341);margin-top:8px">✍ 반성: 제외된 종목의 실제 등락을 확인하고, 진입 조건이 너무 좁게 설정된 것은 아닌지 검토하세요.</p>');
+    lines.push('<p style="color:var(--yellow,#e3b341);margin-top:8px">[반성] 제외된 종목의 실제 등락을 확인하고, 진입 조건이 너무 좁게 설정된 것은 아닌지 검토하세요.</p>');
     return lines.join('');
   }
 
@@ -412,7 +581,7 @@
     var assignments = dp.symbol_assignments || [];
 
     if (!fp.length) {
-      return '<p class="good">✓ 오늘은 손실 거래가 없었습니다.</p>';
+      return '<p class="good">오늘은 손실 거래가 없었습니다.</p>';
     }
 
     // symbol → AI 진입 판단 맵
@@ -474,7 +643,7 @@
     if (lowConf)      reflections.push('confidence가 낮은 종목을 진입하고 있습니다 — 임계값 상향을 권장합니다.');
     if (!reflections.length) reflections.push('패턴이 뚜렷하지 않습니다 — AI 진입 판단과 실제 결과의 괴리를 분석하세요.');
 
-    lines.push('<p style="color:var(--red,#f85149);margin-top:8px">✍ 반성 포인트: ' + reflections.join(' / ') + '</p>');
+    lines.push('<p style="color:var(--red,#f85149);margin-top:8px">[반성] ' + reflections.join(' / ') + '</p>');
     return lines.join('');
   }
 
@@ -529,19 +698,19 @@
         return '<code>' + escapeHtml(k) + '=' + escapeHtml(String(overrides[k])) + '</code>';
       }).join(', ');
       if (winRate >= 0.6) {
-        add('✅ <strong>오늘 파라미터 조정 효과 확인</strong> — ' + oDesc
+        add('<strong>오늘 파라미터 조정 효과 확인</strong> — ' + oDesc
           + ' 설정으로 승률 ' + Math.round(winRate * 100) + '% 달성. 다음 거래일도 유지 권장.');
         // 유효했던 override 그대로 추천
         oKeys.forEach(function(k) { recommend(k, overrides[k]); });
       } else if (completed.length > 0 && winRate < 0.5) {
-        add('⚙️ <strong>파라미터 조정 재검토</strong> — 오늘 적용한 ' + oDesc
+        add('<strong>파라미터 조정 재검토</strong> — 오늘 적용한 ' + oDesc
           + ' 에도 불구하고 승률 ' + Math.round(winRate * 100) + '%. 원래 설정 복원 검토.');
       }
     }
 
     // 리스크 요인 (정보성, override 없음)
     if (riskFactors.length) {
-      add('⚠️ <strong>다음 거래일 리스크 요인:</strong> '
+      add('<strong>다음 거래일 리스크 요인:</strong> '
         + riskFactors.map(function(f) { return escapeHtml(f); }).join(' / '));
     }
 
@@ -549,97 +718,142 @@
     if (fp.length >= 3 && avgConf != null && avgConf < 0.5) {
       var rec = Math.ceil((avgConf + 0.07) * 20) * 5 / 100;  // 0.xx 형태
       recommend('min_confidence', rec);
-      add('⚙️ <strong>confidence 임계값 상향</strong> — 손실 ' + fp.length + '건 평균 진입 confidence <strong>'
+      add('<strong>confidence 임계값 상향</strong> — 손실 ' + fp.length + '건 평균 진입 confidence <strong>'
         + (avgConf * 100).toFixed(0) + '%</strong>. <code>min_confidence → '
         + (rec * 100).toFixed(0) + '%</code> 적용 권장.');
     } else if (fp.length >= 2) {
-      add('🔍 <strong>진입 필터 재검토</strong> — 손실 ' + fp.length + '건. S3/S4 파라미터 점검 필요.');
+      add('<strong>진입 필터 재검토</strong> — 손실 ' + fp.length + '건. S3/S4 파라미터 점검 필요.');
     } else if (fp.length === 1) {
-      add('📌 <strong>손실 종목 개별 확인</strong> — 단발 변수 가능성. 종목 뉴스·재무지표 재검토.');
+      add('<strong>손실 종목 개별 확인</strong> — 단발 변수 가능성. 종목 뉴스·재무지표 재검토.');
     }
 
     // EOD 청산 집중 → stop_loss_pct 추천
     if (eodAll && fp.length > 0) {
       recommend('stop_loss_pct', -0.06);
-      add('⚙️ <strong>장중 손절 조건 추가</strong> — 손실 전 건 EOD 청산. <code>stop_loss_pct → -6%</code> 적용 권장.');
+      add('<strong>장중 손절 조건 추가</strong> — 손실 전 건 EOD 청산. <code>stop_loss_pct → -6%</code> 적용 권장.');
     } else if (eodAll && completed.length > 3) {
-      add('⚙️ <strong>익절 조건 점검</strong> — 완료 거래 전 건 EOD 청산. <code>take_profit_pct</code> 재확인 권장.');
+      add('<strong>익절 조건 점검</strong> — 완료 거래 전 건 EOD 청산. <code>take_profit_pct</code> 재확인 권장.');
     }
 
     // 놓친 기회
     if (missed.length > 3) {
-      add('🔍 <strong>스크리닝 조건 완화 검토</strong> — 미진입 ' + missed.length + '건. S3/S4 필터 재검토.');
+      add('<strong>스크리닝 조건 완화 검토</strong> — 미진입 ' + missed.length + '건. S3/S4 필터 재검토.');
     }
 
     // 좋은 성과 — override 없음
     if (fp.length === 0 && winRate >= 0.7) {
-      add('✅ <strong>현재 전략 유지</strong> — 승률 ' + Math.round(winRate * 100) + '%, 손실 없음. 변경 불필요.');
+      add('<strong>현재 전략 유지</strong> — 승률 ' + Math.round(winRate * 100) + '%, 손실 없음. 변경 불필요.');
     } else if (fp.length <= 1 && winRate >= 0.5) {
-      add('📊 <strong>전략 유지 + 모니터링</strong> — 승률 ' + Math.round(winRate * 100) + '% 양호. 추가 데이터 축적 중.');
+      add('<strong>전략 유지 + 모니터링</strong> — 승률 ' + Math.round(winRate * 100) + '% 양호. 추가 데이터 축적 중.');
     }
 
     // 무결성 경고
     if (warns.length) {
-      add('🔴 <strong>체결 데이터 점검 필수</strong> — 무결성 경고 ' + warns.length + '건. fills 테이블 / KIS 체결 대조 후 재집계.');
+      add('<strong>체결 데이터 점검 필수</strong> — 무결성 경고 ' + warns.length + '건. fills 테이블 / KIS 체결 대조 후 재집계.');
     }
 
     if (!items.length) {
-      items.push('<p class="good">✅ 특이사항 없음 — 현재 설정을 유지하세요.</p>');
-    }
-
-    // 적용 버튼 표시 여부 결정
-    var applyBtn = document.getElementById('ra-apply-btn');
-    if (applyBtn) {
-      if (Object.keys(_raRecommendedOverrides).length > 0 && nextDay) {
-        applyBtn.style.display = '';
-        applyBtn.dataset.nextDay = nextDay;
-      } else {
-        applyBtn.style.display = 'none';
-      }
+      items.push('<p class="good">특이사항 없음 — 현재 설정을 유지하세요.</p>');
     }
 
     return items.join('');
   }
 
-  /* "다음 거래일에 적용" 버튼 핸들러 */
-  async function applyNextDayOverrides() {
-    var overrides = _raRecommendedOverrides;
-    var btn = document.getElementById('ra-apply-btn');
-    var nextDay = btn ? btn.dataset.nextDay : null;
+  /* ── BLOCK 6 — 시스템 반영 내역 ── */
+  function _nlSettingsApplied(r) {
+    var llmReview = r.llm_review || {};
+    var appliedSettings = llmReview.applied_settings || [];
+    var appliedAt = llmReview.applied_at || '';
+    var badgeEl = document.getElementById('ra-settings-applied-badge');
+    var section = document.getElementById('ra-settings-applied-section');
 
-    if (!nextDay || !Object.keys(overrides).length) {
-      alert('적용할 파라미터 추천값이 없습니다.');
-      return;
+    if (appliedSettings.length) {
+      if (badgeEl) badgeEl.textContent = '자동 반영 ' + appliedSettings.length + '건' + (appliedAt ? ' · ' + appliedAt.slice(11,16) : '');
+      if (section) section.style.display = 'block';
+      return '<div>' + appliedSettings.map(function(s) {
+        return '<div style="font-size:12px; padding:4px 0; border-bottom:1px solid var(--line);">'
+          + '• ' + escapeHtml(s) + '</div>';
+      }).join('') + '</div>';
     }
 
-    var desc = Object.keys(overrides).map(function(k) {
-      return k + ' = ' + overrides[k];
-    }).join('\n');
-    if (!confirm(nextDay + ' 거래일에 아래 파라미터를 적용할까요?\n\n' + desc)) return;
-
-    try {
-      btn.disabled = true;
-      btn.textContent = '적용 중...';
-      var res = await fetch('/api/v1/review-audit/apply-overrides', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ trade_date: nextDay, overrides: overrides }),
-      });
-      var data = await res.json();
-      if (res.ok && data.ok) {
-        btn.textContent = '✓ 적용 완료';
-        btn.disabled = true;
-        showToast(nextDay + ' 파라미터 override 저장 완료');
-      } else {
-        btn.disabled = false;
-        btn.textContent = '다음 거래일에 적용 ↗';
-        showToast('적용 실패: ' + (data.detail || 'unknown'), 'error');
-      }
-    } catch (e) {
-      btn.disabled = false;
-      btn.textContent = '다음 거래일에 적용 ↗';
-      showToast('오류: ' + e.message, 'error');
+    // old_value == new_value인 항목(실제 변경 없음) 필터링
+    var changes = (r.settings_changes || []).filter(function(c) {
+      if (c.old_value === null || c.old_value === undefined) return true;
+      return String(c.old_value) !== String(c.new_value);
+    });
+    if (section) section.style.display = changes.length ? 'block' : 'none';
+    if (!changes.length) {
+      return '<p class="muted">자동 반영된 설정 없음.</p>';
     }
+
+    // actor별 표시 이름 매핑
+    function actorLabel(actor) {
+      if (!actor) return '시스템';
+      if (actor === 's10_auto') return 'S10 자동반영';
+      if (actor === 'ghost_timing_upgrade') return '귀신타이밍 전략 업그레이드';
+      if (actor.startsWith('pm_manual')) return 'PM 수동 변경';
+      if (actor === 'admin') return '관리자';
+      if (actor.startsWith('scheduler')) return '스케줄러';
+      return actor;
+    }
+
+    // 키 설명 매핑
+    function keyLabel(key) {
+      var m = {
+        'engine.min_confidence_floor': 'AI 신뢰도 최소 기준',
+        'engine.min_price_change_pct': '최소 등락률',
+        'engine.max_price_change_pct': '최대 등락률',
+        'engine.min_volume_ratio': '최소 거래량 비율',
+        'engine.entry_start_time': '진입 시작 시간',
+        'engine.entry_end_time': '진입 종료 시간',
+        'override_stop_loss_rate': '손절 기준',
+        'override_trailing_activate_rate': '트레일링 활성화 기준',
+        'override_trailing_stop_rate': '트레일링 손절폭',
+        'risk.daily_loss_limit_percent': '일일 손실 한도',
+        'risk.max_positions': '최대 보유 종목 수',
+      };
+      return m[key] || key;
+    }
+
+    function fmtVal(v) {
+      if (v === null || v === undefined) return '-';
+      if (typeof v === 'number' && v < 1 && v > -1 && v !== 0) return (v * 100).toFixed(1) + '%';
+      return String(v);
+    }
+
+    function fmtTime(iso) {
+      if (!iso) return '';
+      try {
+        var d = new Date(iso);
+        return (d.getMonth()+1) + '/' + d.getDate() + ' ' +
+          String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+      } catch(e) { return iso.slice(11,16); }
+    }
+
+    var rows = changes.map(function(c) {
+      var oldV = fmtVal(c.old_value);
+      var newV = fmtVal(c.new_value);
+      var arrow = oldV === '-' ? '' : oldV + ' → ';
+      var actorBadge = '<span style="font-size:10px;color:var(--muted);background:var(--panel-2);padding:1px 5px;border-radius:3px;">' + escapeHtml(actorLabel(c.actor)) + '</span>';
+      var timeStr = fmtTime(c.changed_at);
+      return '<tr>'
+        + '<td style="padding:6px 8px 6px 0; color:var(--muted); font-size:11px;">' + escapeHtml(timeStr) + '</td>'
+        + '<td style="padding:6px 8px;">' + escapeHtml(keyLabel(c.key)) + '<br><span style="font-size:10px;color:var(--muted);">' + escapeHtml(c.key) + '</span></td>'
+        + '<td style="padding:6px 8px; font-weight:600;">' + escapeHtml(arrow) + '<strong style="color:var(--green);">' + escapeHtml(newV) + '</strong></td>'
+        + '<td style="padding:6px 0;">' + actorBadge + '</td>'
+        + '</tr>'
+        + (c.reason ? '<tr><td></td><td colspan="3" style="padding:0 8px 8px; font-size:11px; color:var(--muted);">' + escapeHtml(c.reason) + '</td></tr>' : '');
+    }).join('');
+
+    return '<table style="width:100%; border-collapse:collapse;">'
+      + '<thead><tr>'
+      + '<th style="text-align:left;padding:4px 8px 4px 0;font-size:11px;color:var(--muted);">시각</th>'
+      + '<th style="text-align:left;padding:4px 8px;font-size:11px;color:var(--muted);">설정 항목</th>'
+      + '<th style="text-align:left;padding:4px 8px;font-size:11px;color:var(--muted);">변경 값</th>'
+      + '<th style="text-align:left;padding:4px 0;font-size:11px;color:var(--muted);">반영 주체</th>'
+      + '</tr></thead>'
+      + '<tbody>' + rows + '</tbody>'
+      + '</table>';
   }
 
   /* 간이 Markdown → HTML 변환기 */
@@ -760,20 +974,13 @@
       + String(today.getDate()).padStart(2, '0');
     var targetDate = (input && input.value) ? input.value : defaultDate;
 
-    if (!confirm(targetDate + ' S10 Review & Audit + S11 Learning Memory를 실행할까요?')) return;
+    if (!confirm(targetDate + ' S10 Review & Audit를 실행할까요?')) return;
     try {
-      // S10 실행
       await fetch('/api/v1/review-audit/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ date: targetDate }),
       });
-      // S11 실행 (실패해도 S10 결과는 표시)
-      try {
-        await fetch('/api/v1/learning-memory/build', { method: 'POST' });
-      } catch (e11) {
-        console.warn('S11 Learning Memory 실행 실패 (무시):', e11.message);
-      }
       await _loadReviewByDateStr(targetDate);
     } catch (e) {
       alert('실행 실패: ' + e.message);
@@ -816,37 +1023,6 @@
       const pnl = data.avg_pnl != null ? (data.avg_pnl * 100).toFixed(2) + '%' : '—';
       return `<tr><td>${reason}</td><td>${data.count || 0}</td><td>${pnl}</td></tr>`;
     }).join('');
-  }
-
-  async function buildLearningMemory() {
-    const btn = document.getElementById('ra-build-memory-btn');
-    if (btn) { btn.disabled = true; btn.textContent = '생성 중...'; }
-    try {
-      const res  = await fetch('/api/v1/learning-memory/build', { method: 'POST' });
-      const data = await res.json();
-      if (res.ok && data.ok) {
-        showToast('Learning Memory 생성 완료');
-        await loadReviewAuditData();
-      } else {
-        showToast('생성 실패: ' + (data.detail || (data.payload && data.payload.reason) || 'unknown'), 'error');
-      }
-    } catch (e) {
-      showToast('오류: ' + e.message, 'error');
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = 'S11 Learning Memory 생성'; }
-    }
-  }
-
-  async function runTestS11() {
-    const result = document.getElementById('test-s11-result');
-    if (result) { result.style.display = 'block'; result.textContent = '실행 중...'; }
-    try {
-      const res  = await fetch('/api/v1/learning-memory/build', { method: 'POST' });
-      const data = await res.json();
-      if (result) result.textContent = JSON.stringify(data.payload || data, null, 2);
-    } catch (e) {
-      if (result) result.textContent = '오류: ' + e.message;
-    }
   }
 
   /* ── Statistics ── */

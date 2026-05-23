@@ -16,7 +16,7 @@ function envValue(key, fallback = '') {
 
 async function login(page) {
   await page.goto(`${backendUrl}/console`, { waitUntil: 'domcontentloaded', timeout: 20_000 });
-  await expect(page.getByRole('heading', { name: 'Dantabot Control Console' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Kairos Control Console' })).toBeVisible();
   await page.locator('#loginUsername').fill(envValue('APP_ADMIN_USERNAME', 'admin'));
   await page.locator('#loginPassword').fill(envValue('APP_ADMIN_PASSWORD'));
   await page.getByRole('button', { name: '로그인' }).click();

@@ -340,7 +340,7 @@ test('Console shell loads extracted assets without browser runtime errors', asyn
     '/static/js/console-main.js',
   ];
 
-  await expect(page.getByRole('heading', { name: 'Dantabot Control Console' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Kairos Control Console' })).toBeVisible();
   await expect(page.locator('link[href="/static/css/console.css"]')).toHaveCount(1);
   await expect(page.locator('script[src="/static/js/console.js"]')).toHaveCount(0);
   await expect(page.locator('[onclick], [onchange]')).toHaveCount(0);

@@ -173,6 +173,44 @@ def _get_market_tone(trade_date: str) -> dict[str, Any] | None:
     return None
 
 
+def _get_morning_context(trade_date: str) -> dict[str, Any]:
+    """morning_context 테이블에서 오늘 시장 컨텍스트를 로드한다. 없으면 빈 dict."""
+    try:
+        from .market_tone import get_today_morning_context
+        ctx = get_today_morning_context(trade_date)
+        return ctx if ctx else {}
+    except Exception as exc:
+        logger.warning("WARN: RulePackGen morning_context 로드 실패 — %s", exc)
+        return {}
+
+
+def _format_morning_context_for_prompt(ctx: dict[str, Any]) -> str:
+    """morning_context를 LLM 프롬프트용 텍스트로 변환한다."""
+    if not ctx:
+        return "데이터 없음"
+    lines = [
+        f"시장 레짐: {ctx.get('regime', 'N/A')}",
+        f"리스크 레벨: {ctx.get('risk_level', 'N/A')}",
+        f"주도 종목 성격: {ctx.get('stock_character', 'N/A')}",
+        f"RulePack 힌트: {ctx.get('rulepack_hint', 'N/A')}",
+    ]
+    mdata = ctx.get("market_data", {})
+    if isinstance(mdata, dict):
+        for k, label in [("nasdaq", "NASDAQ"), ("sp500", "S&P500"), ("vix", "VIX"),
+                         ("nikkei", "닛케이"), ("hangseng", "항셍"), ("usdkrw", "USD/KRW")]:
+            item = mdata.get(k)
+            if item and isinstance(item, dict):
+                pct = float(item.get("change_pct") or 0.0)
+                lines.append(f"  {label}: {item.get('price')} ({pct:+.2f}%)")
+    key_factors = ctx.get("key_factors", [])
+    if key_factors:
+        lines.append(f"핵심 요인: {', '.join(str(item) for item in key_factors)}")
+    risk_factors = ctx.get("risk_factors", [])
+    if risk_factors:
+        lines.append(f"리스크 요인: {', '.join(str(item) for item in risk_factors)}")
+    return "\n".join(lines)
+
+
 def _get_yesterday_rulepack(today: str) -> dict[str, Any] | None:
     """오늘 기준 전일 날짜의 활성 RulePack을 조회한다."""
     from datetime import date, timedelta
@@ -189,6 +227,7 @@ def _build_prompt(
     market_tone: dict[str, Any] | None,
     screening: dict[str, Any] | None,
     yesterday_rulepack: dict[str, Any] | None,
+    morning_context: dict[str, Any] | None = None,
 ) -> str:
     """0845_gpt_rulepack_generation.md 기반으로 LLM 입력 프롬프트를 빌드한다."""
     if market_tone:
@@ -210,12 +249,15 @@ def _build_prompt(
     else:
         yesterday_str = "{}"
 
+    morning_context_text = _format_morning_context_for_prompt(morning_context or {})
+
     return render_prompt(
         "0845_gpt_rulepack_generation.md",
         {
             "market_tone": market_tone_str,
             "screening_output": screening_str,
             "yesterday_rulepack": yesterday_str,
+            "morning_context": morning_context_text,
         },
     )
 
@@ -332,7 +374,8 @@ async def run_rulepack_generation() -> dict[str, Any]:
     market_tone = _get_market_tone(today)
     yesterday_rulepack = _get_yesterday_rulepack(today)
     pm_settings = _load_pm_settings()
-    prompt = _build_prompt(market_tone, screening, yesterday_rulepack)
+    morning_ctx = _get_morning_context(today)
+    prompt = _build_prompt(market_tone, screening, yesterday_rulepack, morning_ctx)
 
     llm_result = await llm_router.call_llm(prompt, task_name="RulePack 생성")
     provider = llm_result.get("provider", "none")
@@ -397,3 +440,45 @@ async def run_rulepack_generation() -> dict[str, Any]:
 def get_today_rulepack(trade_date: str) -> dict[str, Any] | None:
     """지정 거래일의 활성 RulePack을 반환한다."""
     return get_active_rulepack_for_date(trade_date)
+
+
+def get_active_rulepack(trade_date: str) -> dict[str, Any] | None:
+    """특정 날짜의 active/validated RulePack을 조회해 분석 스냅샷용 dict로 반환한다.
+
+    Args:
+        trade_date: 조회할 거래일(YYYY-MM-DD).
+    """
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT rulepack_id, status, machine_rules, created_at, activated_at
+                FROM rulepacks
+                WHERE trade_date = ? AND status IN ('active', 'validated')
+                ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, created_at DESC
+                LIMIT 1
+                """,
+                (trade_date,),
+            ).fetchone()
+        if row is None:
+            return None
+        record = dict(row)
+        machine_rules = record.get("machine_rules")
+        if isinstance(machine_rules, str):
+            record["machine_rules"] = json.loads(machine_rules)
+        if isinstance(record.get("machine_rules"), dict):
+            merged = dict(record["machine_rules"])
+            merged.update(
+                {
+                    "rulepack_id": record.get("rulepack_id", ""),
+                    "status": record.get("status", ""),
+                    "created_at": record.get("created_at", ""),
+                    "activated_at": record.get("activated_at"),
+                    "machine_rules": record["machine_rules"],
+                }
+            )
+            return merged
+        return record
+    except Exception as exc:
+        logger.warning("WARN: RulePackGenerationService active rulepack 조회 실패 trade_date=%s error=%s", trade_date, exc)
+        return None

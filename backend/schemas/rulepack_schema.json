@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://dantabot.local/schemas/rulepack_schema.json",
+  "$id": "https://kairos.local/schemas/rulepack_schema.json",
   "title": "RulePack Schema v1.0",
   "description": "GPT가 생성하는 일일 RulePack의 검증 스키마. 검증 게이트 1단(Schema Validator)이 사용한다. ADR-001, ADR-004, ADR-008 참조.",
   "type": "object",

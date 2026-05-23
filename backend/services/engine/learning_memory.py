@@ -171,25 +171,50 @@ def _build_false_positive_memory(
         expires_at: Expiration date for short-lived operational memory.
     """
     symbol = str(case.get("symbol") or "")
+    symbol_name = str(case.get("symbol_name") or symbol)
+    fp_type = str(case.get("false_positive_type") or "entry_fail")
+    pnl_pct = case.get("pnl_pct")
+    confidence = case.get("original_confidence")
+    loss_reason = str(case.get("loss_reason") or "")
+    exit_reason = str(case.get("exit_reason") or "")
+    profile = str(case.get("assigned_profile") or "-")
+
+    # LLM이 읽기 쉬운 자연어 요약
+    pnl_str = f"{pnl_pct:+.1f}%" if pnl_pct is not None else "손익미상"
+    conf_str = f"{confidence:.2f}" if confidence is not None else "-"
+    summary = (
+        f"[{trade_date}] {symbol_name}({symbol}) 손실 진입 ({pnl_str}). "
+        f"유형: {fp_type}, confidence: {conf_str}, 프로파일: {profile}. "
+        f"손실 원인: {loss_reason[:120] if loss_reason else '미상'}."
+    )
+
     return _make_memory(
         trade_date=trade_date,
         scope="S4_HYBRID_SCREENING",
         category="false_positive",
-        summary=f"False positive {symbol or 'unknown'} type={case.get('false_positive_type') or 'unknown'}.",
+        summary=summary,
         evidence={
             "symbol": symbol,
-            "symbol_name": case.get("symbol_name", ""),
-            "false_positive_type": case.get("false_positive_type", ""),
+            "symbol_name": symbol_name,
+            "false_positive_type": fp_type,
+            "pnl_pct": pnl_pct,
+            "pnl_amount": case.get("pnl_amount"),
             "original_score": case.get("original_score"),
-            "original_confidence": case.get("original_confidence"),
-            "assigned_profile": case.get("assigned_profile"),
-            "loss_reason": case.get("loss_reason", ""),
-            "exit_reason": case.get("exit_reason", ""),
+            "original_confidence": confidence,
+            "assigned_profile": profile,
+            "buy_price": case.get("buy_price"),
+            "sell_price": case.get("sell_price"),
+            "loss_reason": loss_reason,
+            "exit_reason": exit_reason,
             "suggested_penalty": case.get("suggested_penalty"),
         },
         recommendation={
-            "action": "penalize_similar_context_in_review",
-            "rag_usage": "다음 S4/S5 판단의 참고 컨텍스트이며 모델 자체 학습이 아님",
+            "action": "penalize_similar_context_in_screening",
+            "guidance": (
+                f"{symbol_name}와 유사한 패턴(confidence {conf_str}, {fp_type})이 "
+                f"발견되면 suitability_score를 낮게 평가한다."
+            ),
+            "rag_usage": "S4 스크리닝 LLM 컨텍스트 — 동일 종목 또는 유사 패턴 재진입 경계",
             "target_stage": "S4_HYBRID_SCREENING",
         },
         auto_apply_allowed=False,

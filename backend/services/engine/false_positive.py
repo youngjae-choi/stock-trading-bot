@@ -51,17 +51,37 @@ def _validate_required(**values: Any) -> None:
 
 
 def _ensure_fp_pnl_columns() -> None:
-    """Ensure buy_price/sell_price/pnl columns exist (migration for existing DBs)."""
+    """Ensure buy_price/sell_price/pnl/reviewed_at columns exist (migration for existing DBs)."""
     with get_connection() as conn:
         existing = {row[1] for row in conn.execute("PRAGMA table_info(false_positive_cases)").fetchall()}
         for col, stmt in [
-            ("buy_price",  "ALTER TABLE false_positive_cases ADD COLUMN buy_price  REAL"),
-            ("sell_price", "ALTER TABLE false_positive_cases ADD COLUMN sell_price REAL"),
-            ("pnl_amount", "ALTER TABLE false_positive_cases ADD COLUMN pnl_amount REAL"),
-            ("pnl_pct",    "ALTER TABLE false_positive_cases ADD COLUMN pnl_pct    REAL"),
+            ("buy_price",   "ALTER TABLE false_positive_cases ADD COLUMN buy_price   REAL"),
+            ("sell_price",  "ALTER TABLE false_positive_cases ADD COLUMN sell_price  REAL"),
+            ("pnl_amount",  "ALTER TABLE false_positive_cases ADD COLUMN pnl_amount  REAL"),
+            ("pnl_pct",     "ALTER TABLE false_positive_cases ADD COLUMN pnl_pct     REAL"),
+            ("reviewed_at", "ALTER TABLE false_positive_cases ADD COLUMN reviewed_at TEXT"),
         ]:
             if col not in existing:
                 conn.execute(stmt)
+
+
+def mark_false_positive_reviewed(fp_id: str) -> bool:
+    """False positive 케이스를 '확인 완료'로 표시한다 (화면에서 숨김).
+
+    Args:
+        fp_id: false_positive_cases.id
+
+    Returns:
+        True if updated, False if not found.
+    """
+    from datetime import datetime
+    reviewed_at = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
+    with get_connection() as conn:
+        result = conn.execute(
+            "UPDATE false_positive_cases SET reviewed_at=? WHERE id=?",
+            (reviewed_at, fp_id),
+        )
+        return result.rowcount > 0
 
 
 def _summarize_rule_matched(rule_matched_json: str) -> str:
@@ -178,20 +198,23 @@ def get_today_false_positives(trade_date: str) -> list[dict]:
     return [_row_to_dict(row) for row in rows]
 
 
-def get_false_positives(start_date: str, end_date: str) -> list[dict]:
+def get_false_positives(start_date: str, end_date: str, include_reviewed: bool = False) -> list[dict]:
     """날짜 범위 내 false positive 케이스를 최신순으로 반환한다.
 
     Args:
         start_date: YYYY-MM-DD 시작일.
         end_date: YYYY-MM-DD 종료일.
+        include_reviewed: True이면 확인 완료된 케이스도 포함 (기본: 미확인만).
     """
-    logger.info("START: FalsePositive range start=%s end=%s", start_date, end_date)
+    logger.info("START: FalsePositive range start=%s end=%s include_reviewed=%s", start_date, end_date, include_reviewed)
     _ensure_fp_pnl_columns()
+    reviewed_clause = "" if include_reviewed else "AND (reviewed_at IS NULL)"
     with get_connection() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT * FROM false_positive_cases
             WHERE trade_date >= ? AND trade_date <= ?
+            {reviewed_clause}
             ORDER BY trade_date DESC, created_at DESC
             """,
             (start_date, end_date),

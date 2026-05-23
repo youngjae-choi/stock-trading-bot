@@ -8,6 +8,7 @@
     }
     renderTodayFeed();
     updateLastTime();
+    window._lastConsoleDataTs = Date.now();
     loadConsoleData();
 
     var savedScreen = sessionStorage.getItem('currentScreen');

@@ -23,7 +23,7 @@ from ..config import settings
 from .db import get_connection
 
 logger = logging.getLogger("BackendAuthService")
-SESSION_COOKIE_NAME = "dantabot_session"
+SESSION_COOKIE_NAME = "kairos_session"
 _HASH_ITERATIONS = 260_000
 _MFA_CHALLENGE_MINUTES = 10
 _BACKUP_CODE_COUNT = 8
@@ -203,7 +203,7 @@ def _consume_mfa_challenge(challenge_id: str) -> None:
         )
 
 
-def start_mfa_enrollment(challenge_id: str, method_type: str, issuer: str = "Dantabot") -> dict[str, Any] | None:
+def start_mfa_enrollment(challenge_id: str, method_type: str, issuer: str = "Kairos") -> dict[str, Any] | None:
     """Start enrollment for a user-selected MFA method."""
     challenge = _load_mfa_challenge(challenge_id, "enroll")
     if challenge is None:

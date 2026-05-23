@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -58,6 +58,74 @@ def _ensure_signals_table() -> None:
             conn.execute("ALTER TABLE trading_signals ADD COLUMN realized_pnl REAL")
 
 
+def _save_daily_context_snapshot(today: str) -> None:
+    """오늘의 레짐과 RulePack 파라미터를 daily_context_snapshot에 저장한다.
+
+    Args:
+        today: Snapshot 대상 거래일(YYYY-MM-DD). S6 activate 시점에 호출되며 실패해도 거래 흐름은 유지한다.
+    """
+    try:
+        from .market_tone import get_today_morning_context
+        from .rulepack_generation import get_active_rulepack
+
+        ctx = get_today_morning_context(today) or {}
+        rulepack = get_active_rulepack(today) or {}
+        machine_rules = rulepack.get("machine_rules") if isinstance(rulepack.get("machine_rules"), dict) else rulepack
+        risk = machine_rules.get("risk_limits") if isinstance(machine_rules, dict) else {}
+        risk = risk or {}
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        with get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO daily_context_snapshot
+                    (trade_date, regime, risk_level, rulepack_id,
+                     stop_loss_rate, take_profit_rate, max_positions,
+                     max_position_size_rate, trailing_activate_profit,
+                     trailing_stop_rate, new_entry_allowed,
+                     raw_rulepack_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    today,
+                    ctx.get("regime", "neutral"),
+                    ctx.get("risk_level", "normal"),
+                    rulepack.get("rulepack_id", ""),
+                    risk.get("stop_loss_rate"),
+                    risk.get("take_profit_rate"),
+                    risk.get("max_positions"),
+                    risk.get("max_position_size_rate"),
+                    None,
+                    None,
+                    1 if machine_rules.get("new_entry_allowed", True) else 0,
+                    json.dumps(rulepack, ensure_ascii=False),
+                    now,
+                ),
+            )
+        try:
+            from ..regime_set_service import match_set as match_regime_set
+
+            market_data = ctx.get("market_data") if isinstance(ctx.get("market_data"), dict) else {}
+            vix_data = market_data.get("vix") if isinstance(market_data.get("vix"), dict) else {}
+            kospi_data = market_data.get("kospi") if isinstance(market_data.get("kospi"), dict) else {}
+            regime_label = str(ctx.get("regime") or "neutral")
+            vix_value = _to_float_or_none(vix_data.get("price") if isinstance(vix_data, dict) else None)
+            kospi_change = _to_float_or_none(kospi_data.get("change_pct") if isinstance(kospi_data, dict) else None)
+            match_regime_set(regime_label, vix_value, kospi_change, today)
+            logger.info(
+                "SUCCESS: [S6] regime_set matched trade_date=%s regime=%s vix=%s kospi_change_pct=%s",
+                today,
+                regime_label,
+                vix_value,
+                kospi_change,
+            )
+        except Exception as regime_exc:
+            logger.warning("WARN: [S6] regime set matching failed (비치명) - %s", regime_exc)
+        logger.info("INFO: [S6] daily_context_snapshot saved trade_date=%s regime=%s", today, ctx.get("regime"))
+    except Exception as exc:
+        logger.warning("WARN: [S6] daily_context_snapshot 저장 실패 (비치명) - %s", exc)
+
+
 def _candidate_symbol(candidate: dict[str, Any]) -> str:
     """Extract a candidate symbol from S4/S5 compatible key names.
 
@@ -79,8 +147,36 @@ def _candidate_confidence(candidate: dict[str, Any]) -> float:
         return 0.0
 
 
+def _has_recent_submitted_buy(symbol: str, within_minutes: int = 5) -> bool:
+    """Return True if there is a submitted buy order for symbol within the last N minutes.
+
+    Used to protect freshly-placed positions from being evicted by the KIS balance sync
+    before KIS settlement has propagated (typically 1-3 minutes after order submission).
+
+    Args:
+        symbol: Stock symbol to check.
+        within_minutes: Grace period in minutes after order submission.
+    """
+    cutoff = (datetime.now(ZoneInfo("Asia/Seoul")) - timedelta(minutes=within_minutes)).isoformat()
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT id FROM trading_orders
+            WHERE symbol = ? AND side = 'buy' AND status IN ('submitted', 'filled')
+              AND created_at >= ?
+            LIMIT 1
+            """,
+            (symbol, cutoff),
+        ).fetchone()
+    return row is not None
+
+
 def _sync_managed_positions_with_account(account_positions: list[dict[str, Any]]) -> list[str]:
     """Align S8-managed quantities to KIS real holdings without adding unmanaged holdings.
+
+    Positions with a recent submitted/filled buy order are NOT removed even if KIS
+    balance does not yet reflect them — KIS settlement can lag 1-3 minutes after order
+    placement (race condition between S7 and S8 activation sync).
 
     Args:
         account_positions: Public account positions from the KIS balance API.
@@ -95,11 +191,23 @@ def _sync_managed_positions_with_account(account_positions: list[dict[str, Any]]
             continue
         holding = holdings.get(symbol)
         if not holding:
+            if _has_recent_submitted_buy(symbol):
+                logger.info(
+                    "INFO: [S6] KIS 잔고 미존재 but 최근 매수 주문 있음 → S8 포지션 유지 symbol=%s",
+                    symbol,
+                )
+                continue
             position_manager.remove_position(symbol)
             logger.warning("WARN: [S6] KIS 잔고 미존재 S8 포지션 제거 symbol=%s", symbol)
             continue
         qty = int(float(str(holding.get("qty") or 0).replace(",", "")))
         if qty <= 0:
+            if _has_recent_submitted_buy(symbol):
+                logger.info(
+                    "INFO: [S6] KIS 수량 0 but 최근 매수 주문 있음 → S8 포지션 유지 symbol=%s",
+                    symbol,
+                )
+                continue
             position_manager.remove_position(symbol)
             logger.warning("WARN: [S6] KIS 수량 0 S8 포지션 제거 symbol=%s", symbol)
             continue
@@ -132,6 +240,22 @@ def _first_float(*values: Any) -> float | None:
     for value in values:
         parsed = _to_float_or_none(value)
         if parsed is not None:
+            return parsed
+    return None
+
+
+def _first_positive_float(*values: Any) -> float | None:
+    """여러 후보 값 중 0보다 큰 첫 번째 숫자를 반환한다.
+
+    volume_ratio처럼 0.0이 "데이터 없음"을 의미하는 필드에 사용한다.
+    0.0은 건너뛰고 다음 후보를 확인한다.
+
+    Args:
+        values: Values ordered by runtime trust priority.
+    """
+    for value in values:
+        parsed = _to_float_or_none(value)
+        if parsed is not None and parsed > 0:
             return parsed
     return None
 
@@ -360,7 +484,7 @@ def _rules_allow_signal(matched: dict[str, Any]) -> bool:
     Args:
         matched: Rule evaluation payload from `_evaluate_rules`.
     """
-    required_keys = ["volume_ratio", "ai_confidence", "price_change"]
+    required_keys = ["volume_ratio", "ai_confidence", "price_change", "time_window"]
     required_keys.extend(
         key
         for key in ("vwap_position", "ma5_above_ma20", "rsi_range", "spread_max_pct")
@@ -385,6 +509,26 @@ def _get_setting_float(key: str, default: float) -> float:
             return float(json.loads(row["value_json"]))
     except Exception as exc:
         logger.warning("WARN: [S6] system setting float 조회 실패 key=%s error=%s", key, exc)
+    return default
+
+
+def _get_setting_str(key: str, default: str) -> str:
+    """system_settings에서 문자열 값을 읽는다. 실패 시 default 반환.
+
+    Args:
+        key: system_settings key to read.
+        default: Fallback value when the key is absent or invalid.
+    """
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT value_json FROM system_settings WHERE key = ?", (key,)
+            ).fetchone()
+        if row:
+            value = json.loads(row["value_json"])
+            return str(value) if value is not None else default
+    except Exception as exc:
+        logger.warning("WARN: [S6] system setting str 조회 실패 key=%s error=%s", key, exc)
     return default
 
 
@@ -484,6 +628,7 @@ class DecisionEngine:
         today = _today_kst()
         logger.info("START: [S6] Decision Engine activate trade_date=%s", today)
         _ensure_signals_table()
+        _save_daily_context_snapshot(today)
 
         screening = get_today_screening(today)
         candidates = screening.get("candidates", []) if screening else []
@@ -547,6 +692,65 @@ class DecisionEngine:
             "already_sent": len(self._signal_sent),
             "symbols": symbols,
             "cache_meta": get_meta(),
+        }
+
+    def is_active(self) -> bool:
+        """Decision Engine 활성화 여부."""
+        return self._active
+
+    async def refresh_candidates(self) -> dict[str, Any]:
+        """장중 재선별 후 호출 — 후보 목록을 교체하고 WS 구독을 갱신한다.
+
+        기존 signal_sent는 유지 (이미 주문 나간 종목 중복 방지).
+        보유 포지션 종목은 제거하지 않음.
+        """
+        if not self._active:
+            return {"ok": False, "reason": "not_active"}
+
+        today = _today_kst()
+        logger.info("START: [S6] refresh_candidates trade_date=%s", today)
+
+        old_candidates = dict(self._candidates)
+
+        # 새 S4 후보 로드
+        screening = get_today_screening(today)
+        new_candidates_raw = screening.get("candidates", []) if screening else []
+        new_candidates: dict[str, dict[str, Any]] = {
+            symbol: candidate
+            for candidate in new_candidates_raw
+            if (symbol := _candidate_symbol(candidate))
+        }
+
+        self._candidates = new_candidates
+        if new_candidates:
+            load_daily_rules(today, list(new_candidates.keys()))
+        else:
+            logger.warning("WARN: [S6] refresh_candidates — 새 후보 없음 (기존 후보 유지)")
+            self._candidates = old_candidates
+            return {"ok": False, "reason": "no_new_candidates", "old_count": len(old_candidates)}
+
+        # WS 구독 갱신: 기존 포지션 종목 + 새 후보 합집합
+        from .position_manager import position_manager
+        managed_symbols = [str(pos.get("symbol") or "") for pos in position_manager.get_positions()]
+        all_symbols = list(dict.fromkeys([*list(new_candidates.keys()), *managed_symbols]))
+
+        try:
+            await realtime_ws_manager.stop()
+            await realtime_ws_manager.start(symbols=all_symbols)
+        except Exception as exc:
+            logger.warning("WARN: [S6] refresh_candidates WS 재구독 실패 — %s", exc)
+
+        logger.info(
+            "SUCCESS: [S6] refresh_candidates old=%d new=%d symbols=%s",
+            len(old_candidates),
+            len(new_candidates),
+            all_symbols,
+        )
+        return {
+            "ok": True,
+            "old_count": len(old_candidates),
+            "new_count": len(new_candidates),
+            "symbols": all_symbols,
         }
 
     async def deactivate(self) -> None:
@@ -658,13 +862,34 @@ class DecisionEngine:
 
         parsed_volume_ratio_min = _first_float(final_rule.get("volume_ratio_min"))
         volume_ratio_min = parsed_volume_ratio_min if parsed_volume_ratio_min is not None else 1.0
-        volume_ratio = _first_float(
+        vol_floor = _get_setting_float("engine.min_volume_ratio", 1.0)
+        volume_ratio_min = max(volume_ratio_min, vol_floor)
+
+        entry_start_str = _get_setting_str("engine.entry_start_time", "09:00")
+        entry_end_str = _get_setting_str("engine.entry_end_time", "10:30")
+        now_hhmm = _now_kst().strftime("%H:%M")
+        time_window_ok = entry_start_str <= now_hhmm <= entry_end_str
+        if not time_window_ok:
+            return {
+                "pass": False,
+                "reason": f"진입 시간 창 외 ({now_hhmm}, 허용: {entry_start_str}~{entry_end_str})",
+                "matched": {"time_window": False},
+                "observed_values": {
+                    "now_hhmm": now_hhmm,
+                    "entry_start": entry_start_str,
+                    "entry_end": entry_end_str,
+                },
+            }
+
+        # _first_positive_float: 0.0은 "데이터 없음"으로 건너뛰고 양수 값만 사용
+        # candidate의 정적 volume_ratio가 0이면 tick의 실시간 prev_volume_ratio를 확인
+        volume_ratio = _first_positive_float(
+            tick.get("prev_volume_ratio"),
+            tick.get("prdy_vol_vrss_acml_vol_rate"),
+            tick.get("volume_ratio"),
             candidate.get("volume_ratio"),
             candidate.get("vol_ratio"),
             candidate.get("volume_ratio_20d"),
-            tick.get("volume_ratio"),
-            tick.get("prev_volume_ratio"),
-            tick.get("prdy_vol_vrss_acml_vol_rate"),
         )
         volume_ok = volume_ratio >= volume_ratio_min if volume_ratio is not None else volume_ratio_min <= 1.0
 
@@ -684,6 +909,7 @@ class DecisionEngine:
             "volume_ratio": volume_ok,
             "ai_confidence": ai_conf >= ai_conf_min,
             "price_change": price_ok,
+            "time_window": time_window_ok,
         }
         observed_values: dict[str, Any] = {
             "ai_confidence": ai_conf,
@@ -756,6 +982,15 @@ class DecisionEngine:
                     _now_kst().isoformat(),
                 ),
             )
+
+        try:
+            from .technical_indicators import save_signal_indicators as _save_signal_indicators
+
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, _save_signal_indicators, signal_id, symbol, today)
+            logger.info("INFO: [S6] signal indicators save scheduled signal_id=%s symbol=%s", signal_id, symbol)
+        except Exception as sti_exc:
+            logger.warning("WARN: [S6] signal indicators save skipped signal_id=%s reason=%s", signal_id, sti_exc)
 
         self._signal_sent.add(symbol)
         logger.info("SIGNAL: [S6] BUY signal symbol=%s price=%.0f confidence=%.2f", symbol, price, confidence)
