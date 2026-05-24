@@ -73,10 +73,10 @@
 
     if (themeBtn) {
       themeBtn.addEventListener("click", function () {
-        if (document.body.classList.contains("light")) {
-          setTheme("dark");
-        } else {
+        if (document.body.classList.contains("dark")) {
           setTheme("light");
+        } else {
+          setTheme("dark");
         }
       });
     }

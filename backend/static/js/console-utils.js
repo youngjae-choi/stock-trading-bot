@@ -9,11 +9,13 @@
     }
     if (mode === "light") {
       document.body.classList.add("light");
+      document.body.classList.remove("dark");
       if (themeBtn) themeBtn.textContent = "Dark";
       localStorage.setItem("kairos_theme", "light");
       swapLogos(lightLogo);
       return;
     }
+    document.body.classList.add("dark");
     document.body.classList.remove("light");
     if (themeBtn) themeBtn.textContent = "Light";
     localStorage.setItem("kairos_theme", "dark");

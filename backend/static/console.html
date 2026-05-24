@@ -10,6 +10,14 @@
 </head>
 
 <body class="auth-required">
+  <script>
+    /* FOUC 방지: JS 로드 전에 저장된 테마를 즉시 적용 */
+    (function() {
+      var t = localStorage.getItem('kairos_theme');
+      if (t === 'light') { document.body.classList.add('light'); }
+      else { document.body.classList.add('dark'); }
+    })();
+  </script>
   <section class="login-screen" id="loginScreen">
     <form class="login-panel" id="loginForm">
       <img id="loginLogo" src="/static/img/kairos-logo.svg" alt="Kairos" width="160" style="display:block; margin:0 auto 12px;">
@@ -1893,178 +1901,139 @@
             <button type="button" class="btn" data-action="refreshDividends">새로고침</button>
           </div>
 
-          <!-- Row 1: 계좌 등록 | 등록 계좌 -->
-          <div style="display:grid;grid-template-columns:5fr 8fr;gap:20px;margin-bottom:20px;align-items:start;">
-            <!-- 계좌 등록 -->
-            <div class="card">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                <div class="card-title" style="margin:0;">계좌 등록 <span>Register Account</span></div>
-                <button type="submit" form="dividendAccountForm" class="btn compact primary">등록</button>
+          <!-- 등록 계좌 -->
+          <div class="card" style="margin-bottom:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <div class="card-title" style="margin:0;">등록 계좌 <span>Account List</span></div>
+              <div style="display:flex;gap:8px;">
+                <button class="btn compact primary" onclick="openDivModal('account','add')">+ 등록</button>
+                <button class="btn compact" onclick="handleEditSelectedAccount()">수정</button>
+                <button class="btn compact danger" onclick="handleBulkDeleteAccounts()">삭제</button>
               </div>
-              <form id="dividendAccountForm">
-                <div class="field">
-                  <label>금융사명 (은행/증권)</label>
-                  <input type="text" id="divAccBank" placeholder="예: 미래에셋증권, 국민은행" required>
-                </div>
-                <div class="field">
-                  <label>계좌번호</label>
-                  <input type="text" id="divAccNumber" placeholder="하이픈(-) 포함" required>
-                </div>
-                <div class="field">
-                  <label>소유자명</label>
-                  <input type="text" id="divAccOwner" placeholder="실명 입력" required>
-                </div>
-              </form>
             </div>
-
-            <!-- 등록 계좌 -->
-            <div class="card">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                <div class="card-title" style="margin:0;">등록 계좌 <span>Account List</span></div>
-                <div class="flex-row" style="gap:8px;">
-                  <button class="btn compact" onclick="handleEditSelectedAccount()">수정</button>
-                  <button class="btn compact danger" onclick="handleBulkDeleteAccounts()">삭제</button>
-                </div>
-              </div>
-              <div class="table-wrap" style="max-height:260px;overflow-y:auto;">
-                <table id="dividendAccountsTable">
-                  <thead>
-                    <tr>
-                      <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll('dividendAccountsTableBody', this.checked)"></th>
-                      <th>금융사</th><th>계좌번호</th><th>소유자</th>
-                    </tr>
-                  </thead>
-                  <tbody id="dividendAccountsTableBody">
-                    <tr><td colspan="4" class="muted">계좌 정보를 불러오는 중...</td></tr>
-                  </tbody>
-                </table>
-              </div>
+            <div class="table-wrap" style="max-height:240px;overflow-y:auto;">
+              <table id="dividendAccountsTable">
+                <thead>
+                  <tr>
+                    <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll('dividendAccountsTableBody', this.checked)"></th>
+                    <th>금융사</th><th>계좌번호</th><th>소유자</th>
+                  </tr>
+                </thead>
+                <tbody id="dividendAccountsTableBody">
+                  <tr><td colspan="4" class="muted" style="text-align:center;">계좌 정보를 불러오는 중...</td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
 
-          <!-- Row 2: 종목 등록 | 등록 종목 -->
-          <div style="display:grid;grid-template-columns:5fr 8fr;gap:20px;margin-bottom:20px;align-items:start;">
-            <!-- 종목 등록 -->
-            <div class="card">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                <div class="card-title" style="margin:0;">종목 등록 <span>Dividend Stocks</span></div>
-                <button type="submit" form="dividendStockForm" class="btn compact primary">등록</button>
-              </div>
-              <form id="dividendStockForm">
-                <div class="field">
-                  <label>종목명</label>
-                  <input type="text" id="divStockName" placeholder="예: 삼성전자" required>
-                </div>
-                <div class="field">
-                  <label>종목코드</label>
-                  <input type="text" id="divStockCode" placeholder="005930" maxlength="6" required>
-                </div>
-                <div class="field">
-                  <label>다음 배당락일</label>
-                  <input type="date" id="divStockExDate">
-                </div>
-              </form>
-            </div>
-
-            <!-- 등록 종목 -->
-            <div class="card">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                <div class="card-title" style="margin:0;">등록 종목 <span>Stock List</span></div>
+          <!-- 등록 종목 -->
+          <div class="card" style="margin-bottom:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <div class="card-title" style="margin:0;">등록 종목 <span>Stock List</span></div>
+              <div style="display:flex;gap:8px;">
+                <button class="btn compact primary" onclick="openDivModal('stock','add')">+ 등록</button>
                 <button class="btn compact danger" onclick="deleteDividendStock()">삭제</button>
               </div>
-              <div class="table-wrap" style="max-height:260px;overflow-y:auto;">
-                <table id="dividendStocksTable">
-                  <thead>
-                    <tr>
-                      <th style="width:24px;"><input type="checkbox" id="divStockSelectAll" onchange="toggleSelectAll('dividendStocksTableBody', this.checked)"></th>
-                      <th>종목명</th><th>코드</th><th>예상 배당락일</th><th>D-day</th><th>알림</th><th></th>
-                    </tr>
-                  </thead>
-                  <tbody id="dividendStocksTableBody">
-                    <tr><td colspan="7" class="muted" style="text-align:center;">종목을 등록해 주세요.</td></tr>
-                  </tbody>
-                </table>
-              </div>
+            </div>
+            <div class="table-wrap" style="max-height:240px;overflow-y:auto;">
+              <table id="dividendStocksTable">
+                <thead>
+                  <tr>
+                    <th style="width:24px;"><input type="checkbox" id="divStockSelectAll" onchange="toggleSelectAll('dividendStocksTableBody', this.checked)"></th>
+                    <th>종목명</th><th>코드</th><th>예상 배당락일</th><th>D-day</th><th>알림</th><th></th>
+                  </tr>
+                </thead>
+                <tbody id="dividendStocksTableBody">
+                  <tr><td colspan="7" class="muted" style="text-align:center;">종목을 등록해 주세요.</td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
 
-          <!-- Row 3: 배당금 입력 | 최근 배당 이력 -->
-          <div style="display:grid;grid-template-columns:5fr 8fr;gap:20px;margin-bottom:20px;align-items:start;">
-            <!-- 배당금 입력 -->
-            <div class="card">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                <div class="card-title" style="margin:0;">배당금 입력 <span>Record Dividend</span></div>
-                <button type="submit" form="dividendEntryForm" class="btn compact primary">등록</button>
+          <!-- 최근 배당 이력 -->
+          <div class="card" style="margin-bottom:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <div class="card-title" style="margin:0;">최근 배당 이력 <span>Recent History</span></div>
+              <div style="display:flex;gap:8px;">
+                <button class="btn compact primary" onclick="openDivModal('entry','add')">+ 등록</button>
+                <button class="btn compact" onclick="handleEditSelectedEntry()">수정</button>
+                <button class="btn compact danger" onclick="handleBulkDeleteEntries()">삭제</button>
               </div>
-              <form id="dividendEntryForm">
-                <div class="field">
-                  <label>종목 선택 <span style="color:var(--muted);font-size:11px;">(선택사항)</span></label>
-                  <select id="divEntryStockId">
-                    <option value="">종목 선택 안함</option>
-                  </select>
+            </div>
+            <div class="table-wrap" style="max-height:400px;overflow-y:auto;">
+              <table id="dividendHistoryTable">
+                <thead>
+                  <tr>
+                    <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll('dividendHistoryTableBody', this.checked)"></th>
+                    <th>날짜</th><th>종목</th><th>금융사</th><th>소유자</th><th>배당율</th><th>순수익</th>
+                  </tr>
+                </thead>
+                <tbody id="dividendHistoryTableBody">
+                  <tr><td colspan="7" class="muted" style="text-align:center;">이력 정보를 불러오는 중...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="section-gap"></div>
+
+          <!-- ── 등록/수정 모달 ─────────────────────────────────────────────── -->
+          <div id="divModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.55);align-items:center;justify-content:center;">
+            <div style="background:var(--panel);border-radius:var(--radius);padding:28px 28px 20px;width:420px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.35);">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                <strong id="divModalTitle" style="font-size:16px;">등록</strong>
+                <button onclick="closeDivModal()" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:0 4px;">✕</button>
+              </div>
+
+              <!-- 계좌 폼 -->
+              <form id="divModalAccountForm" style="display:none;" onsubmit="submitDivModal(event,'account')">
+                <div class="field"><label>금융사명 (은행/증권)</label><input type="text" id="divAccBank" placeholder="예: 미래에셋증권, 국민은행" required></div>
+                <div class="field"><label>계좌번호</label><input type="text" id="divAccNumber" placeholder="하이픈(-) 포함" required></div>
+                <div class="field"><label>소유자명</label><input type="text" id="divAccOwner" placeholder="실명 입력" required></div>
+                <input type="hidden" id="divAccEditId">
+                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+                  <button type="button" class="btn compact" onclick="closeDivModal()">취소</button>
+                  <button type="submit" class="btn compact primary" id="divAccSubmitBtn">등록</button>
                 </div>
-                <div class="field">
-                  <label>계좌 선택</label>
-                  <select id="divEntryAccId" required>
-                    <option value="">계좌를 먼저 등록하세요</option>
-                  </select>
+              </form>
+
+              <!-- 종목 폼 -->
+              <form id="divModalStockForm" style="display:none;" onsubmit="submitDivModal(event,'stock')">
+                <div class="field"><label>종목명</label><input type="text" id="divStockName" placeholder="예: 삼성전자" required></div>
+                <div class="field"><label>종목코드</label><input type="text" id="divStockCode" placeholder="005930" maxlength="6" required></div>
+                <div class="field"><label>다음 배당락일</label><input type="date" id="divStockExDate"></div>
+                <input type="hidden" id="divStockEditId">
+                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+                  <button type="button" class="btn compact" onclick="closeDivModal()">취소</button>
+                  <button type="submit" class="btn compact primary" id="divStockSubmitBtn">등록</button>
                 </div>
-                <div class="grid cols-2" style="gap:10px;">
-                  <div class="field">
-                    <label>배당일</label>
-                    <input type="date" id="divEntryDate" required>
-                  </div>
-                  <div class="field">
-                    <label>배당율 (%)</label>
-                    <input type="number" id="divEntryRate" step="0.01" placeholder="예: 2.50">
-                  </div>
+              </form>
+
+              <!-- 배당금 폼 -->
+              <form id="divModalEntryForm" style="display:none;" onsubmit="submitDivModal(event,'entry')">
+                <div class="field"><label>종목 선택 <span style="color:var(--muted);font-size:11px;">(선택사항)</span></label>
+                  <select id="divEntryStockId"><option value="">종목 선택 안함</option></select></div>
+                <div class="field"><label>계좌 선택</label>
+                  <select id="divEntryAccId" required><option value="">계좌를 먼저 등록하세요</option></select></div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                  <div class="field"><label>배당일</label><input type="date" id="divEntryDate" required></div>
+                  <div class="field"><label>배당율 (%)</label><input type="number" id="divEntryRate" step="0.01" placeholder="예: 2.50"></div>
                 </div>
-                <div class="grid cols-2" style="gap:10px;">
-                  <div class="field">
-                    <label>배당금 (세전)</label>
-                    <input type="number" id="divEntryAmount" step="0.01" value="0" required>
-                  </div>
-                  <div class="field">
-                    <label>세금</label>
-                    <input type="number" id="divEntryTax" step="0.01" value="0" required>
-                  </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                  <div class="field"><label>배당금 (세전)</label><input type="number" id="divEntryAmount" step="0.01" value="0" required></div>
+                  <div class="field"><label>세금</label><input type="number" id="divEntryTax" step="0.01" value="0" required></div>
                 </div>
-                <div class="field">
-                  <label>순 수익금 (자동계산)</label>
-                  <input type="number" id="divEntryNet" step="0.01" value="0" readonly>
-                </div>
-                <div class="field">
-                  <label>메모</label>
-                  <input type="text" id="divEntryMemo" placeholder="자유 입력">
+                <div class="field"><label>순 수익금 (자동계산)</label><input type="number" id="divEntryNet" step="0.01" value="0" readonly></div>
+                <div class="field"><label>메모</label><input type="text" id="divEntryMemo" placeholder="자유 입력"></div>
+                <input type="hidden" id="divEntryEditId">
+                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+                  <button type="button" class="btn compact" onclick="closeDivModal()">취소</button>
+                  <button type="submit" class="btn compact primary" id="divEntrySubmitBtn">등록</button>
                 </div>
               </form>
             </div>
-
-            <!-- 최근 배당 이력 -->
-            <div class="card">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                <div class="card-title" style="margin:0;">최근 배당 이력 <span>Recent History</span></div>
-                <div class="flex-row" style="gap:8px;">
-                  <button class="btn compact" onclick="handleEditSelectedEntry()">수정</button>
-                  <button class="btn compact danger" onclick="handleBulkDeleteEntries()">삭제</button>
-                </div>
-              </div>
-              <div class="table-wrap" style="max-height:400px;overflow-y:auto;">
-                <table id="dividendHistoryTable">
-                  <thead>
-                    <tr>
-                      <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll('dividendHistoryTableBody', this.checked)"></th>
-                      <th>날짜</th><th>종목</th><th>금융사</th><th>소유자</th><th>배당율</th><th>순수익</th>
-                    </tr>
-                  </thead>
-                  <tbody id="dividendHistoryTableBody">
-                    <tr><td colspan="7" class="muted">이력 정보를 불러오는 중...</td></tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
           </div>
-          <div class="section-gap"></div>
+
         </section>
 
         <!-- ─── Portfolio: Dividend Stats ─────────────────────────────────── -->
