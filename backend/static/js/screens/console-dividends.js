@@ -1,7 +1,10 @@
 /**
  * Portfolio: Dividend Management Screen Logic
  * 2026-05-24: 모달 방식으로 전환 (등록/수정 폼 카드 제거)
+ * 2026-05-25: 카드 순서 변경 (이력 최상단), 페이지네이션 추가
  */
+
+const DIV_PAGE_SIZE = 10;
 
 let _currentEditAccountId = null;
 let _currentEditEntryId   = null;
@@ -10,6 +13,122 @@ let _dividendHistoryMap   = {};
 let _dividendStocksMap    = {};
 let _divModalType = null;   // 'account' | 'stock' | 'entry'
 let _divModalMode = null;   // 'add' | 'edit'
+
+// 페이지 상태
+let _divPages = { history: 1, stocks: 1, accounts: 1 };
+// 전체 데이터 캐시 (페이지네이션용)
+let _divAllHistory  = [];
+let _divAllStocks   = [];
+let _divAllAccounts = [];
+
+// ── 페이지네이션 헬퍼 ────────────────────────────────────────────────────────
+
+function divPagePrev(type) {
+  if (_divPages[type] > 1) { _divPages[type]--; _divRenderPage(type); }
+}
+function divPageNext(type) {
+  const all = type === 'history' ? _divAllHistory : type === 'stocks' ? _divAllStocks : _divAllAccounts;
+  const maxPage = Math.max(1, Math.ceil(all.length / DIV_PAGE_SIZE));
+  if (_divPages[type] < maxPage) { _divPages[type]++; _divRenderPage(type); }
+}
+
+function _divUpdatePager(type, total) {
+  const page    = _divPages[type];
+  const maxPage = Math.max(1, Math.ceil(total / DIV_PAGE_SIZE));
+  const map = {
+    history:  { info: 'divHistoryPageInfo',  prev: 'divHistoryPrev',  next: 'divHistoryNext'  },
+    stocks:   { info: 'divStocksPageInfo',   prev: 'divStocksPrev',   next: 'divStocksNext'   },
+    accounts: { info: 'divAccountsPageInfo', prev: 'divAccountsPrev', next: 'divAccountsNext' },
+  };
+  const ids = map[type];
+  const infoEl = document.getElementById(ids.info);
+  const prevEl = document.getElementById(ids.prev);
+  const nextEl = document.getElementById(ids.next);
+  if (infoEl) infoEl.textContent = total > 0 ? `${page} / ${maxPage}` : '';
+  if (prevEl) prevEl.disabled = page <= 1;
+  if (nextEl) nextEl.disabled = page >= maxPage;
+}
+
+function _divRenderPage(type) {
+  const page  = _divPages[type];
+  const start = (page - 1) * DIV_PAGE_SIZE;
+  const end   = start + DIV_PAGE_SIZE;
+
+  if (type === 'history') {
+    const slice = _divAllHistory.slice(start, end);
+    const tbody = document.getElementById('dividendHistoryTableBody');
+    if (!tbody) return;
+    if (slice.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">배당 이력이 없습니다.</td></tr>';
+    } else {
+      tbody.innerHTML = slice.map(row => {
+        const rateStr  = row.dividend_rate != null ? row.dividend_rate.toFixed(2) + '%' : '-';
+        const stockStr = row.stock_name ? escapeHtml(row.stock_name) : '<span class="muted">-</span>';
+        return `<tr>
+          <td><input type="checkbox" value="${row.id}"></td>
+          <td style="font-size:12px;">${row.dividend_date}</td>
+          <td style="font-size:12px;">${stockStr}</td>
+          <td>${escapeHtml(row.bank_name)}</td>
+          <td class="muted" style="font-size:12px;">${escapeHtml(row.owner_name || '-')}</td>
+          <td class="muted" style="font-size:12px;">${rateStr}</td>
+          <td class="good">${row.net_amount.toLocaleString()}</td>
+        </tr>`;
+      }).join('');
+    }
+    _divUpdatePager('history', _divAllHistory.length);
+
+  } else if (type === 'stocks') {
+    const slice = _divAllStocks.slice(start, end);
+    const tbody = document.getElementById('dividendStocksTableBody');
+    if (!tbody) return;
+    const today = new Date();
+    if (slice.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">종목을 등록해 주세요.</td></tr>';
+    } else {
+      tbody.innerHTML = slice.map(s => {
+        const exDate = s.next_ex_date ? new Date(s.next_ex_date + 'T00:00:00') : null;
+        const delta  = exDate ? Math.round((exDate - today) / 86400000) : null;
+        const dday   = delta == null ? '-'
+          : delta < 0   ? `<span class="muted">D+${Math.abs(delta)}</span>`
+          : delta === 0 ? '<span class="bad">D-Day</span>'
+          : delta <= 2  ? `<span class="bad">D-${delta}</span>`
+          : `<span>D-${delta}</span>`;
+        const muteBtn = s.notification_muted
+          ? `<button class="btn compact" onclick="unmuteStock('${s.id}')">🔔</button>`
+          : `<button class="btn compact" onclick="muteStock('${s.id}')">🔕</button>`;
+        const editBtn = `<button class="btn compact" onclick="openDivModal('stock','edit',_dividendStocksMap['${s.id}'])" title="수정">✏️</button>`;
+        return `<tr>
+          <td><input type="checkbox" value="${s.id}"></td>
+          <td><strong>${escapeHtml(s.name)}</strong></td>
+          <td class="muted" style="font-size:12px;">${escapeHtml(s.code)}</td>
+          <td style="font-size:12px;">${s.next_ex_date || '-'}</td>
+          <td>${dday}</td>
+          <td>${muteBtn}</td>
+          <td>${editBtn}</td>
+        </tr>`;
+      }).join('');
+    }
+    _divUpdatePager('stocks', _divAllStocks.length);
+
+  } else if (type === 'accounts') {
+    const slice = _divAllAccounts.slice(start, end);
+    const tbody = document.getElementById('dividendAccountsTableBody');
+    if (!tbody) return;
+    if (slice.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="muted" style="text-align:center;">등록된 계좌가 없습니다.</td></tr>';
+    } else {
+      tbody.innerHTML = slice.map(acc => `
+        <tr>
+          <td><input type="checkbox" value="${acc.id}"></td>
+          <td>${escapeHtml(acc.bank_name)}</td>
+          <td>${escapeHtml(acc.account_number)}</td>
+          <td>${escapeHtml(acc.owner_name)}</td>
+        </tr>
+      `).join('');
+    }
+    _divUpdatePager('accounts', _divAllAccounts.length);
+  }
+}
 
 // ── 모달 열기/닫기 ────────────────────────────────────────────────────────────
 
@@ -286,33 +405,9 @@ async function loadDividendStocks() {
     if (!data.ok) return;
     _dividendStocksMap = {};
     data.stocks.forEach(s => _dividendStocksMap[s.id] = s);
-    if (data.stocks.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">종목을 등록해 주세요.</td></tr>';
-    } else {
-      const today = new Date();
-      tbody.innerHTML = data.stocks.map(s => {
-        const exDate = s.next_ex_date ? new Date(s.next_ex_date + 'T00:00:00') : null;
-        const delta  = exDate ? Math.round((exDate - today) / 86400000) : null;
-        const dday   = delta == null ? '-'
-          : delta < 0   ? `<span class="muted">D+${Math.abs(delta)}</span>`
-          : delta === 0 ? '<span class="bad">D-Day</span>'
-          : delta <= 2  ? `<span class="bad">D-${delta}</span>`
-          : `<span>D-${delta}</span>`;
-        const muteBtn = s.notification_muted
-          ? `<button class="btn compact" onclick="unmuteStock('${s.id}')">🔔</button>`
-          : `<button class="btn compact" onclick="muteStock('${s.id}')">🔕</button>`;
-        const editBtn = `<button class="btn compact" onclick="openDivModal('stock','edit',_dividendStocksMap['${s.id}'])" title="수정">✏️</button>`;
-        return `<tr>
-          <td><input type="checkbox" value="${s.id}"></td>
-          <td><strong>${escapeHtml(s.name)}</strong></td>
-          <td class="muted" style="font-size:12px;">${escapeHtml(s.code)}</td>
-          <td style="font-size:12px;">${s.next_ex_date || '-'}</td>
-          <td>${dday}</td>
-          <td>${muteBtn}</td>
-          <td>${editBtn}</td>
-        </tr>`;
-      }).join('');
-    }
+    _divAllStocks = data.stocks;
+    _divPages.stocks = 1;
+    _divRenderPage('stocks');
     const currentVal = select ? select.value : '';
     if (select) {
       select.innerHTML = '<option value="">종목 선택 안함</option>'
@@ -332,18 +427,9 @@ async function loadDividendAccounts() {
     if (!data.ok) return;
     _dividendAccountsMap = {};
     data.accounts.forEach(acc => _dividendAccountsMap[acc.id] = acc);
-    if (data.accounts.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" class="muted" style="text-align:center;">등록된 계좌가 없습니다.</td></tr>';
-    } else {
-      tbody.innerHTML = data.accounts.map(acc => `
-        <tr>
-          <td><input type="checkbox" value="${acc.id}"></td>
-          <td>${escapeHtml(acc.bank_name)}</td>
-          <td>${escapeHtml(acc.account_number)}</td>
-          <td>${escapeHtml(acc.owner_name)}</td>
-        </tr>
-      `).join('');
-    }
+    _divAllAccounts = data.accounts;
+    _divPages.accounts = 1;
+    _divRenderPage('accounts');
     if (select) {
       const currentVal = select.value;
       select.innerHTML = '<option value="">계좌 선택</option>'
@@ -364,23 +450,9 @@ async function refreshDividendHistory() {
     if (!data.ok) return;
     _dividendHistoryMap = {};
     data.history.forEach(row => _dividendHistoryMap[row.id] = row);
-    if (data.history.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">배당 이력이 없습니다.</td></tr>';
-    } else {
-      tbody.innerHTML = data.history.map(row => {
-        const rateStr  = row.dividend_rate != null ? row.dividend_rate.toFixed(2) + '%' : '-';
-        const stockStr = row.stock_name ? escapeHtml(row.stock_name) : '<span class="muted">-</span>';
-        return `<tr>
-          <td><input type="checkbox" value="${row.id}"></td>
-          <td style="font-size:12px;">${row.dividend_date}</td>
-          <td style="font-size:12px;">${stockStr}</td>
-          <td>${escapeHtml(row.bank_name)}</td>
-          <td class="muted" style="font-size:12px;">${escapeHtml(row.owner_name || '-')}</td>
-          <td class="muted" style="font-size:12px;">${rateStr}</td>
-          <td class="good">${row.net_amount.toLocaleString()}</td>
-        </tr>`;
-      }).join('');
-    }
+    _divAllHistory = data.history;
+    _divPages.history = 1;
+    _divRenderPage('history');
   } catch (e) {
     if (tbody) tbody.innerHTML = `<tr><td colspan="7" class="bad">오류: ${escapeHtml(e.message)}</td></tr>`;
   }
