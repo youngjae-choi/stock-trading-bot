@@ -360,6 +360,14 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
             "number",
             "S4 스크리닝 최소 순수익률 (%). 0이면 비용 자동 계산(수수료×2 + 거래세)으로 적용",
         ),
+        ("intraday_refresh.master_enabled", True, "boolean", "장중 재선별 v2 통합 kill switch"),
+        ("intraday_refresh.lunch_slots_enabled", True, "boolean", "13:00/14:00 장중 재선별 슬롯 활성화"),
+        ("intraday_refresh.sector_rotation_enabled", True, "boolean", "섹터 회전 감지 트리거 활성화"),
+        ("intraday_refresh.sector_rotation_threshold", 3.0, "number", "섹터 회전 트리거 갭 임계치(%)"),
+        ("intraday_refresh.replacement_signal_enabled", True, "boolean", "포지션 교체 신호 생성 활성화"),
+        ("intraday_refresh.replacement_score_gap", 0.15, "number", "교체 신호 신규 후보 상대 점수 우위 임계치"),
+        ("intraday_refresh.max_replacement_per_symbol", 1, "number", "종목당 일일 교체 신호 최대 횟수"),
+        ("intraday_refresh.max_replacement_per_day", 5, "number", "일일 교체 신호 최대 횟수"),
     ]
     for key, value, value_type, description in defaults:
         connection.execute(
@@ -1128,6 +1136,35 @@ CREATE TABLE IF NOT EXISTS trading_signals (
 )
 """,
         "CREATE INDEX IF NOT EXISTS idx_trading_signals_trade_date ON trading_signals(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS replacement_signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trade_date TEXT NOT NULL,
+    slot TEXT NOT NULL,
+    current_symbol TEXT NOT NULL,
+    current_score REAL NOT NULL,
+    current_pnl_pct REAL,
+    new_symbol TEXT NOT NULL,
+    new_score REAL NOT NULL,
+    score_gap REAL NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_replacement_signals_date ON replacement_signals(trade_date)",
+        """
+CREATE TABLE IF NOT EXISTS sector_rotation_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trade_date TEXT NOT NULL,
+    slot TEXT NOT NULL,
+    top_sectors TEXT NOT NULL,
+    bottom_sectors TEXT NOT NULL,
+    gap_pct REAL NOT NULL,
+    triggered INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_sector_rotation_log_date ON sector_rotation_log(trade_date)",
         """
 CREATE TABLE IF NOT EXISTS signal_technical_indicators (
     id                  TEXT PRIMARY KEY,

@@ -120,6 +120,10 @@
 
     if (name === "funnel") {
       loadFunnelData();
+      var td = window._tcTradeDate || null;
+      if (typeof loadIntradayReselectionTimeline === "function") loadIntradayReselectionTimeline(td);
+      if (typeof loadReplacementSignals === "function") loadReplacementSignals(td);
+      if (typeof loadIntradayKillSwitches === "function") loadIntradayKillSwitches();
     }
 
     if (name === "expert-knowledge") {
@@ -142,7 +146,8 @@
       });
       _todayTimer = setInterval(function() {
         _safeLoadConsoleData();
-        loadTodayRegimeTimeline(window._tcTradeDate || null);
+        var td = window._tcTradeDate || null;
+        loadTodayRegimeTimeline(td);
       }, 30000);
     }
 

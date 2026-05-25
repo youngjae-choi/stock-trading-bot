@@ -618,7 +618,89 @@
     loadSettingsProfiles();
     loadTradingCostSettings();
     loadRegimeSets();
+    loadIntradaySettings();
   }
+
+  async function loadIntradaySettings() {
+    try {
+      const fullMap = await loadSettingsMapFull();
+      const keys = [
+        'intraday_refresh.master_enabled',
+        'intraday_refresh.lunch_slots_enabled',
+        'intraday_refresh.sector_rotation_enabled',
+        'intraday_refresh.replacement_signal_enabled'
+      ];
+      
+      const masterEnabled = !!(fullMap['intraday_refresh.master_enabled']?.value);
+      
+      keys.forEach(key => {
+        const elId = key.replace(/\./g, '-');
+        const el = document.getElementById(elId);
+        if (el) {
+          el.checked = !!(fullMap[key]?.value);
+          if (key !== 'intraday_refresh.master_enabled') {
+            el.disabled = !masterEnabled;
+          }
+        }
+      });
+
+      const lastUpdatedEl = document.getElementById('intraday-settings-last-updated');
+      if (lastUpdatedEl) {
+        // 가장 최근 업데이트 시간 찾기
+        let latest = null;
+        keys.forEach(key => {
+          const m = fullMap[key];
+          if (m && m.updated_at) {
+            if (!latest || m.updated_at > latest.updated_at) latest = m;
+          }
+        });
+        if (latest) {
+          lastUpdatedEl.innerHTML = _fmtSettingTs(latest.updated_at, latest.updated_by);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load intraday settings', e);
+    }
+  }
+
+  window.toggleIntradaySetting = async function(key, checkbox) {
+    const val = checkbox.checked;
+    try {
+      const res = await fetchJson('/api/v1/settings', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          key: key,
+          value: val,
+          value_type: 'boolean'
+        })
+      });
+      
+      if (res.ok) {
+        showToast('설정이 저장되었습니다.', 'ok');
+        // 마스터 토글일 경우 하위 항목 활성/비활성 처리
+        if (key === 'intraday_refresh.master_enabled') {
+          const subKeys = [
+            'intraday_refresh.lunch_slots_enabled',
+            'intraday_refresh.sector_rotation_enabled',
+            'intraday_refresh.replacement_signal_enabled'
+          ];
+          subKeys.forEach(sk => {
+            const el = document.getElementById(sk.replace(/\./g, '-'));
+            if (el) el.disabled = !val;
+          });
+        }
+        // 업데이트 시간 갱신을 위해 재로드
+        await loadIntradaySettings();
+      } else {
+        showToast('저장 실패: ' + (res.error || '알 수 없는 오류'), 'err');
+        checkbox.checked = !val; // 원복
+      }
+    } catch (e) {
+      showToast('오류 발생: ' + e.message, 'err');
+      checkbox.checked = !val; // 원복
+    }
+  };
 
   async function loadRegimeSets() {
     var container = document.getElementById('regime-sets-list');

@@ -740,18 +740,68 @@ class DecisionEngine:
         except Exception as exc:
             logger.warning("WARN: [S6] refresh_candidates WS 재구독 실패 — %s", exc)
 
+        replacement_result: dict[str, Any] = {"skipped": True, "reason": "not_evaluated"}
+        try:
+            from .replacement_signal import evaluate_replacement_signals
+
+            replacement_result = await evaluate_replacement_signals(
+                new_candidates=new_candidates,
+                current_positions=position_manager.get_positions(),
+            )
+        except Exception as exc:
+            replacement_result = {"ok": False, "error": str(exc)}
+            logger.warning("WARN: [S6] replacement signal evaluation failed — %s", exc)
+
         logger.info(
-            "SUCCESS: [S6] refresh_candidates old=%d new=%d symbols=%s",
+            "SUCCESS: [S6] refresh_candidates old=%d new=%d symbols=%s replacement_created=%s",
             len(old_candidates),
             len(new_candidates),
             all_symbols,
+            replacement_result.get("created", 0),
         )
         return {
             "ok": True,
             "old_count": len(old_candidates),
             "new_count": len(new_candidates),
             "symbols": all_symbols,
+            "replacement_signal": replacement_result,
         }
+
+    async def on_position_slot_opened(self, exited_symbol: str, reason: str) -> dict[str, Any]:
+        """Refresh candidate watch after a trailing-stop exit opens capacity.
+
+        Args:
+            exited_symbol: Symbol that just submitted a sell order.
+            reason: PositionManager exit reason. This method only re-arms natural
+                candidate evaluation and never submits a forced buy order.
+        """
+        if not self._active:
+            return {"ok": False, "reason": "not_active"}
+        from .position_manager import position_manager
+
+        managed_symbols = [str(pos.get("symbol") or "") for pos in position_manager.get_positions()]
+        rearmed: list[str] = []
+        for symbol in self._candidates:
+            if symbol == exited_symbol or symbol in managed_symbols or _has_recent_submitted_buy(symbol):
+                continue
+            if symbol in self._signal_sent:
+                self._signal_sent.discard(symbol)
+                rearmed.append(symbol)
+
+        all_symbols = list(dict.fromkeys([*list(self._candidates.keys()), *managed_symbols]))
+        try:
+            await realtime_ws_manager.stop()
+            await realtime_ws_manager.start(symbols=all_symbols)
+        except Exception as exc:
+            logger.warning("WARN: [S6] slot-open WS refresh failed exited=%s reason=%s", exited_symbol, exc)
+        logger.info(
+            "SUCCESS: [S6] position slot opened exited=%s reason=%s rearmed=%d symbols=%d",
+            exited_symbol,
+            reason,
+            len(rearmed),
+            len(all_symbols),
+        )
+        return {"ok": True, "exited_symbol": exited_symbol, "rearmed": rearmed, "symbols": all_symbols}
 
     async def deactivate(self) -> None:
         """장 종료 시 호출 — WS 콜백 등록을 해제하고 실시간 연결을 종료한다."""

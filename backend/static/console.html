@@ -631,18 +631,37 @@
 
           <div class="section-gap"></div>
 
-          <!-- 장중 재선별 이력 -->
-          <div class="card" id="funnel-intraday-section">
-            <div class="card-title">장중 재선별 이력 <span>09:30 / 10:30 / 11:30 슬롯</span></div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr><th>슬롯</th><th>실행</th><th>재선별</th><th style="text-align:left;">사유</th><th style="text-align:right;">시장 avg</th></tr>
-                </thead>
-                <tbody id="funnel-intraday-tbody">
-                  <tr><td colspan="5" class="muted" style="text-align:center;">오늘 재선별 이력 없음</td></tr>
-                </tbody>
-              </table>
+          <!-- Task 1 & 2: 장중 재선별 타임라인 (5개 슬롯 + 섹터 회전) -->
+          <div id="tc-intraday-reselection-card" class="card" style="margin-bottom:16px; display:none;">
+            <div class="card-title">장중 재선별 타임라인 <span id="tc-reselection-date">오늘</span> <small>09:30 / 10:30 / 11:30 / 13:00 / 14:00 슬롯</small></div>
+            <div id="tc-reselection-timeline" style="display:flex; flex-direction:column; gap:8px;">
+              <!-- JS에서 채움 -->
+            </div>
+          </div>
+
+          <!-- Task 3: 포지션 교체 신호 -->
+          <div id="tc-replacement-signal-card" class="card" style="margin-bottom:16px; display:none;">
+            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+              <span>포지션 교체 신호</span>
+              <span id="tc-replacement-count" class="badge">0건</span>
+            </div>
+            <div id="tc-replacement-list" style="display:flex; flex-direction:column; gap:10px;">
+              <!-- JS에서 채움 -->
+            </div>
+            <div style="margin-top:12px; font-size:11px; color:var(--info, #3fb950); border-top:1px solid var(--line); padding-top:8px;">
+              ⚠️ 강제 교체 없음. 트레일링 스탑 발동 시 자연 교체.
+            </div>
+          </div>
+
+          <!-- Task 4: Kill Switch (긴급 비활성화) -->
+          <div id="tc-kill-switch-card" class="card" style="margin-bottom:16px;">
+            <div class="card-title">⚙️ 장중 재선별 기능 활성화 <small>긴급 비활성화 - 즉시 반영</small></div>
+            <div id="tc-kill-switch-list" style="display:flex; flex-direction:column; gap:8px; padding-top:6px;">
+              <!-- JS에서 채움 -->
+              <div class="muted" style="font-size:12px; text-align:center; padding:8px;">설정을 불러오는 중...</div>
+            </div>
+            <div style="margin-top:10px; font-size:11px; color:var(--muted); border-top:1px solid var(--line); padding-top:8px;">
+              마스터 OFF 시 모든 신규 기능 비활성. 재시작 불필요 — 매 호출 시 설정 재확인.
             </div>
           </div>
 
@@ -1740,6 +1759,67 @@
 
           <div class="section-gap"></div>
 
+          <!-- Task 4: Kill Switch UI -->
+          <div class="card">
+            <div class="settings-card-hd">
+              <div class="settings-card-meta">
+                <span class="settings-tag">긴급 제어</span>
+                <div class="settings-card-title-txt">장중 재선별 기능 활성화</div>
+                <div class="settings-card-desc">장중 재선별 및 교체 신호 기능을 실시간으로 활성화/비활성화합니다.</div>
+              </div>
+            </div>
+            <div style="padding: 0 20px 20px;">
+              <div class="settings-switch-group">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--line);">
+                  <div>
+                    <div style="font-weight:600;">전체 활성화 (Master)</div>
+                    <div style="font-size:11px; color:var(--muted);">모든 장중 재선별 하위 기능의 상위 스위치</div>
+                  </div>
+                  <label class="switch">
+                    <input type="checkbox" id="intraday-refresh-master-enabled" onchange="toggleIntradaySetting('intraday_refresh.master_enabled', this)">
+                    <span class="slider round"></span>
+                  </label>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--line); margin-left:20px;">
+                  <div>
+                    <div style="font-weight:500;">점심 슬롯 (13:00/14:00)</div>
+                    <div style="font-size:11px; color:var(--muted);">오후 시간대 재선별 추가 트리거</div>
+                  </div>
+                  <label class="switch">
+                    <input type="checkbox" id="intraday-refresh-lunch-slots-enabled" onchange="toggleIntradaySetting('intraday_refresh.lunch_slots_enabled', this)">
+                    <span class="slider round"></span>
+                  </label>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--line); margin-left:20px;">
+                  <div>
+                    <div style="font-weight:500;">섹터 회전 감지</div>
+                    <div style="font-size:11px; color:var(--muted);">급격한 섹터 변화 시 즉시 재선별 트리거</div>
+                  </div>
+                  <label class="switch">
+                    <input type="checkbox" id="intraday-refresh-sector-rotation-enabled" onchange="toggleIntradaySetting('intraday_refresh.sector_rotation_enabled', this)">
+                    <span class="slider round"></span>
+                  </label>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; margin-left:20px;">
+                  <div>
+                    <div style="font-weight:500;">교체 신호 발생</div>
+                    <div style="font-size:11px; color:var(--muted);">보유 종목보다 더 나은 후보 발견 시 신호 발생</div>
+                  </div>
+                  <label class="switch">
+                    <input type="checkbox" id="intraday-refresh-replacement-signal-enabled" onchange="toggleIntradaySetting('intraday_refresh.replacement_signal_enabled', this)">
+                    <span class="slider round"></span>
+                  </label>
+                </div>
+              </div>
+              <div style="margin-top:16px; font-size:11px; color:var(--muted); display:flex; justify-content:space-between;">
+                <span>⚠️ 끄면 즉시 반영됨 (재시작 불필요)</span>
+                <span id="intraday-settings-last-updated">-</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-gap"></div>
+
           <!-- ③ 리스크 & 운용 설정 (포트폴리오 한도 + 청산 정책 통합) -->
           <div class="card">
             <div class="settings-card-hd">
@@ -2230,6 +2310,7 @@
   <script src="/static/js/screens/console-trading-monitor.js"></script>
   <script src="/static/js/screens/console-live-decision.js"></script>
   <script src="/static/js/screens/console-diagnostics.js"></script>
+  <script src="/static/js/screens/console-intraday-v2.js"></script>
   <script src="/static/js/screens/console-execution-risk.js"></script>
   <script src="/static/js/screens/console-alerts.js"></script>
   <script src="/static/js/screens/console-approval.js"></script>

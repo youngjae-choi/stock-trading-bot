@@ -1,6 +1,6 @@
 """장중 시장 재평가 & 후보 재선별 (S3-Light → S4 → S5 갱신 → S6 후보 교체).
 
-스케줄: 09:30 / 10:30 / 11:30 KST (각 슬롯 1회)
+스케줄: 09:30 / 10:30 / 11:30 / 13:00 / 14:00 KST (각 슬롯 1회)
 - 매 슬롯: KIS 거래량 상위 종목 평균 등락률로 아침 플랜 대비 시장 변화 감지
 - 변화 감지 시: S3 재실행 → S4 재실행 → S5 후보 목록 갱신 → S6 후보 교체
 - 미감지 시: 1분 이내 스킵
@@ -15,6 +15,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from ..db import get_connection
+from ..settings_store import get_setting
 
 logger = logging.getLogger("IntradayRefresh")
 
@@ -28,8 +29,9 @@ _REFRESH_THRESHOLD: dict[str, float] = {
 }
 _DEFAULT_THRESHOLD = 3.0
 
-# 허용 슬롯
-_ALLOWED_SLOTS = {"09:30", "10:30", "11:30"}
+# 허용 슬롯. 13:00/14:00은 lunch_slots_enabled kill switch로만 제어한다.
+_BASE_ALLOWED_SLOTS = {"09:30", "10:30", "11:30"}
+_LUNCH_ALLOWED_SLOTS = {"13:00", "14:00"}
 
 
 # ---------------------------------------------------------------------------
@@ -59,12 +61,12 @@ def _get_refresh_log(trade_date: str) -> list[dict[str, Any]]:
     try:
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT key, value FROM system_settings WHERE key LIKE ?",
+                "SELECT key, value_json FROM system_settings WHERE key LIKE ?",
                 (f"intraday_refresh.{trade_date}.%",),
             ).fetchall()
         for row in rows:
             try:
-                results.append({"slot": row["key"].split(".")[-1], **json.loads(row["value"])})
+                results.append({"slot": row["key"].split(".")[-1], **json.loads(row["value_json"])})
             except Exception:
                 pass
     except Exception:
@@ -79,11 +81,14 @@ def _save_refresh_log(trade_date: str, slot: str, data: dict[str, Any]) -> None:
         with get_connection() as conn:
             existing = conn.execute("SELECT key FROM system_settings WHERE key=?", (key,)).fetchone()
             if existing:
-                conn.execute("UPDATE system_settings SET value=? WHERE key=?", (value, key))
+                conn.execute("UPDATE system_settings SET value_json=? WHERE key=?", (value, key))
             else:
                 conn.execute(
-                    "INSERT INTO system_settings (key, value) VALUES (?,?)",
-                    (key, value),
+                    """
+                    INSERT INTO system_settings (key, value_json, value_type, description, updated_at, updated_by)
+                    VALUES (?, ?, 'json', '장중 재선별 슬롯 실행 로그', ?, 'intraday_refresh')
+                    """,
+                    (key, value, datetime.now(KST).isoformat()),
                 )
     except Exception as exc:
         logger.warning("WARN: IntradayRefresh 이력 저장 실패 — %s", exc)
@@ -93,13 +98,25 @@ def _already_ran(trade_date: str, slot: str) -> bool:
     key = f"intraday_refresh.{trade_date}.{slot}"
     try:
         with get_connection() as conn:
-            row = conn.execute("SELECT value FROM system_settings WHERE key=?", (key,)).fetchone()
+            row = conn.execute("SELECT value_json FROM system_settings WHERE key=?", (key,)).fetchone()
         if row:
-            data = json.loads(row["value"])
+            data = json.loads(row["value_json"])
             return data.get("ran", False)
     except Exception:
         pass
     return False
+
+
+def _setting_bool(key: str, default: bool) -> bool:
+    """매 호출마다 kill switch 값을 읽어 재시작 없이 토글을 반영한다."""
+    try:
+        value = get_setting(key, default)
+    except Exception as exc:
+        logger.warning("WARN: IntradayRefresh setting read failed key=%s reason=%s", key, exc)
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
 
 
 async def _fetch_market_snapshot() -> dict[str, Any]:
@@ -224,18 +241,43 @@ async def _send_telegram_notify(
     reselection_result: dict[str, Any],
 ) -> None:
     try:
-        from ..alert_service import send_telegram_message
+        from ..alert_service import send_telegram_alert
         s4 = reselection_result.get("s4", {})
         s6 = reselection_result.get("s6", {})
         new_count = s6.get("new_count", s4.get("output_count", "?"))
-        text = (
-            f"♻️ [장중 재선별] {slot} 슬롯\n"
-            f"감지: {reason}\n"
-            f"→ 새 후보 {new_count}종목으로 교체"
+        await send_telegram_alert(
+            f"장중 재선별 - {slot}",
+            f"✅ 트리거됨 — {reason}\n신규 후보 {new_count}종목, 보유 종목 유지",
         )
-        await send_telegram_message(text)
     except Exception as exc:
         logger.warning("WARN: IntradayRefresh 텔레그램 알림 실패 — %s", exc)
+
+
+async def _send_telegram_skip(slot: str, avg_change: float | None, reason: str) -> None:
+    """재선별 스킵도 운영자가 확인할 수 있게 텔레그램 알림을 보낸다."""
+    try:
+        from ..alert_service import send_telegram_alert
+
+        avg_text = "확인불가" if avg_change is None else f"{avg_change:+.1f}%"
+        await send_telegram_alert(f"장중 재선별 - {slot}", f"⏭️ 스킵 — 시장 평균 {avg_text} ({reason})")
+    except Exception as exc:
+        logger.warning("WARN: IntradayRefresh 스킵 텔레그램 알림 실패 — %s", exc)
+
+
+async def _send_sector_rotation_notify(slot: str, sector_result: dict[str, Any], reselection_result: dict[str, Any]) -> None:
+    """섹터 회전으로 트리거된 경우 별도 알림을 발송한다."""
+    try:
+        from ..alert_service import send_telegram_alert
+
+        s4 = reselection_result.get("s4", {})
+        s6 = reselection_result.get("s6", {})
+        new_count = s6.get("new_count", s4.get("output_count", "?"))
+        await send_telegram_alert(
+            f"섹터 회전 감지 - {slot}",
+            f"🔄 {sector_result.get('reason', '')}\n재선별 트리거됨. 신규 후보 {new_count}종목.",
+        )
+    except Exception as exc:
+        logger.warning("WARN: IntradayRefresh 섹터 회전 텔레그램 알림 실패 — %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +288,7 @@ async def check_and_refresh(slot: str) -> dict[str, Any]:
     """장중 재평가 슬롯 실행 진입점.
 
     Args:
-        slot: "09:30" | "10:30" | "11:30"
+        slot: "09:30" | "10:30" | "11:30" | "13:00" | "14:00"
 
     Returns:
         실행 결과 딕셔너리
@@ -254,7 +296,12 @@ async def check_and_refresh(slot: str) -> dict[str, Any]:
     trade_date = _today()
     logger.info("START: [IntradayRefresh] slot=%s trade_date=%s", slot, trade_date)
 
-    if slot not in _ALLOWED_SLOTS:
+    master_enabled = _setting_bool("intraday_refresh.master_enabled", True)
+    lunch_slots_enabled = master_enabled and _setting_bool("intraday_refresh.lunch_slots_enabled", True)
+    allowed_slots = set(_BASE_ALLOWED_SLOTS)
+    if lunch_slots_enabled:
+        allowed_slots.update(_LUNCH_ALLOWED_SLOTS)
+    if slot not in allowed_slots:
         return {"ok": False, "reason": f"invalid_slot: {slot}"}
 
     if _already_ran(trade_date, slot):
@@ -267,6 +314,7 @@ async def check_and_refresh(slot: str) -> dict[str, Any]:
         log_data = {"ran": True, "triggered": False, "reason": snapshot.get("reason", "snapshot_failed"), "avg_change": None}
         _save_refresh_log(trade_date, slot, log_data)
         logger.warning("WARN: [IntradayRefresh] 시장 스냅샷 조회 실패 — 스킵 slot=%s", slot)
+        await _send_telegram_skip(slot, None, "시장 스냅샷 조회 실패")
         return {"ok": False, "reason": "snapshot_failed"}
 
     avg_change = snapshot["avg_change"]
@@ -277,7 +325,19 @@ async def check_and_refresh(slot: str) -> dict[str, Any]:
 
     # 3. 재평가 필요 여부 판단
     existing_logs = _get_refresh_log(trade_date)
-    triggered, reason = _needs_refresh(avg_change, intensity, existing_logs)
+    market_triggered, market_reason = _needs_refresh(avg_change, intensity, existing_logs)
+    sector_result: dict[str, Any] = {"enabled": False, "triggered": False, "reason": "master_disabled"}
+    if master_enabled:
+        try:
+            from .sector_rotation import detect_sector_rotation
+
+            sector_result = detect_sector_rotation(snapshot, slot=slot, trade_date=trade_date)
+        except Exception as exc:
+            sector_result = {"ok": False, "enabled": True, "triggered": False, "reason": str(exc), "gap_pct": 0.0}
+            logger.warning("WARN: [IntradayRefresh] 섹터 회전 판단 실패 — %s", exc)
+
+    triggered = market_triggered or bool(sector_result.get("triggered"))
+    reason = market_reason if market_triggered else str(sector_result.get("reason") or market_reason)
 
     logger.info(
         "INFO: [IntradayRefresh] 판단 slot=%s avg_change=%+.2f%% intensity=%s triggered=%s reason=%s",
@@ -285,8 +345,15 @@ async def check_and_refresh(slot: str) -> dict[str, Any]:
     )
 
     if not triggered:
-        log_data = {"ran": True, "triggered": False, "reason": reason, "avg_change": avg_change}
+        log_data = {
+            "ran": True,
+            "triggered": False,
+            "reason": reason,
+            "avg_change": avg_change,
+            "sector_rotation": sector_result,
+        }
         _save_refresh_log(trade_date, slot, log_data)
+        await _send_telegram_skip(slot, avg_change, reason)
         return {"ok": True, "triggered": False, "reason": reason, "avg_change": avg_change}
 
     # 4. S3 → S4 → S5 → S6 재실행
@@ -297,14 +364,26 @@ async def check_and_refresh(slot: str) -> dict[str, Any]:
         "triggered": True,
         "reason": reason,
         "avg_change": avg_change,
+        "market_triggered": market_triggered,
+        "sector_rotation": sector_result,
         "reselection": reselection,
     }
     _save_refresh_log(trade_date, slot, log_data)
 
     await _send_telegram_notify(slot, avg_change, reason, reselection)
+    if sector_result.get("triggered"):
+        await _send_sector_rotation_notify(slot, sector_result, reselection)
 
     logger.info("SUCCESS: [IntradayRefresh] 재선별 완료 slot=%s", slot)
-    return {"ok": True, "triggered": True, "avg_change": avg_change, "reason": reason, "reselection": reselection}
+    return {
+        "ok": True,
+        "triggered": True,
+        "avg_change": avg_change,
+        "reason": reason,
+        "market_triggered": market_triggered,
+        "sector_rotation": sector_result,
+        "reselection": reselection,
+    }
 
 
 def get_today_refresh_status(trade_date: str | None = None) -> list[dict[str, Any]]:

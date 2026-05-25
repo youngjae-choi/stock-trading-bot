@@ -827,6 +827,101 @@ def get_intraday_refresh_status():
     return {"ok": True, "payload": logs}
 
 
+@router.get("/reselection-stats")
+async def get_reselection_stats(trade_date: str | None = Query(None, description="YYYY-MM-DD (기본값: 오늘)")):
+    """Return intraday reselection slot logs, sector rotations, and replacement signals.
+
+    Args:
+        trade_date: Optional trade date. Empty data is returned as arrays, not errors.
+    """
+    target_date = trade_date or _today_kst()
+    endpoint = "/api/v1/trading-monitor/reselection-stats"
+    logger.info("START: GET %s trade_date=%s", endpoint, target_date)
+    try:
+        from ...services.engine.intraday_refresh import get_today_refresh_status
+        from ...services.engine.replacement_signal import get_replacement_signals
+        from ...services.engine.sector_rotation import get_sector_rotation_logs
+
+        logs = get_today_refresh_status(target_date)
+        slots = []
+        for log in logs:
+            reselection = log.get("reselection") if isinstance(log.get("reselection"), dict) else {}
+            s6 = reselection.get("s6", {}) if isinstance(reselection, dict) else {}
+            s4 = reselection.get("s4", {}) if isinstance(reselection, dict) else {}
+            slots.append(
+                {
+                    "slot": log.get("slot", ""),
+                    "triggered": bool(log.get("triggered")),
+                    "reason": log.get("reason", ""),
+                    "avg_change": log.get("avg_change"),
+                    "new_candidates": s6.get("new_count", s4.get("output_count", 0)),
+                    "market_triggered": bool(log.get("market_triggered", log.get("triggered", False))),
+                    "sector_rotation_triggered": bool((log.get("sector_rotation") or {}).get("triggered"))
+                    if isinstance(log.get("sector_rotation"), dict)
+                    else False,
+                }
+            )
+        payload = {
+            "trade_date": target_date,
+            "slots": slots,
+            "sector_rotations": get_sector_rotation_logs(target_date),
+            "replacement_signals": _format_replacement_signals(get_replacement_signals(target_date)),
+        }
+        logger.info("SUCCESS: GET %s trade_date=%s slots=%d", endpoint, target_date, len(slots))
+        return {"ok": True, "payload": payload}
+    except Exception as exc:
+        logger.error("FAIL: GET %s trade_date=%s reason=%s", endpoint, target_date, exc)
+        return {"ok": True, "payload": {"trade_date": target_date, "slots": [], "sector_rotations": [], "replacement_signals": []}}
+
+
+def _format_replacement_signals(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Shape DB replacement signal rows for the Trading Monitor API contract."""
+    formatted = []
+    for signal in signals:
+        formatted.append(
+            {
+                "id": signal.get("id"),
+                "slot": signal.get("slot", ""),
+                "current": {
+                    "symbol": signal.get("current_symbol", ""),
+                    "name": signal.get("current_name", ""),
+                    "score": signal.get("current_score", 0),
+                    "pnl_pct": signal.get("current_pnl_pct"),
+                },
+                "new": {
+                    "symbol": signal.get("new_symbol", ""),
+                    "name": signal.get("new_name", ""),
+                    "score": signal.get("new_score", 0),
+                },
+                "score_gap": round(_to_float(signal.get("score_gap")) * 100, 1),
+                "reason": signal.get("reason", ""),
+                "created_at": signal.get("created_at", ""),
+            }
+        )
+    return formatted
+
+
+@router.get("/replacement-signals")
+async def get_replacement_signal_list(trade_date: str | None = Query(None, description="YYYY-MM-DD (기본값: 오늘)")):
+    """Return replacement signals for one trade date.
+
+    Args:
+        trade_date: Optional trade date. Missing data returns an empty signals array.
+    """
+    target_date = trade_date or _today_kst()
+    endpoint = "/api/v1/trading-monitor/replacement-signals"
+    logger.info("START: GET %s trade_date=%s", endpoint, target_date)
+    try:
+        from ...services.engine.replacement_signal import get_replacement_signals
+
+        signals = _format_replacement_signals(get_replacement_signals(target_date))
+        logger.info("SUCCESS: GET %s trade_date=%s count=%d", endpoint, target_date, len(signals))
+        return {"ok": True, "payload": {"signals": signals}}
+    except Exception as exc:
+        logger.error("FAIL: GET %s trade_date=%s reason=%s", endpoint, target_date, exc)
+        return {"ok": True, "payload": {"signals": []}}
+
+
 def _backfill_sell_order_names(trade_date: str) -> int:
     """Fill missing sell order names from the local symbols master table.
 

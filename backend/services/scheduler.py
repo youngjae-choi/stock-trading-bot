@@ -1152,8 +1152,14 @@ def _build_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    # 장중 시장 재평가 & 후보 재선별 — 09:30 / 10:30 / 11:30 KST
-    for _slot_hhmm, _slot_id in [("09:30", "0930"), ("10:30", "1030"), ("11:30", "1130")]:
+    # 장중 시장 재평가 & 후보 재선별 — 09:30 / 10:30 / 11:30 / 13:00 / 14:00 KST
+    for _slot_hhmm, _slot_id in [
+        ("09:30", "0930"),
+        ("10:30", "1030"),
+        ("11:30", "1130"),
+        ("13:00", "1300"),
+        ("14:00", "1400"),
+    ]:
         _sh, _sm = int(_slot_hhmm.split(":")[0]), int(_slot_hhmm.split(":")[1])
         scheduler.add_job(
             functools.partial(job_intraday_refresh, slot=_slot_hhmm),

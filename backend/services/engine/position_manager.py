@@ -194,11 +194,27 @@ class PositionManager:
         logger.info("START: [S8] exit symbol=%s reason=%s price=%.2f", symbol, reason, price)
         try:
             from .order_executor import order_executor
-            await order_executor.execute_sell(symbol=symbol, qty=int(position["qty"]), price=0, reason=reason)
+            sell_result = await order_executor.execute_sell(symbol=symbol, qty=int(position["qty"]), price=0, reason=reason)
             logger.info("SUCCESS: [S8] exit order symbol=%s reason=%s", symbol, reason)
+            if reason == "TRAILING_STOP" and isinstance(sell_result, dict) and sell_result.get("ok"):
+                await self._notify_trailing_slot_opened(symbol, reason)
         except Exception as exc:
             self._closing.discard(symbol)
             logger.error("FAIL: [S8] exit order failed symbol=%s error=%s", symbol, exc)
+
+    async def _notify_trailing_slot_opened(self, symbol: str, reason: str) -> None:
+        """Re-arm S6 candidate evaluation after a trailing stop opens capacity.
+
+        Args:
+            symbol: Exited symbol.
+            reason: Exit reason. This notification never places a buy order directly.
+        """
+        try:
+            from .decision_engine import decision_engine
+
+            await decision_engine.on_position_slot_opened(symbol, reason)
+        except Exception as exc:
+            logger.warning("WARN: [S8] trailing slot-open notification failed symbol=%s reason=%s", symbol, exc)
 
     def _update_trailing(self, position: dict[str, Any], price: float) -> None:
         """트레일링 스탑 상태 업데이트. 손절선은 절대 하향하지 않는다."""

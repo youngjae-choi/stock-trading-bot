@@ -173,6 +173,13 @@
 
   async function loadFunnelData() {
     loadFunnelMemoryCounts();
+    // 신규: Funnel Monitor에 통합된 장중 재선별 v2 카드 갱신
+    try {
+      var td = window._tcTradeDate || null;
+      if (typeof loadIntradayReselectionTimeline === "function") loadIntradayReselectionTimeline(td);
+      if (typeof loadReplacementSignals === "function") loadReplacementSignals(td);
+      if (typeof loadIntradayKillSwitches === "function") loadIntradayKillSwitches();
+    } catch (e) { console.warn("intraday v2 refresh failed", e); }
     // Load Daily Plan profile assignments
     var assignments = [];
     try {
