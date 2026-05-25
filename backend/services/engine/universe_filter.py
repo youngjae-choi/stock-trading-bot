@@ -180,6 +180,15 @@ _TONE_WEIGHTS: dict[str, dict[str, float]] = {
 }
 _DEFAULT_WEIGHTS = _TONE_WEIGHTS["neutral"]
 
+# 시장 톤별 상위 선정 종목 수 — 비관적 장에서는 보수적으로 줄이고 낙관적 장에서는 늘린다
+_TONE_TOP_N: dict[str, int] = {
+    "positive": 35,
+    "neutral":  30,
+    "negative": 20,
+    "mixed":    25,
+    "fallback": 30,
+}
+
 
 def _get_tone_weights(trade_date: str) -> tuple[dict[str, float], str]:
     """오늘 시장 톤을 DB에서 조회해 가중치를 반환한다.
@@ -317,7 +326,8 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
     rejection_counts = _count_filter_rejections(merged)
     filtered = _apply_filters(merged)
     ranked = _score_and_rank(filtered, total=len(merged), weights=weights)
-    top_n = ranked[:_TOP_N_RESULT]
+    top_n_count = _TONE_TOP_N.get(tone_used, _TOP_N_RESULT)
+    top_n = ranked[:top_n_count]
 
     # 탈락 종목 Missed Opportunities 기록
     filtered_symbols = {item.get("symbol") for item in filtered}

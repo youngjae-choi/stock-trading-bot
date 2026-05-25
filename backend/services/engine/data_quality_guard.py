@@ -23,6 +23,8 @@ _VALID_EVENT_TYPES = {
     "llm_parse_error",
     "duplicate_tick",
     "symbol_mapping_error",
+    "price_zero_or_negative",
+    "ws_consecutive_disconnect",
 }
 _SEVERITY_RANK = {
     "INFO": 0,
@@ -182,6 +184,57 @@ def take_dq_snapshot(trade_date: str) -> dict:
         )
     logger.info("SUCCESS: DataQualityGuard.snapshot.create snapshot_id=%s", snapshot["id"])
     return snapshot
+
+
+def publish_event(
+    source: str,
+    event_type: str,
+    severity: str,
+    detail: dict | None = None,
+    symbol: str | None = None,
+    notify_telegram: bool = False,
+) -> str | None:
+    """Record a DQ event and optionally send a Telegram alert.
+
+    Args:
+        source: Component that detected the issue (e.g. "position_manager").
+        event_type: One of the supported DQ event types.
+        severity: INFO, WARNING, DEGRADED, BLOCK_NEW_ENTRY, or EMERGENCY.
+        detail: Optional dict of contextual data — serialized to JSON.
+        symbol: Optional stock symbol related to the event.
+        notify_telegram: Whether to send a Telegram alert in addition to DB recording.
+    """
+    import json as _json
+    detail_str = _json.dumps(detail or {}, ensure_ascii=False) if detail else ""
+    full_detail = f"[{source}] {detail_str}" if detail_str else f"[{source}]"
+    try:
+        event_id = record_dq_event(event_type=event_type, severity=severity, symbol=symbol, detail=full_detail)
+    except Exception as exc:
+        logger.warning("WARN: DataQualityGuard.publish_event failed source=%s reason=%s", source, exc)
+        return None
+    if notify_telegram:
+        try:
+            import asyncio
+            from ..alert_service import send_telegram_alert
+            msg = f"[데이터 품질 경보] {severity}\n원인: {event_type}\n컴포넌트: {source}\n{detail_str}"
+            asyncio.create_task(send_telegram_alert("[매매봇] DQ 경보", msg))
+        except Exception as exc:
+            logger.warning("WARN: DataQualityGuard.publish_event telegram failed reason=%s", exc)
+    return event_id
+
+
+def get_current_status() -> str:
+    """Return the current overall DQ status based on today's events.
+
+    Returns one of: NORMAL, WARNING, DEGRADED, BLOCK_NEW_ENTRY, EMERGENCY.
+    """
+    today = _today_kst()
+    try:
+        result = get_today_dq_status(today)
+        return str(result.get("overall_status", "NORMAL"))
+    except Exception as exc:
+        logger.warning("WARN: DataQualityGuard.get_current_status failed reason=%s", exc)
+        return "NORMAL"
 
 
 def get_latest_dq_snapshot(trade_date: str) -> dict | None:

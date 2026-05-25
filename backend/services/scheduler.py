@@ -904,6 +904,33 @@ async def job_review_audit() -> None:
     except Exception as exc:
         logger.error("FAIL: [Job ReviewAudit] 미진입 수익률 업데이트 실패 — reason=%s", exc)
 
+    # ── Step 3: S11 Learning Memory Builder — review 결과를 다음날 자동 반영용 메모리로 변환
+    try:
+        from .engine.learning_memory import run_learning_memory_builder
+
+        lm_result = await run_learning_memory_builder(today)
+        logger.info(
+            "SUCCESS: [Job ReviewAudit] S11 Learning Memory 생성 완료 memories=%d auto=%d approval=%d",
+            lm_result.get("memory_count", 0),
+            lm_result.get("auto_apply_count", 0),
+            lm_result.get("approval_required_count", 0),
+        )
+    except Exception as exc:
+        logger.error("FAIL: [Job ReviewAudit] S11 Learning Memory 생성 실패 — reason=%s", exc)
+
+    # ── Step 4: 같은 종목 3회+ 손실 시 자동 차단 (expert_knowledge 승인 없이)
+    try:
+        from .engine.loss_streak_guard import auto_block_loss_streak_symbols
+
+        block_result = auto_block_loss_streak_symbols(today)
+        if block_result.get("blocked"):
+            logger.info(
+                "SUCCESS: [Job ReviewAudit] 손실 스트릭 차단 완료 blocked=%s",
+                block_result.get("blocked"),
+            )
+    except Exception as exc:
+        logger.error("FAIL: [Job ReviewAudit] 손실 스트릭 차단 실패 — reason=%s", exc)
+
 
 async def job_postprocess_pipeline() -> None:
     """Run S9 then S10 sequentially from one postprocess schedule key."""

@@ -147,14 +147,43 @@ class OrderExecutor:
         self._balance_cache_at: float = 0.0
         self._BALANCE_TTL = 30.0
 
+    _BUY_MAX_RETRY = 3
+    _BUY_RETRY_DELAYS = (2.0, 4.0, 8.0)  # 초 단위 — 지수 백오프
+
     async def execute_signal(self, signal: dict[str, Any]) -> dict[str, Any]:
-        """Serialize BUY signal execution to keep KIS calls below per-second limits.
+        """Serialize BUY signal execution with up to 3 retries on transient failure.
 
         Args:
             signal: Signal dictionary containing id, symbol, name, and trigger_price.
         """
         async with self._semaphore:
-            return await self._execute_signal_inner(signal)
+            last_result: dict[str, Any] = {}
+            for attempt in range(self._BUY_MAX_RETRY):
+                result = await self._execute_signal_inner(signal)
+                if result.get("ok"):
+                    return result
+                last_result = result
+                # preflight/validation 실패는 재시도해도 의미 없음
+                non_retryable = {"invalid_signal", "preflight_blocked", "emergency_halt_active", "emergency_halt_status_uncertain"}
+                if result.get("reason") in non_retryable:
+                    return result
+                if attempt < self._BUY_MAX_RETRY - 1:
+                    delay = self._BUY_RETRY_DELAYS[attempt]
+                    logger.warning(
+                        "WARN: [S7] BUY 재시도 %d/%d symbol=%s reason=%s delay=%.1fs",
+                        attempt + 1,
+                        self._BUY_MAX_RETRY,
+                        signal.get("symbol"),
+                        result.get("reason"),
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+            logger.error(
+                "FAIL: [S7] BUY 최대 재시도(%d회) 초과 symbol=%s",
+                self._BUY_MAX_RETRY,
+                signal.get("symbol"),
+            )
+            return last_result
 
     async def _execute_signal_inner(self, signal: dict[str, Any]) -> dict[str, Any]:
         """Execute one pending BUY signal through KIS and persist the order.
@@ -416,22 +445,42 @@ class OrderExecutor:
                     ord_dvsn=ord_dvsn,
                 )
             except Exception as first_exc:
-                # 매도 1차 실패 — 2초 대기 후 시장가로 재시도 1회
+                # 매도 실패 — 최대 2회 시장가 재시도 (총 3회 시도)
                 logger.warning(
                     "WARN: [S8/S9] sell 1차 실패, 시장가 재시도 symbol=%s reason=%s",
                     safe_symbol, first_exc,
                 )
-                await asyncio.sleep(2.0)
-                response = await order_cash(
-                    side="sell",
-                    symbol=safe_symbol,
-                    qty=safe_qty,
-                    price="0",
-                    ord_dvsn="01",  # 시장가
-                )
-                order_type = "market"
-                safe_price = 0.0
-                logger.info("INFO: [S8/S9] sell 시장가 재시도 성공 symbol=%s", safe_symbol)
+                _sell_retry_delays = (2.0, 4.0)
+                _sell_success = False
+                for _sell_attempt, _sell_delay in enumerate(_sell_retry_delays, start=1):
+                    await asyncio.sleep(_sell_delay)
+                    try:
+                        response = await order_cash(
+                            side="sell",
+                            symbol=safe_symbol,
+                            qty=safe_qty,
+                            price="0",
+                            ord_dvsn="01",  # 시장가
+                        )
+                        order_type = "market"
+                        safe_price = 0.0
+                        logger.info(
+                            "INFO: [S8/S9] sell 시장가 재시도 성공 attempt=%d symbol=%s",
+                            _sell_attempt,
+                            safe_symbol,
+                        )
+                        _sell_success = True
+                        break
+                    except Exception as retry_exc:
+                        logger.warning(
+                            "WARN: [S8/S9] sell 재시도 %d/%d 실패 symbol=%s reason=%s",
+                            _sell_attempt,
+                            len(_sell_retry_delays),
+                            safe_symbol,
+                            retry_exc,
+                        )
+                if not _sell_success:
+                    raise first_exc
             await asyncio.sleep(0.2)
             kis_order_no = self._extract_order_no(response)
 

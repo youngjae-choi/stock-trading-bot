@@ -181,6 +181,17 @@ class PositionManager:
 
         price = _to_float(tick.get("price"))
         if price <= 0:
+            try:
+                from .data_quality_guard import publish_event as _dq_publish
+                _dq_publish(
+                    source="position_manager",
+                    event_type="price_zero_or_negative",
+                    severity="DEGRADED",
+                    detail={"symbol": symbol, "price": price},
+                    notify_telegram=False,
+                )
+            except Exception:
+                pass
             return
 
         # 트레일링 상태 업데이트
@@ -256,12 +267,47 @@ class PositionManager:
                 "profile_assigned": position.get("profile_assigned", "MID_VOL"),
             })
 
+    # 시장 톤별 강제청산 시간 (부정적 시황일수록 일찍 청산)
+    _TONE_FORCE_EXIT: dict[str, str] = {
+        "positive": "15:25:00",
+        "neutral":  "15:20:00",
+        "negative": "15:10:00",
+        "mixed":    "15:15:00",
+        "fallback": "15:20:00",
+    }
+    # 시장 톤별 TIME_EXIT pnl 임계값 (부정적 시황일수록 손익분기 기준 높임)
+    _TONE_TIME_EXIT_PNL: dict[str, float] = {
+        "positive": 0.0,    # 수익 중이면 계속 보유
+        "neutral":  0.005,  # 0.5% 미달 시 시간 손절
+        "negative": 0.01,   # 1% 미달 시 시간 손절 (더 일찍 컷)
+        "mixed":    0.008,
+        "fallback": 0.005,
+    }
+
+    def _get_today_tone(self) -> str:
+        """오늘 시장 톤을 DB에서 조회. 실패 시 fallback 반환."""
+        try:
+            from zoneinfo import ZoneInfo as _ZI
+            trade_date = _now_kst().strftime("%Y-%m-%d")
+            with get_connection() as conn:
+                row = conn.execute(
+                    "SELECT tone FROM market_tone_results WHERE trade_date = ? ORDER BY created_at DESC LIMIT 1",
+                    (trade_date,),
+                ).fetchone()
+            if row:
+                return str(row["tone"]).lower()
+        except Exception:
+            pass
+        return "fallback"
+
     def _exit_reason(self, position: dict[str, Any], price: float) -> str:
         now = _now_kst()
         active_stop = _to_float(position["active_stop_price"])
 
-        # 1. 강제청산 시간 (최우선)
-        force_time_str = str(position.get("force_exit_time") or "15:20:00")
+        # 1. 강제청산 시간 (최우선) — 시장 톤에 따라 조정
+        tone = self._get_today_tone()
+        default_force_time = self._TONE_FORCE_EXIT.get(tone, "15:20:00")
+        force_time_str = str(position.get("force_exit_time") or default_force_time)
         try:
             h, m, s = map(int, force_time_str.split(":"))
             force_dt = now.replace(hour=h, minute=m, second=s, microsecond=0)
@@ -276,7 +322,7 @@ class PositionManager:
                 return "TRAILING_STOP"
             return "INITIAL_STOP_LOSS"
 
-        # 3. 시간 손절 (최대 보유 시간 초과 + 손익분기 미달)
+        # 3. 시간 손절 (최대 보유 시간 초과 + 손익분기 미달) — pnl 임계값 톤에 따라 조정
         try:
             entry_time = datetime.fromisoformat(position["entry_time"])
             if entry_time.tzinfo is None:
@@ -284,7 +330,8 @@ class PositionManager:
             max_minutes = int(position.get("max_holding_minutes") or 180)
             entry_price = _to_float(position["entry_price"])
             pnl_pct = (price - entry_price) / entry_price if entry_price > 0 else 0
-            if now - entry_time >= timedelta(minutes=max_minutes) and pnl_pct < 0.005:
+            time_exit_pnl = self._TONE_TIME_EXIT_PNL.get(tone, 0.005)
+            if now - entry_time >= timedelta(minutes=max_minutes) and pnl_pct < time_exit_pnl:
                 return "TIME_EXIT"
         except Exception:
             pass

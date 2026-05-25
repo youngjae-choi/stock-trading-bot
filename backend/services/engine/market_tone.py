@@ -384,3 +384,22 @@ def get_today_morning_context(trade_date: str) -> dict[str, Any] | None:
             except Exception:
                 d[field] = {} if field == "market_data" else []
     return d
+
+
+def get_latest_morning_context() -> dict[str, Any] | None:
+    """날짜 무관, DB에서 가장 최근 morning_context를 조회한다."""
+    _ensure_table()
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM morning_context ORDER BY trade_date DESC, created_at DESC LIMIT 1",
+        ).fetchone()
+    if row is None:
+        return None
+    d = dict(row)
+    for field in ("market_data", "key_factors", "risk_factors"):
+        if isinstance(d.get(field), str):
+            try:
+                d[field] = json.loads(d[field])
+            except Exception:
+                d[field] = {} if field == "market_data" else []
+    return d

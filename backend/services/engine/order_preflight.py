@@ -403,6 +403,20 @@ def run_preflight(
     else:
         checks["daily_loss_limit"] = PREFLIGHT_OK
 
+    # 8. 데이터 품질 상태 확인 — DEGRADED 이상이면 신규 BUY 차단
+    _DQ_BLOCK_LEVELS = {"DEGRADED", "BLOCK_NEW_ENTRY", "EMERGENCY"}
+    try:
+        from .data_quality_guard import get_current_status as _dq_status
+        dq_status = _dq_status()
+        if dq_status in _DQ_BLOCK_LEVELS:
+            checks["data_quality"] = PREFLIGHT_BLOCK
+            block_reasons.append(f"데이터 품질 저하 ({dq_status}) — 신규 주문 차단")
+        else:
+            checks["data_quality"] = PREFLIGHT_OK
+    except Exception as exc:
+        logger.warning("WARN: [S6-P] DQ status check failed; fail-open reason=%s", exc)
+        checks["data_quality"] = PREFLIGHT_OK
+
     passed = len(block_reasons) == 0
     preflight_id = str(uuid.uuid4())
     created_at = _now_utc_iso()

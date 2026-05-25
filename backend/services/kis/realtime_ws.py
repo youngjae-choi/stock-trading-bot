@@ -72,6 +72,8 @@ class RealtimeWSManager:
         self._stop_event = asyncio.Event()
         self._tick_callbacks: list[Callable[[dict[str, Any]], Awaitable[None]]] = []
         self.is_connected: bool = False
+        self._consecutive_fail_count: int = 0
+        self._ws_block_published: bool = False
 
     async def start(self, symbols: list[str]) -> None:
         safe_symbols = [str(s).strip() for s in symbols if str(s).strip()]
@@ -142,6 +144,8 @@ class RealtimeWSManager:
                 async with websockets.connect(ws_url, ping_interval=20, ping_timeout=20) as ws:
                     self._ws = ws
                     self.is_connected = True
+                    self._consecutive_fail_count = 0
+                    self._ws_block_published = False
                     for symbol in self._symbols:
                         subscribe_message = self._build_subscribe_message(approval_key=approval_key, symbol=symbol)
                         await ws.send(json.dumps(subscribe_message))
@@ -155,7 +159,21 @@ class RealtimeWSManager:
                 break
             except Exception as exc:
                 self.is_connected = False
-                logger.error("FAIL: realtime websocket loop - %s", str(exc))
+                self._consecutive_fail_count += 1
+                logger.error("FAIL: realtime websocket loop fail_count=%d - %s", self._consecutive_fail_count, str(exc))
+                if self._consecutive_fail_count >= 3 and not self._ws_block_published:
+                    try:
+                        from ..engine.data_quality_guard import publish_event as _dq_publish
+                        _dq_publish(
+                            source="realtime_ws",
+                            event_type="ws_consecutive_disconnect",
+                            severity="BLOCK_NEW_ENTRY",
+                            detail={"fail_count": self._consecutive_fail_count},
+                            notify_telegram=True,
+                        )
+                        self._ws_block_published = True
+                    except Exception as dq_exc:
+                        logger.warning("WARN: [WS] DQ publish failed reason=%s", dq_exc)
                 if self._stop_event.is_set():
                     break
                 await asyncio.sleep(2.0)

@@ -309,11 +309,20 @@
           return;
         }
         var d = json.data;
+        var isToday = json.is_today !== false;
         card.style.display = 'block';
 
-        // 날짜
+        // 날짜 + 전일 기준 표시
         var dateEl = document.getElementById('mbDate');
-        if (dateEl) dateEl.textContent = d.trade_date || '';
+        if (dateEl) {
+          dateEl.textContent = d.trade_date || '';
+          if (!isToday) {
+            dateEl.textContent += ' (전일 기준)';
+            dateEl.style.color = 'var(--muted)';
+          } else {
+            dateEl.style.color = '';
+          }
+        }
 
         // 레짐 배지
         var regimeEl = document.getElementById('mbRegime');
@@ -337,25 +346,26 @@
           riskEl.setAttribute('data-val', d.risk_level || 'normal');
         }
 
-        // 시장 수치 그리드
+        // 시장 수치 그리드 (SOX, 10Y 국채 추가)
         var grid = document.getElementById('mbMarketGrid');
         if (grid && d.market_data) {
           var marketLabels = {
             'nasdaq': 'NASDAQ', 'sp500': 'S&P500',
             'vix': 'VIX', 'usdkrw': 'USD/KRW',
             'nikkei': '닛케이', 'hangseng': '항셍',
-            'kospi': 'KOSPI', 'oil_wti': 'WTI'
+            'kospi': 'KOSPI', 'oil_wti': 'WTI',
+            'sox': 'SOX', 'us_10y_yield': '미국10Y'
           };
+          var vixInvert = new Set(['vix', 'us_10y_yield']);
           var html = '';
-          var keys = ['nasdaq', 'sp500', 'vix', 'usdkrw', 'nikkei', 'hangseng', 'kospi', 'oil_wti'];
+          var keys = ['nasdaq', 'sp500', 'vix', 'usdkrw', 'nikkei', 'hangseng', 'kospi', 'oil_wti', 'sox', 'us_10y_yield'];
           keys.forEach(function(k) {
             var item = d.market_data[k];
             if (!item) return;
             var pct = item.change_pct;
             var dir = pct > 0 ? 'up' : (pct < 0 ? 'down' : 'flat');
             var arrow = pct > 0 ? '▲' : (pct < 0 ? '▼' : '━');
-            // VIX: 반대 색상 (높을수록 위험)
-            if (k === 'vix') { dir = pct > 0 ? 'down' : (pct < 0 ? 'up' : 'flat'); }
+            if (vixInvert.has(k)) { dir = pct > 0 ? 'down' : (pct < 0 ? 'up' : 'flat'); }
             html += '<div class="mb-market-item">' +
               '<span class="mb-market-label">' + (marketLabels[k] || k) + '</span>' +
               '<span class="mb-market-value ' + dir + '">' +

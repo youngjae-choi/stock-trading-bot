@@ -478,19 +478,55 @@ def _add_layer3_evaluation(
             observed_values["spread_source"] = spread_source
 
 
+_OR_GATE_AI_MIN = 0.85   # AI 신뢰도 OR 게이트 임계값
+_OR_GATE_VOL_MIN = 3.0   # 거래량비율 OR 게이트 임계값
+
+
 def _rules_allow_signal(matched: dict[str, Any]) -> bool:
     """현재 S6 매수 신호 발행에 필요한 게이트 조건 통과 여부를 반환한다.
+
+    기본 AND 게이트: 모든 조건이 True여야 통과.
+    OR 게이트(폴백): price_change만 미달이고 AI신뢰도≥0.85 + 거래량비율≥3.0이면 통과.
 
     Args:
         matched: Rule evaluation payload from `_evaluate_rules`.
     """
-    required_keys = ["volume_ratio", "ai_confidence", "price_change", "time_window"]
-    required_keys.extend(
+    optional_keys = [
         key
         for key in ("vwap_position", "ma5_above_ma20", "rsi_range", "spread_max_pct")
         if key in matched
-    )
-    return all(bool(matched.get(key)) for key in required_keys)
+    ]
+    core_keys = ["volume_ratio", "ai_confidence", "price_change", "time_window"]
+    all_keys = core_keys + optional_keys
+
+    # 기본 AND 게이트
+    if all(bool(matched.get(key)) for key in all_keys):
+        return True
+
+    # OR 게이트: time_window·volume_ratio·ai_confidence 필수, price_change만 미달 허용
+    if not bool(matched.get("time_window")):
+        return False
+    if not bool(matched.get("volume_ratio")):
+        return False
+    if not bool(matched.get("ai_confidence")):
+        return False
+    if bool(matched.get("price_change")):
+        # price_change 이외 다른 조건이 실패 → OR 게이트 대상 아님
+        return False
+    if not all(bool(matched.get(key)) for key in optional_keys):
+        return False
+
+    obs = matched.get("observed_values") or {}
+    ai_conf = float(obs.get("ai_confidence") or 0.0)
+    vol_ratio = float(obs.get("volume_ratio") or 0.0)
+    if ai_conf >= _OR_GATE_AI_MIN and vol_ratio >= _OR_GATE_VOL_MIN:
+        logger.info(
+            "INFO: [S6] OR-gate 통과 (price_change 미달 면제) ai_conf=%.2f vol_ratio=%.1f",
+            ai_conf, vol_ratio,
+        )
+        return True
+
+    return False
 
 
 def _get_setting_float(key: str, default: float) -> float:
@@ -907,7 +943,7 @@ class DecisionEngine:
         price_ok = (
             price_min_pct <= change_rate <= price_max_pct
             if change_rate is not None
-            else price_min_pct <= 0
+            else False
         )
 
         parsed_volume_ratio_min = _first_float(final_rule.get("volume_ratio_min"))
@@ -941,7 +977,7 @@ class DecisionEngine:
             candidate.get("vol_ratio"),
             candidate.get("volume_ratio_20d"),
         )
-        volume_ok = volume_ratio >= volume_ratio_min if volume_ratio is not None else volume_ratio_min <= 1.0
+        volume_ok = volume_ratio >= volume_ratio_min if volume_ratio is not None else False
 
         unavailable_conditions: dict[str, Any] = {}
         if change_rate is None and price_min_pct > 0:

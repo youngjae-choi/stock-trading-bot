@@ -49,12 +49,50 @@ def _ensure_table() -> None:
         )
 
 
+async def _fetch_news_summary(candidates: list[dict[str, Any]], max_symbols: int = 5) -> str:
+    """상위 N개 종목의 KIS 뉴스 헤드라인을 수집해 LLM 프롬프트용 텍스트로 반환한다.
+
+    Args:
+        candidates: S3 후보 종목 목록 (rank 기준 정렬 상태 가정).
+        max_symbols: 뉴스를 조회할 최대 종목 수 (KIS rate limit 고려).
+    """
+    from ..kis.domestic.service import get_news_title
+    import asyncio
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    today_str = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
+    lines: list[str] = []
+    top = candidates[:max_symbols]
+
+    for item in top:
+        symbol = str(item.get("symbol") or "")
+        name = str(item.get("name") or symbol)
+        if not symbol:
+            continue
+        try:
+            await asyncio.sleep(0.07)  # KIS rate limit 여유
+            result = await get_news_title(symbol=symbol, date_yyyymmdd=today_str)
+            news_items = result.get("output") or []
+            if isinstance(news_items, list) and news_items:
+                headlines = [str(n.get("news_ttl") or "") for n in news_items[:2] if n.get("news_ttl")]
+                if headlines:
+                    lines.append(f"[{name}({symbol})] " + " / ".join(headlines))
+        except Exception as exc:
+            logger.debug("DEBUG: news_fetch failed symbol=%s reason=%s", symbol, exc)
+
+    if not lines:
+        return "뉴스 헤드라인 수집 실패 또는 해당 종목 뉴스 없음"
+    return "\n".join(lines)
+
+
 def _build_prompt(
     candidates_30: list[dict[str, Any]],
     market_tone: dict[str, Any] | None,
     morning_context: dict[str, Any] | None = None,
     memories: list[dict[str, Any]] | None = None,
     knowledge_items: list[dict[str, Any]] | None = None,
+    news_summary: str | None = None,
 ) -> str:
     """스크리닝 프롬프트를 빌드한다.
 
@@ -102,7 +140,7 @@ def _build_prompt(
         ensure_ascii=False,
         indent=2,
     )
-    news_summary = "뉴스 데이터 미제공 — 이번 버전 제외"
+    news_summary = news_summary or "뉴스 데이터 미제공"
     if memories:
         memory_lines = []
         for memory in memories:
@@ -404,6 +442,14 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
     except Exception as exc:
         logger.warning("WARN: HybridScreening morning_context 조회 실패 — %s", exc)
 
+    # 뉴스 헤드라인 수집 (상위 5종목, 실패해도 스크리닝 계속 진행)
+    news_summary: str | None = None
+    try:
+        news_summary = await _fetch_news_summary(items, max_symbols=5)
+        logger.info("INFO: HybridScreening 뉴스 수집 완료 lines=%d", news_summary.count("\n") + 1 if news_summary else 0)
+    except Exception as exc:
+        logger.warning("WARN: HybridScreening 뉴스 수집 실패 (스크리닝 계속) reason=%s", exc)
+
     # 프롬프트 빌드 및 LLM 호출
     try:
         prompt = _build_prompt(
@@ -412,6 +458,7 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
             morning_context=morning_context,
             memories=memories,
             knowledge_items=knowledge_items,
+            news_summary=news_summary,
         )
     except Exception as exc:
         finish_pipeline_run(

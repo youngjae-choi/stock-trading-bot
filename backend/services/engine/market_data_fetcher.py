@@ -33,6 +33,7 @@ _SYMBOLS = {
     "sector_industry": "XLI",
     "kr_semiconductor": "005930.KS",
     "kr_battery": "373220.KS",
+    "sox": "^SOX",
 }
 _YAHOO_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=2d&interval=1d"
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; KairosMarketFetcher/1.0)"}
@@ -118,6 +119,7 @@ def format_for_prompt(market_data: dict[str, Any]) -> str:
         "sector_industry": "미국 산업섹터 XLI",
         "kr_semiconductor": "삼성전자(반도체 프록시)",
         "kr_battery": "LG에너지솔루션(배터리 프록시)",
+        "sox": "필라델피아 반도체지수(SOX)",
     }
     arrows = {"up": "▲", "down": "▼", "flat": "━"}
     for key, label in labels.items():
