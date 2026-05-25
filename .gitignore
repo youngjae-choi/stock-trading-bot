@@ -32,3 +32,11 @@ data/
 .vscode/
 .codex
 .sisyphus/
+
+# Local tool configs
+.claude/
+.playwright-mcp/
+cursor/
+
+# Test screenshots
+tests/e2e/img/
