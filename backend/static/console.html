@@ -1676,15 +1676,22 @@
             </div>
           </div>
 
+          <!-- ① 매수 조건 가드레일 -->
           <div class="card">
-            <div class="card-title">매수 조건 가드레일 <span style="font-size:11px; color:var(--muted)">AI가 매일 설정 / 이 값이 절대 하한선/상한선</span></div>
-            <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <div class="settings-card-hd">
+              <div class="settings-card-meta">
+                <span class="settings-tag">AI 자동설정</span>
+                <div class="settings-card-title-txt">매수 조건 가드레일</div>
+                <div class="settings-card-desc">AI가 매일 판단하는 권장값 / 수동 가드레일은 절대 하한선·상한선입니다. 값 변경 시 자동 저장됩니다.</div>
+              </div>
+            </div>
+            <table class="settings-table">
               <thead>
-                <tr style="border-bottom:1px solid var(--border);">
-                  <th style="text-align:left; padding:6px 0;">항목</th>
-                  <th style="text-align:left; padding:6px 0;">현재 AI 설정</th>
-                  <th style="text-align:left; padding:6px 0;">가드레일 (수동)</th>
-                  <th style="text-align:left; padding:6px 0;">설명</th>
+                <tr>
+                  <th>항목</th>
+                  <th>현재 AI 설정</th>
+                  <th>가드레일 (수동)</th>
+                  <th>설명</th>
                 </tr>
               </thead>
               <tbody id="buy-condition-tbody">
@@ -1695,16 +1702,15 @@
 
           <div class="section-gap"></div>
 
-          <!-- 거래 비용 설정 -->
+          <!-- ② 거래 비용 설정 -->
           <div class="card">
-            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-              <span>거래 비용 설정 <span style="font-size:11px; color:var(--muted); font-weight:400;">수수료 · 거래세 · S4 필터</span></span>
-              <button type="button" class="btn primary" data-action="saveTradingCostSettings">저장</button>
+            <div class="settings-card-hd">
+              <div class="settings-card-meta">
+                <span class="settings-tag">수수료</span>
+                <div class="settings-card-title-txt">거래 비용 설정</div>
+                <div class="settings-card-desc">PnL 순수익(Net) 계산과 S4 스크리닝 최소 수익률 기준에 적용됩니다. 모의투자 중에는 수수료를 0으로 설정하세요.</div>
+              </div>
             </div>
-            <p class="muted" style="margin-bottom:14px; font-size:12px;">
-              PnL 계산(Net)과 S4 스크리닝 최소 수익률 기준에 적용됩니다.
-              모의투자 중에는 수수료를 0으로 설정하세요.
-            </p>
             <div class="form-grid">
               <div class="field">
                 <label>브로커 수수료율 (%)</label>
@@ -1719,32 +1725,37 @@
               <div class="field">
                 <label>S4 최소 순수익률 (%)</label>
                 <input id="cost-min-net-return" type="number" step="0.01" min="0" value="0">
-                <small class="muted">0이면 수수료×2 + 거래세 자동 계산. 이 미만 예상 수익률 종목은 S4에서 제외</small>
+                <small class="muted">0이면 수수료×2+거래세 자동 계산. 이 미만 예상 수익률 종목은 S4에서 제외</small>
               </div>
             </div>
-            <div style="margin-top:12px; padding:10px 12px; background:var(--panel-2); border-radius:8px; font-size:12px; color:var(--muted);">
+            <div class="settings-summary">
               <span id="cost-summary-label">왕복 비용 합계: -</span>
               &nbsp;·&nbsp;
-              <span style="color:var(--muted);">양도세: 소액주주 비과세 (보유액 10억 미만)</span>
+              <span>양도세: 소액주주 비과세 (보유액 10억 미만)</span>
+            </div>
+            <div class="settings-card-ft">
+              <button type="button" class="btn primary" data-action="saveTradingCostSettings">저장</button>
             </div>
           </div>
 
           <div class="section-gap"></div>
 
+          <!-- ③ 리스크 & 운용 설정 (포트폴리오 한도 + 청산 정책 통합) -->
           <div class="card">
-            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-              <span>리스크 & 청산 설정 <span>system_settings</span></span>
-              <button type="button" class="btn primary" data-action="saveRiskSettings">저장</button>
+            <div class="settings-card-hd">
+              <div class="settings-card-meta">
+                <span class="settings-tag">system_settings</span>
+                <div class="settings-card-title-txt">리스크 & 운용 설정</div>
+                <div class="settings-card-desc">포트폴리오 전체 한도, 운용 모드, 청산 타이밍을 함께 설정합니다. 변경 후 저장을 눌러야 반영됩니다.</div>
+              </div>
             </div>
-            <p class="muted" style="margin-bottom:12px; font-size:12px;">이 설정값을 기준으로 Risk Profile Pack의 위험 한도가 자동 적용됩니다.</p>
 
-            <!-- 포트폴리오 위험 한도 -->
-            <div style="font-size:11px; color:var(--muted); font-weight:600; margin-bottom:8px; letter-spacing:0.05em;">포트폴리오 위험 한도 (전체 계좌 기준)</div>
+            <div class="settings-sublabel">포트폴리오 위험 한도</div>
             <div class="form-grid" id="riskSettingsForm">
               <div class="field">
-                <label>일일 손실 한도</label>
+                <label>일일 손실 한도 (%)</label>
                 <input id="risk-daily-loss" type="number" step="0.1" value="-2.0">
-                <small class="muted">당일 계좌 전체 손익이 이 이하로 떨어지면 신규 매수를 중단</small>
+                <small class="muted">계좌 전체 손익이 이 이하로 떨어지면 신규 매수를 중단</small>
               </div>
               <div class="field">
                 <label>주간 손실 한도</label>
@@ -1755,7 +1766,7 @@
                 <input id="risk-monthly-loss" value="-8.0%" readonly>
               </div>
               <div class="field">
-                <label>최대 보유 종목</label>
+                <label>최대 보유 종목 수</label>
                 <input id="risk-max-positions" type="number" step="1" min="1" value="5">
               </div>
               <div class="field">
@@ -1772,69 +1783,70 @@
               </div>
             </div>
 
-            <hr style="border:none; border-top:1px solid var(--border,var(--line)); margin:16px 0;">
+            <div class="settings-divider"></div>
 
-            <!-- 포지션별 청산 기준 -->
-            <div style="font-size:11px; color:var(--muted); font-weight:600; margin-bottom:4px; letter-spacing:0.05em;">포지션별 청산 기준 (개별 종목 기준)</div>
-            <p class="muted" style="font-size:11px; margin-bottom:10px;">포트폴리오 한도(위)와 별개로, 개별 종목 진입가 대비 손절/익절 기준을 설정합니다. 비워두면 Risk Profile 값을 사용합니다.</p>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr><th>항목</th><th>현재값</th><th>새 값</th><th>저장</th><th>예시</th><th>최종 수정</th></tr>
-                </thead>
-                <tbody id="exitOverrideSettingsTableBody">
-                  <tr><td colspan="6" class="muted">설정을 불러오는 중입니다...</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="section-gap"></div>
-
-          <div class="card">
-            <div class="card-title">Default Exit Policy</div>
-            <div style="display:flex; flex-direction:column; gap:10px; font-size:12px;">
-              <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div class="settings-sublabel">청산 정책 (고정)</div>
+            <div class="settings-policy-grid">
+              <div class="settings-policy-row">
                 <span>고정 익절 사용</span>
-                <span style="color:#f85149; font-weight:600;">OFF (고정)</span>
+                <span class="settings-badge-off">OFF (고정)</span>
               </div>
-              <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div class="settings-policy-row">
                 <span>초기 손절</span>
-                <span style="color:#3fb950; font-weight:600;">ON</span>
+                <span class="settings-badge-on">ON</span>
               </div>
-              <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div class="settings-policy-row">
                 <span>트레일링 스탑</span>
-                <span style="color:#3fb950; font-weight:600;">ON</span>
+                <span class="settings-badge-on">ON</span>
               </div>
-              <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div class="settings-policy-row">
                 <span>손절선 하향 금지</span>
-                <span style="color:#3fb950; font-weight:600;">ON (고정)</span>
+                <span class="settings-badge-on">ON (고정)</span>
               </div>
-              <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div class="settings-policy-row">
                 <span>장마감 강제청산</span>
-                <span style="color:#3fb950; font-weight:600;">ON (고정)</span>
+                <span class="settings-badge-on">ON (고정)</span>
               </div>
-              <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div class="settings-policy-row">
                 <label>신규매수 금지 시간</label>
                 <input type="text" value="15:10" style="width:80px; text-align:center;" id="setting-cutoff-time">
               </div>
-              <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div class="settings-policy-row">
                 <label>강제청산 시작 시간</label>
                 <input type="text" value="15:20" style="width:80px; text-align:center;" id="setting-force-exit-time">
               </div>
             </div>
+
+            <div class="settings-divider"></div>
+
+            <div class="settings-sublabel">포지션별 수동 오버라이드 <span style="font-size:10px; font-weight:400; text-transform:none; letter-spacing:0;">비워두면 Risk Profile 값 사용</span></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>항목</th><th>현재값</th><th>새 값 (blur 시 자동저장)</th><th>예시</th><th>최종 수정</th></tr>
+                </thead>
+                <tbody id="exitOverrideSettingsTableBody">
+                  <tr><td colspan="5" class="muted">설정을 불러오는 중입니다...</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="settings-card-ft">
+              <button type="button" class="btn primary" data-action="saveRiskSettings">저장</button>
+            </div>
           </div>
 
           <div class="section-gap"></div>
 
+          <!-- ④ Risk Profile Pack -->
           <div class="card">
-            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-              <span>Risk Profile Pack <span id="settings-profile-ver" style="font-size:10px; color:var(--muted);"></span></span>
-              <button type="button" class="btn" data-action="saveRiskProfilePack">저장 (새 버전 생성)</button>
+            <div class="settings-card-hd">
+              <div class="settings-card-meta">
+                <span class="settings-tag">버전 관리</span>
+                <div class="settings-card-title-txt">Risk Profile Pack <span id="settings-profile-ver" style="font-size:11px; color:var(--muted); font-weight:400;"></span></div>
+                <div class="settings-card-desc">저장 시 새 버전이 자동 생성됩니다. 기존 버전 이력은 보존됩니다.</div>
+              </div>
             </div>
-            <p style="font-size:11px; color:var(--muted); margin-bottom:10px;">
-              저장 시 새 버전이 자동 생성됩니다. 기존 버전 이력은 보존됩니다.
-            </p>
             <div class="table-wrap">
               <table id="settings-profiles-table">
                 <thead>
@@ -1853,20 +1865,29 @@
                 </tbody>
               </table>
             </div>
+            <div class="settings-card-ft">
+              <button type="button" class="btn primary" data-action="saveRiskProfilePack">새 버전으로 저장</button>
+            </div>
           </div>
 
           <div class="section-gap"></div>
 
+          <!-- ⑤ 스케줄러 시간 설정 -->
           <div class="card">
-            <div class="card-title">스케줄러 시간 설정 <span>system_settings</span></div>
-            <p class="muted" style="margin-bottom: 15px;">⚠️ 변경 후 서버를 재시작해야 반영됩니다.</p>
+            <div class="settings-card-hd">
+              <div class="settings-card-meta">
+                <span class="settings-tag">system_settings</span>
+                <div class="settings-card-title-txt">스케줄러 시간 설정</div>
+                <div class="settings-card-desc">⚠️ 변경 후 서버를 재시작해야 반영됩니다. 시간 입력 후 포커스를 벗어나면 자동 저장됩니다.</div>
+              </div>
+            </div>
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>단계</th><th>설명</th><th>현재 시간</th><th>최종 수정</th><th>새 시간</th><th>저장</th></tr>
+                  <tr><th>단계</th><th>설명</th><th>현재 시간</th><th>최종 수정</th><th>새 시간 (blur 시 자동저장)</th></tr>
                 </thead>
                 <tbody id="schedulerSettingsTableBody">
-                  <tr><td colspan="6" class="muted">설정을 불러오는 중입니다...</td></tr>
+                  <tr><td colspan="5" class="muted">설정을 불러오는 중입니다...</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1874,14 +1895,16 @@
 
           <div class="section-gap"></div>
 
+          <!-- ⑥ Regime SET 관리 -->
           <div class="card" id="regime-sets-card">
-            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-              <span>Regime SET 관리 <span style="font-size:11px; color:var(--muted); font-weight:400;">시장 상황별 매매 파라미터</span></span>
+            <div class="settings-card-hd">
+              <div class="settings-card-meta">
+                <span class="settings-tag">시장 레짐</span>
+                <div class="settings-card-title-txt">Regime SET 관리</div>
+                <div class="settings-card-desc">SET을 클릭하면 설정을 확인하고 수정할 수 있습니다. 시스템은 매일 아침 브리핑 결과로 최적 SET을 자동 선택하며, 성과에 따라 파라미터를 미세 조정합니다.</div>
+              </div>
               <button type="button" class="btn" data-action="loadRegimeSets">새로고침</button>
             </div>
-            <p class="muted" style="font-size:12px; margin-bottom:12px;">
-              SET을 클릭하면 설정을 확인하고 수정할 수 있습니다. 시스템은 매일 아침 브리핑 결과로 최적 SET을 자동 선택하며, 성과에 따라 파라미터를 미세 조정합니다.
-            </p>
             <div id="regime-sets-list">
               <div class="muted" style="text-align:center; padding:20px;">로딩 중...</div>
             </div>

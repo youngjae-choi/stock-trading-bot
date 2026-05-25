@@ -63,6 +63,8 @@
       engineTestClearLog: function() { return engineTestClearLog(); },
       saveRiskSettings: function() { return saveRiskSettings(); },
       saveRiskProfilePack: function() { return saveRiskProfilePack(); },
+      saveTradingCostSettings: function() { return saveTradingCostSettings(); },
+      loadRegimeSets: function() { return loadRegimeSets(); },
       ackAlert: function() { return ackAlert(element.dataset.id); },
       approveRequest: function() { return approveRequest(element.dataset.id); },
       rejectRequest: function() { return rejectRequest(element.dataset.id); },

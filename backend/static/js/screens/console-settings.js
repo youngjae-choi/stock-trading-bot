@@ -119,9 +119,9 @@
         });
       }));
       _updateCostSummary();
-      alert('거래 비용 설정이 저장되었습니다.');
+      showToast('거래 비용 설정이 저장되었습니다.', 'ok');
     } catch (e) {
-      alert('저장 실패: ' + e.message);
+      showToast('저장 실패: ' + e.message, 'err');
     }
   }
 
@@ -204,10 +204,10 @@
           body: JSON.stringify(item)
         });
       }));
-      alert("저장됨");
+      showToast('리스크 설정이 저장되었습니다.', 'ok');
       loadRiskSettings();
     } catch (e) {
-      alert("저장 실패: " + e.message);
+      showToast('저장 실패: ' + e.message, 'err');
     }
   }
 
@@ -229,10 +229,10 @@
         var tsHtml = _fmtSettingTs(meta.updated_at, meta.updated_by) || '<span class="muted">-</span>';
         var inputHtml = k.readOnly
           ? '<span class="muted">' + escapeHtml(current) + '</span>'
-          : '<input type="text" id="input-' + k.key + '" value="' + escapeHtml(current) + '" style="width: 80px; padding: 5px; border-radius: 5px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);">';
-        var buttonHtml = k.readOnly
-          ? '<span class="muted">실시간</span>'
-          : '<button class="btn primary" data-action="saveSchedulerSetting" data-key="' + escapeHtml(k.key) + '">저장</button>';
+          : '<input type="text" id="input-' + k.key + '" value="' + escapeHtml(current)
+            + '" data-key="' + escapeHtml(k.key) + '"'
+            + ' onblur="saveSchedulerSetting(this.dataset.key)"'
+            + ' style="width: 80px; padding: 5px; border-radius: 5px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);">';
         return ''
           + '<tr>'
           + '  <td>' + k.label + '</td>'
@@ -240,7 +240,6 @@
           + '  <td>' + escapeHtml(current) + '</td>'
           + '  <td>' + tsHtml + '</td>'
           + '  <td>' + inputHtml + '</td>'
-          + '  <td>' + buttonHtml + '</td>'
           + '</tr>';
       }).join("");
       var tbody = document.getElementById("schedulerSettingsTableBody");
@@ -248,7 +247,7 @@
     } catch (e) {
       console.error("Failed to load scheduler settings", e);
       var tbody = document.getElementById("schedulerSettingsTableBody");
-      if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="muted">설정 로드 실패: ' + escapeHtml(e.message) + '</td></tr>';
+      if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="muted">설정 로드 실패: ' + escapeHtml(e.message) + '</td></tr>';
     }
   }
 
@@ -258,7 +257,7 @@
     if (!input) return;
     var val = input.value;
     if (!isClockTime(val) && val !== "실시간") {
-      alert("시간 형식이 올바르지 않습니다 (HH:MM 또는 실시간)");
+      showToast('시간 형식이 올바르지 않습니다 (HH:MM 또는 실시간)', 'err');
       return;
     }
     try {
@@ -267,10 +266,10 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key: key, value: val })
       });
-      alert("저장됨 (재시작 필요)");
+      showToast('저장됨 — 서버 재시작 필요', 'ok');
       loadSchedulerSettings();
     } catch (e) {
-      alert("저장 실패: " + e.message);
+      showToast('저장 실패: ' + e.message, 'err');
     }
   }
 
@@ -295,8 +294,11 @@
           + '<tr>'
           + '  <td>' + k.label + '</td>'
           + '  <td>' + escapeHtml(currentLabel) + '</td>'
-          + '  <td><input type="text" id="input-' + k.key + '" value="' + escapeHtml(current) + '" placeholder="' + escapeHtml(k.placeholder) + '" style="width: 120px; padding: 5px; border-radius: 5px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);"></td>'
-          + '  <td><button class="btn primary" data-action="saveExitOverrideSetting" data-key="' + escapeHtml(k.key) + '">저장</button></td>'
+          + '  <td><input type="text" id="input-' + k.key + '" value="' + escapeHtml(current)
+          + '" placeholder="' + escapeHtml(k.placeholder) + '"'
+          + ' data-key="' + escapeHtml(k.key) + '"'
+          + ' onblur="saveExitOverrideSetting(this.dataset.key)"'
+          + ' style="width: 120px; padding: 5px; border-radius: 5px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);"></td>'
           + '  <td class="muted">' + k.example + '</td>'
           + '  <td>' + tsHtml + '</td>'
           + '</tr>';
@@ -306,7 +308,7 @@
     } catch (e) {
       console.error("Failed to load exit override settings", e);
       var tbody = document.getElementById("exitOverrideSettingsTableBody");
-      if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="muted">설정 로드 실패: ' + escapeHtml(e.message) + '</td></tr>';
+      if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="muted">설정 로드 실패: ' + escapeHtml(e.message) + '</td></tr>';
     }
   }
 
@@ -325,10 +327,10 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key: key, value: val })
       });
-      alert("저장됨");
+      showToast('저장됨', 'ok');
       loadExitOverrideSettings();
     } catch (e) {
-      alert("저장 실패: " + e.message);
+      showToast('저장 실패: ' + e.message, 'err');
     }
   }
 
@@ -656,7 +658,7 @@
             + '<div class="form-grid" style="grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:10px; margin-bottom:12px;">'
               + _regimeSetField('최대 포지션', 'rset-max_positions-' + set.id, sc.max_positions, 'number', '1', '20')
               + _regimeSetField('손절선 (%)', 'rset-stop_loss_rate-' + set.id, ((sc.stop_loss_rate || 0) * 100).toFixed(2), 'number', '-20', '0')
-              + _regimeSetField('목표 익절 (%)', 'rset-take_profit_rate-' + set.id, ((sc.take_profit_rate || 0) * 100).toFixed(2), 'number', '0', '30')
+              + _regimeSetField('목표 익절 (%)', 'rset-take_profit_rate-' + set.id, ((sc.take_profit_rate || 0) * 100).toFixed(2), 'number', '0', '30', '기록용 — 실제 청산 미적용')
               + _regimeSetField('트레일링 발동 (%)', 'rset-trailing_activate_profit-' + set.id, ((sc.trailing_activate_profit || 0) * 100).toFixed(2), 'number', '0', '30')
               + _regimeSetField('트레일링 폭 (%)', 'rset-trailing_stop_rate-' + set.id, ((sc.trailing_stop_rate || 0) * 100).toFixed(2), 'number', '0', '10')
             + '</div>'
@@ -679,12 +681,13 @@
     }
   }
 
-  function _regimeSetField(label, id, value, type, min, max) {
+  function _regimeSetField(label, id, value, type, min, max, hint) {
     return '<div class="field">'
       + '<label style="font-size:11px;">' + label + '</label>'
       + '<input id="' + id + '" type="' + type + '" value="' + value + '"'
       + (min ? ' min="' + min + '"' : '') + (max ? ' max="' + max + '"' : '')
       + ' style="width:100%;">'
+      + (hint ? '<small style="display:block; font-size:10px; color:var(--muted); margin-top:3px;">' + hint + '</small>' : '')
       + '</div>';
   }
 

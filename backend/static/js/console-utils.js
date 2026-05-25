@@ -715,8 +715,32 @@
   }
 
 
-  function showToast(message) {
-    alert(message); // Simple alert as fallback if showToast is not defined
+  var _toastTimer = null;
+  function showToast(message, type) {
+    var existing = document.getElementById('kairos-toast');
+    if (existing) existing.remove();
+    if (_toastTimer) { clearTimeout(_toastTimer); _toastTimer = null; }
+
+    var toast = document.createElement('div');
+    toast.id = 'kairos-toast';
+    toast.className = 'kairos-toast toast-' + (type || 'info');
+    var icons = { ok: '✓', err: '✕', info: '·' };
+    var icon = document.createElement('span');
+    icon.className = 'kairos-toast-icon';
+    icon.textContent = icons[type || 'info'] || '·';
+    var text = document.createElement('span');
+    text.textContent = message;
+    toast.appendChild(icon);
+    toast.appendChild(text);
+    document.body.appendChild(toast);
+
+    requestAnimationFrame(function() {
+      requestAnimationFrame(function() { toast.classList.add('show'); });
+    });
+    _toastTimer = setTimeout(function() {
+      toast.classList.remove('show');
+      setTimeout(function() { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 220);
+    }, 2800);
   }
 
   /* Write identical text into every element id that exists on the active console page. */
