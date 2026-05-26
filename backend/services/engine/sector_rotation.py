@@ -108,12 +108,19 @@ def detect_sector_rotation(snapshot: dict[str, Any], slot: str = "", trade_date:
             save_sector_rotation_log(trade_date, slot, result)
         return result
 
+    # 섹터 우선순위: 1) item 인라인 sector 필드 (KIS bstp_kor_isnm), 2) symbols 테이블 fallback
     symbols = [str(item.get("symbol") or item.get("ticker") or item.get("code") or "").strip() for item in items]
-    sector_by_symbol = _symbol_sector_map([symbol for symbol in symbols if symbol])
+    inline_sectors = {
+        str(item.get("symbol") or "").strip(): str(item.get("sector") or "").strip()
+        for item in items
+    }
+    needs_db_lookup = [s for s in symbols if s and not inline_sectors.get(s)]
+    sector_by_symbol = _symbol_sector_map(needs_db_lookup) if needs_db_lookup else {}
+
     grouped: dict[str, list[float]] = {}
     for item in items:
         symbol = str(item.get("symbol") or item.get("ticker") or item.get("code") or "").strip()
-        sector = sector_by_symbol.get(symbol, "")
+        sector = inline_sectors.get(symbol) or sector_by_symbol.get(symbol, "")
         if not sector:
             continue
         grouped.setdefault(sector, []).append(_to_float(item.get("change_rate") or item.get("chg_rate")))

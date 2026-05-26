@@ -158,11 +158,15 @@ def _parse_tone_response(raw: str) -> dict[str, Any]:
     }
 
 
-async def run_market_tone_analysis(trigger_source: str = "api_manual") -> dict[str, Any]:
+async def run_market_tone_analysis(
+    trigger_source: str = "api_manual",
+    intraday_snapshot: "dict[str, Any] | None" = None,
+) -> dict[str, Any]:
     """시장 톤 분석을 실행하고 결과를 DB에 저장한 뒤 반환한다.
 
     Args:
         trigger_source: Actual execution source for audit, e.g. auto_scheduler or console_manual.
+        intraday_snapshot: 이미 수집된 장중 스냅샷. 전달 시 API 재호출 없이 재사용.
 
     Returns:
         {
@@ -202,11 +206,14 @@ async def run_market_tone_analysis(trigger_source: str = "api_manual") -> dict[s
     market_data: dict[str, Any] = {}
 
     if is_intraday:
-        # 장중 분기: 국내 실시간 스냅샷 수집
+        # 장중 분기: 사전 수집된 스냅샷 재사용 or 신규 호출
         slot = datetime.now(__import__("zoneinfo").ZoneInfo("Asia/Seoul")).strftime("%H:%M")
         try:
-            from ..kis.domestic.universe_service import fetch_intraday_kr_market_snapshot
-            market_data = await fetch_intraday_kr_market_snapshot()
+            if intraday_snapshot and intraday_snapshot.get("ok"):
+                market_data = intraday_snapshot
+            else:
+                from ..kis.domestic.universe_service import fetch_intraday_kr_market_snapshot
+                market_data = await fetch_intraday_kr_market_snapshot()
             market_data_text = _format_intraday_for_prompt(market_data)
         except Exception as exc:
             logger.warning("WARN: MarketToneService 장중 스냅샷 수집 실패 — %s", exc)

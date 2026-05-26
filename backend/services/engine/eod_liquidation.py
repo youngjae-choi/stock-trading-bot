@@ -63,19 +63,30 @@ async def _get_open_positions_from_account() -> list[dict[str, Any]]:
     positions: list[dict[str, Any]] = []
     if not isinstance(account_positions, list):
         return positions
+    managed_by_symbol = {
+        str(position.get("symbol") or "").strip(): position
+        for position in position_manager.get_positions()
+        if str(position.get("symbol") or "").strip()
+    }
     for holding in account_positions:
         if not isinstance(holding, dict):
             continue
         symbol = str(holding.get("symbol") or "").strip()
         qty = int(holding.get("qty") or 0)
         if symbol and qty > 0:
+            managed_position = managed_by_symbol.get(symbol) or {}
             positions.append({
                 "symbol": symbol,
                 "name": str(holding.get("name") or ""),
                 "qty": qty,
                 "source": "kis_account",
+                "auto_imported": bool(managed_position.get("auto_imported")),
             })
-    logger.info("SUCCESS: [S9] KIS 실보유 청산 대상 조회 count=%d", len(positions))
+    logger.info(
+        "SUCCESS: [S9] KIS 실보유 청산 대상 조회 count=%d auto_imported_count=%d",
+        len(positions),
+        sum(1 for position in positions if position.get("auto_imported")),
+    )
     return positions
 
 def _empty_summary() -> dict[str, int]:
@@ -153,7 +164,12 @@ async def run_eod_liquidation() -> dict[str, Any]:
                 if int(position.get("qty") or 0) > 0
             ]
 
-    logger.info("START: [S9] EOD liquidation positions=%d trade_date=%s", len(positions), today)
+    logger.info(
+        "START: [S9] EOD liquidation positions=%d trade_date=%s auto_imported_count=%d",
+        len(positions),
+        today,
+        sum(1 for position in positions if position.get("auto_imported")),
+    )
     if not positions:
         logger.info("INFO: [S9] 청산할 포지션 없음")
         return {
@@ -174,12 +190,14 @@ async def run_eod_liquidation() -> dict[str, Any]:
             logger.warning("WARN: [S9] invalid liquidation position symbol=%s qty=%s", symbol, qty)
             continue
         duplicate_sell = find_active_sell_order(today, symbol)
+        auto_imported = bool(pos.get("auto_imported"))
         if duplicate_sell:
             result = {
                 "ok": False,
                 "status": "skipped_duplicate",
                 "symbol": symbol,
                 "qty": qty,
+                "auto_imported": auto_imported,
                 "reason": "sell_already_submitted",
                 "existing_order_id": duplicate_sell.get("id"),
                 "existing_status": duplicate_sell.get("status"),
@@ -188,13 +206,15 @@ async def run_eod_liquidation() -> dict[str, Any]:
             skipped_duplicates.append(result)
             _classify_sell_result(result, summary)
             logger.warning(
-                "WARN: [S9] duplicate EOD sell skipped symbol=%s qty=%d existing_order_id=%s status=%s",
+                "WARN: [S9] duplicate EOD sell skipped symbol=%s qty=%d auto_imported=%s existing_order_id=%s status=%s",
                 symbol,
                 qty,
+                auto_imported,
                 duplicate_sell.get("id"),
                 duplicate_sell.get("status"),
             )
             continue
+        logger.info("START: [S9] EOD sell symbol=%s qty=%d auto_imported=%s", symbol, qty, auto_imported)
         result = await order_executor.execute_sell(
             symbol=symbol,
             qty=qty,
@@ -202,6 +222,8 @@ async def run_eod_liquidation() -> dict[str, Any]:
             reason="eod",
             name=str(pos.get("name") or ""),
         )
+        if isinstance(result, dict):
+            result["auto_imported"] = auto_imported
         results.append(result)
         _classify_sell_result(result, summary)
     logger.info(

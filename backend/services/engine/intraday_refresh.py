@@ -180,27 +180,28 @@ def _needs_refresh(
     return False, f"변화 미감지 intensity={intensity} avg_change={avg_change:+.2f}% threshold=±{threshold}%"
 
 
-async def _run_reselection(trade_date: str) -> dict[str, Any]:
-    """S2 → S3 → S4 → S5 순서로 재실행하고 결과 요약 반환."""
-    result: dict[str, Any] = {}
-
-    # S2: Market Tone 재분석 — 아침 mixed 판단을 장중 변화에 반영
+async def _run_s2_intraday(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """매 슬롯 S2 장중 분석 실행 — 스냅샷을 재사용해 API 이중 호출 없음."""
     try:
         from .market_tone import run_market_tone_analysis
-        s2 = await run_market_tone_analysis(trigger_source="intraday_refresh")
-        result["s2"] = {
-            "ok": s2.get("ok", False),
-            "tone": s2.get("tone"),
-            "confidence": s2.get("confidence"),
-        }
-        logger.info(
-            "INFO: [IntradayRefresh] S2 완료 tone=%s confidence=%s",
-            s2.get("tone"),
-            s2.get("confidence"),
+        result = await run_market_tone_analysis(
+            trigger_source="intraday_refresh",
+            intraday_snapshot=snapshot,
         )
+        logger.info(
+            "INFO: [IntradayRefresh] S2 장중 완료 tone=%s confidence=%s",
+            result.get("tone"),
+            result.get("confidence"),
+        )
+        return result
     except Exception as exc:
-        result["s2"] = {"ok": False, "error": str(exc)}
-        logger.warning("WARN: [IntradayRefresh] S2 실패 (후속 단계는 진행) — %s", exc)
+        logger.warning("WARN: [IntradayRefresh] S2 장중 실패 — %s", exc)
+        return {"ok": False, "error": str(exc)}
+
+
+async def _run_reselection(trade_date: str) -> dict[str, Any]:
+    """S3 → S4 → S5 → S6 재실행 (S2는 슬롯 진입 시 이미 실행됨)."""
+    result: dict[str, Any] = {}
 
     # S3: Universe Filter 재실행
     try:
@@ -348,11 +349,15 @@ async def check_and_refresh(slot: str) -> dict[str, Any]:
 
     avg_change = snapshot["avg_change"]
 
-    # 2. 아침 플랜 조회
+    # 2. S2 장중 분석 — 매 슬롯 실행 (스냅샷 재사용, API 이중 호출 없음)
+    if master_enabled:
+        await _run_s2_intraday(snapshot)
+
+    # 4. 아침 플랜 조회
     morning_plan = _get_morning_plan(trade_date)
     intensity = (morning_plan or {}).get("trading_intensity", "neutral")
 
-    # 3. 재평가 필요 여부 판단
+    # 5. 재평가 필요 여부 판단
     existing_logs = _get_refresh_log(trade_date)
     market_triggered, market_reason = _needs_refresh(avg_change, intensity, existing_logs)
     sector_result: dict[str, Any] = {"enabled": False, "triggered": False, "reason": "master_disabled"}
@@ -385,7 +390,7 @@ async def check_and_refresh(slot: str) -> dict[str, Any]:
         await _send_telegram_skip(slot, avg_change, reason)
         return {"ok": True, "triggered": False, "reason": reason, "avg_change": avg_change}
 
-    # 4. S3 → S4 → S5 → S6 재실행
+    # 6. S3 → S4 → S5 → S6 재실행
     reselection = await _run_reselection(trade_date)
 
     log_data = {

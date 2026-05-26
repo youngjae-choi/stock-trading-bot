@@ -74,6 +74,41 @@ class PositionManagerTrailingPersistenceTest(unittest.TestCase):
         self.assertTrue(saved["trailing_active"])
         self.assertEqual(saved["highest_price_since_entry"], 105.0)
 
+    def test_auto_imported_position_disables_trailing_but_keeps_initial_stop(self) -> None:
+        """KIS auto-imported holdings must keep LOW_VOL initial stop without trailing updates."""
+        manager = PositionManager()
+        with patch("backend.services.engine.position_manager._upsert_stop_state"):
+            manager.sync_account_position(
+                symbol="005930",
+                name="삼성전자",
+                qty=1,
+                entry_price=100.0,
+                final_rule={
+                    "profile_assigned": "LOW_VOL",
+                    "initial_stop_loss": -0.02,
+                    "trailing_activate_profit": 0.01,
+                    "trailing_stop_rate": 0.03,
+                    "force_exit_time": "15:20:00",
+                },
+            )
+
+        position = manager._positions["005930"]
+        self.assertTrue(position["auto_imported"])
+        self.assertEqual(position["active_stop_price"], 98.0)
+
+        with patch("backend.services.engine.position_manager._upsert_stop_state") as upsert:
+            manager._update_trailing(position, 110.0)
+
+        self.assertFalse(position["trailing_active"])
+        self.assertEqual(position["trailing_stop_price"], 98.0)
+        self.assertEqual(position["active_stop_price"], 98.0)
+        upsert.assert_not_called()
+
+        manager._get_today_tone = Mock(return_value="fallback")
+        with patch("backend.services.engine.position_manager._now_kst") as now:
+            now.return_value = __import__("datetime").datetime.fromisoformat("2026-05-26T10:00:00+09:00")
+            self.assertEqual(manager._exit_reason(position, 97.5), "INITIAL_STOP_LOSS")
+
 
 class DecisionEngineAccountSyncTest(unittest.TestCase):
     """Verify KIS holdings sync follows the KIS account SSOT."""
@@ -119,6 +154,41 @@ class DecisionEngineAccountSyncTest(unittest.TestCase):
         fake_manager.remove_position.assert_called_once_with("005930")
 
 
+class DecisionEnginePositionSyncLogTest(unittest.IsolatedAsyncioTestCase):
+    """Verify 60-second PositionSync writes analysis-friendly structured logs."""
+
+    async def test_run_account_sync_once_logs_success_payload(self) -> None:
+        """One mocked KIS sync must log START and SUCCESS fields used for operations analysis."""
+        engine = decision_engine.DecisionEngine()
+        engine._active = True
+
+        with patch("backend.services.kis.domestic.service.get_balance", new=AsyncMock(return_value={"raw": True})), \
+             patch("backend.api.routes.account._build_balance_payload", return_value={"positions": [{"symbol": "005930"}]}), \
+             patch(
+                 "backend.services.engine.decision_engine._sync_managed_positions_with_account",
+                 return_value={
+                     "synced": ["005930"],
+                     "managed_before": 0,
+                     "managed_after": 1,
+                     "added": ["005930"],
+                     "removed": [],
+                     "qty_changed": [],
+                     "imported": 1,
+                     "kis_symbols": 1,
+                 },
+             ), \
+             self.assertLogs("DecisionEngine", level="INFO") as logs:
+            synced = await engine._run_account_sync_once()
+
+        self.assertEqual(synced, ["005930"])
+        joined = "\n".join(logs.output)
+        self.assertIn("START: PositionSync", joined)
+        self.assertIn("SUCCESS: PositionSync", joined)
+        self.assertIn("kis_response_ms=", joined)
+        self.assertIn("added=['005930']", joined)
+        self.assertIn("rate_limit_hits=0", joined)
+
+
 class EODLiquidationPolicyTest(unittest.IsolatedAsyncioTestCase):
     """Verify administrator timed liquidation uses all KIS holdings."""
 
@@ -143,6 +213,19 @@ class EODLiquidationPolicyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["summary"]["submitted"], 2)
         sell.assert_any_await(symbol="005930", qty=3, price=0, reason="eod", name="")
         sell.assert_any_await(symbol="000660", qty=2, price=0, reason="eod", name="")
+
+    async def test_eod_liquidation_marks_auto_imported_metadata(self) -> None:
+        """S9 result metadata must preserve whether an account holding was auto-imported into S8."""
+        account_positions = [{"symbol": "005930", "qty": 3, "source": "kis_account", "auto_imported": True}]
+        sell = AsyncMock(return_value={"ok": True, "kis_order_no": "KIS-1", "symbol": "005930", "qty": 3})
+
+        with patch("backend.services.engine.eod_liquidation._record_legacy_residual_alert", return_value=[]), \
+             patch("backend.services.engine.eod_liquidation._get_open_positions_from_account", new=AsyncMock(return_value=account_positions)), \
+             patch("backend.services.engine.eod_liquidation.find_active_sell_order", return_value=None), \
+             patch("backend.services.engine.eod_liquidation.order_executor.execute_sell", sell):
+            result = await eod_liquidation.run_eod_liquidation()
+
+        self.assertTrue(result["results"][0]["auto_imported"])
 
 
 

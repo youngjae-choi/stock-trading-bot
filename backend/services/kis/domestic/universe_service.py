@@ -125,6 +125,7 @@ async def get_volume_rank(market_code: str = "J", top_n: int = 100) -> Dict[str,
                 "volume": _pick_int(row, _VOLUME_KEYS),
                 "price": _pick_int(row, _PRICE_KEYS),
                 "change_rate": _pick_float(row, _CHANGE_RATE_KEYS),
+                "sector": str(_pick(row, "bstp_kor_isnm", default="")),
             }
         )
 
@@ -343,7 +344,8 @@ async def fetch_intraday_kr_market_snapshot() -> dict[str, Any]:
             for it in top10_items
         ],
         "vol30_avg_change": avg_change,
-        "avg_change": avg_change,  # 기존 intraday_refresh 호환
+        "avg_change": avg_change,       # intraday_refresh._needs_refresh 호환
+        "items": vol30_items,           # sector_rotation.detect_sector_rotation 호환
         "sectors": sectors,
         "count": len(vol30_items),
     }

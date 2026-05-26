@@ -7,6 +7,7 @@ import json
 import logging
 import time
 import uuid
+from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -209,7 +210,11 @@ def _import_rule_for_account_holding(symbol: str) -> dict[str, Any]:
     return rule
 
 
-def _sync_managed_positions_with_account(account_positions: list[dict[str, Any]]) -> list[str]:
+def _sync_managed_positions_with_account(
+    account_positions: list[dict[str, Any]],
+    *,
+    return_stats: bool = False,
+) -> list[str] | dict[str, Any]:
     """Align S8-managed positions to KIS real holdings and import KIS-only holdings.
 
     Positions with a recent submitted/filled buy order are NOT removed even if KIS
@@ -218,6 +223,7 @@ def _sync_managed_positions_with_account(account_positions: list[dict[str, Any]]
 
     Args:
         account_positions: Public account positions from the KIS balance API.
+        return_stats: When True, return analysis-friendly sync deltas instead of only symbols.
     """
     from .position_manager import position_manager
 
@@ -228,7 +234,16 @@ def _sync_managed_positions_with_account(account_positions: list[dict[str, Any]]
     }
     synced: list[str] = []
     managed_symbols: set[str] = set()
-    for position in position_manager.get_positions():
+    before_positions = position_manager.get_positions()
+    before_qty = {
+        str(position.get("symbol") or "").strip(): int(position.get("qty") or 0)
+        for position in before_positions
+        if str(position.get("symbol") or "").strip()
+    }
+    removed: list[str] = []
+    qty_changed: list[tuple[str, int, int]] = []
+    added: list[str] = []
+    for position in before_positions:
         symbol = str(position.get("symbol") or "").strip()
         if not symbol:
             continue
@@ -242,6 +257,7 @@ def _sync_managed_positions_with_account(account_positions: list[dict[str, Any]]
                 )
                 continue
             position_manager.remove_position(symbol)
+            removed.append(symbol)
             logger.warning("WARN: [S6] KIS 잔고 미존재 S8 포지션 제거 symbol=%s", symbol)
             continue
         qty = _account_holding_qty(holding)
@@ -253,10 +269,14 @@ def _sync_managed_positions_with_account(account_positions: list[dict[str, Any]]
                 )
                 continue
             position_manager.remove_position(symbol)
+            removed.append(symbol)
             logger.warning("WARN: [S6] KIS 수량 0 S8 포지션 제거 symbol=%s", symbol)
             continue
         if position_manager.update_position_quantity(symbol, qty):
             synced.append(symbol)
+            previous_qty = before_qty.get(symbol, 0)
+            if previous_qty != qty:
+                qty_changed.append((symbol, previous_qty, qty))
 
     imported = 0
     for symbol, holding in holdings.items():
@@ -281,11 +301,32 @@ def _sync_managed_positions_with_account(account_positions: list[dict[str, Any]]
         ):
             synced.append(symbol)
             imported += 1
+            added.append(symbol)
+            logger.info(
+                "EVENT: position auto_imported symbol=%s name=%s qty=%d entry_price=%.2f profile=%s detection_reason=kis_only_holding",
+                symbol,
+                str(holding.get("name") or ""),
+                qty,
+                entry_price,
+                _import_rule_for_account_holding(symbol).get("profile_assigned", "LOW_VOL"),
+            )
     logger.info(
         "SUCCESS: [S6] KIS 실잔고 기준 S8 동기화 count=%d imported=%d",
         len(synced),
         imported,
     )
+    if return_stats:
+        after_positions = position_manager.get_positions()
+        return {
+            "synced": synced,
+            "managed_before": len(before_positions),
+            "managed_after": len(after_positions),
+            "added": added,
+            "removed": removed,
+            "qty_changed": qty_changed,
+            "imported": imported,
+            "kis_symbols": len(holdings),
+        }
     return synced
 
 
@@ -735,6 +776,8 @@ class DecisionEngine:
     """S6: 실시간 tick을 받아 RulePack 조건을 평가하고 매수 신호를 생성한다."""
 
     BLOCK_COOLDOWN_SECONDS = 30.0
+    RATE_LIMIT_PRESSURE_WINDOW_SECONDS = 30 * 60
+    RATE_LIMIT_PRESSURE_WARN_THRESHOLD = 50
 
     def __init__(self):
         """Initialize in-memory runtime state for one trading session."""
@@ -745,6 +788,22 @@ class DecisionEngine:
         self._block_cooldown: dict[str, float] = {}
         self._account_sync_task: asyncio.Task | None = None
         self._account_sync_interval_seconds = 60.0
+        self._account_sync_seq = 0
+        self._account_sync_rate_limit_hits: deque[float] = deque()
+
+    def _record_account_sync_rate_limit_hits(self, hits: int) -> int:
+        """Record EGW00201 hits observed during PositionSync and return the 30-minute count.
+
+        Args:
+            hits: Number of EGW00201 rate-limit hits detected in the current sync.
+        """
+        now = time.time()
+        cutoff = now - self.RATE_LIMIT_PRESSURE_WINDOW_SECONDS
+        while self._account_sync_rate_limit_hits and self._account_sync_rate_limit_hits[0] < cutoff:
+            self._account_sync_rate_limit_hits.popleft()
+        for _ in range(max(0, hits)):
+            self._account_sync_rate_limit_hits.append(now)
+        return len(self._account_sync_rate_limit_hits)
 
     async def activate(self) -> dict[str, Any]:
         """장 시작에 호출 — RulePack과 S4 후보 로드 후 WS 콜백을 등록한다."""
@@ -808,21 +867,95 @@ class DecisionEngine:
             "cache_meta": get_meta(),
         }
 
-    async def _run_account_sync_once(self) -> list[str]:
-        """Fetch KIS holdings once and sync PositionManager from the account SSOT."""
+    async def _run_account_sync_once(self, *, refresh_subscriptions: bool = False) -> list[str]:
+        """Fetch KIS holdings once and sync PositionManager from the account SSOT.
+
+        Args:
+            refresh_subscriptions: Refresh realtime WS subscriptions when sync changes managed symbols.
+        """
+        self._account_sync_seq += 1
+        seq = self._account_sync_seq
+        trade_date = _today_kst()
+        if not self._active:
+            logger.info("SKIP: PositionSync trade_date=%s seq=%d reason=engine_inactive", trade_date, seq)
+            return []
+
+        started = time.perf_counter()
+        kis_response_ms = 0
+        rate_limit_hits = 0
+        logger.info("START: PositionSync trade_date=%s seq=%d", trade_date, seq)
         try:
             from ...api.routes.account import _build_balance_payload
+            from ...utils import kis_rate_limiter
             from ..kis.domestic.service import get_balance
 
-            account_payload = _build_balance_payload(await get_balance())
+            rate_limit_before = float(kis_rate_limiter.snapshot().get("last_rate_limited_at") or 0.0)
+            kis_started = time.perf_counter()
+            balance_data = await get_balance()
+            kis_response_ms = int((time.perf_counter() - kis_started) * 1000)
+            rate_limit_after = float(kis_rate_limiter.snapshot().get("last_rate_limited_at") or 0.0)
+            if rate_limit_after > rate_limit_before:
+                rate_limit_hits = 1
+
+            account_payload = _build_balance_payload(balance_data)
             account_positions = account_payload.get("positions", [])
             if isinstance(account_positions, list):
-                return _sync_managed_positions_with_account(account_positions)
+                stats = _sync_managed_positions_with_account(account_positions, return_stats=True)
+                synced = list(stats.get("synced", [])) if isinstance(stats, dict) else []
+                changed = bool(
+                    isinstance(stats, dict)
+                    and (stats.get("added") or stats.get("removed") or stats.get("qty_changed"))
+                )
+                ws_resub = False
+                if refresh_subscriptions and changed:
+                    try:
+                        ws_resub = await self._refresh_realtime_subscriptions()
+                    except Exception as ws_exc:
+                        logger.error("FAIL: PositionSync seq=%d reason=ws_resub_error exc=%s", seq, ws_exc)
+                last_30m_hits = self._record_account_sync_rate_limit_hits(rate_limit_hits)
+                if last_30m_hits > self.RATE_LIMIT_PRESSURE_WARN_THRESHOLD:
+                    logger.warning("WARN: KIS rate_limit pressure high last_30m_hits=%d", last_30m_hits)
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                logger.info(
+                    "SUCCESS: PositionSync seq=%d kis_response_ms=%d kis_symbols=%d managed_before=%d managed_after=%d added=%s removed=%s qty_changed=%s ws_resub=%s elapsed_ms=%d rate_limit_hits=%d",
+                    seq,
+                    kis_response_ms,
+                    int(stats.get("kis_symbols", 0)) if isinstance(stats, dict) else 0,
+                    int(stats.get("managed_before", 0)) if isinstance(stats, dict) else 0,
+                    int(stats.get("managed_after", 0)) if isinstance(stats, dict) else 0,
+                    stats.get("added", []) if isinstance(stats, dict) else [],
+                    stats.get("removed", []) if isinstance(stats, dict) else [],
+                    stats.get("qty_changed", []) if isinstance(stats, dict) else [],
+                    ws_resub,
+                    elapsed_ms,
+                    rate_limit_hits,
+                )
+                return synced
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            logger.error(
+                "FAIL: PositionSync seq=%d reason=kis_balance_error exc=positions_not_list elapsed_ms=%d rate_limit_hits=%d",
+                seq,
+                elapsed_ms,
+                rate_limit_hits,
+            )
         except Exception as exc:
-            logger.warning("WARN: [S6] KIS 실잔고 기준 S8 동기화 실패 error=%s", exc)
+            error_text = str(exc)
+            rate_limit_hits = error_text.count("EGW00201")
+            if rate_limit_hits <= 0 and "EGW00201" in error_text:
+                rate_limit_hits = 1
+            last_30m_hits = self._record_account_sync_rate_limit_hits(rate_limit_hits)
+            if last_30m_hits > self.RATE_LIMIT_PRESSURE_WARN_THRESHOLD:
+                logger.warning("WARN: KIS rate_limit pressure high last_30m_hits=%d", last_30m_hits)
+            logger.error(
+                "FAIL: PositionSync seq=%d reason=kis_balance_error exc=%s elapsed_ms=%d rate_limit_hits=%d",
+                seq,
+                exc,
+                int((time.perf_counter() - started) * 1000),
+                rate_limit_hits,
+            )
         return []
 
-    async def _refresh_realtime_subscriptions(self) -> None:
+    async def _refresh_realtime_subscriptions(self) -> bool:
         """Restart realtime subscriptions when KIS sync changes protected symbols."""
         from .position_manager import position_manager
 
@@ -830,18 +963,17 @@ class DecisionEngine:
         symbols = list(dict.fromkeys([*list(self._candidates.keys()), *managed_symbols]))
         current_symbols = list(getattr(realtime_ws_manager, "_symbols", []) or [])
         if not symbols or symbols == current_symbols:
-            return
+            return False
         await realtime_ws_manager.start(symbols=symbols)
         logger.info("SUCCESS: [S6] realtime subscriptions refreshed after KIS sync symbols=%s", symbols)
+        return True
 
     async def _account_sync_loop(self) -> None:
         """Periodically sync KIS holdings while S6 is active to keep S8 on KIS SSOT."""
         try:
             while self._active:
                 await asyncio.sleep(self._account_sync_interval_seconds)
-                synced = await self._run_account_sync_once()
-                if synced:
-                    await self._refresh_realtime_subscriptions()
+                await self._run_account_sync_once(refresh_subscriptions=True)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

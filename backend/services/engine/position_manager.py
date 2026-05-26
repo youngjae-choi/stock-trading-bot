@@ -88,8 +88,18 @@ class PositionManager:
         qty: int,
         entry_price: float,
         final_rule: dict[str, Any],
+        auto_imported: bool = False,
     ) -> None:
-        """포지션 등록. final_rule은 rule_cache.get_rule() 결과를 넘긴다."""
+        """포지션 등록. final_rule은 rule_cache.get_rule() 결과를 넘긴다.
+
+        Args:
+            symbol: 종목 코드.
+            name: 종목명.
+            qty: 보유 수량.
+            entry_price: 진입가 또는 KIS 평균 매입가.
+            final_rule: 적용할 S8 리스크 규칙.
+            auto_imported: KIS-only 보유 종목을 안전장치로 자동 등록했는지 여부.
+        """
         safe_symbol = str(symbol or "").strip()
         safe_qty = int(qty or 0)
         safe_entry = _to_float(entry_price)
@@ -117,6 +127,7 @@ class PositionManager:
             "entry_price": safe_entry,
             "entry_time": _now_kst().isoformat(),
             "profile_assigned": profile,
+            "auto_imported": bool(auto_imported),
             # 손절선 (절대 하향 불가)
             "initial_stop_price": initial_stop_price,
             "active_stop_price": initial_stop_price,
@@ -142,8 +153,8 @@ class PositionManager:
             "trailing_active": False,
             "profile_assigned": profile,
         })
-        logger.info("SUCCESS: [S8] position added symbol=%s profile=%s entry=%.2f stop=%.2f",
-                    safe_symbol, profile, safe_entry, initial_stop_price)
+        logger.info("SUCCESS: [S8] position added symbol=%s profile=%s entry=%.2f stop=%.2f auto_imported=%s",
+                    safe_symbol, profile, safe_entry, initial_stop_price, bool(auto_imported))
 
 
     def update_position_quantity(self, symbol: str, qty: int) -> bool:
@@ -210,9 +221,10 @@ class PositionManager:
             qty=safe_qty,
             entry_price=safe_entry,
             final_rule=rule,
+            auto_imported=True,
         )
         logger.info(
-            "SUCCESS: [S8] account holding imported symbol=%s qty=%d entry=%.2f profile=%s",
+            "SUCCESS: [S8] account holding imported symbol=%s qty=%d entry=%.2f profile=%s auto_imported=True",
             safe_symbol,
             safe_qty,
             safe_entry,
@@ -285,6 +297,17 @@ class PositionManager:
 
     def _update_trailing(self, position: dict[str, Any], price: float) -> None:
         """트레일링 스탑 상태 업데이트. 손절선은 절대 하향하지 않는다."""
+        if bool(position.get("auto_imported")):
+            if not position.get("trailing_skip_logged"):
+                logger.info(
+                    "INFO: [S8] trailing disabled for auto_imported position symbol=%s price=%.2f active_stop=%.2f",
+                    position.get("symbol"),
+                    price,
+                    _to_float(position.get("active_stop_price")),
+                )
+                position["trailing_skip_logged"] = True
+            return
+
         entry_price = _to_float(position["entry_price"])
         prev_high = _to_float(position["highest_price_since_entry"])
         new_high = max(prev_high, price)
