@@ -13,6 +13,7 @@ from ...services.engine.data_quality_guard import (
     get_latest_dq_snapshot,
     get_today_dq_status,
     record_dq_event,
+    resolve_dq_events,
     take_dq_snapshot,
 )
 
@@ -80,6 +81,24 @@ def create_snapshot() -> dict:
         raise HTTPException(status_code=500, detail="Data quality snapshot creation failed") from exc
     logger.info("SUCCESS: POST /api/v1/data-quality/snapshot snapshot_id=%s", snapshot["id"])
     return {"ok": True, "payload": snapshot}
+
+
+@router.post("/resolve")
+def resolve_events(trade_date: str | None = None) -> dict:
+    """Resolve (suppress) all data-quality events for a trade date.
+
+    Resolved events are excluded from status calculation and will not block orders.
+    Defaults to today's KST date when trade_date is omitted.
+    """
+    target_date = trade_date or _today_kst()
+    logger.info("START: POST /api/v1/data-quality/resolve trade_date=%s", target_date)
+    try:
+        updated = resolve_dq_events(target_date)
+    except Exception as exc:
+        logger.error("FAIL: POST /api/v1/data-quality/resolve reason=%s", exc)
+        raise HTTPException(status_code=500, detail="Data quality resolve failed") from exc
+    logger.info("SUCCESS: POST /api/v1/data-quality/resolve updated=%d", updated)
+    return {"ok": True, "payload": {"resolved_count": updated, "trade_date": target_date}}
 
 
 @router.post("/event")

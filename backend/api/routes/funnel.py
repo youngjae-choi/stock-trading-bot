@@ -136,7 +136,7 @@ async def get_funnel_summary():
         # position_manager가 실시간 보유 종목 수를 관리 (position_stop_states는 전체 추적 기록이라 부적합)
         pos_count = 0
         try:
-            from ..services.engine.position_manager import position_manager
+            from ...services.engine.position_manager import position_manager
             pos_count = len(position_manager.get_positions())
         except Exception:
             pass

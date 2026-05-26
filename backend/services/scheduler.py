@@ -9,6 +9,7 @@ S2~S13 단계에서 placeholder job들이 실 구현으로 교체된다.
 from __future__ import annotations
 
 import functools
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -932,6 +933,27 @@ async def job_review_audit() -> None:
         logger.error("FAIL: [Job ReviewAudit] 손실 스트릭 차단 실패 — reason=%s", exc)
 
 
+async def job_missed_returns_update() -> None:
+    """Run missed-opportunity return updates independently of S9/S10 review.
+
+    This job is separated from job_postprocess_pipeline so missed-entry tracking
+    still runs when S9 liquidation, fill polling, summary, or review steps fail.
+    """
+    today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+    logger.info("START: [Job MissedReturns] 미진입 수익률 독립 업데이트 (%s KST)", today)
+    try:
+        from .engine.missed_opportunity import update_missed_returns
+
+        result = await update_missed_returns(today)
+        logger.info(
+            "SUCCESS: [Job MissedReturns] 미진입 수익률 독립 업데이트 완료 updated=%d errors=%d",
+            result.get("updated", 0),
+            result.get("errors", 0),
+        )
+    except Exception as exc:
+        logger.error("FAIL: [Job MissedReturns] 미진입 수익률 독립 업데이트 실패 — reason=%s", exc)
+
+
 async def job_postprocess_pipeline() -> None:
     """Run S9 then S10 sequentially from one postprocess schedule key."""
     logger.info("START: [PostProcess] S9~S10 후처리 프로세스")
@@ -1154,6 +1176,17 @@ def _build_scheduler() -> AsyncIOScheduler:
         id="job_postprocess_pipeline",
         name="후처리 프로세스 S9~S10",
         replace_existing=True,
+        misfire_grace_time=1800,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        job_missed_returns_update,
+        CronTrigger(hour=15, minute=35, timezone="Asia/Seoul"),
+        id="job_missed_returns_update",
+        name="미진입 수익률 독립 업데이트",
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
     )
     hour, minute = _parse_time("backup")
     scheduler.add_job(

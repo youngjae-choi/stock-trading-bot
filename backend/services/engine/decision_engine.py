@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -171,8 +172,45 @@ def _has_recent_submitted_buy(symbol: str, within_minutes: int = 5) -> bool:
     return row is not None
 
 
+def _account_holding_qty(holding: dict[str, Any]) -> int:
+    """Return a parsed positive KIS holding quantity, or zero when invalid.
+
+    Args:
+        holding: Public account position payload from _build_balance_payload().
+    """
+    try:
+        return int(float(str(holding.get("qty") or 0).replace(",", "")))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _account_holding_entry_price(holding: dict[str, Any]) -> float:
+    """Return the KIS average purchase price used for imported S8 stop state.
+
+    Args:
+        holding: Public account position payload from _build_balance_payload().
+    """
+    return _first_positive_float(
+        holding.get("avg_price"),
+        holding.get("entry_price"),
+        holding.get("current_price"),
+    ) or 0.0
+
+
+def _import_rule_for_account_holding(symbol: str) -> dict[str, Any]:
+    """Return the active risk rule for a KIS-imported holding with LOW_VOL fallback.
+
+    Args:
+        symbol: KIS holding symbol.
+    """
+    rule = dict(get_rule(symbol) or {})
+    if not rule.get("profile_assigned"):
+        rule["profile_assigned"] = "LOW_VOL"
+    return rule
+
+
 def _sync_managed_positions_with_account(account_positions: list[dict[str, Any]]) -> list[str]:
-    """Align S8-managed quantities to KIS real holdings without adding unmanaged holdings.
+    """Align S8-managed positions to KIS real holdings and import KIS-only holdings.
 
     Positions with a recent submitted/filled buy order are NOT removed even if KIS
     balance does not yet reflect them — KIS settlement can lag 1-3 minutes after order
@@ -183,12 +221,18 @@ def _sync_managed_positions_with_account(account_positions: list[dict[str, Any]]
     """
     from .position_manager import position_manager
 
-    holdings = {str(item.get("symbol") or "").strip(): item for item in account_positions}
+    holdings = {
+        str(item.get("symbol") or "").strip(): item
+        for item in account_positions
+        if str(item.get("symbol") or "").strip()
+    }
     synced: list[str] = []
+    managed_symbols: set[str] = set()
     for position in position_manager.get_positions():
         symbol = str(position.get("symbol") or "").strip()
         if not symbol:
             continue
+        managed_symbols.add(symbol)
         holding = holdings.get(symbol)
         if not holding:
             if _has_recent_submitted_buy(symbol):
@@ -200,7 +244,7 @@ def _sync_managed_positions_with_account(account_positions: list[dict[str, Any]]
             position_manager.remove_position(symbol)
             logger.warning("WARN: [S6] KIS 잔고 미존재 S8 포지션 제거 symbol=%s", symbol)
             continue
-        qty = int(float(str(holding.get("qty") or 0).replace(",", "")))
+        qty = _account_holding_qty(holding)
         if qty <= 0:
             if _has_recent_submitted_buy(symbol):
                 logger.info(
@@ -213,7 +257,35 @@ def _sync_managed_positions_with_account(account_positions: list[dict[str, Any]]
             continue
         if position_manager.update_position_quantity(symbol, qty):
             synced.append(symbol)
-    logger.info("SUCCESS: [S6] KIS 실잔고 기준 S8 수량 동기화 count=%d", len(synced))
+
+    imported = 0
+    for symbol, holding in holdings.items():
+        if symbol in managed_symbols:
+            continue
+        qty = _account_holding_qty(holding)
+        entry_price = _account_holding_entry_price(holding)
+        if qty <= 0 or entry_price <= 0:
+            logger.warning(
+                "WARN: [S6] KIS 보유 포지션 자동등록 스킵 symbol=%s qty=%s entry=%s",
+                symbol,
+                qty,
+                entry_price,
+            )
+            continue
+        if position_manager.sync_account_position(
+            symbol=symbol,
+            name=str(holding.get("name") or ""),
+            qty=qty,
+            entry_price=entry_price,
+            final_rule=_import_rule_for_account_holding(symbol),
+        ):
+            synced.append(symbol)
+            imported += 1
+    logger.info(
+        "SUCCESS: [S6] KIS 실잔고 기준 S8 동기화 count=%d imported=%d",
+        len(synced),
+        imported,
+    )
     return synced
 
 
@@ -568,13 +640,22 @@ def _get_setting_str(key: str, default: str) -> str:
     return default
 
 
+_BLOCKED_SIGNAL_STATUSES = ("preflight_blocked", "rejected", "failed")
+
+
 def _load_sent_symbols(trade_date: str) -> set[str]:
-    """Return symbols that already emitted a signal for the trade date."""
+    """Return symbols that already emitted a NON-blocked signal for the trade date.
+
+    Signals that never reached order submission (preflight_blocked/rejected/failed) are
+    excluded so the monitoring loop can re-signal them when conditions re-trigger.
+    """
     _ensure_signals_table()
+    placeholders = ",".join("?" * len(_BLOCKED_SIGNAL_STATUSES))
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT symbol FROM trading_signals WHERE trade_date = ?",
-            (trade_date,),
+            f"SELECT DISTINCT symbol FROM trading_signals "
+            f"WHERE trade_date = ? AND status NOT IN ({placeholders})",
+            (trade_date, *_BLOCKED_SIGNAL_STATUSES),
         ).fetchall()
     return {str(row["symbol"]) for row in rows if row["symbol"]}
 
@@ -653,11 +734,17 @@ def _restore_positions_from_db(trade_date: str, candidate_symbols: list[str]) ->
 class DecisionEngine:
     """S6: 실시간 tick을 받아 RulePack 조건을 평가하고 매수 신호를 생성한다."""
 
+    BLOCK_COOLDOWN_SECONDS = 30.0
+
     def __init__(self):
         """Initialize in-memory runtime state for one trading session."""
         self._active = False
         self._candidates: dict[str, dict[str, Any]] = {}
         self._signal_sent: set[str] = set()
+        # symbol → monotonic timestamp when re-evaluation is allowed
+        self._block_cooldown: dict[str, float] = {}
+        self._account_sync_task: asyncio.Task | None = None
+        self._account_sync_interval_seconds = 60.0
 
     async def activate(self) -> dict[str, Any]:
         """장 시작에 호출 — RulePack과 S4 후보 로드 후 WS 콜백을 등록한다."""
@@ -689,18 +776,9 @@ class DecisionEngine:
         position_manager.activate()
         if not position_manager.get_positions():
             _restore_positions_from_db(today, [])
-        account_symbols: list[str] = []
-        try:
-            from ...api.routes.account import _build_balance_payload
-            from ..kis.domestic.service import get_balance
-
-            account_payload = _build_balance_payload(await get_balance())
-            account_positions = account_payload.get("positions", [])
-            if isinstance(account_positions, list):
-                account_symbols = _sync_managed_positions_with_account(account_positions)
-        except Exception as exc:
-            logger.warning("WARN: [S6] KIS 실잔고 기준 S8 동기화 실패 error=%s", exc)
+        account_symbols = await self._run_account_sync_once()
         fill_poller.start(today)
+        self._start_account_sync_loop()
 
         managed_symbols = [str(pos.get("symbol") or "") for pos in position_manager.get_positions()]
         symbols = list(dict.fromkeys([*candidate_symbols, *managed_symbols]))
@@ -729,6 +807,68 @@ class DecisionEngine:
             "symbols": symbols,
             "cache_meta": get_meta(),
         }
+
+    async def _run_account_sync_once(self) -> list[str]:
+        """Fetch KIS holdings once and sync PositionManager from the account SSOT."""
+        try:
+            from ...api.routes.account import _build_balance_payload
+            from ..kis.domestic.service import get_balance
+
+            account_payload = _build_balance_payload(await get_balance())
+            account_positions = account_payload.get("positions", [])
+            if isinstance(account_positions, list):
+                return _sync_managed_positions_with_account(account_positions)
+        except Exception as exc:
+            logger.warning("WARN: [S6] KIS 실잔고 기준 S8 동기화 실패 error=%s", exc)
+        return []
+
+    async def _refresh_realtime_subscriptions(self) -> None:
+        """Restart realtime subscriptions when KIS sync changes protected symbols."""
+        from .position_manager import position_manager
+
+        managed_symbols = [str(pos.get("symbol") or "") for pos in position_manager.get_positions()]
+        symbols = list(dict.fromkeys([*list(self._candidates.keys()), *managed_symbols]))
+        current_symbols = list(getattr(realtime_ws_manager, "_symbols", []) or [])
+        if not symbols or symbols == current_symbols:
+            return
+        await realtime_ws_manager.start(symbols=symbols)
+        logger.info("SUCCESS: [S6] realtime subscriptions refreshed after KIS sync symbols=%s", symbols)
+
+    async def _account_sync_loop(self) -> None:
+        """Periodically sync KIS holdings while S6 is active to keep S8 on KIS SSOT."""
+        try:
+            while self._active:
+                await asyncio.sleep(self._account_sync_interval_seconds)
+                synced = await self._run_account_sync_once()
+                if synced:
+                    await self._refresh_realtime_subscriptions()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("WARN: [S6] periodic KIS account sync stopped unexpectedly error=%s", exc)
+
+    def _start_account_sync_loop(self) -> None:
+        """Start the periodic KIS account sync task if it is not already running."""
+        if self._account_sync_task and not self._account_sync_task.done():
+            return
+        self._account_sync_task = asyncio.create_task(self._account_sync_loop(), name="s6-kis-account-sync")
+        logger.info(
+            "SUCCESS: [S6] periodic KIS account sync started interval=%.0fs",
+            self._account_sync_interval_seconds,
+        )
+
+    async def _stop_account_sync_loop(self) -> None:
+        """Stop the periodic KIS account sync task during S6 shutdown."""
+        task = self._account_sync_task
+        self._account_sync_task = None
+        if not task or task.done():
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        logger.info("SUCCESS: [S6] periodic KIS account sync stopped")
 
     def is_active(self) -> bool:
         """Decision Engine 활성화 여부."""
@@ -843,6 +983,7 @@ class DecisionEngine:
         """장 종료 시 호출 — WS 콜백 등록을 해제하고 실시간 연결을 종료한다."""
         logger.info("START: [S6] Decision Engine deactivate")
         self._active = False
+        await self._stop_account_sync_loop()
         realtime_ws_manager.unregister_tick_callback(self._on_tick)
         from .position_manager import position_manager
         from .fill_poller import fill_poller
@@ -882,8 +1023,19 @@ class DecisionEngine:
             return
 
         symbol = str(tick.get("symbol") or "").strip()
+        from .position_manager import position_manager
+
+        managed_symbols = {str(pos.get("symbol") or "") for pos in position_manager.get_positions()}
+        if symbol in managed_symbols:
+            return
         if symbol not in self._candidates or symbol in self._signal_sent:
             return
+
+        cooldown_until = self._block_cooldown.get(symbol)
+        if cooldown_until is not None:
+            if time.monotonic() < cooldown_until:
+                return
+            self._block_cooldown.pop(symbol, None)
 
         try:
             price = float(tick.get("price") or 0)
@@ -1082,17 +1234,34 @@ class DecisionEngine:
         logger.info("SIGNAL: [S6] BUY signal symbol=%s price=%.0f confidence=%.2f", symbol, price, confidence)
         from .order_executor import order_executor
 
-        asyncio.create_task(
-            order_executor.execute_signal(
-                {
-                    "id": signal_id,
-                    "symbol": symbol,
-                    "name": candidate.get("name", ""),
-                    "trigger_price": price,
-                    "confidence": confidence,
-                }
-            )
-        )
+        async def _execute_and_track() -> None:
+            """Submit the signal and release re-signaling if preflight blocks it."""
+            try:
+                result = await order_executor.execute_signal(
+                    {
+                        "id": signal_id,
+                        "symbol": symbol,
+                        "name": candidate.get("name", ""),
+                        "trigger_price": price,
+                        "confidence": confidence,
+                    }
+                )
+            except Exception as exc:
+                logger.warning("WARN: [S6] order_executor task crashed symbol=%s reason=%s", symbol, exc)
+                self._signal_sent.discard(symbol)
+                self._block_cooldown[symbol] = time.monotonic() + self.BLOCK_COOLDOWN_SECONDS
+                return
+
+            if not (result or {}).get("ok"):
+                reason = (result or {}).get("reason", "unknown")
+                self._signal_sent.discard(symbol)
+                self._block_cooldown[symbol] = time.monotonic() + self.BLOCK_COOLDOWN_SECONDS
+                logger.info(
+                    "INFO: [S6] signal blocked — released for re-signaling symbol=%s reason=%s cooldown=%.0fs",
+                    symbol, reason, self.BLOCK_COOLDOWN_SECONDS,
+                )
+
+        asyncio.create_task(_execute_and_track())
 
 
 decision_engine = DecisionEngine()

@@ -3,6 +3,11 @@ const fs = require('fs');
 
 const backendUrl = process.env.BACKEND_URL || 'http://127.0.0.1:8000';
 
+// Resolve all DQ events written during this test suite so they don't block production orders.
+test.afterAll(async ({ request }) => {
+  await request.post(`${backendUrl}/api/v1/data-quality/resolve`).catch(() => {});
+});
+
 function envValue(key, fallback = '') {
   if (process.env[key]) return process.env[key];
   try {

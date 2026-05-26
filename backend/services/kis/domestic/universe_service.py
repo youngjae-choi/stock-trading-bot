@@ -4,9 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Any, Dict, Literal
+from zoneinfo import ZoneInfo
 
 from ..common.client import kis_client
+
+KST = ZoneInfo("Asia/Seoul")
+
+# 업종 코드 → 이름 (KIS FID_INPUT_ISCD)
+_SECTOR_MAP: dict[str, str] = {
+    "0029": "반도체/IT",   # KOSPI 전기전자
+    "0027": "2차전지",     # KOSPI 비철금속(배터리 소재)
+    "0041": "금융",        # KOSPI 금융업
+    "0020": "바이오",      # KOSPI 의약품
+}
 
 logger = logging.getLogger("KISUniverseService")
 
@@ -226,3 +238,112 @@ async def get_price_rank(
         )
 
     return {"sort_by": safe_sort_by, "items": items, "count": len(items)}
+
+
+async def get_market_index(index_code: str) -> dict[str, Any]:
+    """KOSPI(0001) / KOSDAQ(1001) 지수 현재가·등락률 조회.
+
+    TR_ID FHPUP02100000 = 국내업종 현재지수 (v1_국내주식-063)
+    """
+    payload = await kis_client.request(
+        method="GET",
+        path="/uapi/domestic-stock/v1/quotations/inquire-index-price",
+        tr_id="FHPUP02100000",
+        params={
+            "FID_COND_MRKT_DIV_CODE": "U",
+            "FID_INPUT_ISCD": index_code,
+        },
+    )
+    out = payload.get("output", {})
+    return {
+        "code": index_code,
+        "price": _to_float(out.get("bstp_nmix_prpr", 0)),
+        "change_rate": _to_float(out.get("bstp_nmix_prdy_ctrt", 0)),
+        "change": _to_float(out.get("bstp_nmix_prdy_vrss", 0)),
+    }
+
+
+async def get_sector_index(sector_code: str) -> dict[str, Any]:
+    """업종 지수 등락률 조회 (sector_code는 _SECTOR_MAP 키).
+
+    TR_ID FHPUP02100000 = 국내업종 현재지수 (v1_국내주식-063)
+    """
+    payload = await kis_client.request(
+        method="GET",
+        path="/uapi/domestic-stock/v1/quotations/inquire-index-price",
+        tr_id="FHPUP02100000",
+        params={
+            "FID_COND_MRKT_DIV_CODE": "U",
+            "FID_INPUT_ISCD": sector_code,
+        },
+    )
+    out = payload.get("output", {})
+    return {
+        "code": sector_code,
+        "name": _SECTOR_MAP.get(sector_code, sector_code),
+        "change_rate": _to_float(out.get("bstp_nmix_prdy_ctrt", 0)),
+    }
+
+
+async def fetch_intraday_kr_market_snapshot() -> dict[str, Any]:
+    """장중 한국 시장 종합 스냅샷.
+
+    병렬로 4종 데이터를 수집한다. 일부 호출이 실패해도 나머지는 살린다.
+
+    Returns:
+        {
+            "ok": bool,
+            "fetched_at": str,          # ISO8601 KST
+            "kospi": {"change_rate": float, ...},
+            "kosdaq": {"change_rate": float, ...},
+            "top10": [{"symbol", "name", "change_rate"}, ...],   # 거래대금 상위 10
+            "vol30_avg_change": float,  # 거래량 상위 30종목 평균 등락률
+            "sectors": [{"name", "change_rate"}, ...],
+            "avg_change": float,        # 기존 호환 — vol30_avg_change 동일값
+        }
+    """
+    tasks = [
+        get_market_index("0001"),                                    # KOSPI
+        get_market_index("1001"),                                    # KOSDAQ
+        get_price_rank(sort_by="trade_amount", market_code="J", top_n=10),  # 거래대금 상위
+        get_volume_rank(market_code="J", top_n=30),                  # 거래량 상위
+        *[get_sector_index(code) for code in _SECTOR_MAP],          # 업종 지수
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    kospi_raw, kosdaq_raw, top10_raw, vol30_raw, *sector_raws = results
+    now = datetime.now(KST).isoformat()
+
+    def _safe(r: Any, fallback: Any) -> Any:
+        return fallback if isinstance(r, Exception) else r
+
+    kospi = _safe(kospi_raw, {"code": "0001", "change_rate": None, "price": None})
+    kosdaq = _safe(kosdaq_raw, {"code": "1001", "change_rate": None, "price": None})
+
+    top10_items = _safe(top10_raw, {}).get("items", [])[:10]
+
+    vol30 = _safe(vol30_raw, {"items": []})
+    vol30_items = vol30.get("items", [])
+    rates = [float(it.get("change_rate") or 0.0) for it in vol30_items]
+    avg_change = round(sum(rates) / len(rates), 2) if rates else None
+
+    sectors = []
+    for raw in sector_raws:
+        if not isinstance(raw, Exception):
+            sectors.append({"name": raw["name"], "change_rate": raw["change_rate"]})
+
+    ok = avg_change is not None  # 최소한 vol30이 있어야 useful
+    return {
+        "ok": ok,
+        "fetched_at": now,
+        "kospi": kospi,
+        "kosdaq": kosdaq,
+        "top10": [
+            {"symbol": it["symbol"], "name": it["name"], "change_rate": it["change_rate"]}
+            for it in top10_items
+        ],
+        "vol30_avg_change": avg_change,
+        "avg_change": avg_change,  # 기존 intraday_refresh 호환
+        "sectors": sectors,
+        "count": len(vol30_items),
+    }

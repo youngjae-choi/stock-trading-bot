@@ -69,6 +69,48 @@ def _ensure_table() -> None:
         )
 
 
+def _format_intraday_for_prompt(snapshot: dict[str, Any]) -> str:
+    """fetch_intraday_kr_market_snapshot() 결과를 LLM 프롬프트용 텍스트로 변환."""
+    lines: list[str] = []
+
+    kospi = snapshot.get("kospi") or {}
+    kosdaq = snapshot.get("kosdaq") or {}
+    k_rate = kospi.get("change_rate")
+    q_rate = kosdaq.get("change_rate")
+    if k_rate is not None or q_rate is not None:
+        k_str = f"{k_rate:+.2f}%" if k_rate is not None else "N/A"
+        q_str = f"{q_rate:+.2f}%" if q_rate is not None else "N/A"
+        lines.append(f"[현재 지수]\n  KOSPI: {k_str} / KOSDAQ: {q_str}")
+
+    top10 = snapshot.get("top10") or []
+    if top10:
+        rows = "\n".join(
+            f"  {it['name']}({it['symbol']}): {it['change_rate']:+.2f}%"
+            for it in top10
+            if it.get("change_rate") is not None
+        )
+        lines.append(f"[거래대금 상위 종목 동향]\n{rows}")
+
+    avg = snapshot.get("vol30_avg_change")
+    if avg is not None:
+        lines.append(f"[거래량 상위 30종목 평균 등락률]: {avg:+.2f}%")
+
+    sectors = snapshot.get("sectors") or []
+    if sectors:
+        up = [s for s in sectors if (s.get("change_rate") or 0) > 0]
+        down = [s for s in sectors if (s.get("change_rate") or 0) < 0]
+        up_str = ", ".join(f"{s['name']} {s['change_rate']:+.2f}%" for s in sorted(up, key=lambda x: -x["change_rate"]))
+        down_str = ", ".join(f"{s['name']} {s['change_rate']:+.2f}%" for s in sorted(down, key=lambda x: x["change_rate"]))
+        if up_str:
+            lines.append(f"[강세 섹터]: {up_str}")
+        if down_str:
+            lines.append(f"[약세 섹터]: {down_str}")
+
+    if not lines:
+        return "[장중 시장 현황]\n  데이터 없음"
+    return "\n\n".join(lines)
+
+
 def _parse_tone_response(raw: str) -> dict[str, Any]:
     """LLM 응답 문자열에서 JSON을 추출해 파싱한다."""
     # 마크다운 코드 블록 제거
@@ -156,43 +198,62 @@ async def run_market_tone_analysis(trigger_source: str = "api_manual") -> dict[s
         logger.error("FAIL: MarketToneService ensure table failed trade_date=%s reason=%s", today, exc)
         raise
 
-    # 해외 시장 데이터를 먼저 수집하고 실패 시에도 LLM 분석 자체는 계속 진행한다.
-    market_data: dict[str, Any] = {}  # morning_context 저장용으로 스코프 유지
-    try:
-        from .market_data_fetcher import fetch_overnight_market_summary, format_for_prompt
+    is_intraday = safe_source == "intraday_refresh"
+    market_data: dict[str, Any] = {}
 
-        market_data = await fetch_overnight_market_summary()
-        market_data_text = format_for_prompt(market_data)
-    except Exception as exc:
-        logger.warning("WARN: MarketToneService 해외 시장 데이터 실시간 수집 실패 — %s", exc)
-        # S11 overnight snapshot fallback.
+    if is_intraday:
+        # 장중 분기: 국내 실시간 스냅샷 수집
+        slot = datetime.now(__import__("zoneinfo").ZoneInfo("Asia/Seoul")).strftime("%H:%M")
         try:
-            from .us_market_watch import get_latest_snapshot
-            from .market_data_fetcher import format_for_prompt as _fmt
+            from ..kis.domestic.universe_service import fetch_intraday_kr_market_snapshot
+            market_data = await fetch_intraday_kr_market_snapshot()
+            market_data_text = _format_intraday_for_prompt(market_data)
+        except Exception as exc:
+            logger.warning("WARN: MarketToneService 장중 스냅샷 수집 실패 — %s", exc)
+            market_data_text = "[장중 시장 현황]\n  데이터 수집 실패 — 가용한 정보만 기준으로 판단"
+    else:
+        # 아침 분기: 해외 야간 데이터 수집
+        slot = "08:00"
+        try:
+            from .market_data_fetcher import fetch_overnight_market_summary, format_for_prompt
 
-            snapshot = get_latest_snapshot()
-            if snapshot and snapshot.get("raw_data") and isinstance(snapshot["raw_data"], dict):
-                market_data = snapshot["raw_data"]
-                market_data_text = _fmt(snapshot["raw_data"])
-                market_data_text += (
-                    f"\n[참고: S11 스냅샷 기준 {snapshot['snapshot_date']} "
-                    f"{snapshot['snapshot_time']} KST]"
-                )
-                logger.info(
-                    "INFO: MarketToneService S11 스냅샷 폴백 적용 date=%s time=%s",
-                    snapshot["snapshot_date"], snapshot["snapshot_time"],
-                )
-            else:
+            market_data = await fetch_overnight_market_summary()
+            market_data_text = format_for_prompt(market_data)
+        except Exception as exc:
+            logger.warning("WARN: MarketToneService 해외 시장 데이터 실시간 수집 실패 — %s", exc)
+            # S11 overnight snapshot fallback.
+            try:
+                from .us_market_watch import get_latest_snapshot
+                from .market_data_fetcher import format_for_prompt as _fmt
+
+                snapshot = get_latest_snapshot()
+                if snapshot and snapshot.get("raw_data") and isinstance(snapshot["raw_data"], dict):
+                    market_data = snapshot["raw_data"]
+                    market_data_text = _fmt(snapshot["raw_data"])
+                    market_data_text += (
+                        f"\n[참고: S11 스냅샷 기준 {snapshot['snapshot_date']} "
+                        f"{snapshot['snapshot_time']} KST]"
+                    )
+                    logger.info(
+                        "INFO: MarketToneService S11 스냅샷 폴백 적용 date=%s time=%s",
+                        snapshot["snapshot_date"], snapshot["snapshot_time"],
+                    )
+                else:
+                    market_data_text = "[전날 밤 해외 시장 현황]\n  데이터 수집 실패 — 가용한 정보만 기준으로 판단"
+            except Exception as snap_exc:
+                logger.warning("WARN: MarketToneService S11 스냅샷 폴백도 실패 — %s", snap_exc)
                 market_data_text = "[전날 밤 해외 시장 현황]\n  데이터 수집 실패 — 가용한 정보만 기준으로 판단"
-        except Exception as snap_exc:
-            logger.warning("WARN: MarketToneService S11 스냅샷 폴백도 실패 — %s", snap_exc)
-            market_data_text = "[전날 밤 해외 시장 현황]\n  데이터 수집 실패 — 가용한 정보만 기준으로 판단"
+
+    prompt_file = "intraday_market_tone.md" if is_intraday else "0805_opus_market_tone.md"
+    prompt_vars = {"date": today, "market_data": market_data_text}
+    if is_intraday:
+        prompt_vars["slot"] = slot
 
     # LLM 호출
     try:
         prompt = render_prompt(
-            "0805_opus_market_tone.md",
-            {"date": today, "market_data": market_data_text},
+            prompt_file,
+            prompt_vars,
         )
     except Exception as exc:
         finish_pipeline_run(

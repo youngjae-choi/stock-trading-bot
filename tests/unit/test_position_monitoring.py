@@ -76,13 +76,14 @@ class PositionManagerTrailingPersistenceTest(unittest.TestCase):
 
 
 class DecisionEngineAccountSyncTest(unittest.TestCase):
-    """Verify KIS holdings sync only already managed S8 positions."""
+    """Verify KIS holdings sync follows the KIS account SSOT."""
 
-    def test_sync_managed_positions_updates_quantity_without_adding_unmanaged_holding(self) -> None:
-        """KIS-only holdings must not become automatic sell targets without strategy ownership."""
+    def test_sync_managed_positions_updates_quantity_and_imports_unmanaged_holding(self) -> None:
+        """KIS-only holdings must be imported so S8 can protect real account positions."""
         fake_manager = Mock()
         fake_manager.get_positions.return_value = [{"symbol": "005930", "qty": 10}]
         fake_manager.update_position_quantity = Mock(return_value=True)
+        fake_manager.sync_account_position = Mock(return_value=True)
         fake_manager.remove_position = Mock()
         account_positions = [
             {"symbol": "005930", "name": "삼성전자", "qty": 6, "avg_price": 70000},
@@ -92,10 +93,16 @@ class DecisionEngineAccountSyncTest(unittest.TestCase):
         with patch("backend.services.engine.position_manager.position_manager", fake_manager):
             symbols = decision_engine._sync_managed_positions_with_account(account_positions)
 
-        self.assertEqual(symbols, ["005930"])
+        self.assertEqual(symbols, ["005930", "000660"])
         fake_manager.update_position_quantity.assert_called_once_with("005930", 6)
+        fake_manager.sync_account_position.assert_called_once_with(
+            symbol="000660",
+            name="SK하이닉스",
+            qty=2,
+            entry_price=120000.0,
+            final_rule={"profile_assigned": "LOW_VOL"},
+        )
         fake_manager.remove_position.assert_not_called()
-        self.assertFalse(fake_manager.add_position.called)
 
     def test_sync_managed_positions_removes_position_missing_from_kis_holdings(self) -> None:
         """A managed symbol absent from KIS holdings must be removed to prevent oversell."""
@@ -134,8 +141,8 @@ class EODLiquidationPolicyTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["liquidated"], 2)
         self.assertEqual(result["summary"]["submitted"], 2)
-        sell.assert_any_await(symbol="005930", qty=3, price=0, reason="eod")
-        sell.assert_any_await(symbol="000660", qty=2, price=0, reason="eod")
+        sell.assert_any_await(symbol="005930", qty=3, price=0, reason="eod", name="")
+        sell.assert_any_await(symbol="000660", qty=2, price=0, reason="eod", name="")
 
 
 

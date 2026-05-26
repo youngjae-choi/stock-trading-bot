@@ -164,6 +164,62 @@ class PositionManager:
             logger.info("SUCCESS: [S8] position qty synced symbol=%s previous=%d current=%d", safe_symbol, previous_qty, safe_qty)
         return True
 
+    def sync_account_position(
+        self,
+        *,
+        symbol: str,
+        name: str,
+        qty: int,
+        entry_price: float,
+        final_rule: dict[str, Any] | None,
+    ) -> bool:
+        """Create or update a PositionManager entry from the KIS account SSOT.
+
+        Args:
+            symbol: KIS holding symbol.
+            name: KIS product name.
+            qty: Current KIS holding quantity.
+            entry_price: KIS average purchase price used as the S8 entry price.
+            final_rule: Active risk rule; LOW_VOL fallback is applied for imports.
+        """
+        safe_symbol = str(symbol or "").strip()
+        safe_qty = int(qty or 0)
+        safe_entry = _to_float(entry_price)
+        if not safe_symbol or safe_qty <= 0 or safe_entry <= 0:
+            logger.warning(
+                "WARN: [S8] account sync skipped invalid holding symbol=%s qty=%s entry=%s",
+                symbol,
+                qty,
+                entry_price,
+            )
+            return False
+
+        if safe_symbol in self._positions:
+            updated = self.update_position_quantity(safe_symbol, safe_qty)
+            position = self._positions[safe_symbol]
+            if name and not position.get("name"):
+                position["name"] = str(name)
+            return updated
+
+        rule = {"profile_assigned": "LOW_VOL", **(final_rule or {})}
+        if not rule.get("profile_assigned"):
+            rule["profile_assigned"] = "LOW_VOL"
+        self.add_position(
+            symbol=safe_symbol,
+            name=name,
+            qty=safe_qty,
+            entry_price=safe_entry,
+            final_rule=rule,
+        )
+        logger.info(
+            "SUCCESS: [S8] account holding imported symbol=%s qty=%d entry=%.2f profile=%s",
+            safe_symbol,
+            safe_qty,
+            safe_entry,
+            rule.get("profile_assigned"),
+        )
+        return True
+
     def remove_position(self, symbol: str) -> None:
         safe_symbol = str(symbol or "").strip()
         self._positions.pop(safe_symbol, None)

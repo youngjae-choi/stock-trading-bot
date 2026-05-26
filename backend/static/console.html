@@ -239,9 +239,8 @@
               <div class="funnel-step"><strong id="fp-total">-</strong><span>전체 종목</span></div>
               <div class="funnel-step"><strong id="fp-layer1">-</strong><span>Layer 1 Universe</span></div>
               <div class="funnel-step"><strong id="fp-layer2">-</strong><span>Layer 2 후보</span></div>
-              <div class="funnel-step"><strong id="fp-signals">-</strong><span>오늘 매수 신호</span></div>
               <div class="funnel-step">
-                <strong id="fp-positions">-</strong><span>보유중</span>
+                <strong id="fp-signals">-</strong><span>오늘 매수 신호</span>
                 <div style="display:flex; gap:8px; flex-wrap:wrap; font-size:10px; margin-top:6px; padding-top:6px; border-top:1px solid var(--line);">
                   <span><span style="color:#6cb6ff;">L</span> <strong id="tc-low-vol-count">-</strong></span>
                   <span><span style="color:#3fb950;">M</span> <strong id="tc-mid-vol-count">-</strong></span>
@@ -249,6 +248,7 @@
                   <span><span style="color:#f85149;">T</span> <strong id="tc-theme-spike-count">-</strong></span>
                 </div>
               </div>
+              <div class="funnel-step"><strong id="fp-positions">-</strong><span>보유중</span></div>
             </div>
             <div style="text-align:right; margin-top:8px;">
               <button type="button" class="btn" style="font-size:11px;" data-action="showScreen" data-screen="funnel">
@@ -595,7 +595,11 @@
             <div class="card compact"><div class="card-title">기준 universe</div><div class="metric" id="funnel-total">-</div><div class="muted" id="funnel-total-source">출처 확인 전</div></div>
             <div class="card compact"><div class="card-title">Layer 1 통과</div><div class="metric" id="funnel-layer1">-</div><div class="muted" id="funnel-layer1-detail">S3 결과 확인 전</div></div>
             <div class="card compact"><div class="card-title">Layer 2 통과</div><div class="metric" id="funnel-layer2">-</div><div class="muted" id="funnel-layer2-detail">S4 결과 확인 전</div></div>
-            <div class="card compact"><div class="card-title">현재 매수대기</div><div class="metric" id="funnel-candidates">-</div><div class="muted" id="funnel-candidates-detail">미수집·대기: S4 결과 확인 전</div></div>
+            <div class="card compact">
+              <div class="card-title" title="이 값은 S4 하이브리드 스크리닝이 생성한 모든 BUY 신호 수입니다. Daily Plan이 일부 종목을 제외하면 Trading Monitor에서는 더 적게 표시됩니다.">오늘 BUY 신호 (원본) <span style="cursor:help;">ⓘ</span></div>
+              <div class="metric" id="funnel-candidates">-</div>
+              <div class="muted" id="funnel-candidates-detail">Daily Plan 배정 전 S4 원본 신호. Trading Monitor의 매수대기와 다를 수 있음.</div>
+            </div>
             <div class="card compact">
               <div class="card-title">Profile 배정</div>
               <div style="display:flex; gap:10px; flex-wrap:wrap; font-size:12px; margin-top:6px; line-height:1.6;">
@@ -2318,7 +2322,7 @@
   <script src="/static/js/screens/console-false-positive.js"></script>
   <script src="/static/js/screens/console-confidence-calibration.js"></script>
   <script src="/static/js/screens/console-settings.js?v=7"></script>
-  <script src="/static/js/screens/console-funnel-data-health.js"></script>
+  <script src="/static/js/screens/console-funnel-data-health.js?v=1"></script>
   <script src="/static/js/screens/console-review.js?v=7"></script>
   <script src="/static/js/screens/console-statistics.js"></script>
   <script src="/static/js/screens/console-regime-analytics.js?v=7"></script>

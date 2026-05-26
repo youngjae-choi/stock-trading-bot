@@ -22,12 +22,20 @@ logger = logging.getLogger("IntradayRefresh")
 KST = ZoneInfo("Asia/Seoul")
 
 # 재평가 트리거 기준 등락률 (절댓값)
+# 주의: daily_plan은 "normal"을 쓰고, market_tone 코드는 "neutral"을 쓴다.
+# 두 어휘가 동일 개념을 가리키므로 둘 다 받는다.
 _REFRESH_THRESHOLD: dict[str, float] = {
     "defensive": 2.0,   # 아침 defensive인데 시장이 +2% 이상 오름
     "aggressive": 2.0,  # 아침 aggressive인데 시장이 -2% 이하 빠짐
     "neutral": 3.0,     # neutral인데 ±3% 이상 이탈
+    "normal": 3.0,      # daily_plan이 기록하는 어휘
 }
+_NEUTRAL_INTENSITIES = {"neutral", "normal"}
 _DEFAULT_THRESHOLD = 3.0
+
+# 같은 방향으로 이미 trigger됐어도, 시장 평균이 직전 trigger 대비 이 폭만큼 더
+# 변하면 재평가를 허용한다. 점진적 강세/약세를 무시하지 않기 위함.
+_RETRIGGER_DELTA = 1.0
 
 # 허용 슬롯. 13:00/14:00은 lunch_slots_enabled kill switch로만 제어한다.
 _BASE_ALLOWED_SLOTS = {"09:30", "10:30", "11:30"}
@@ -120,16 +128,13 @@ def _setting_bool(key: str, default: bool) -> bool:
 
 
 async def _fetch_market_snapshot() -> dict[str, Any]:
-    """KIS 거래량 상위 30종목 조회 → 평균 등락률 계산."""
+    """장중 한국 시장 종합 스냅샷 조회 (지수 + 시총상위 + 거래대금 + 업종)."""
     try:
-        from ..kis.domestic.universe_service import get_volume_rank
-        result = await get_volume_rank(market_code="J", top_n=30)
-        items = result.get("items", []) if isinstance(result, dict) else []
-        if not items:
+        from ..kis.domestic.universe_service import fetch_intraday_kr_market_snapshot
+        result = await fetch_intraday_kr_market_snapshot()
+        if not result.get("ok") or result.get("avg_change") is None:
             return {"ok": False, "reason": "no_items", "avg_change": None, "items": []}
-        rates = [float(item.get("change_rate") or 0.0) for item in items]
-        avg = sum(rates) / len(rates) if rates else 0.0
-        return {"ok": True, "avg_change": round(avg, 2), "items": items, "count": len(items)}
+        return result
     except Exception as exc:
         logger.warning("WARN: IntradayRefresh 시장 스냅샷 조회 실패 — %s", exc)
         return {"ok": False, "reason": str(exc), "avg_change": None, "items": []}
@@ -148,30 +153,54 @@ def _needs_refresh(
     intensity = (morning_intensity or "neutral").lower()
     threshold = _REFRESH_THRESHOLD.get(intensity, _DEFAULT_THRESHOLD)
 
-    # 이미 오늘 같은 방향으로 재평가 완료했으면 스킵
+    # 이미 오늘 같은 방향으로 재평가 완료했으면 스킵하되,
+    # 직전 trigger 대비 |Δ| >= _RETRIGGER_DELTA 이면 점진 변화 반영을 위해 재평가 허용
     already_triggered = [log for log in existing_logs if log.get("triggered")]
     if already_triggered:
         last = already_triggered[-1]
         last_avg = last.get("avg_change", 0.0) or 0.0
-        # 같은 방향(both positive or both negative)이면 중복 스킵
-        if avg_change > 0 and last_avg > 0:
-            return False, f"already_triggered_positive (last={last_avg:+.2f}%)"
-        if avg_change < 0 and last_avg < 0:
-            return False, f"already_triggered_negative (last={last_avg:+.2f}%)"
+        delta = avg_change - last_avg
+        if abs(delta) < _RETRIGGER_DELTA:
+            if avg_change > 0 and last_avg > 0:
+                return False, (
+                    f"already_triggered_positive (last={last_avg:+.2f}%, delta={delta:+.2f}% < ±{_RETRIGGER_DELTA}%)"
+                )
+            if avg_change < 0 and last_avg < 0:
+                return False, (
+                    f"already_triggered_negative (last={last_avg:+.2f}%, delta={delta:+.2f}% < ±{_RETRIGGER_DELTA}%)"
+                )
 
     if intensity == "defensive" and avg_change >= threshold:
         return True, f"defensive 플랜인데 시장 avg_change={avg_change:+.2f}% (>= +{threshold}%)"
     if intensity == "aggressive" and avg_change <= -threshold:
         return True, f"aggressive 플랜인데 시장 avg_change={avg_change:+.2f}% (<= -{threshold}%)"
-    if intensity == "neutral" and abs(avg_change) >= threshold:
-        return True, f"neutral 플랜인데 시장 avg_change={avg_change:+.2f}% (>= ±{threshold}%)"
+    if intensity in _NEUTRAL_INTENSITIES and abs(avg_change) >= threshold:
+        return True, f"{intensity} 플랜인데 시장 avg_change={avg_change:+.2f}% (>= ±{threshold}%)"
 
     return False, f"변화 미감지 intensity={intensity} avg_change={avg_change:+.2f}% threshold=±{threshold}%"
 
 
 async def _run_reselection(trade_date: str) -> dict[str, Any]:
-    """S3 → S4 → S5 순서로 재실행하고 결과 요약 반환."""
+    """S2 → S3 → S4 → S5 순서로 재실행하고 결과 요약 반환."""
     result: dict[str, Any] = {}
+
+    # S2: Market Tone 재분석 — 아침 mixed 판단을 장중 변화에 반영
+    try:
+        from .market_tone import run_market_tone_analysis
+        s2 = await run_market_tone_analysis(trigger_source="intraday_refresh")
+        result["s2"] = {
+            "ok": s2.get("ok", False),
+            "tone": s2.get("tone"),
+            "confidence": s2.get("confidence"),
+        }
+        logger.info(
+            "INFO: [IntradayRefresh] S2 완료 tone=%s confidence=%s",
+            s2.get("tone"),
+            s2.get("confidence"),
+        )
+    except Exception as exc:
+        result["s2"] = {"ok": False, "error": str(exc)}
+        logger.warning("WARN: [IntradayRefresh] S2 실패 (후속 단계는 진행) — %s", exc)
 
     # S3: Universe Filter 재실행
     try:

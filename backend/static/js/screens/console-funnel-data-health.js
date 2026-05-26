@@ -216,7 +216,7 @@
         if (l2DetailEl) l2DetailEl.textContent = (fp.has_s4 ? "S4 결과 있음" : "S4 결과 없음") + " / " + (fp.has_s5 ? "S5 결과 있음" : "S5 결과 없음");
         if (candEl2 && fp.signals_count != null) candEl2.textContent = fp.signals_count;
         var candDetailEl = document.getElementById('funnel-candidates-detail');
-        if (candDetailEl) candDetailEl.textContent = fp.signals_count > 0 ? '오늘 생성된 BUY 신호 수' : '데이터 없음: 오늘 BUY 신호 없음';
+        if (candDetailEl) candDetailEl.textContent = fp.signals_count > 0 ? 'S4 원본 BUY 신호 수 (Daily Plan 배정 전)' : '데이터 없음: 오늘 BUY 신호 없음';
         if (emptyReasonEl) {
           emptyReasonEl.textContent = fp.empty_reason || "";
           emptyReasonEl.style.display = fp.empty_reason ? "block" : "none";

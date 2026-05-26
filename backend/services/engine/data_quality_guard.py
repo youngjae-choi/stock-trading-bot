@@ -113,7 +113,7 @@ def get_today_dq_status(trade_date: str) -> dict:
             """
             SELECT *
             FROM data_quality_events
-            WHERE trade_date = ?
+            WHERE trade_date = ? AND resolved = 0
             ORDER BY created_at DESC
             """,
             (trade_date,),
@@ -221,6 +221,34 @@ def publish_event(
         except Exception as exc:
             logger.warning("WARN: DataQualityGuard.publish_event telegram failed reason=%s", exc)
     return event_id
+
+
+def resolve_dq_events(trade_date: str, event_ids: list[str] | None = None) -> int:
+    """Mark data-quality events as resolved so they are excluded from status calculation.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date to target.
+        event_ids: Specific event IDs to resolve. If None, resolves all events for the date.
+
+    Returns:
+        Number of rows updated.
+    """
+    logger.info("START: DataQualityGuard.resolve trade_date=%s ids=%s", trade_date, event_ids)
+    with get_connection() as conn:
+        if event_ids:
+            placeholders = ",".join("?" * len(event_ids))
+            cursor = conn.execute(
+                f"UPDATE data_quality_events SET resolved = 1 WHERE trade_date = ? AND id IN ({placeholders})",
+                [trade_date, *event_ids],
+            )
+        else:
+            cursor = conn.execute(
+                "UPDATE data_quality_events SET resolved = 1 WHERE trade_date = ?",
+                (trade_date,),
+            )
+        updated = cursor.rowcount
+    logger.info("SUCCESS: DataQualityGuard.resolve updated=%d", updated)
+    return updated
 
 
 def get_current_status() -> str:

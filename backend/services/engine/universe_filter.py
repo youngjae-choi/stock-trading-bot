@@ -27,6 +27,7 @@ from typing import Any
 
 from ..db import get_connection
 from ..kis.domestic.universe_service import get_price_rank, get_volume_rank
+from ..settings_store import get_setting
 from .expert_knowledge import get_active_knowledge
 from .learning_memory import get_active_memories
 from .missed_opportunity import record_missed_opportunity
@@ -37,6 +38,39 @@ logger = logging.getLogger("UniverseFilterService")
 _MAX_UNIVERSE = 60   # KIS에서 가져올 최대 종목 수
 _TOP_N_RESULT = 30   # DB에 저장할 상위 종목 수
 _CHANGE_RATE_LIMIT = 29.0  # 상한가/하한가 제외 기준
+
+# ETF 식별 — 운용사 prefix 또는 "액티브" 접미. 같은 테마 ETF가 후보를 점령하고
+# 개별주 모멘텀 기회를 가리는 문제 해소를 위해 사용한다.
+_ETF_NAME_PREFIXES: tuple[str, ...] = (
+    "KODEX", "TIGER", "ACE", "RISE", "SOL", "KBSTAR", "HANARO", "KOSEF",
+    "ARIRANG", "PLUS", "TIMEFOLIO", "TIME", "BNK", "WOORI", "KIWOOM",
+)
+_ETF_NAME_KEYWORDS: tuple[str, ...] = ("액티브",)
+
+
+def _is_etf(name: str) -> bool:
+    """ETF 여부 판단. 운용사 prefix가 있거나 이름에 '액티브'가 포함되면 True."""
+    raw = str(name or "").strip()
+    if not raw:
+        return False
+    upper = raw.upper()
+    if any(upper.startswith(prefix) for prefix in _ETF_NAME_PREFIXES):
+        return True
+    if any(keyword in raw for keyword in _ETF_NAME_KEYWORDS):
+        return True
+    return False
+
+
+def _exclude_etf_enabled() -> bool:
+    """system_settings에서 ETF 제외 여부를 읽어 매 호출 반영한다."""
+    try:
+        value = get_setting("engine.exclude_etf_enabled", True)
+    except Exception as exc:
+        logger.warning("WARN: UniverseFilter exclude_etf_enabled read failed reason=%s", exc)
+        return True
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +146,8 @@ def _merge_and_deduplicate(
 
 
 def _apply_filters(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """상한가/하한가, 가격/거래량 0 종목을 제거한다."""
+    """상한가/하한가, 가격/거래량 0 종목, (옵션) ETF를 제거한다."""
+    exclude_etf = _exclude_etf_enabled()
     result = []
     for item in items:
         change = abs(item.get("change_rate", 0.0))
@@ -122,16 +157,20 @@ def _apply_filters(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         if item.get("volume", 0) <= 0 and item.get("trade_amount", 0) <= 0:
             continue
+        if exclude_etf and _is_etf(item.get("name", "")):
+            continue
         result.append(item)
     return result
 
 
 def _count_filter_rejections(items: list[dict[str, Any]]) -> dict[str, int]:
     """필터 동작을 바꾸지 않고 S3 탈락 사유만 집계한다."""
+    exclude_etf = _exclude_etf_enabled()
     counts = {
         "limit_change_rate": 0,
         "invalid_price": 0,
         "empty_liquidity": 0,
+        "etf_excluded": 0,
     }
     for item in items:
         change = abs(item.get("change_rate", 0.0))
@@ -143,6 +182,9 @@ def _count_filter_rejections(items: list[dict[str, Any]]) -> dict[str, int]:
             continue
         if item.get("volume", 0) <= 0 and item.get("trade_amount", 0) <= 0:
             counts["empty_liquidity"] += 1
+            continue
+        if exclude_etf and _is_etf(item.get("name", "")):
+            counts["etf_excluded"] += 1
             continue
     return counts
 
