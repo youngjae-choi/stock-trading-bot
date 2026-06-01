@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -39,30 +40,78 @@ _MAX_UNIVERSE = 60   # KIS에서 가져올 최대 종목 수
 _TOP_N_RESULT = 30   # DB에 저장할 상위 종목 수
 _CHANGE_RATE_LIMIT = 29.0  # 상한가/하한가 제외 기준
 
-# ETF 식별 — 운용사 prefix 또는 "액티브" 접미. 같은 테마 ETF가 후보를 점령하고
-# 개별주 모멘텀 기회를 가리는 문제 해소를 위해 사용한다.
+# 정책상 매수 대상에서 제외되는 상품군 식별.
+# 단타 매매봇은 일반 주식의 단기 모멘텀만 거래한다 — ETF/ETN/인버스/레버리지/단일종목 파생은
+# 후보군에 들어와도 매수하지 않으므로 universe 단계에서 차단한다.
+
+# 정규 ETF 운용사 이름 prefix (6자리 코드만으로는 일반주와 구분 불가하므로 이름 기반 유지)
 _ETF_NAME_PREFIXES: tuple[str, ...] = (
     "KODEX", "TIGER", "ACE", "RISE", "SOL", "KBSTAR", "HANARO", "KOSEF",
     "ARIRANG", "PLUS", "TIMEFOLIO", "TIME", "BNK", "WOORI", "KIWOOM",
+    # 추가 운용사 (2026-06-01 발견: WON, 1Q, DAISHIN, MASTER, FOCUS, SMART)
+    "WON", "1Q", "DAISHIN", "MASTER", "FOCUS", "SMART", "HK", "MEGA",
 )
-_ETF_NAME_KEYWORDS: tuple[str, ...] = ("액티브",)
+
+# 이름에 포함되면 정책상 제외되는 키워드.
+# - "액티브": 액티브 ETF
+# - "ETN": 상장지수증권 (Q-prefix 코드 외에 KIS 응답 이름에 ETN 표기되는 경우)
+# - "인버스" / "Inverse": 시장 하락에 베팅하는 상품 (long-only 정책 반대)
+# - "레버리지" / "Leverage": 배수 추종 상품
+# - "2X", "3X", "2배", "3배": 배수 레버리지/인버스
+# - "단일종목": 단일종목 선물 ETF (개별주 파생)
+_EXCLUDED_NAME_KEYWORDS: tuple[str, ...] = (
+    "액티브", "ETN", "인버스", "Inverse", "레버리지", "Leverage",
+    "2X", "3X", "2배", "3배", "단일종목",
+)
+
+# 종목 코드 패턴 — 코드 자체로 파생/ETN/단일종목 ETF 식별 가능한 경우.
+# - Q + 6자리 숫자: KIS ETN 분류 (예: Q610087, Q700025, Q570060)
+# - 4자리 숫자 + 알파벳 + 1자리: 단일종목 ETF/REITs/테마 ETF 6자리 코드
+#   (예: 0103T0, 0177A0, 0174J0, 0198D0, 0193T0)
+_EXCLUDED_CODE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^Q\d{6}$"),
+    re.compile(r"^\d{4}[A-Z]\d$"),
+)
 
 
-def _is_etf(name: str) -> bool:
-    """ETF 여부 판단. 운용사 prefix가 있거나 이름에 '액티브'가 포함되면 True."""
+def _is_excluded_product(symbol: str, name: str) -> bool:
+    """정책상 매수 제외 상품군 여부 판단.
+
+    Args:
+        symbol: 종목 코드 (예: '005930', 'Q610087', '0198D0').
+        name: 종목명.
+
+    Returns:
+        True이면 매수 후보·미진입 추적에서 모두 제외.
+    """
+    sym = str(symbol or "").strip().upper()
+    if sym and any(p.match(sym) for p in _EXCLUDED_CODE_PATTERNS):
+        return True
+
     raw = str(name or "").strip()
     if not raw:
         return False
     upper = raw.upper()
     if any(upper.startswith(prefix) for prefix in _ETF_NAME_PREFIXES):
         return True
-    if any(keyword in raw for keyword in _ETF_NAME_KEYWORDS):
+    if any(keyword in raw for keyword in _EXCLUDED_NAME_KEYWORDS):
+        return True
+    if any(keyword.upper() in upper for keyword in _EXCLUDED_NAME_KEYWORDS):
         return True
     return False
 
 
+# 하위 호환: 기존 _is_etf 호출 지점 보호 (deprecate 진행 중).
+def _is_etf(name: str) -> bool:
+    return _is_excluded_product("", name)
+
+
 def _exclude_etf_enabled() -> bool:
-    """system_settings에서 ETF 제외 여부를 읽어 매 호출 반영한다."""
+    """system_settings에서 정책 제외 필터 활성 여부를 읽어 매 호출 반영한다.
+
+    하위 호환을 위해 setting key는 engine.exclude_etf_enabled 유지하되,
+    의미는 "정책 제외 상품군 전체" (ETF/ETN/인버스/레버리지/단일종목 파생) 로 확장됐다.
+    """
     try:
         value = get_setting("engine.exclude_etf_enabled", True)
     except Exception as exc:
@@ -146,8 +195,8 @@ def _merge_and_deduplicate(
 
 
 def _apply_filters(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """상한가/하한가, 가격/거래량 0 종목, (옵션) ETF를 제거한다."""
-    exclude_etf = _exclude_etf_enabled()
+    """상한가/하한가, 가격/거래량 0 종목, 정책상 제외 상품군(ETF/ETN/인버스/레버리지)을 제거한다."""
+    exclude_policy_products = _exclude_etf_enabled()
     result = []
     for item in items:
         change = abs(item.get("change_rate", 0.0))
@@ -157,7 +206,7 @@ def _apply_filters(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         if item.get("volume", 0) <= 0 and item.get("trade_amount", 0) <= 0:
             continue
-        if exclude_etf and _is_etf(item.get("name", "")):
+        if exclude_policy_products and _is_excluded_product(item.get("symbol", ""), item.get("name", "")):
             continue
         result.append(item)
     return result
@@ -165,12 +214,12 @@ def _apply_filters(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _count_filter_rejections(items: list[dict[str, Any]]) -> dict[str, int]:
     """필터 동작을 바꾸지 않고 S3 탈락 사유만 집계한다."""
-    exclude_etf = _exclude_etf_enabled()
+    exclude_policy_products = _exclude_etf_enabled()
     counts = {
         "limit_change_rate": 0,
         "invalid_price": 0,
         "empty_liquidity": 0,
-        "etf_excluded": 0,
+        "policy_excluded": 0,  # 기존 etf_excluded → 정책 제외 전체 (ETF/ETN/인버스/레버리지/단일종목)
     }
     for item in items:
         change = abs(item.get("change_rate", 0.0))
@@ -183,8 +232,8 @@ def _count_filter_rejections(items: list[dict[str, Any]]) -> dict[str, int]:
         if item.get("volume", 0) <= 0 and item.get("trade_amount", 0) <= 0:
             counts["empty_liquidity"] += 1
             continue
-        if exclude_etf and _is_etf(item.get("name", "")):
-            counts["etf_excluded"] += 1
+        if exclude_policy_products and _is_excluded_product(item.get("symbol", ""), item.get("name", "")):
+            counts["policy_excluded"] += 1
             continue
     return counts
 
@@ -371,11 +420,16 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
     top_n_count = _TONE_TOP_N.get(tone_used, _TOP_N_RESULT)
     top_n = ranked[:top_n_count]
 
-    # 탈락 종목 Missed Opportunities 기록
+    # 탈락 종목 Missed Opportunities 기록.
+    # 정책상 절대 매수 안 하는 상품군 (ETF/ETN/인버스/레버리지/단일종목 파생) 은 학습 노이즈가 되므로
+    # missed_opportunities 에 기록하지 않는다. 그 외 일반 주식의 탈락만 학습 대상.
     filtered_symbols = {item.get("symbol") for item in filtered}
     for item in merged:
         sym = item.get("symbol", "")
         if sym in filtered_symbols:
+            continue
+        if _is_excluded_product(sym, item.get("name", "")):
+            # 정책 제외 상품군 — 처음부터 매수 후보가 아니므로 missed 기록 skip
             continue
         change = abs(item.get("change_rate", 0.0))
         if change >= _CHANGE_RATE_LIMIT:

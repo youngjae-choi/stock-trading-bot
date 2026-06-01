@@ -256,20 +256,19 @@
         if (tbody && Array.isArray(candidates) && candidates.length > 0) {
           tbody.innerHTML = candidates.map(function(c) {
             var score = c.suitability_score != null ? c.suitability_score.toFixed(2) : "-";
-            var conf = c.confidence != null ? c.confidence.toFixed(2) : "-";
             var candidateSymbol = funnelSymbolKey(c);
             var asgn = assignments.find(function(a) { return funnelSymbolKey(a) === candidateSymbol; });
             var profileName = asgn ? asgn.profile : "-";
             var profileReason = asgn ? asgn.reason : "-";
             var memRefs = (c.memory_refs || []).join(', ') || '-';
 
+            // AI 신뢰도(conf) 컬럼은 2026-06-01에 게이트에서 제거되어 표시도 제외.
             return '<tr>'
               + '<td>' + escapeHtml(candidateSymbol) + '</td>'
               + '<td>' + escapeHtml(c.name || "") + '</td>'
               + '<td>' + score + '</td>'
               + '<td>-</td><td>-</td>'
               + '<td>' + score + '</td>'
-              + '<td>' + conf + '</td>'
               + '<td style="font-size:12px; color:var(--accent); text-align:center;">' + escapeHtml(batchTime) + '</td>'
               + '<td><span class="status info">감시중</span></td>'
               + '<td>' + escapeHtml(c.reason || "") + '</td>'
@@ -279,7 +278,7 @@
               + '</tr>';
           }).join("");
         } else if (tbody && sc.output_count === 0) {
-          tbody.innerHTML = '<tr><td colspan="13" class="muted" style="text-align:center;">데이터 없음: 오늘 스크리닝 통과 후보 없음</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="12" class="muted" style="text-align:center;">데이터 없음: 오늘 스크리닝 통과 후보 없음</td></tr>';
         }
       }
     } catch (e) {

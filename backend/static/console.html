@@ -709,12 +709,13 @@
               <table>
                 <thead>
                   <tr>
-                    <th>종목코드</th><th>종목명</th><th>기술</th><th>기초</th><th>테마</th><th>총점</th><th>AI 신뢰도</th><th>선별 시각</th><th>상태</th><th>선정 사유</th><th>배정 Profile</th><th>배정 사유</th><th>Memory refs</th>
+                    <th>종목코드</th><th>종목명</th><th>기술</th><th>기초</th><th>테마</th><th>총점</th><th>선별 시각</th><th>상태</th><th>선정 사유</th><th>배정 Profile</th><th>배정 사유</th><th>Memory refs</th>
                   </tr>
                 </thead>
                 <tbody id="funnel-candidates-tbody">
                   <tr><td colspan="12" class="muted" style="text-align:center;">미수집·대기: 새로고침을 눌러 후보 선정 결과 불러오기</td></tr>
                 </tbody>
+                <!-- 2026-06-01: AI 신뢰도 컬럼 제거 (정성 점수를 게이트에서 분리) -->
               </table>
             </div>
           </div>
@@ -1003,7 +1004,7 @@
               <table>
                 <thead>
                   <tr>
-                    <th>시간</th><th>종목코드</th><th>종목명</th><th>진입가</th><th>신뢰도</th><th>상태</th><th>조건 추적</th>
+                    <th>시간</th><th>종목코드</th><th>종목명</th><th>진입가</th><th>상태</th><th>조건 추적</th>
                   </tr>
                 </thead>
                 <tbody id="live-signals-tbody">

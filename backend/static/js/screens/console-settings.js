@@ -347,13 +347,9 @@
       });
       var aiEntryRules = screeningData?.payload?.screening?.entry_rules || screeningData?.payload?.entry_rules || {};
       
+      // AI 신뢰도(min_ai_confidence/min_confidence_floor)는 매수 게이트에서 제외됨 (2026-06-01).
+      // LLM 점수는 관찰·랭킹·메모리 생성용으로만 유지. 정량 지표만 입력 노출.
       var rows = [
-        {
-          label: '주식단타매매 전문 AI 판단값',
-          aiValue: aiEntryRules.min_ai_confidence ?? '-',
-          guardKey: 'engine.min_confidence_floor',
-          desc: '전문 AI가 판단한 오늘의 추천값 / 가드레일은 절대 하한선'
-        },
         {
           label: '최소 등락률 %',
           aiValue: aiEntryRules.min_price_change_pct ?? '-',

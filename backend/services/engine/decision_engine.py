@@ -591,15 +591,11 @@ def _add_layer3_evaluation(
             observed_values["spread_source"] = spread_source
 
 
-_OR_GATE_AI_MIN = 0.85   # AI 신뢰도 OR 게이트 임계값
-_OR_GATE_VOL_MIN = 3.0   # 거래량비율 OR 게이트 임계값
-
-
 def _rules_allow_signal(matched: dict[str, Any]) -> bool:
     """현재 S6 매수 신호 발행에 필요한 게이트 조건 통과 여부를 반환한다.
 
-    기본 AND 게이트: 모든 조건이 True여야 통과.
-    OR 게이트(폴백): price_change만 미달이고 AI신뢰도≥0.85 + 거래량비율≥3.0이면 통과.
+    정량 게이트만 AND로 평가. 정성 점수(ai_confidence)는 게이트에서 제외하고
+    관찰·랭킹 용도로만 유지한다 (observed_values 에 기록).
 
     Args:
         matched: Rule evaluation payload from `_evaluate_rules`.
@@ -609,37 +605,10 @@ def _rules_allow_signal(matched: dict[str, Any]) -> bool:
         for key in ("vwap_position", "ma5_above_ma20", "rsi_range", "spread_max_pct")
         if key in matched
     ]
-    core_keys = ["volume_ratio", "ai_confidence", "price_change", "time_window"]
+    core_keys = ["volume_ratio", "price_change", "time_window"]
     all_keys = core_keys + optional_keys
 
-    # 기본 AND 게이트
-    if all(bool(matched.get(key)) for key in all_keys):
-        return True
-
-    # OR 게이트: time_window·volume_ratio·ai_confidence 필수, price_change만 미달 허용
-    if not bool(matched.get("time_window")):
-        return False
-    if not bool(matched.get("volume_ratio")):
-        return False
-    if not bool(matched.get("ai_confidence")):
-        return False
-    if bool(matched.get("price_change")):
-        # price_change 이외 다른 조건이 실패 → OR 게이트 대상 아님
-        return False
-    if not all(bool(matched.get(key)) for key in optional_keys):
-        return False
-
-    obs = matched.get("observed_values") or {}
-    ai_conf = float(obs.get("ai_confidence") or 0.0)
-    vol_ratio = float(obs.get("volume_ratio") or 0.0)
-    if ai_conf >= _OR_GATE_AI_MIN and vol_ratio >= _OR_GATE_VOL_MIN:
-        logger.info(
-            "INFO: [S6] OR-gate 통과 (price_change 미달 면제) ai_conf=%.2f vol_ratio=%.1f",
-            ai_conf, vol_ratio,
-        )
-        return True
-
-    return False
+    return all(bool(matched.get(key)) for key in all_keys)
 
 
 def _get_setting_float(key: str, default: float) -> float:

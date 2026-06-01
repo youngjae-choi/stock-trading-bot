@@ -32,7 +32,7 @@
         var payload = signalsData.payload || {};
         var signals = Array.isArray(payload) ? payload : (payload.signals || []);
         if (signals.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">아직 신호 없음</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;">아직 신호 없음</td></tr>';
         } else {
           tbody.innerHTML = signals.map(function(sig) {
             var matched = parseRuleMatched(sig.rule_matched);
@@ -43,12 +43,12 @@
               ? '<span class="status warn">' + unavailableKeys.length + '개 확인필요</span>'
               : '<span class="status ok">추적 정상</span>';
             var conditionDetail = buildRuleTraceDetail(observed, unavailableKeys);
+            // AI 신뢰도 컬럼은 2026-06-01 게이트 분리 후 표시 제외 (observed_values에는 보존).
             return '<tr>'
               + '<td>' + escapeHtml(formatSignalTime(sig.created_at || sig.time || "")) + '</td>'
               + '<td>' + escapeHtml(sig.symbol || "") + '</td>'
               + '<td>' + escapeHtml(sig.name || "") + '</td>'
               + '<td>' + formatWonNumber(sig.trigger_price != null ? sig.trigger_price : sig.entry_price) + '</td>'
-              + '<td>' + (sig.confidence != null ? escapeHtml(Number(sig.confidence).toFixed(2)) : "-") + '</td>'
               + '<td>' + escapeHtml(sig.status || "대기중") + '</td>'
               + '<td>' + conditionSummary + conditionDetail + '</td>'
               + '</tr>';
@@ -57,7 +57,7 @@
       }
     } catch (e) {
       var tbody3 = document.getElementById("live-signals-tbody");
-      if (tbody3) tbody3.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>';
+      if (tbody3) tbody3.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;">불러오기 실패: ' + escapeHtml(e.message) + '</td></tr>';
     }
   }
 

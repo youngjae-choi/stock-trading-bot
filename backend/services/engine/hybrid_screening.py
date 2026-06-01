@@ -575,8 +575,11 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
             overall_confidence=overall_confidence,
         )
 
-    # S4 탈락 종목 Missed Opportunities 기록
-    # items 기준으로 candidates에 없는 종목 = S4에서 탈락
+    # S4 탈락 종목 Missed Opportunities 기록.
+    # 정책 제외 상품군 (ETF/ETN/인버스/레버리지/단일종목 파생) 은 S3에서 차단되어야 하지만
+    # 누수 방지를 위해 S4에서도 동일 가드를 둔다.
+    from .universe_filter import _is_excluded_product
+
     candidate_symbols = {c.get("symbol") or c.get("ticker") for c in candidates}
     # skipped 리스트에 있는 종목은 LLM이 명시적으로 제외한 것
     for sk in skipped:
@@ -585,6 +588,8 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
             continue
         # 원본 S3 데이터에서 가격 찾기
         orig = next((i for i in items if i.get("symbol") == sym), {})
+        if _is_excluded_product(sym, sk.get("name") or orig.get("name", "")):
+            continue
         try:
             record_missed_opportunity(
                 trade_date=today,
@@ -602,6 +607,8 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
     for orig in items:
         sym = orig.get("symbol", "")
         if sym in candidate_symbols or sym in skipped_symbols:
+            continue
+        if _is_excluded_product(sym, orig.get("name", "")):
             continue
         try:
             record_missed_opportunity(
