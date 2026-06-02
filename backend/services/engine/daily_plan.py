@@ -174,6 +174,27 @@ def _plan_count_context(plan_data: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def _preserved_active_plan_id(
+    trade_date: str, creation_mode: str, validation_summary: dict[str, Any]
+) -> str | None:
+    """재생성 플랜이 검증 실패했고 같은 날 기존 active 플랜이 있으면 그 id를 반환한다.
+
+    빈/검증실패 재생성이 INSERT OR REPLACE로 아침의 정상 active 플랜을 덮어써
+    그날 거래가 죽던 문제를 막기 위한 보존 판단. 보존 대상이 없으면 None.
+    """
+    if creation_mode == "dry_run":
+        return None
+    if int(validation_summary.get("failed_count", 0) or 0) <= 0:
+        return None
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id FROM daily_trading_plans WHERE trade_date = ? AND status = 'active' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (trade_date,),
+        ).fetchone()
+    return row["id"] if row else None
+
+
 def get_today_daily_plan(trade_date: str | None = None) -> dict[str, Any] | None:
     """오늘 활성 Daily Trading Plan 조회."""
     if not trade_date:
@@ -437,6 +458,34 @@ async def run_daily_plan_generation(
 
     plan_id = f"daily-{trade_date}"
     now = _now_utc()
+
+    # 빈/검증실패 재생성이 기존 active 플랜을 덮어쓰지 않도록 보존한다 (PM 결정 2026-06-02).
+    # 장중 재선별이 후보 0종목인 빈 플랜을 만들면, 같은 id(daily-날짜)의 INSERT OR REPLACE가
+    # 아침의 정상 active 플랜을 파괴해 그날 거래가 죽던 문제를 막는다.
+    preserved_id = _preserved_active_plan_id(trade_date, creation_mode, validation_summary)
+    if preserved_id:
+        logger.warning(
+            "WARN: [S5] 재생성 플랜 검증 실패(%s) — 기존 active 플랜 %s 보존, 덮어쓰기 생략 trigger=%s",
+            validation_summary, preserved_id, safe_source,
+        )
+        finish_pipeline_run(
+            run_id=run_audit_id,
+            status="skipped",
+            result_ref_id=preserved_id,
+            message="regeneration_validation_failed_active_plan_preserved",
+            metadata={"trigger_source": safe_source, "validation_summary": validation_summary},
+        )
+        return {
+            "ok": True,
+            "plan_id": preserved_id,
+            "trade_date": trade_date,
+            "status": "active",
+            "preserved": True,
+            "trigger_source": safe_source,
+            "run_audit_id": run_audit_id,
+            "validation": validation,
+            "assignments_count": 0,
+        }
 
     try:
         with get_connection() as conn:
