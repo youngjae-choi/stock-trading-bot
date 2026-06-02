@@ -244,7 +244,6 @@
             + '<td>+' + ((p.trailing_activate_profit || 0) * 100).toFixed(1) + '%</td>'
             + '<td>' + ((p.trailing_stop_rate || 0) * 100).toFixed(1) + '%</td>'
             + '<td>' + ((p.max_position_rate || 0) * 100).toFixed(0) + '%</td>'
-            + '<td>' + (p.max_holding_minutes || '-') + '분</td>'
             + '<td>' + (p.reentry_allowed === false ? '불가' : '허용') + '</td>'
             + '</tr>';
         }).join('');

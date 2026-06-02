@@ -207,7 +207,9 @@ def resolve_symbol_rule(
     final.update(symbol_overrides.get(symbol_code, {}))
 
     # 3. Global Risk Guard 강제 (절대 완화 불가)
-    guard_max_pos_rate = float(global_risk.get("max_position_rate_per_stock", 0.10))
+    # 가드는 Risk Profile Pack의 최대 비중(LOW_VOL 15%)을 깎지 않도록 0.15로 둔다.
+    # 프로파일별 max_position_rate(15/12/8/5%)가 그대로 적용된다. (PM 결정 2026-06-02)
+    guard_max_pos_rate = float(global_risk.get("max_position_rate_per_stock", 0.15))
     final["max_position_rate"] = min(
         float(final.get("max_position_rate", guard_max_pos_rate)),
         guard_max_pos_rate,

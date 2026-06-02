@@ -6,14 +6,14 @@
 청산 우선순위:
   1. INITIAL_STOP_LOSS  — 진입 후 초기 손절선 이탈
   2. TRAILING_STOP      — 트레일링 스탑 이탈
-  3. TIME_EXIT          — 최대 보유 시간 초과 (손익분기 미달 시)
-  4. DAILY_FORCE_EXIT   — 장마감 강제청산 (15:20 이후)
+  3. DAILY_FORCE_EXIT   — 장마감 강제청산 (15:20 이후)
+  (TIME_EXIT 최대 보유 시간 청산은 2026-06-02 제거됨)
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -354,15 +354,6 @@ class PositionManager:
         "mixed":    "15:15:00",
         "fallback": "15:20:00",
     }
-    # 시장 톤별 TIME_EXIT pnl 임계값 (부정적 시황일수록 손익분기 기준 높임)
-    _TONE_TIME_EXIT_PNL: dict[str, float] = {
-        "positive": 0.0,    # 수익 중이면 계속 보유
-        "neutral":  0.005,  # 0.5% 미달 시 시간 손절
-        "negative": 0.01,   # 1% 미달 시 시간 손절 (더 일찍 컷)
-        "mixed":    0.008,
-        "fallback": 0.005,
-    }
-
     def _get_today_tone(self) -> str:
         """오늘 시장 톤을 DB에서 조회. 실패 시 fallback 반환."""
         try:
@@ -401,19 +392,9 @@ class PositionManager:
                 return "TRAILING_STOP"
             return "INITIAL_STOP_LOSS"
 
-        # 3. 시간 손절 (최대 보유 시간 초과 + 손익분기 미달) — pnl 임계값 톤에 따라 조정
-        try:
-            entry_time = datetime.fromisoformat(position["entry_time"])
-            if entry_time.tzinfo is None:
-                entry_time = entry_time.replace(tzinfo=ZoneInfo("Asia/Seoul"))
-            max_minutes = int(position.get("max_holding_minutes") or 180)
-            entry_price = _to_float(position["entry_price"])
-            pnl_pct = (price - entry_price) / entry_price if entry_price > 0 else 0
-            time_exit_pnl = self._TONE_TIME_EXIT_PNL.get(tone, 0.005)
-            if now - entry_time >= timedelta(minutes=max_minutes) and pnl_pct < time_exit_pnl:
-                return "TIME_EXIT"
-        except Exception:
-            pass
+        # 3. 시간 손절(TIME_EXIT, 최대 보유 시간 초과)은 2026-06-02 제거됨 (PM 결정).
+        #    15:20 강제청산(DAILY_FORCE_EXIT)이 당일 보유를 마감하므로 보유 시간 기반
+        #    청산은 중복·노이즈로 판단해 손절/트레일링/EOD만 사용한다.
 
         return ""
 
