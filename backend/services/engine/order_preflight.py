@@ -383,14 +383,10 @@ def run_preflight(
     else:
         checks["price_valid"] = PREFLIGHT_OK
 
-    # 6. 신뢰도 최소값 (final_rule)
-    ai_conf_min = _to_float(final_rule.get("ai_confidence_min"), 0.0)
-    confidence = _to_float(signal.get("confidence"), 0.0)
-    if confidence < ai_conf_min:
-        checks["ai_confidence"] = PREFLIGHT_BLOCK
-        block_reasons.append(f"confidence={confidence:.2f} < 최소 {ai_conf_min:.2f}")
-    else:
-        checks["ai_confidence"] = PREFLIGHT_OK
+    # 6. AI confidence(정성 점수)는 2026-06-01(209faa9) 매수 게이트에서 분리되어
+    #    preflight 차단 기준에서도 제외한다. 정량 지표만으로 진입을 판단한다.
+    #    관찰·랭킹 호환을 위해 값은 기록하되 절대 차단하지 않는다.
+    checks["ai_confidence"] = PREFLIGHT_OK
 
     # 7. 당일 실현손실 한도. 증명 가능한 percent breach가 있을 때만 신규 BUY를 차단한다.
     daily_loss = evaluate_daily_loss_limit(final_rule)
