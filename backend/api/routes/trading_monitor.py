@@ -51,18 +51,8 @@ def _compute_buy_readiness(
     tick = tick or {}
     conditions: list[dict[str, Any]] = []
 
-    # AI 신뢰도
-    ai_conf = float(candidate.get("suitability_score") or candidate.get("confidence") or 0.0)
-    ai_min = float((rule or {}).get("ai_confidence_min", 0.65))
-    ai_score = min(ai_conf / ai_min, 1.0) * 100 if ai_min > 0 else 100.0
-    conditions.append({
-        "name": "ai_confidence",
-        "label": "AI 신뢰도",
-        "current_value": round(ai_conf, 3),
-        "threshold_label": f">= {ai_min:.2f}",
-        "score_pct": round(ai_score, 1),
-        "met": ai_conf >= ai_min,
-    })
+    # AI 신뢰도(정성 점수)는 2026-06-01 매수 게이트에서 분리되어 준비도 조건에서도 제외한다.
+    # (정량 지표만 게이트로 사용 — decision_engine._rules_allow_signal 와 일치)
 
     # 거래량 배수 — realtime tick (prev_volume_ratio) 우선, S4 정적값 폴백
     # 조건이 0이어도 항상 표시 (숨기면 100% 오표시 발생)
@@ -331,9 +321,10 @@ def _build_policy_texts(
         cash_usage_text: Precomputed cash-usage sentence.
     """
     buy_prefix = "신규 진입 허용" if new_entry_allowed else "신규 진입 차단"
+    # 2026-06-01: AI confidence 게이트 분리 — 매수 문구는 정량 기준(등락률)만 안내한다.
     buy_condition_text = (
-        f"{buy_prefix}. AI confidence {entry_rules['min_ai_confidence']:.2f} 이상이고 "
-        f"등락률 {entry_rules['min_price_change_pct']:.1f}%~{entry_rules['max_price_change_pct']:.1f}% 범위의 후보만 검토합니다."
+        f"{buy_prefix}. 등락률 {entry_rules['min_price_change_pct']:.1f}%~"
+        f"{entry_rules['max_price_change_pct']:.1f}% 범위의 후보만 검토합니다."
     )
     exit_rules = cast(dict[str, Any], rulepack.get("exit_rules") if isinstance(rulepack.get("exit_rules"), dict) else {})
     force_close = exit_rules.get("force_close_at") or "15:20"
