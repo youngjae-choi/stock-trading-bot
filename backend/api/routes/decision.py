@@ -55,6 +55,11 @@ async def activate_decision_engine():
     logger.info("START: POST /api/v1/decision/activate")
     try:
         result = await decision_engine.activate()
+        # 수동 활성화도 자동복구 의도로 기록 — 재기동 시 워치독이 복원하게 한다.
+        if result.get("ok"):
+            from ...services.scheduler import _set_engine_should_be_active
+
+            _set_engine_should_be_active(True)
         logger.info("SUCCESS: POST /api/v1/decision/activate ok=%s", result.get("ok"))
         return {"ok": True, "payload": result}
     except Exception as exc:
@@ -67,6 +72,10 @@ async def deactivate_decision_engine():
     """수동 비활성화 — 실시간 WS 콜백과 연결을 종료한다."""
     logger.info("START: POST /api/v1/decision/deactivate")
     try:
+        # 수동 비활성화는 "꺼둘 의도" — 워치독이 다시 켜지 않도록 플래그를 끈다.
+        from ...services.scheduler import _set_engine_should_be_active
+
+        _set_engine_should_be_active(False)
         await decision_engine.deactivate()
         logger.info("SUCCESS: POST /api/v1/decision/deactivate")
         return {"ok": True}

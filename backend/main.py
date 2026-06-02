@@ -123,6 +123,15 @@ async def lifespan(app: FastAPI):
         logger.info("SUCCESS: [startup] 오늘 포지션 자동 복원 완료 trade_date=%s", today)
     except Exception as exc:
         logger.warning("WARN: [startup] 포지션 복원 실패 error=%s", exc)
+
+    # 장중 재기동 시 매수 엔진을 즉시 자가 복구한다 (워치독 주기 갭 제거).
+    # should_be_active=True 이고 긴급정지가 아니면 Job6 경로로 재활성화한다.
+    try:
+        from .services.scheduler import job_decision_engine_watchdog
+
+        await job_decision_engine_watchdog()
+    except Exception as exc:
+        logger.warning("WARN: [startup] 매수 엔진 자동복구 검사 실패 error=%s", exc)
     yield
     scheduler_instance.shutdown(wait=False)
     logger.info("SUCCESS: Scheduler stopped")

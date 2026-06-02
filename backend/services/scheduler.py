@@ -755,6 +755,55 @@ async def job_trade_preparation_pipeline() -> None:
         logger.error("FAIL: [TradePrep] 거래준비 프로세스 중단 reason=%s", exc)
 
 
+# ─────────────────────────────────────────────────────────────
+# 매수 엔진 자동복구 — "should_be_active" 의도 플래그 + 워치독
+# 엔진 활성 상태는 in-memory(_active)라 장중 재기동 시 소실되고,
+# 활성화 cron(Job6)은 하루 1회라 재기동 후 재활성화되지 않는다.
+# Job6 활성화 성공 시 플래그를 True로, EOD 비활성화 시 False로 영속화하고,
+# 워치독/시작훅이 "켜져 있어야 하는데 꺼진" 상태를 감지해 자동 복구한다.
+# 단, 수동 긴급정지(risk.emergency_halt_enabled)는 존중한다. (PM 결정 2026-06-02)
+# ─────────────────────────────────────────────────────────────
+_ENGINE_SHOULD_BE_ACTIVE_KEY = "engine.should_be_active"
+
+
+def _get_engine_should_be_active() -> bool:
+    """매수 엔진이 현재 활성이어야 하는지(영속 의도)를 반환한다."""
+    try:
+        from .settings_store import get_setting
+
+        return bool(get_setting(_ENGINE_SHOULD_BE_ACTIVE_KEY, False))
+    except Exception as exc:
+        logger.warning("WARN: should_be_active 조회 실패 — %s", exc)
+        return False
+
+
+def _set_engine_should_be_active(value: bool) -> None:
+    """매수 엔진 활성 의도 플래그를 영속화한다 (재기동/워치독 자동복구용)."""
+    try:
+        from .settings_store import upsert_setting
+
+        upsert_setting(
+            _ENGINE_SHOULD_BE_ACTIVE_KEY,
+            bool(value),
+            "bool",
+            "매수 엔진이 현재 활성이어야 하는지 (자동복구 워치독용)",
+            actor="system",
+        )
+    except Exception as exc:
+        logger.warning("WARN: should_be_active=%s 저장 실패 — %s", value, exc)
+
+
+def _is_emergency_halt_active() -> bool:
+    """수동 긴급정지 활성 여부."""
+    try:
+        from .settings_store import get_setting
+
+        return bool(get_setting("risk.emergency_halt_enabled", False))
+    except Exception as exc:
+        logger.warning("WARN: emergency_halt 조회 실패 — %s", exc)
+        return False
+
+
 async def job_decision_engine_start() -> None:
     """Job 6 (09:00 KST): S6 Decision Engine 활성화 + WS 연결."""
     logger.info("START: [Job6] Decision Engine 활성화 (09:00 KST)")
@@ -787,6 +836,9 @@ async def job_decision_engine_start() -> None:
 
         from .engine.decision_engine import decision_engine
         result = await decision_engine.activate()
+        # 활성화 성공 시에만 의도 플래그를 켜서, 재기동/워치독이 자동 복구할 수 있게 한다.
+        if result.get("ok"):
+            _set_engine_should_be_active(True)
         logger.info(
             "SUCCESS: [Job6] Decision Engine active=%s candidates=%s",
             result.get("ok"),
@@ -799,12 +851,38 @@ async def job_decision_engine_start() -> None:
 async def job_decision_engine_stop() -> None:
     """Job 9 (15:20 KST): S6 비활성화 + WS 종료."""
     logger.info("START: [Job9] Decision Engine 비활성화 (15:20 KST)")
+    # EOD 정상 종료 — 워치독이 재활성화하지 않도록 의도 플래그를 끈다.
+    _set_engine_should_be_active(False)
     try:
         from .engine.decision_engine import decision_engine
         await decision_engine.deactivate()
         logger.info("SUCCESS: [Job9] Decision Engine 비활성화 완료")
     except Exception as exc:
         logger.error("FAIL: [Job9] 비활성화 실패 — reason=%s", exc)
+
+
+async def job_decision_engine_watchdog() -> None:
+    """매수 엔진 자동복구 워치독.
+
+    "활성이어야 하는데(should_be_active) 꺼진" 상태를 감지하면 Job6 경로로
+    재활성화한다. 장중 서버 재기동이나 예기치 못한 비활성을 자가 복구한다.
+    수동 긴급정지(risk.emergency_halt_enabled)는 존중해 재활성화하지 않는다.
+    """
+    try:
+        if not _get_engine_should_be_active():
+            return  # EOD 이후 또는 미개시 — 복구 대상 아님
+        if _is_emergency_halt_active():
+            return  # 운영자가 수동 정지 — 존중
+        from .engine.decision_engine import decision_engine
+
+        if decision_engine.is_active():
+            return  # 이미 정상 — 무동작
+        logger.warning(
+            "WARN: [Watchdog] Decision Engine 비활성 감지 (should_be_active=True, halt=False) — 재활성화 시도"
+        )
+        await job_decision_engine_start()
+    except Exception as exc:
+        logger.error("FAIL: [Watchdog] Decision Engine 자동복구 실패 — reason=%s", exc)
 
 
 async def job_eod_liquidation() -> dict[str, Any]:
@@ -822,6 +900,8 @@ async def job_eod_liquidation() -> dict[str, Any]:
         liquidation_error = exc
         logger.error("FAIL: [Job S9] 청산 실패 — reason=%s", exc)
 
+    # EOD 청산과 함께 정상 종료 — 워치독 자동복구 대상에서 제외한다.
+    _set_engine_should_be_active(False)
     try:
         from .engine.decision_engine import decision_engine
 
@@ -1168,6 +1248,17 @@ def _build_scheduler() -> AsyncIOScheduler:
         id="job_decision_engine_start",
         name="Decision Engine 활성화",
         replace_existing=True,
+    )
+    # 매수 엔진 자동복구 워치독 — 장중(09~15시) 2분 간격. should_be_active 플래그와
+    # 긴급정지 상태를 보고 "켜져 있어야 하는데 꺼진" 엔진만 재활성화한다.
+    scheduler.add_job(
+        job_decision_engine_watchdog,
+        CronTrigger(hour="9-15", minute="*/2", timezone="Asia/Seoul"),
+        id="job_decision_engine_watchdog",
+        name="Decision Engine 자동복구 워치독",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
     )
     hour, minute = _parse_time("postprocess")
     scheduler.add_job(
