@@ -43,37 +43,24 @@ def _init_reselection_schema(conn: sqlite3.Connection) -> None:
 
 
 class SectorRotationDetectionTest(unittest.TestCase):
-    """Verify sector rotation detection groups snapshot items by DB sector."""
-
-    def setUp(self) -> None:
-        """Prepare an isolated symbol master."""
-        self.conn = sqlite3.connect(":memory:")
-        self.conn.row_factory = sqlite3.Row
-        _init_reselection_schema(self.conn)
-        rows = [
-            ("000001", "반도체"),
-            ("000002", "반도체"),
-            ("000003", "바이오"),
-            ("000004", "통신"),
-        ]
-        self.conn.executemany("INSERT INTO symbols (symbol, sector) VALUES (?, ?)", rows)
-
-    def tearDown(self) -> None:
-        """Close the isolated DB."""
-        self.conn.close()
+    """Verify sector rotation detection uses snapshot["sectors"] (KIS sector indices)."""
 
     def test_detect_sector_rotation_triggers_when_top_two_gap_exceeds_threshold(self) -> None:
-        """Top sectors outperforming the rest by at least the configured gap must trigger."""
+        """Top sectors outperforming the rest by at least the configured gap must trigger.
+
+        Input is snapshot["sectors"] — KIS sector-index change rates collected by
+        fetch_intraday_kr_market_snapshot (no per-stock grouping / symbols lookup).
+        """
         snapshot = {
-            "items": [
-                {"symbol": "000001", "change_rate": 5.0},
-                {"symbol": "000002", "change_rate": 4.0},
-                {"symbol": "000003", "change_rate": -1.0},
-                {"symbol": "000004", "change_rate": -2.0},
+            "sectors": [
+                {"name": "반도체", "change_rate": 5.0},
+                {"name": "바이오", "change_rate": 4.0},
+                {"name": "통신", "change_rate": -1.0},
+                {"name": "금융", "change_rate": -2.0},
             ]
         }
 
-        with patch.object(sector_rotation, "get_connection", return_value=self.conn), patch.object(
+        with patch.object(
             sector_rotation, "get_setting", side_effect=lambda key, default=None: default
         ):
             result = sector_rotation.detect_sector_rotation(snapshot, trade_date="2026-05-25")
@@ -81,6 +68,23 @@ class SectorRotationDetectionTest(unittest.TestCase):
         self.assertTrue(result["triggered"])
         self.assertGreaterEqual(result["gap_pct"], 3.0)
         self.assertIn("반도체", result["reason"])
+
+    def test_detect_sector_rotation_skips_when_fewer_than_three_sectors(self) -> None:
+        """Insufficient sector sample (<3) must skip rather than trigger."""
+        snapshot = {
+            "sectors": [
+                {"name": "반도체", "change_rate": 5.0},
+                {"name": "바이오", "change_rate": -2.0},
+            ]
+        }
+
+        with patch.object(
+            sector_rotation, "get_setting", side_effect=lambda key, default=None: default
+        ):
+            result = sector_rotation.detect_sector_rotation(snapshot, trade_date="2026-05-25")
+
+        self.assertFalse(result["triggered"])
+        self.assertEqual(result["reason"], "sector_sample_insufficient")
 
 
 class ReplacementSignalEvaluationTest(unittest.IsolatedAsyncioTestCase):

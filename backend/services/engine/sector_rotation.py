@@ -90,7 +90,8 @@ def detect_sector_rotation(snapshot: dict[str, Any], slot: str = "", trade_date:
     """Detect whether top sectors significantly outperform the remaining sectors.
 
     Args:
-        snapshot: Intraday market snapshot containing KIS volume-rank items.
+        snapshot: Intraday market snapshot. Uses snapshot["sectors"] — the KIS
+            sector-index change rates collected by fetch_intraday_kr_market_snapshot.
         slot: Optional scheduler slot used for audit logging.
         trade_date: Optional YYYY-MM-DD trade date. Defaults to today in KST.
     """
@@ -101,34 +102,28 @@ def detect_sector_rotation(snapshot: dict[str, Any], slot: str = "", trade_date:
         return {"ok": True, "enabled": False, "triggered": False, "reason": "sector_rotation_disabled", "gap_pct": 0.0}
 
     threshold = _setting_float("intraday_refresh.sector_rotation_threshold", 3.0)
-    items = snapshot.get("items", []) if isinstance(snapshot, dict) else []
-    if not isinstance(items, list) or not items:
+
+    # 업종 지수 등락률을 직접 사용한다 (snapshot["sectors"] = KIS get_sector_index 결과).
+    # 과거에는 volume-rank 개별종목을 sector 필드로 재그룹화했으나, 해당 응답에
+    # bstp_kor_isnm(업종명)이 없고 symbols 테이블도 비어 있어 항상 sector_sample_insufficient
+    # 였다. 이미 매 슬롯 수집 중인 업종 지수를 직접 쓰면 추가 API 없이 정확하다.
+    sectors = snapshot.get("sectors", []) if isinstance(snapshot, dict) else []
+    if not isinstance(sectors, list) or not sectors:
         result = {"ok": False, "enabled": True, "triggered": False, "reason": "snapshot_empty", "gap_pct": 0.0}
         if slot:
             save_sector_rotation_log(trade_date, slot, result)
         return result
 
-    # 섹터 우선순위: 1) item 인라인 sector 필드 (KIS bstp_kor_isnm), 2) symbols 테이블 fallback
-    symbols = [str(item.get("symbol") or item.get("ticker") or item.get("code") or "").strip() for item in items]
-    inline_sectors = {
-        str(item.get("symbol") or "").strip(): str(item.get("sector") or "").strip()
-        for item in items
-    }
-    needs_db_lookup = [s for s in symbols if s and not inline_sectors.get(s)]
-    sector_by_symbol = _symbol_sector_map(needs_db_lookup) if needs_db_lookup else {}
-
-    grouped: dict[str, list[float]] = {}
-    for item in items:
-        symbol = str(item.get("symbol") or item.get("ticker") or item.get("code") or "").strip()
-        sector = inline_sectors.get(symbol) or sector_by_symbol.get(symbol, "")
-        if not sector:
-            continue
-        grouped.setdefault(sector, []).append(_to_float(item.get("change_rate") or item.get("chg_rate")))
-
     sector_avgs = [
-        {"sector": sector, "avg_change": round(sum(rates) / len(rates), 2), "count": len(rates)}
-        for sector, rates in grouped.items()
-        if rates
+        {
+            "sector": str(s.get("name") or s.get("sector") or "").strip(),
+            "avg_change": round(_to_float(s.get("change_rate") or s.get("avg_change")), 2),
+            "count": 1,
+        }
+        for s in sectors
+        if isinstance(s, dict)
+        and str(s.get("name") or s.get("sector") or "").strip()
+        and (s.get("change_rate") is not None or s.get("avg_change") is not None)
     ]
     sector_avgs.sort(key=lambda item: item["avg_change"], reverse=True)
     if len(sector_avgs) < 3:
