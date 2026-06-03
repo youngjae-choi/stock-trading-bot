@@ -9,6 +9,7 @@ LLM 호출 실패 시 provider="none"으로 저장하고 서버는 계속 실행
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -419,7 +420,9 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
             "id": record_id,
         }
 
-    items = universe["items"][:30]
+    from ..settings_store import get_setting
+    _llm_input_cap = int(get_setting("screening.llm_input_cap", 60) or 60)
+    items = universe["items"][:_llm_input_cap]
 
     # 시장 톤 조회
     market_tone = None
@@ -531,6 +534,97 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
                 len(candidates), len(cost_passed), len(cost_filtered), cost_threshold_pct,
             )
         candidates = cost_passed
+
+    # --- TSI 부착 + WS 한도까지 블렌드 top-up (매수 적극성) ---
+    from datetime import datetime, timedelta
+
+    from ..settings_store import get_setting as _get_setting
+    from .technical_indicators import _pykrx_ohlcv
+    from .tsi import tsi_for_closes
+
+    def _symbol_tsi(sym: str) -> float | None:
+        try:
+            end = datetime.now().strftime("%Y%m%d")
+            start = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")
+            df = _pykrx_ohlcv(sym, start, end)
+            if df is None or "종가" not in df:
+                return None
+            return tsi_for_closes([float(x) for x in df["종가"].tolist()])
+        except Exception:
+            return None
+
+    async def _tsi_map(symbols: list[str]) -> dict[str, float | None]:
+        """여러 종목 일봉 TSI를 스레드풀에서 병렬(동시 8개) 계산.
+
+        _symbol_tsi 는 pykrx 동기 HTTP 호출이라 직접 호출하면 asyncio 이벤트
+        루프를 수십 초 차단한다(WS heartbeat·엔진 영향). to_thread + 세마포어로
+        루프를 비차단 유지하되 KRX rate limit 회피를 위해 동시 8개로 제한한다.
+        """
+        uniq = [s for s in dict.fromkeys(symbols) if s]
+        if not uniq:
+            return {}
+        sem = asyncio.Semaphore(8)
+
+        async def _one(s: str) -> float | None:
+            async with sem:
+                return await asyncio.to_thread(_symbol_tsi, s)
+
+        results = await asyncio.gather(
+            *[_one(s) for s in uniq], return_exceptions=True
+        )
+        out: dict[str, float | None] = {}
+        for s, r in zip(uniq, results):
+            out[s] = None if isinstance(r, BaseException) else r
+        return out
+
+    candidate_max = int(_get_setting("screening.candidate_max", 40) or 40)
+    ws_max = int(_get_setting("realtime.ws_max", 41) or 41)
+    try:
+        from .position_manager import position_manager
+        held = len(position_manager.get_positions())
+    except Exception:
+        held = 0
+    target = max(0, min(candidate_max, ws_max - held))
+
+    # 1) 기존 LLM 후보에 일봉 TSI 부착 (이벤트 루프 비차단)
+    chosen = {str(c.get("symbol") or c.get("ticker")): c for c in candidates if (c.get("symbol") or c.get("ticker"))}
+    _llm_tsi = await _tsi_map(list(chosen.keys()))
+    for _sym, _c in chosen.items():
+        _c["tsi"] = _llm_tsi.get(_sym)
+
+    # 2) 부족분은 블렌드 점수 상위로 top-up — 단, 일봉 TSI>0(상승추세) 종목만.
+    #    블렌드 = 0.4×TSI_norm + 0.4×유니버스점수_norm + 0.2×LLM확신(suitability).
+    #    하락추세(TSI<=0)는 자리만 채우려 넣지 않는다(부족하면 target 미만이어도 OK).
+    if len(chosen) < target:
+        pool = [
+            _it for _it in items
+            if str(_it.get("symbol") or "") and str(_it.get("symbol")) not in chosen
+        ]
+        _pool_tsi = await _tsi_map([str(_it.get("symbol")) for _it in pool])
+        _u_scores = [float(_it.get("score") or 0.0) for _it in pool]
+        _u_min, _u_max = (min(_u_scores), max(_u_scores)) if _u_scores else (0.0, 0.0)
+        _u_rng = _u_max - _u_min
+
+        def _blend(_it: dict[str, Any]) -> float:
+            _sym = str(_it.get("symbol"))
+            _t = _pool_tsi.get(_sym)
+            _tsi_n = max(0.0, min(1.0, (_t or 0.0) / 100.0))
+            _u = float(_it.get("score") or 0.0)
+            _u_n = (_u - _u_min) / _u_rng if _u_rng > 0 else 0.5
+            _suit = float(_it.get("suitability_score") or 0.0)
+            return 0.4 * _tsi_n + 0.4 * _u_n + 0.2 * _suit
+
+        for _it in sorted(pool, key=_blend, reverse=True):
+            _sym = str(_it.get("symbol"))
+            _t = _pool_tsi.get(_sym)
+            if _t is None or _t <= 0:
+                continue
+            chosen[_sym] = {**_it, "ticker": _it.get("symbol"), "tsi": _t, "suitability_score": _it.get("suitability_score", 0.0)}
+            if len(chosen) >= target:
+                break
+
+    candidates = list(chosen.values())
+    logger.info("INFO: HybridScreening 후보 확장 target=%d held=%d final=%d", target, held, len(candidates))
 
     # DB 저장
     record_id = str(uuid.uuid4())

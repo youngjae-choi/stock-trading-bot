@@ -106,6 +106,22 @@ def _compute_buy_readiness(
             "met": vwap_met,
         })
 
+    # TSI 추세 (candidate.tsi 있을 때만 표시)
+    tsi_val = candidate.get("tsi")
+    if tsi_val is not None:
+        try:
+            tsi_f = float(tsi_val)
+            conditions.append({
+                "name": "tsi",
+                "label": "TSI 추세",
+                "current_value": round(tsi_f, 1),
+                "threshold_label": "> 0 (상승추세)",
+                "score_pct": 100.0 if tsi_f > 0 else 0.0,
+                "met": tsi_f > 0,
+            })
+        except (TypeError, ValueError):
+            pass
+
     # 종합 점수 계산 (단순 평균)
     if conditions:
         overall = sum(c["score_pct"] for c in conditions) / len(conditions)

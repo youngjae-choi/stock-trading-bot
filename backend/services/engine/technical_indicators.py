@@ -116,7 +116,7 @@ def calculate_indicators(symbol: str, trade_date: str) -> dict[str, Any]:
         logger.warning("WARN: calculate_indicators invalid date symbol=%s date=%s error=%s", symbol, trade_date, exc)
         return result
 
-    start = (dt - timedelta(days=40)).strftime("%Y%m%d")
+    start = (dt - timedelta(days=120)).strftime("%Y%m%d")
     end = dt.strftime("%Y%m%d")
 
     try:
@@ -125,6 +125,8 @@ def calculate_indicators(symbol: str, trade_date: str) -> dict[str, Any]:
             logger.warning("WARN: calculate_indicators insufficient rows symbol=%s date=%s", symbol, trade_date)
         else:
             closes = _safe_float_series(df["종가"])
+            from .tsi import tsi_for_closes
+            result["tsi"] = tsi_for_closes(closes)
             volumes = _safe_float_series(df["거래량"])
             if len(closes) >= 2:
                 today_close = closes[-1]
@@ -182,6 +184,7 @@ def _ensure_signal_indicators_table() -> None:
                 price_vs_ma20_pct   REAL,
                 rsi14               REAL,
                 momentum5d_pct      REAL,
+                tsi                 REAL,
                 volume_ratio        REAL,
                 kospi_change_pct    REAL,
                 outcome_pnl_pct     REAL,
@@ -192,6 +195,10 @@ def _ensure_signal_indicators_table() -> None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sti_symbol_date ON signal_technical_indicators(symbol, trade_date)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sti_signal_id ON signal_technical_indicators(signal_id)")
+        try:
+            conn.execute("ALTER TABLE signal_technical_indicators ADD COLUMN tsi REAL")
+        except Exception:
+            pass  # column already exists on existing DBs
 
 
 def save_signal_indicators(signal_id: str, symbol: str, trade_date: str) -> bool:
@@ -227,9 +234,9 @@ def save_signal_indicators(signal_id: str, symbol: str, trade_date: str) -> bool
                 INSERT INTO signal_technical_indicators
                     (id, signal_id, symbol, trade_date,
                      price_change_pct, price_vs_ma5_pct, price_vs_ma20_pct,
-                     rsi14, momentum5d_pct, volume_ratio, kospi_change_pct,
+                     rsi14, momentum5d_pct, tsi, volume_ratio, kospi_change_pct,
                      created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(uuid.uuid4()),
@@ -241,6 +248,7 @@ def save_signal_indicators(signal_id: str, symbol: str, trade_date: str) -> bool
                     indicators.get("price_vs_ma20_pct"),
                     indicators.get("rsi14"),
                     indicators.get("momentum5d_pct"),
+                    indicators.get("tsi"),
                     indicators.get("volume_ratio"),
                     indicators.get("kospi_change_pct"),
                     now,

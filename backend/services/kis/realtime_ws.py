@@ -81,6 +81,11 @@ class RealtimeWSManager:
             raise ValueError("symbols is required")
 
         unique_symbols = list(dict.fromkeys(safe_symbols))
+        from ..settings_store import get_setting
+        ws_max = int(get_setting("realtime.ws_max", 41) or 41)
+        if len(unique_symbols) > ws_max:
+            logger.warning("WARN: WS 구독 %d개 > 한도 %d — 상위 %d개만 구독", len(unique_symbols), ws_max, ws_max)
+            unique_symbols = unique_symbols[:ws_max]
         if self._runner_task and not self._runner_task.done():
             await self.stop()
 
