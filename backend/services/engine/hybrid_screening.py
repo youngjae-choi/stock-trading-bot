@@ -419,7 +419,9 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
             "id": record_id,
         }
 
-    items = universe["items"][:30]
+    from ..settings_store import get_setting
+    _llm_input_cap = int(get_setting("screening.llm_input_cap", 60) or 60)
+    items = universe["items"][:_llm_input_cap]
 
     # 시장 톤 조회
     market_tone = None
@@ -531,6 +533,50 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
                 len(candidates), len(cost_passed), len(cost_filtered), cost_threshold_pct,
             )
         candidates = cost_passed
+
+    # --- TSI 부착 + WS 한도까지 블렌드 top-up (매수 적극성) ---
+    from datetime import datetime, timedelta
+
+    from ..settings_store import get_setting as _get_setting
+    from .technical_indicators import _pykrx_ohlcv
+    from .tsi import tsi_for_closes
+
+    def _symbol_tsi(sym: str) -> float | None:
+        try:
+            end = datetime.now().strftime("%Y%m%d")
+            start = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")
+            df = _pykrx_ohlcv(sym, start, end)
+            if df is None or "종가" not in df:
+                return None
+            return tsi_for_closes([float(x) for x in df["종가"].tolist()])
+        except Exception:
+            return None
+
+    candidate_max = int(_get_setting("screening.candidate_max", 40) or 40)
+    ws_max = int(_get_setting("realtime.ws_max", 41) or 41)
+    try:
+        from .position_manager import position_manager
+        held = len(position_manager.get_positions())
+    except Exception:
+        held = 0
+    target = max(0, min(candidate_max, ws_max - held))
+
+    chosen = {str(c.get("symbol") or c.get("ticker")): c for c in candidates if (c.get("symbol") or c.get("ticker"))}
+    for _sym, _c in chosen.items():
+        _c["tsi"] = _symbol_tsi(_sym)
+    if len(chosen) < target:
+        for _it in sorted(items, key=lambda x: x.get("score", 0.0), reverse=True):
+            _sym = str(_it.get("symbol") or "")
+            if not _sym or _sym in chosen:
+                continue
+            _t = _symbol_tsi(_sym)
+            if _t is None or _t <= 0:
+                continue
+            chosen[_sym] = {**_it, "ticker": _it.get("symbol"), "tsi": _t, "suitability_score": _it.get("suitability_score", 0.0)}
+            if len(chosen) >= target:
+                break
+    candidates = list(chosen.values())
+    logger.info("INFO: HybridScreening 후보 확장 target=%d held=%d final=%d", target, held, len(candidates))
 
     # DB 저장
     record_id = str(uuid.uuid4())
