@@ -112,6 +112,7 @@ def format_for_prompt(market_data: dict[str, Any]) -> str:
         "hangseng": "항셍",
         "shanghai": "상하이종합",
         "kospi": "KOSPI",
+        "kospi_night_futures": "코스피200 야간선물(다음날 갭 선행지표)",
         "sector_tech": "미국 기술섹터 XLK",
         "sector_finance": "미국 금융섹터 XLF",
         "sector_energy": "미국 에너지섹터 XLE",

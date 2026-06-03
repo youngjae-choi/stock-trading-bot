@@ -404,3 +404,41 @@ async def check_trading_day(date_str: str) -> bool:
 
     result = await get_trading_day_status(date_str)
     return result["status"] == "trading"
+
+
+async def get_kospi_night_futures() -> Dict[str, Any] | None:
+    """코스피200 선물 근월물(101000) 현재가·전일대비 등락률을 반환한다.
+
+    야간 세션(18:00~익일 05:00) 중에는 실시간 야간가, 야간 마감 후~정규 개장 전에는
+    야간 세션 마지막 체결가가 조회된다. 다음날 코스피 갭 방향 선행지표로 사용한다.
+    실패 시 None (비치명 — 아침 브리핑/톤 분석은 가용 데이터로 계속).
+
+    Returns:
+        {"price": float, "change_pct": float, "direction": "up|down|flat", "name": str} 또는 None.
+    """
+    try:
+        resp = await kis_client.request(
+            method="GET",
+            path="/uapi/domestic-futureoption/v1/quotations/inquire-price",
+            tr_id="FHMIF10000000",
+            params={"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": "101000"},
+        )
+        if str(resp.get("rt_cd") or "") != "0":
+            logger.warning("WARN: 야간선물 시세 rt_cd != 0 msg=%s", resp.get("msg1"))
+            return None
+        out = resp.get("output1") if isinstance(resp.get("output1"), dict) else {}
+        raw_price = out.get("futs_prpr")
+        if raw_price in (None, "", "0"):
+            return None
+        price = float(str(raw_price).replace(",", ""))
+        chg = float(str(out.get("futs_prdy_ctrt") or 0).replace(",", ""))
+        direction = "up" if chg > 0 else ("down" if chg < 0 else "flat")
+        return {
+            "price": price,
+            "change_pct": chg,
+            "direction": direction,
+            "name": str(out.get("hts_kor_isnm") or "코스피200 선물"),
+        }
+    except Exception as exc:
+        logger.warning("WARN: 야간선물 시세 조회 실패 — %s", exc)
+        return None

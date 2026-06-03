@@ -225,6 +225,15 @@ async def run_market_tone_analysis(
             from .market_data_fetcher import fetch_overnight_market_summary, format_for_prompt
 
             market_data = await fetch_overnight_market_summary()
+            # 코스피200 야간선물(KIS) 보강 — 다음날 코스피 갭 방향 선행지표
+            try:
+                from ..kis.domestic.service import get_kospi_night_futures
+
+                nf = await get_kospi_night_futures()
+                if nf:
+                    market_data["kospi_night_futures"] = nf
+            except Exception as _nf_exc:
+                logger.warning("WARN: 야간선물 보강 실패 (비치명) — %s", _nf_exc)
             market_data_text = format_for_prompt(market_data)
         except Exception as exc:
             logger.warning("WARN: MarketToneService 해외 시장 데이터 실시간 수집 실패 — %s", exc)
