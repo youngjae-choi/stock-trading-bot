@@ -249,8 +249,20 @@ class OrderExecutor:
         try:
             balance = await self._get_cached_balance()
             deposit = self._extract_deposit(balance)
-            position_size_pct = self._position_size_pct(final_rule)
-            qty = self._calc_qty(deposit, position_size_pct, price)
+            from .daily_capital import get_baseline, get_active_budget_rate
+            baseline = get_baseline(today)
+            budget_rate = get_active_budget_rate(today)
+            max_positions = int(_to_float(final_rule.get("max_positions"), 7.0) or 7)
+            qty = self._calc_budget_qty(baseline, budget_rate, max_positions, price, deposit)
+            if qty <= 0:
+                position_size_pct = self._position_size_pct(final_rule)
+                qty = self._calc_qty(deposit, position_size_pct, price)
+                logger.info("INFO: [S7] 사이징 폴백(baseline 결손) symbol=%s qty=%d", symbol, qty)
+            else:
+                logger.info(
+                    "INFO: [S7] 예산 균등배분 사이징 symbol=%s baseline=%s rate=%.2f maxpos=%d qty=%d",
+                    symbol, baseline, budget_rate, max_positions, qty,
+                )
             if qty <= 0:
                 raise ValueError("calculated quantity is zero")
 
@@ -568,6 +580,24 @@ class OrderExecutor:
             )
             logger.error("FAIL: [S8/S9] sell order failed order_id=%s symbol=%s reason=%s", order_id, safe_symbol, exc)
             return {"ok": False, "order_id": order_id, "symbol": safe_symbol, "reason": str(exc)}
+
+    def _calc_budget_qty(
+        self,
+        baseline: float | None,
+        budget_rate: float,
+        max_positions: int,
+        price: float,
+        available_cash: float,
+    ) -> int:
+        """예산 균등배분 수량 = floor(min(baseline*budget_rate/max_positions, available_cash) / price).
+
+        baseline 결손/비정상 입력이면 0 반환(호출부가 기존 로직으로 폴백).
+        """
+        if not baseline or baseline <= 0 or budget_rate <= 0 or max_positions <= 0 or price <= 0:
+            return 0
+        per_slot = baseline * budget_rate / max_positions
+        spend = min(per_slot, available_cash if available_cash > 0 else per_slot)
+        return int(spend // price)
 
     def _calc_qty(self, deposit: float, position_size_pct: float, price: float) -> int:
         """Calculate order quantity as floor(deposit * pct / 100 / price), minimum 1.
