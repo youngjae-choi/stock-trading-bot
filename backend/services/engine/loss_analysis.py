@@ -1,0 +1,25 @@
+"""손실 분석 오케스트레이션: 수집 → 전역 게이트 → 전략 제안(미리보기). 반영은 EOD에서."""
+from __future__ import annotations
+
+from typing import Any
+
+from ..db import get_connection
+
+_GLOBAL_MIN_SAMPLE = 3
+
+
+def collect_unreviewed_losses(start: str, end: str) -> list[dict[str, Any]]:
+    """범위 내 미분석(reviewed_at IS NULL) 손실 case 를 반환한다."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT * FROM false_positive_cases
+               WHERE trade_date >= ? AND trade_date <= ? AND reviewed_at IS NULL
+               ORDER BY trade_date DESC""",
+            (start, end),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def is_sample_insufficient(cases: list[dict[str, Any]]) -> bool:
+    """전역 표본 게이트 — 총 손실 < 3 이면 분석 거부."""
+    return len(cases) < _GLOBAL_MIN_SAMPLE
