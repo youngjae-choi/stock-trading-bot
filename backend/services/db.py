@@ -156,6 +156,7 @@ def _default_regime_sets() -> list[dict[str, Any]]:
                 "new_entry_allowed": True,
                 "trailing_activate_profit": 0.04, # +4% 이후 트레일링 발동
                 "trailing_stop_rate": 0.02,       # 2% 되돌리면 청산
+                "daily_budget_rate": 0.90,        # 일일 자본배분 비율 90%
             },
             "priority": 10,
         },
@@ -171,6 +172,7 @@ def _default_regime_sets() -> list[dict[str, Any]]:
                 "new_entry_allowed": True,
                 "trailing_activate_profit": 0.025,
                 "trailing_stop_rate": 0.012,
+                "daily_budget_rate": 0.80,        # 일일 자본배분 비율 80%
             },
             "priority": 10,
         },
@@ -186,6 +188,7 @@ def _default_regime_sets() -> list[dict[str, Any]]:
                 "new_entry_allowed": True,         # 모의계좌: 허용 (실계좌: 실적 없으면 차단)
                 "trailing_activate_profit": 0.015,
                 "trailing_stop_rate": 0.008,
+                "daily_budget_rate": 0.50,        # 일일 자본배분 비율 50%
             },
             "priority": 10,
         },
@@ -201,6 +204,7 @@ def _default_regime_sets() -> list[dict[str, Any]]:
                 "new_entry_allowed": True,         # 모의계좌: 허용 (실계좌: 실적 없으면 차단)
                 "trailing_activate_profit": 0.012,
                 "trailing_stop_rate": 0.006,
+                "daily_budget_rate": 0.30,        # 일일 자본배분 비율 30%
             },
             "priority": 10,
         },
@@ -216,6 +220,7 @@ def _default_regime_sets() -> list[dict[str, Any]]:
                 "new_entry_allowed": True,
                 "trailing_activate_profit": 0.04,
                 "trailing_stop_rate": 0.02,
+                "daily_budget_rate": 0.90,        # risk_on 계열
             },
             "is_prebuilt": True,
             "prebuilt_target_date": "2026-05-26",
@@ -233,6 +238,7 @@ def _default_regime_sets() -> list[dict[str, Any]]:
                 "new_entry_allowed": True,
                 "trailing_activate_profit": 0.022,
                 "trailing_stop_rate": 0.011,
+                "daily_budget_rate": 0.80,        # neutral 계열
             },
             "is_prebuilt": True,
             "prebuilt_target_date": "2026-05-26",
@@ -250,6 +256,7 @@ def _default_regime_sets() -> list[dict[str, Any]]:
                 "new_entry_allowed": True,
                 "trailing_activate_profit": 0.015,
                 "trailing_stop_rate": 0.008,
+                "daily_budget_rate": 0.50,        # risk_off 계열
             },
             "is_prebuilt": True,
             "prebuilt_target_date": "2026-05-26",
