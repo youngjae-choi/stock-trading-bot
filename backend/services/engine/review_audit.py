@@ -829,19 +829,33 @@ async def _send_action_plan_for_approval(result: dict[str, Any]) -> None:
     if not isinstance(settings_reasoning, dict):
         settings_reasoning = {}
 
+    # 안전장치: LLM이 고른 설정을 무방비 반영하지 않는다. 손실분석과 동일한 기준으로
+    # 화이트리스트(매매 파라미터)만 허용하고 가드레일로 clamp한다. 그 외(죽은/위험 설정)는 보류.
+    from .loss_strategy import clamp_setting, is_tunable
+
     applied_settings: list[str] = []
+    skipped_settings: list[str] = []
     for key, new_val in settings_overrides.items():
         reason = str(settings_reasoning.get(key) or "S10 LLM 자동 반영")
+        if not is_tunable(str(key)):
+            skipped_settings.append(f"{key} (비허용 설정 — 보류)")
+            logger.info("INFO: [S10-LLM] setting skipped (not whitelisted) key=%s", key)
+            continue
+        clamped = clamp_setting(str(key), new_val)
+        if clamped is None:
+            skipped_settings.append(f"{key} (값 부적합 — 보류)")
+            logger.info("INFO: [S10-LLM] setting skipped (clamp invalid) key=%s value=%s", key, new_val)
+            continue
         try:
             upsert_setting(
                 key=str(key),
-                value=new_val,
-                value_type=_setting_value_type(new_val),
+                value=clamped,
+                value_type="float",
                 description=reason,
                 actor="s10_llm",
             )
-            applied_settings.append(f"{key} -> {new_val} ({reason})")
-            logger.info("INFO: [S10-LLM] setting applied key=%s value=%s", key, new_val)
+            applied_settings.append(f"{key} -> {clamped} ({reason})")
+            logger.info("INFO: [S10-LLM] setting applied key=%s value=%s (clamped from %s)", key, clamped, new_val)
         except Exception as exc:
             logger.warning("WARN: [S10-LLM] setting apply failed key=%s reason=%s", key, exc)
 
@@ -852,6 +866,7 @@ async def _send_action_plan_for_approval(result: dict[str, Any]) -> None:
             "regime_evaluation": regime_eval,
             "settings_overrides": settings_overrides,
             "applied_settings": applied_settings,
+            "skipped_settings": skipped_settings,
             "narrative": narrative,
             "llm_confidence": llm_response.get("confidence", 0),
         },
@@ -909,6 +924,18 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
     Args:
         trade_date: YYYY-MM-DD trade date to analyze.
     """
+    # 비거래일(주말·공휴일) 가드 — 휴장일 0거래를 "필터 too strict"로 오판해 설정을
+    # 자동반영하던 사고 방지(예: 2026-06-03 지방선거 휴장일). 스케줄러 가드와 이중 방어.
+    try:
+        from .trading_calendar import is_trading_day, non_trading_reason
+
+        if not is_trading_day(trade_date):
+            logger.info("SKIP: [S10] 비거래일(%s) — 리뷰/액션플랜/자동반영 스킵 trade_date=%s",
+                        non_trading_reason(trade_date), trade_date)
+            return {"ok": True, "skipped": True, "reason": "non_trading_day", "trade_date": trade_date}
+    except Exception as _cal_exc:
+        logger.warning("WARN: [S10] 거래일 판정 실패 — 차단 없이 진행 reason=%s", _cal_exc)
+
     logger.info(
         "START: [S10] deterministic Review & Audit trade_date=%s prompt_template=1600_opus_review.md",
         trade_date,
