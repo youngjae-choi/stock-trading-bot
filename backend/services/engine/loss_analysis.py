@@ -52,6 +52,44 @@ def apply_strategies(applied: list[dict[str, Any]], cases: list[dict[str, Any]])
     _mark_reviewed([str(c["id"]) for c in cases if c.get("id")])
 
 
+# "보수적(손실 방어적)" 방향: 값이 클수록 보수적인 키 / 작을수록 보수적인 키
+_HIGHER_IS_CONSERVATIVE = {"engine.min_price_change_pct", "engine.min_volume_ratio"}
+_LOWER_IS_CONSERVATIVE = {"engine.max_price_change_pct", "risk.max_position_rate_per_stock",
+                          "risk.max_positions", "risk.daily_loss_limit_percent"}
+
+
+def _merge_proposals(false_p: list[dict[str, Any]], missed_p: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """같은 설정 키 충돌 시 더 보수적인 값을 채택해 병합한다."""
+    best: dict[str, dict[str, Any]] = {}
+    for p in [*false_p, *missed_p]:
+        key = p["setting_key"]
+        if key not in best:
+            best[key] = p
+            continue
+        cur = best[key]["new_value"]
+        new = p["new_value"]
+        if key in _HIGHER_IS_CONSERVATIVE:
+            best[key] = p if new > cur else best[key]
+        elif key in _LOWER_IS_CONSERVATIVE:
+            best[key] = p if new < cur else best[key]
+    return list(best.values())
+
+
+def consolidate_and_apply(trade_date: str) -> dict[str, Any]:
+    """EOD: 당일 기준 미분석 손실(False) + Missed 제안을 병합해 1회 자동반영한다.
+
+    Missed 제안 도출은 v1에서는 빈 리스트(후속). False 제안만으로도 닫힘.
+    """
+    from datetime import datetime, timedelta
+    start = (datetime.fromisoformat(trade_date) - timedelta(days=30)).strftime("%Y-%m-%d")
+    cases = collect_unreviewed_losses(start, trade_date)
+    false_proposed, _ = loss_strategy.derive_strategies(cases)
+    missed_proposed: list[dict[str, Any]] = []  # v1: 후속 연결 지점
+    merged = _merge_proposals(false_proposed, missed_proposed)
+    apply_strategies(merged, cases)
+    return {"applied": merged, "case_count": len(cases)}
+
+
 def analyze(start: str, end: str) -> dict[str, Any]:
     """미리보기: 수집 → 전역 게이트 → 전략 제안 도출. 반영/숨김은 하지 않는다(EOD에서 수행)."""
     cases = collect_unreviewed_losses(start, end)

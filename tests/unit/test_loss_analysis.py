@@ -71,3 +71,14 @@ class AnalyzeTest(unittest.TestCase):
         self.assertFalse(res["refused"])
         self.assertGreaterEqual(len(res["proposed"]), 1)
         apply_mock.assert_not_called()
+
+
+class MergeTest(unittest.TestCase):
+    def test_conflict_keeps_conservative_value(self):
+        # 같은 설정 키에 두 제안 → 더 보수적(손실 방어적)인 값 채택.
+        # min_price_change_pct는 높을수록 보수적(추격 진입 축소).
+        false_p = [{"setting_key":"engine.min_price_change_pct","new_value":3.5,"reason":"F","pattern":"INITIAL_STOP_LOSS","sample":3}]
+        missed_p = [{"setting_key":"engine.min_price_change_pct","new_value":4.0,"reason":"M","pattern":"x","sample":3}]
+        merged = loss_analysis._merge_proposals(false_p, missed_p)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["new_value"], 4.0)
