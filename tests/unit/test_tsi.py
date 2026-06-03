@@ -22,3 +22,10 @@ class TsiTest(unittest.TestCase):
         v = tsi.compute_tsi(closes)
         self.assertGreaterEqual(v, -100.0)
         self.assertLessEqual(v, 100.0)
+
+
+class SymbolTsiTest(unittest.TestCase):
+    def test_tsi_from_closes_helper(self):
+        from backend.services.engine import tsi as tsi_mod
+        self.assertIsNone(tsi_mod.tsi_for_closes([]))
+        self.assertIsNotNone(tsi_mod.tsi_for_closes([100 + i for i in range(45)]))
