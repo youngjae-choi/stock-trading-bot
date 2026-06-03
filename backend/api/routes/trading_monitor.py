@@ -802,6 +802,10 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
             else:
                 date_losses[trade_date] += 1
 
+    from datetime import datetime as _dt, timedelta as _td
+
+    from ...services.engine.trading_calendar import is_trading_day, non_trading_reason
+
     result = []
     for row in rows:
         d = dict(row)
@@ -812,7 +816,39 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
         d["win_count"] = wins
         d["loss_count"] = losses
         d["win_rate"] = round(wins / total_closed * 100, 1) if total_closed > 0 else 0
+        # 비거래일(주말·공휴일)이면 휴장 표식 — 과거에 쌓인 노이즈 행도 휴장으로 덮어 표시한다.
+        if not is_trading_day(td):
+            d["non_trading"] = True
+            d["non_trading_reason"] = non_trading_reason(td) or "휴장"
         result.append(d)
+
+    # 범위 내 리뷰 행이 없는 비거래일은 "휴장" 행으로 합성한다.
+    existing_dates = {d["trade_date"] for d in result}
+    try:
+        if start_date and end_date:
+            range_start, range_end = start_date, end_date
+        elif existing_dates:
+            range_start, range_end = min(existing_dates), _today_kst()
+        else:
+            range_start = range_end = None
+        if range_start and range_end:
+            cur = _dt.strptime(range_start, "%Y-%m-%d").date()
+            last = _dt.strptime(range_end, "%Y-%m-%d").date()
+            while cur <= last:
+                ds = cur.isoformat()
+                if ds not in existing_dates and not is_trading_day(ds):
+                    result.append({
+                        "trade_date": ds, "non_trading": True,
+                        "non_trading_reason": non_trading_reason(ds) or "휴장",
+                        "trade_count": 0, "win_count": 0, "loss_count": 0, "win_rate": 0,
+                        "total_pnl": 0.0, "pnl_rate": 0.0, "pnl_status": "non_trading",
+                        "missed_entries_count": 0, "integrity_warnings": 0, "market_tone": None,
+                    })
+                cur += _td(days=1)
+            result.sort(key=lambda r: r["trade_date"], reverse=True)
+    except Exception as exc:
+        logger.warning("WARN: daily-results 휴장 행 합성 실패 — %s", exc)
+
     return {"ok": True, "payload": result}
 
 

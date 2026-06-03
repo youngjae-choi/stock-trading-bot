@@ -321,6 +321,23 @@ def _should_skip_auto_job(step: str) -> bool:
     return False
 
 
+def _non_trading_day_today() -> str | None:
+    """오늘이 비거래일(주말·한국 공휴일)이면 사유, 거래일이면 None. EOD job 스킵 가드용.
+
+    holidays 기반 trading_calendar 단일 소스를 사용한다. 판정 실패 시 None(차단 안 함).
+    """
+    try:
+        from .engine.trading_calendar import is_trading_day, non_trading_reason
+
+        today = _today_kst()
+        if is_trading_day(today):
+            return None
+        return non_trading_reason(today) or "closed"
+    except Exception as exc:
+        logger.warning("WARN: 거래일 판정 실패(EOD 가드) — 차단 없이 진행 reason=%s", exc)
+        return None
+
+
 async def job_refresh_kis_token() -> dict[str, Any]:
     """Job 1 (07:45 KST): KIS 액세스 토큰 선제 갱신.
 
@@ -887,6 +904,10 @@ async def job_decision_engine_watchdog() -> None:
 
 async def job_eod_liquidation() -> dict[str, Any]:
     """Job S9 (15:20 KST): 당일 포지션 전량 청산 후 Decision Engine을 종료한다."""
+    _ntr = _non_trading_day_today()
+    if _ntr:
+        logger.info("SKIP: [Job S9] 비거래일(%s) — 청산 스킵", _ntr)
+        return {"ok": True, "skipped": True, "reason": f"non_trading_day:{_ntr}"}
     logger.info("START: [Job S9] 당일 청산 (15:20 KST)")
     liquidation_result: dict[str, Any] = {}
     liquidation_error: Exception | None = None
@@ -941,6 +962,10 @@ async def job_data_backup() -> None:
 async def job_review_audit() -> None:
     """Job S10 Review & Audit (16:00 KST): 당일 매매 결과를 분석한다."""
     today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+    _ntr = _non_trading_day_today()
+    if _ntr:
+        logger.info("SKIP: [Job ReviewAudit] 비거래일(%s) — 리뷰/요약/학습 스킵 (Daily Results 노이즈 방지)", _ntr)
+        return
     logger.info("START: [Job ReviewAudit] S10 Review & Audit (%s KST)", today)
 
     # ── Step 0: 손실 거래 자동 분석 → false_positive_cases 테이블 저장
@@ -1029,6 +1054,10 @@ async def job_missed_returns_update() -> None:
     still runs when S9 liquidation, fill polling, summary, or review steps fail.
     """
     today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+    _ntr = _non_trading_day_today()
+    if _ntr:
+        logger.info("SKIP: [Job MissedReturns] 비거래일(%s) — 미진입 갱신 스킵", _ntr)
+        return
     logger.info("START: [Job MissedReturns] 미진입 수익률 독립 업데이트 (%s KST)", today)
     try:
         from .engine.missed_opportunity import update_missed_returns
@@ -1045,6 +1074,10 @@ async def job_missed_returns_update() -> None:
 
 async def job_postprocess_pipeline() -> None:
     """Run S9 then S10 sequentially from one postprocess schedule key."""
+    _ntr = _non_trading_day_today()
+    if _ntr:
+        logger.info("SKIP: [PostProcess] 비거래일(%s) — 후처리(S9~S10) 스킵", _ntr)
+        return
     logger.info("START: [PostProcess] S9~S10 후처리 프로세스")
     pipeline_run_id = _audit_step_start("POSTPROCESS", {"pipeline": "postprocess"})
     s9_failed = False

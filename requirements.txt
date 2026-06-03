@@ -14,3 +14,6 @@ python-dotenv==1.0.1
 qrcode==8.2
 plotly==5.19.0
 apscheduler==3.10.4
+
+# 한국 증시 휴장일 판정 (비거래일 스킵)
+holidays>=0.98

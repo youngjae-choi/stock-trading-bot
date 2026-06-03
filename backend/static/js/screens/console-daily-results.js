@@ -76,6 +76,12 @@
     if (!container) return;
 
     container.innerHTML = rows.map(function(row) {
+      if (row.non_trading) {
+        return '<div class="daily-result-item" style="opacity:0.5;">'
+          + '<div><div class="daily-result-date">' + escapeHtml(row.trade_date) + '</div>'
+          + '<div class="daily-result-trades">휴장 · ' + escapeHtml(row.non_trading_reason || '비거래일') + '</div></div>'
+          + '</div>';
+      }
       var pnl = row.total_pnl || 0;
       var pnlCls = pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : '';
       var pnlSign = pnl >= 0 ? '+' : '';
@@ -142,7 +148,7 @@
     var totalPnl    = rows.reduce(function(acc, r) { return acc + (r.total_pnl || 0); }, 0);
     var totalNetPnl = rows.reduce(function(acc, r) { return acc + (r.net_pnl != null ? r.net_pnl : (r.total_pnl || 0)); }, 0);
     var hasNetData  = rows.some(function(r) { return r.net_pnl != null; });
-    var tradingDays = rows.length;
+    var tradingDays = rows.filter(function(r) { return !r.non_trading; }).length;
     var totalWins  = rows.reduce(function(acc, r) { return acc + (r.win_count || 0); }, 0);
     var totalLosses= rows.reduce(function(acc, r) { return acc + (r.loss_count || 0); }, 0);
     var totalTrades = totalWins + totalLosses;
@@ -218,6 +224,14 @@
       + '</tr></thead>';
 
     var bodyRows = rows.map(function(row) {
+      // 비거래일(주말·공휴일)은 "휴장" 한 줄로 표시 — missed/integrity 등 노이즈 미표시
+      if (row.non_trading) {
+        return '<tr style="opacity:0.5;">'
+          + '<td style="font-size:13px; color:var(--muted);">' + escapeHtml(row.trade_date)
+          + ' <span class="status" style="font-size:10px; background:rgba(139,148,158,0.15); color:var(--muted);">휴장</span></td>'
+          + '<td colspan="8" style="color:var(--muted); font-size:12px;">' + escapeHtml(row.non_trading_reason || '비거래일') + '</td>'
+          + '</tr>';
+      }
       var pnl = row.total_pnl || 0;
       var pnlCls  = pnl > 0 ? 'good' : pnl < 0 ? 'bad' : '';
       var pnlSign = pnl >= 0 ? '+' : '';

@@ -335,19 +335,21 @@ _KIS_SERVICE_NOT_FOUND_MSGS = ("서비스를 찾을수 없습니다", "서비스
 
 
 def _weekday_trading_day_fallback(date_str: str) -> dict[str, str]:
-    """KIS API 미지원 환경(모의투자 등)에서 요일 기반으로 거래일 여부를 판단한다.
+    """KIS API 미지원 환경(모의투자 등)에서 주말 + 한국 공휴일 기준으로 거래일 여부를 판단한다.
 
-    토·일은 closed, 평일은 trading으로 간주한다.
-    한국 공휴일은 구분하지 않으므로 일부 오탐이 있을 수 있다.
+    holidays 라이브러리로 평일 공휴일(어린이날·현충일·임시공휴일 등)까지 closed로 잡는다.
     """
     try:
-        dt = datetime.strptime(date_str, "%Y%m%d")
-        weekday = dt.weekday()  # 0=월 … 4=금, 5=토, 6=일
-        if weekday >= 5:
-            return {"status": "closed", "reason": f"weekday_fallback:weekend(wd={weekday})", "date": date_str}
-        return {"status": "trading", "reason": f"weekday_fallback:weekday(wd={weekday})", "date": date_str}
+        from ...engine.trading_calendar import is_trading_day, non_trading_reason
+
+        if is_trading_day(date_str):
+            return {"status": "trading", "reason": "calendar_fallback:trading", "date": date_str}
+        reason = non_trading_reason(date_str) or "closed"
+        return {"status": "closed", "reason": f"calendar_fallback:{reason}", "date": date_str}
     except ValueError:
-        return {"status": "unknown", "reason": "weekday_fallback:invalid_date", "date": date_str}
+        return {"status": "unknown", "reason": "calendar_fallback:invalid_date", "date": date_str}
+    except Exception as exc:  # 캘린더 오류 시 거래일 차단 방지
+        return {"status": "unknown", "reason": f"calendar_fallback:error:{exc}", "date": date_str}
 
 
 async def get_trading_day_status(date_str: str) -> dict[str, str]:
