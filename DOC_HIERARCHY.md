@@ -6,7 +6,9 @@
 
 - PM은 요구사항과 우선순위를 결정한다.
 - Sisyphus는 PM의 단일 창구이며, 요청 해석, Agent 위임, 승인 게이트, 최종 보고를 담당한다.
-- 구현 Agent는 승인된 작업계획서 범위 안에서만 작업한다.
+  - Sisyphus 역할은 **OpenCode 와 Claude Code(Opus 컨트롤러) 어느 환경에서도 수행**한다 (공동 주력).
+  - 아래의 역할·프로세스·게이트는 **environment-agnostic** 이며, 환경별 실행 주체 매핑은 4절을 따른다.
+- 구현 Agent(또는 Claude Code의 Task 서브에이전트)는 승인된 작업계획서 범위 안에서만 작업한다.
 - 문서 간 충돌이 있으면 이 문서의 우선순위 순서로 판단한다.
 - 확인하지 않은 코드, API, 설정을 추측해서 구현하지 않는다.
 
@@ -64,7 +66,11 @@
 | Momus | 계획서, 테스트계획서, 완료 기준의 빈틈 검토 | 중간 비용 리뷰 모델 |
 | Multimodal Looker | 스크린샷, PDF, 이미지, 다이어그램 해석 | 멀티모달 모델 |
 
-PM은 Sisyphus에게만 요청한다. Sisyphus가 필요에 따라 적절한 Agent를 호출하고 결과를 PM이 이해할 수 있는 말로 요약한다.
+> "기본 모델/도구 기준" 열은 **OpenCode 환경** 기준이다. **Claude Code 환경**에서는 동일 역할을 다음으로 수행한다:
+> Sisyphus = 세션 본체(Opus 컨트롤러) / 구현·프론트·탐색·리뷰 = **Task 서브에이전트**(기계적 태스크는 sonnet 등 저단가) / 멀티모달 = 지휘자 직접.
+> 원칙: 비싼 모델은 판단·설계·리뷰, 저단가 모델은 기계적 구현. 소규모 수정(1~2곳)은 지휘자 직접.
+
+PM은 메인 지휘자(Sisyphus 역할)에게만 요청한다. 지휘자가 필요에 따라 적절한 실행 주체(Agent / Task 서브에이전트)를 호출하고 결과를 PM이 이해할 수 있는 말로 요약한다.
 
 ## 5. 표준 작업 절차
 
@@ -90,9 +96,11 @@ PM은 Sisyphus에게만 요청한다. Sisyphus가 필요에 따라 적절한 Age
 
 ## 7. 커밋과 변경 관리
 
-- 새 작업 시작 전 Sisyphus가 커밋 여부를 확인한다.
-- 커밋 실행 권한은 Sisyphus만 가진다.
-- Executor, Frontend, Explore, Librarian, Oracle은 git commit을 실행하지 않는다.
+- 새 작업 시작 전 메인 지휘자(Sisyphus 역할)가 커밋 여부를 확인한다.
+- **main 브랜치 통합(merge·push) 권한은 메인 지휘자만 가진다.** 무엇이 main에 올라가는지는 지휘자가 통제한다.
+- 커밋 방식은 환경별로 다르다:
+  - OpenCode: 커밋 실행은 **Sisyphus만** (Executor/Frontend/Explore/Librarian/Oracle은 commit 금지).
+  - Claude Code 서브에이전트 구동: implementer **Task 서브에이전트가 기능 브랜치에 태스크별 원자 커밋**을 수행하고, 지휘자가 리뷰 후 main으로 merge한다.
 - 기존 미커밋 변경이 있으면 작업 목적과 관련된 파일만 선별해 커밋한다.
 - `.env`, `.env.local`, API 키, 토큰, 로컬 DB, 로그 파일은 커밋하지 않는다.
 
