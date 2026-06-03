@@ -37,3 +37,16 @@ class GlobalGateTest(unittest.TestCase):
         with patch.object(loss_analysis, "get_connection", return_value=conn):
             res = loss_analysis.collect_unreviewed_losses("2026-05-01", "2026-06-03")
         self.assertFalse(loss_analysis.is_sample_insufficient(res))
+
+
+class ApplyTest(unittest.TestCase):
+    def test_apply_calls_upsert_and_marks_reviewed(self):
+        applied = [{"setting_key": "engine.min_price_change_pct", "new_value": 3.5,
+                    "reason": "x", "pattern": "INITIAL_STOP_LOSS", "sample": 3}]
+        cases = [{"id": "1"}, {"id": "2"}, {"id": "3"}]
+        calls = {"upsert": [], "reviewed": []}
+        with patch.object(loss_analysis, "upsert_setting", lambda *a, **k: calls["upsert"].append((a, k))), \
+             patch.object(loss_analysis, "_mark_reviewed", lambda ids: calls["reviewed"].extend(ids)):
+            loss_analysis.apply_strategies(applied, cases)
+        self.assertEqual(len(calls["upsert"]), 1)
+        self.assertEqual(set(calls["reviewed"]), {"1", "2", "3"})
