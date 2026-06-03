@@ -132,6 +132,9 @@ def _build_balance_payload(data: dict[str, Any]) -> dict[str, Any]:
         "deposit": deposit,                           # 예탁금 총액 (계좌 한도)
         "buyable_cash": buyable_cash,                 # 주문 가능 예수금 (현금 잔액)
         "available_cash": buyable_cash,
+        # 정산예정금: 주문가능(총평가-주식평가 근사) - 예수금(dnca). 모의투자 가수도 정산분.
+        # buyable_cash > deposit 으로 보이는 차이를 화면에서 따로 표기하기 위함.
+        "settlement_pending": buyable_cash - deposit,
         "total_eval": total_eval,                     # 총평가금액 (현금 + 주식)
         "purchase_total": _to_int(summary.get("pchs_amt_smtl_amt")),
         "pnl_total": _to_int(summary.get("evlu_pfls_smtl_amt")),

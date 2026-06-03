@@ -290,6 +290,19 @@
         setEl('tm-buyable-cash', fmtWon(buyable));
         setEl('tm-deposit-limit', '한도 ' + fmtWon(acct.deposit));
 
+        // 정산예정금 (모의투자 가수도 정산분) — 주문가능이 예수금보다 큰 차이를 따로 표기
+        var settleEl = document.getElementById('tm-settlement');
+        if (settleEl) {
+          var settle = acct.settlement_pending != null ? Number(acct.settlement_pending) : 0;
+          if (settle !== 0) {
+            settleEl.textContent = '정산예정 ' + (settle > 0 ? '+' : '') + Number(settle).toLocaleString() + '원';
+            settleEl.style.display = '';
+          } else {
+            settleEl.textContent = '';
+            settleEl.style.display = 'none';
+          }
+        }
+
         // 주식 평가금액
         setEl('tm-stock-eval', fmtWon(acct.stock_eval != null ? acct.stock_eval : acct.purchase_total));
         var holdings = acct.positions || acct.holdings || [];
