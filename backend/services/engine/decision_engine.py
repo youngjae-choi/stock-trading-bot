@@ -605,7 +605,7 @@ def _rules_allow_signal(matched: dict[str, Any]) -> bool:
         for key in ("vwap_position", "ma5_above_ma20", "rsi_range", "spread_max_pct")
         if key in matched
     ]
-    core_keys = ["volume_ratio", "price_change", "time_window"]
+    core_keys = ["volume_ratio", "price_change", "time_window", "tsi_positive"]
     all_keys = core_keys + optional_keys
 
     return all(bool(matched.get(key)) for key in all_keys)
@@ -1244,11 +1244,18 @@ class DecisionEngine:
                 "required": {"min": volume_ratio_min},
             }
 
+        # TSI 추세 필터: 상승추세(tsi>0)만 매수. 데이터 없으면 통과(차단 금지).
+        tsi_val = _first_float(
+            tick.get("tsi"), candidate.get("tsi"), candidate.get("tsi_value"),
+        )
+        tsi_positive = True if tsi_val is None else (tsi_val > 0)
+
         matched: dict[str, Any] = {
             "volume_ratio": volume_ok,
             "ai_confidence": ai_conf >= ai_conf_min,
             "price_change": price_ok,
             "time_window": time_window_ok,
+            "tsi_positive": tsi_positive,
         }
         observed_values: dict[str, Any] = {
             "ai_confidence": ai_conf,
@@ -1258,6 +1265,7 @@ class DecisionEngine:
             "price_change_max_pct": price_max_pct,
             "volume_ratio": volume_ratio,
             "volume_ratio_min": volume_ratio_min,
+            "tsi": tsi_val,
         }
         _add_layer3_evaluation(
             matched=matched,
