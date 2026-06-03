@@ -20,6 +20,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from .kis.common.client import kis_client
+from .kis.domestic.service import get_balance
 
 logger = logging.getLogger("Scheduler")
 TRADING_DAY_SETTING_DESCRIPTION = "오늘 S2~S6 자동 스케줄 스킵 여부 (KST 당일 값만 유효)"
@@ -50,6 +51,31 @@ def _today_kst() -> str:
 def _today_kst_compact() -> str:
     """Return today's date in Asia/Seoul as YYYYMMDD for KIS trading-day checks."""
     return datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
+
+
+async def job_capture_capital_baseline() -> None:
+    """Job (08:50 KST): 장 개시 전 예수금 baseline을 일자별 1회 캡처."""
+    from .engine.daily_capital import capture_baseline
+
+    trade_date = _today_kst()
+    logger.info("START: [JobCapital] baseline 캡처 trade_date=%s", trade_date)
+    try:
+        balance = await get_balance()
+        summary = (balance.get("output2") or [{}])[0]
+        deposit = 0.0
+        for key in ("ord_psbl_cash", "dnca_tot_amt", "nass_amt"):
+            try:
+                deposit = float(str(summary.get(key) or "0").replace(",", ""))
+            except (TypeError, ValueError):
+                deposit = 0.0
+            if deposit > 0:
+                break
+        result = capture_baseline(deposit, trade_date=trade_date)
+        logger.info("SUCCESS: [JobCapital] baseline=%s trade_date=%s", result, trade_date)
+    except Exception as exc:
+        logger.warning(
+            "WARN: [JobCapital] baseline 캡처 실패 trade_date=%s reason=%s", trade_date, exc
+        )
 
 
 def _hhmm_to_minutes(value: str) -> int | None:
@@ -1342,6 +1368,15 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour=13, minute=0, timezone="Asia/Seoul"),
         id="job_dividend_alert_pm",
         name="배당락일 알림 (오후)",
+        replace_existing=True,
+    )
+
+    # 08:50 장 개시 전 예수금 baseline 캡처
+    scheduler.add_job(
+        job_capture_capital_baseline,
+        CronTrigger(hour=8, minute=50, timezone="Asia/Seoul"),
+        id="job_capture_capital_baseline",
+        name="장개시 예수금 baseline 캡처",
         replace_existing=True,
     )
 

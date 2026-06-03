@@ -1,3 +1,5 @@
+import asyncio
+
 import backend.services.engine.daily_capital as dc
 
 
@@ -50,3 +52,19 @@ def test_cumulative_buy_amount():
     dc._insert_order_for_test(d, "005930", "sell", 10, 1000.0, "filled")
     assert dc.get_cumulative_buy_amount(d) == 10 * 1000.0 + 5 * 2000.0
     dc._delete_orders_for_test(d)
+
+
+def test_capture_job_uses_balance_deposit(monkeypatch):
+    import backend.services.scheduler as sched
+
+    d = "2099-01-09"
+    dc._delete_baseline(d)
+
+    async def fake_balance():
+        return {"output2": [{"ord_psbl_cash": "1234567"}]}
+
+    monkeypatch.setattr(sched, "get_balance", fake_balance, raising=False)
+    monkeypatch.setattr(sched, "_today_kst", lambda: d, raising=False)
+    asyncio.run(sched.job_capture_capital_baseline())
+    assert dc.get_baseline(d) == 1234567.0
+    dc._delete_baseline(d)
