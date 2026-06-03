@@ -18,8 +18,9 @@
 ### 개발 환경
 - 개발 노트북: [OS + 에디터]
 - 개발 서버: [OS / 환경 정보]
-- 기본 작업 환경: OpenCode Sisyphus + CLI Agent 병행
-- 사용 도구: OpenCode / Codex CLI / Gemini CLI / Claude Code Extension(보조)
+- 작업 환경: **OpenCode 와 Claude Code(Extension/CLI)를 공동 주력**으로 사용 (한 세션의 메인 지휘자는 하나)
+- 사용 도구: OpenCode / Codex CLI / Gemini CLI / **Claude Code(Opus 컨트롤러 + Task 서브에이전트)**
+- 이 헌법의 프로세스·게이트·완료정의는 **두 환경 모두 동일하게 적용**된다 (environment-agnostic)
 
 ---
 
@@ -141,6 +142,23 @@
 | Oracle | OpenCode / GPT-5.5 | 수석 아키텍트 — 코드 리뷰, 보안, 성능, 회귀 위험 검토 |
 | Momus | OpenCode / GPT-5.4-mini | 계획 비평 — 작업계획서/테스트계획서 누락 검토 |
 | Multimodal Looker | OpenCode / Gemini Flash | 이미지 해석 — 스크린샷, PDF, 다이어그램 분석 |
+
+> 위 모델 배정은 **OpenCode 환경** 기준이다. Claude Code 환경에서는 아래 매핑으로 동일 역할을 수행한다.
+
+### Claude Code 환경 매핑 (공동 주력)
+
+| 역할(페르소나) | Claude Code에서의 실행 주체 |
+|----------------|------------------------------|
+| Sisyphus(지휘·승인 게이트·커밋) | Claude Code 세션 본체 (Opus 컨트롤러) |
+| Prometheus(기획서/계획서) | 지휘자 직접 또는 Plan 서브에이전트 |
+| Metis(사전 분석) / Momus(계획 비평) | 지휘자 직접 또는 Task 서브에이전트 |
+| Explore / Librarian(탐색) | Explore 서브에이전트 또는 직접 Grep/Glob/WebFetch |
+| Executor / Hephaestus(백엔드 구현) | **Task 서브에이전트**(general-purpose) — 기계적 태스크는 sonnet 등 저단가 |
+| Frontend(UI 구현) | Task 서브에이전트 |
+| Oracle(코드 리뷰·보안·회귀) | Task 서브에이전트(code review) 또는 `/code-review` |
+| Multimodal Looker(이미지) | 지휘자 직접(멀티모달) |
+
+원칙: **"비싼 모델은 판단·설계·리뷰에, 저단가 모델은 기계적 구현에."** 지휘자(Opus)는 컨텍스트를 보존하며 위임으로 토큰을 절약한다. 소규모 수정(1~2곳)은 지휘자가 직접 처리한다.
 
 ### 에이전트 페르소나
 
