@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from ..db import get_connection
 from ..settings_store import get_setting
+from .daily_capital import get_baseline, get_active_budget_rate, get_cumulative_buy_amount
 
 logger = logging.getLogger("OrderPreflight")
 
@@ -326,6 +327,18 @@ def is_new_buy_blocked_by_emergency_halt() -> tuple[bool, str]:
     return False, ""
 
 
+def _budget_cap_check(trade_date: str | None = None) -> tuple[bool, str]:
+    """당일 누적 매수액이 baseline×budget_rate 도달 시 (True, 사유). baseline 없으면 (False, '')."""
+    baseline = get_baseline(trade_date)
+    if not baseline or baseline <= 0:
+        return False, ""
+    budget = baseline * get_active_budget_rate(trade_date)
+    used = get_cumulative_buy_amount(trade_date)
+    if used >= budget > 0:
+        return True, f"일일 투입예산 소진 ({used:,.0f}/{budget:,.0f}원)"
+    return False, ""
+
+
 def run_preflight(
     signal: dict[str, Any],
     final_rule: dict[str, Any],
@@ -412,6 +425,15 @@ def run_preflight(
     except Exception as exc:
         logger.warning("WARN: [S6-P] DQ status check failed; fail-open reason=%s", exc)
         checks["data_quality"] = PREFLIGHT_OK
+
+    # 9. 일일 투입예산 상한 (baseline×budget_rate 도달 시 신규매수 차단)
+    _budget_date = _today_kst()  # _today_kst() already returns str "%Y-%m-%d"
+    budget_blocked, budget_reason = _budget_cap_check(_budget_date)
+    if budget_blocked:
+        checks["budget_cap"] = PREFLIGHT_BLOCK
+        block_reasons.append(budget_reason)
+    else:
+        checks["budget_cap"] = PREFLIGHT_OK
 
     passed = len(block_reasons) == 0
     preflight_id = str(uuid.uuid4())
