@@ -33,6 +33,15 @@ def test_active_budget_rate_from_applied_settings(monkeypatch):
     assert dc.get_active_max_positions("2099-01-05") == 12
 
 
+def test_seed_sets_carry_budget_rate():
+    from backend.services.db import _default_regime_sets
+    sets = {s["id"]: s for s in _default_regime_sets()}
+    assert sets["SET-RISK_ON"]["settings"]["daily_budget_rate"] == 0.90
+    assert sets["SET-NEUTRAL"]["settings"]["daily_budget_rate"] == 0.80
+    assert sets["SET-RISK_OFF"]["settings"]["daily_budget_rate"] == 0.50
+    assert sets["SET-VOLATILE"]["settings"]["daily_budget_rate"] == 0.30
+
+
 def test_cumulative_buy_amount():
     d = "2099-01-06"
     dc._delete_orders_for_test(d)
