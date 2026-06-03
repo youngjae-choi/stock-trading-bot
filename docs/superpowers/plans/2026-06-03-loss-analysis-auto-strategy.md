@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** False Positive(손실분석) 화면의 "손실분석 실행" 버튼이, 범위 내 미분석 손실을 모아 표본 게이트(전역 3건) 통과 시 패턴별 결정적 전략을 도출·가드레일 clamp 후 자동반영하고, 분석된 손실을 숨기며, 결과를 완료 팝업에 표시하도록 만든다.
+**Goal (v1.1):** "손실분석 실행" 버튼은 범위 내 미분석 손실의 원인·전략을 **미리보기(제안)만** 표시하고(반영 X), 실제 설정 반영은 **장마감 Review 종합 단계**가 Missed+False 제안을 합쳐 충돌 조정 후 **하루 1회 일괄** 수행한다(가드레일 clamp+audit, reviewed 숨김).
 
-**Architecture:** 신규 서비스 `loss_analysis.py`가 오케스트레이션한다 — 수집(`false_positive.py` 재사용) → 전역 표본 게이트 → 패턴 그룹핑·패턴별 표본 게이트(`learning_memory` 로직 차용) → 튜닝 화이트리스트 clamp 후 `settings_store.upsert_setting`로 자동반영 + audit → 분석 case reviewed 처리. 신규 엔드포인트 `POST /api/v1/false-positive/analyze`가 호출하고 프런트는 완료 팝업 3상태를 렌더한다.
+**Architecture:** `loss_strategy.py`(순수: 화이트리스트/clamp/전략도출)와 `loss_analysis.py`(흐름)로 분리. 버튼 → `POST /false-positive/analyze`(미리보기, 제안 반환). 반영은 `loss_analysis.consolidate_and_apply(trade_date)`가 `job_review_audit`(EOD) 안에서 False+Missed 제안을 합쳐 1회 upsert_setting + audit + reviewed 처리.
 
 **Tech Stack:** Python 3 / FastAPI / SQLite / pytest / Vanilla JS
 
@@ -318,7 +318,9 @@ git commit -m "feat: 손실 수집 + 전역 표본 게이트"
 
 ---
 
-## Task 4: 자동반영 + reviewed 처리 (loss_analysis.py)
+## Task 4: 반영 빌딩블록 — apply_strategies + reviewed (loss_analysis.py)
+
+> 주의(v1.1): 이 함수들은 **버튼이 아니라 EOD 종합 반영(Task 5.5)** 에서만 호출된다.
 
 **Files:**
 - Modify: `backend/services/engine/loss_analysis.py`
@@ -410,15 +412,15 @@ class AnalyzeTest(unittest.TestCase):
         self.assertTrue(res["refused"])
         self.assertEqual(res["needed"], 3)
 
-    def test_success_applies_and_returns_summary(self):
+    def test_success_returns_proposals_without_applying(self):
         cases = [{"id":str(i),"symbol":f"S{i}","exit_reason":"INITIAL_STOP_LOSS",
                   "assigned_profile":"MID_VOL","pnl_pct":-0.01} for i in range(3)]
         with patch.object(loss_analysis, "collect_unreviewed_losses", return_value=cases), \
              patch.object(loss_analysis, "apply_strategies") as apply_mock:
             res = loss_analysis.analyze("2026-05-01","2026-06-03")
         self.assertFalse(res["refused"])
-        self.assertGreaterEqual(len(res["applied"]), 1)
-        apply_mock.assert_called_once()
+        self.assertGreaterEqual(len(res["proposed"]), 1)
+        apply_mock.assert_not_called()  # 미리보기: 반영하지 않는다
 ```
 
 - [ ] **Step 2: 실패 확인**
@@ -434,19 +436,18 @@ from . import loss_strategy
 
 
 def analyze(start: str, end: str) -> dict[str, Any]:
-    """전체 흐름: 수집 → 전역 게이트 → 전략 도출 → 자동반영 → reviewed → 요약 반환."""
+    """미리보기: 수집 → 전역 게이트 → 전략 제안 도출. 반영/숨김은 하지 않는다(EOD에서 수행)."""
     cases = collect_unreviewed_losses(start, end)
     if is_sample_insufficient(cases):
         return {"refused": True, "reason": "손실 표본 부족", "have": len(cases),
-                "needed": _GLOBAL_MIN_SAMPLE, "applied": [], "observing": [],
+                "needed": _GLOBAL_MIN_SAMPLE, "proposed": [], "observing": [],
                 "analyzed_symbols": []}
-    applied, observing = loss_strategy.derive_strategies(cases)
-    apply_strategies(applied, cases)
-    return {"refused": False, "applied": applied, "observing": observing,
+    proposed, observing = loss_strategy.derive_strategies(cases)
+    return {"refused": False, "proposed": proposed, "observing": observing,
             "analyzed_symbols": [c.get("symbol") for c in cases]}
 ```
 
-LLM 서술(하이브리드)은 보조이므로 v1에서는 `reason` 문자열로 대체하고, 별도 후속(Task 9)에서 추가한다. 결정적 전략/반영은 LLM 없이도 완결된다.
+LLM 서술(하이브리드)은 보조이므로 v1에서는 `reason` 문자열로 대체하고, 별도 후속(Task 9)에서 추가한다. 결정적 전략 제안은 LLM 없이도 완결된다.
 
 - [ ] **Step 4: 통과 확인**
 
@@ -458,6 +459,103 @@ Expected: PASS
 ```bash
 git add backend/services/engine/loss_analysis.py tests/unit/test_loss_analysis.py
 git commit -m "feat: 손실분석 analyze() 통합(거부/성공 흐름)"
+```
+
+---
+
+## Task 5.5: EOD 종합 반영 — Missed+False 병합 후 1회 적용 (loss_analysis.py + scheduler)
+
+**Files:**
+- Modify: `backend/services/engine/loss_analysis.py`
+- Modify: `backend/services/scheduler.py` (job_review_audit 내부에서 호출)
+- Test: `tests/unit/test_loss_analysis.py`
+
+- [ ] **Step 1: 병합(충돌 조정) 실패 테스트 추가**
+
+```python
+class MergeTest(unittest.TestCase):
+    def test_conflict_keeps_conservative_value(self):
+        # 같은 설정 키에 두 제안 → 손실 방어적(더 보수적)인 값 채택.
+        # min_price_change_pct는 "높을수록 보수적"(추격 진입 축소).
+        false_p = [{"setting_key":"engine.min_price_change_pct","new_value":3.5,"reason":"F","pattern":"INITIAL_STOP_LOSS","sample":3}]
+        missed_p = [{"setting_key":"engine.min_price_change_pct","new_value":4.0,"reason":"M","pattern":"x","sample":3}]
+        merged = loss_analysis._merge_proposals(false_p, missed_p)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["new_value"], 4.0)  # 더 높은(보수적) 값
+```
+
+- [ ] **Step 2: 실패 확인**
+
+Run: `PYTHONPATH=. .venv/bin/python -m pytest tests/unit/test_loss_analysis.py::MergeTest -q`
+Expected: FAIL
+
+- [ ] **Step 3: 구현 추가**
+
+```python
+# loss_analysis.py 에 추가
+# "보수적(손실 방어적)" 방향: 값이 클수록 보수적인 키 / 작을수록 보수적인 키
+_HIGHER_IS_CONSERVATIVE = {"engine.min_price_change_pct", "engine.min_volume_ratio"}
+_LOWER_IS_CONSERVATIVE = {"engine.max_price_change_pct", "risk.max_position_rate_per_stock",
+                          "risk.max_positions", "risk.daily_loss_limit_percent"}
+
+
+def _merge_proposals(false_p: list[dict[str, Any]], missed_p: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """같은 설정 키 충돌 시 더 보수적인 값을 채택해 병합한다."""
+    best: dict[str, dict[str, Any]] = {}
+    for p in [*false_p, *missed_p]:
+        key = p["setting_key"]
+        if key not in best:
+            best[key] = p
+            continue
+        cur = best[key]["new_value"]
+        new = p["new_value"]
+        if key in _HIGHER_IS_CONSERVATIVE:
+            best[key] = p if new > cur else best[key]
+        elif key in _LOWER_IS_CONSERVATIVE:
+            best[key] = p if new < cur else best[key]
+    return list(best.values())
+
+
+def consolidate_and_apply(trade_date: str) -> dict[str, Any]:
+    """EOD: 당일 기준 미분석 손실(False) + Missed 제안을 병합해 1회 자동반영한다.
+
+    Missed 제안 도출은 v1에서는 빈 리스트(후속). False 제안만으로도 닫힘.
+    """
+    # 매수는 최대 30일 전일 수 있으므로 넉넉히 수집
+    from datetime import datetime, timedelta
+    start = (datetime.fromisoformat(trade_date) - timedelta(days=30)).strftime("%Y-%m-%d")
+    cases = collect_unreviewed_losses(start, trade_date)
+    false_proposed, _ = loss_strategy.derive_strategies(cases)
+    missed_proposed: list[dict[str, Any]] = []  # v1: 후속 연결 지점
+    merged = _merge_proposals(false_proposed, missed_proposed)
+    apply_strategies(merged, cases)
+    return {"applied": merged, "case_count": len(cases)}
+```
+
+- [ ] **Step 4: 통과 확인**
+
+Run: `PYTHONPATH=. .venv/bin/python -m pytest tests/unit/test_loss_analysis.py -q`
+Expected: PASS
+
+- [ ] **Step 5: job_review_audit 에 와이어링**
+
+`scheduler.py`의 `job_review_audit`에서 `run_review_audit(today)` **성공 직후**에 추가:
+
+```python
+        try:
+            from .engine.loss_analysis import consolidate_and_apply
+            applied = consolidate_and_apply(today)
+            logger.info("SUCCESS: [ReviewAudit] 손실전략 종합 반영 applied=%d case=%d",
+                        len(applied.get("applied", [])), applied.get("case_count", 0))
+        except Exception as exc:
+            logger.error("FAIL: [ReviewAudit] 손실전략 종합 반영 실패 — %s", exc)
+```
+
+- [ ] **Step 6: 커밋**
+
+```bash
+git add backend/services/engine/loss_analysis.py backend/services/scheduler.py tests/unit/test_loss_analysis.py
+git commit -m "feat: EOD Review 종합 반영(Missed+False 병합 1회 적용)"
 ```
 
 ---
@@ -543,15 +641,14 @@ async function runLossAnalysis(start, end) {
     alert('분석 거부 — 손실 표본 부족 (현재 ' + (p.have||0) + '건 / 최소 ' + (p.needed||3) + '건 필요).\n더 쌓인 뒤 다시 시도하세요.');
     return;
   }
-  var applied = p.applied || [], observing = p.observing || [];
-  if (applied.length === 0) {
-    alert('분석 완료 — 즉시 반영할 전략 없음.\n관찰 보류 ' + observing.length + '건.');
+  var proposed = p.proposed || [], observing = p.observing || [];
+  if (proposed.length === 0) {
+    alert('분석 완료 — EOD에 반영할 전략 없음.\n관찰 보류 ' + observing.length + '건.');
   } else {
-    var lines = applied.map(function(s){ return '· ' + s.setting_key + ' → ' + s.new_value + ' (' + s.reason + ')'; }).join('\n');
-    alert('분석 완료 — 반영된 전략 ' + applied.length + '건 / 관찰 보류 ' + observing.length + '건.\n\n' + lines);
+    var lines = proposed.map(function(s){ return '· ' + s.setting_key + ' → ' + s.new_value + ' (' + s.reason + ')'; }).join('\n');
+    alert('분석 완료 — 장마감 Review에서 반영 예정 ' + proposed.length + '건 / 관찰 보류 ' + observing.length + '건.\n(실제 반영은 장마감 후 Missed와 함께 일괄 적용됩니다)\n\n' + lines);
   }
-  // 목록 갱신(분석된 손실은 reviewed 처리되어 사라짐)
-  if (typeof loadFalsePositives === 'function') loadFalsePositives();
+  // 버튼은 미리보기이므로 즉시 숨김 처리하지 않는다(EOD 반영 시 reviewed 처리됨).
 }
 ```
 

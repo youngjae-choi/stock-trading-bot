@@ -1,6 +1,18 @@
-# 손실 분석 → 전략 자동반영 — 설계서 v1.0
+# 손실 분석 → 전략 자동반영 — 설계서 v1.1
 
 작성일: 2026-06-03 · 대상 화면: False Positive(손실분석)
+
+## v1.1 변경 (PM 지시 2026-06-03)
+
+손실분석 결과를 **즉시 직접 반영하지 않는다.** 흐름을 다음으로 변경:
+
+```
+장마감(S9) → Missed 분석 → False 분석 → Review 리포트에 종합
+            → Review 종합 단계에서 Missed+False+당일거래를 합쳐 하루 한 번 일괄 자동반영
+```
+
+- "손실분석 실행" 버튼 = **분석·제안 미리보기 전용**(반영 안 함). 원인 서술 + "EOD에 반영될 전략" 제안을 팝업에 표시.
+- 실제 설정 반영 = **EOD Review 종합(S10/S11)** 이 Missed 제안과 합쳐 충돌 조정 후 1회. reviewed 숨김도 이때.
 
 ## 원본 요구사항 (PM 발화 그대로 인용)
 
@@ -30,10 +42,10 @@
 | 2. 실행 | "손실분석 실행" → **화면 범위 내 미분석 손실 전체**를 대상으로 분석 |
 | 3. 표본 게이트(전역) | **전체 손실 < 3건 → 분석 거부**. 아무 것도 바꾸지 않고 거부 사유 표시 |
 | 4. 원인분석(하이브리드) | 통과 시 **각 종목별 손실 원인을 LLM이 서술** + 후보 전략 제안 |
-| 5. 전략 확정(결정적) | 실제 반영은 결정적 로직으로만. **같은 원인 패턴 3건+ 전략만 자동반영**, 미만은 "관찰 중" 보류 |
-| 6. 자동반영 | 자동반영 대상은 **전부 즉시 시스템 반영**(승인 단계 없음). 모든 변경은 가드레일 clamp + 감사로그 |
-| 7. 알림 | **완료 팝업**에 반영 전략 목록 + 보류(관찰) 목록 + 거부 사유. (텔레그램/Alert Center 미사용) |
-| 8. 미표시 | 분석 끝난 손실 case → **reviewed 처리 → 목록에서 숨김** |
+| 5. 전략 제안(결정적) | 같은 원인 패턴 3건+ 전략은 "EOD 반영 대상", 미만은 "관찰 중". **버튼은 제안만, 반영 안 함** |
+| 6. 버튼 팝업 | **완료 팝업**에 제안 전략(EOD 반영 예정) + 관찰 보류 + 거부 사유. (텔레그램/Alert 미사용) |
+| 7. EOD 종합 반영 | 장마감 Review 종합 단계가 **Missed+False+당일거래**를 합쳐 충돌 조정 후 **하루 1회 일괄** 설정 반영(가드레일 clamp+감사). 승인 단계 없음 |
+| 8. 미표시 | **EOD 반영 시점에** 분석된 손실 case → reviewed 처리 → 목록에서 숨김 |
 
 ## 결정 사항 (PM 승인 완료)
 
@@ -46,26 +58,35 @@
 
 ## 아키텍처
 
-신규 엔드포인트 `POST /api/v1/false-positive/analyze?start=&end=` 가 오케스트레이션한다:
+**A. 미리보기 — `POST /api/v1/false-positive/analyze?start=&end=` (반영 안 함)**
 
 ```
-[손실분석 실행]
-  └─ POST /false-positive/analyze?start=&end=
-       1) 대상 수집: false_positive_cases 중 (범위 내, status≠reviewed) 손실 case
-       2) 전역 표본 게이트: 총 손실 < 3 → return {refused:true, reason, needed:3}
-       3) LLM 원인 서술: 종목별 손실 원인 narrative + 후보 전략 (하이브리드)
-       4) 전략 도출 (LLM 제안 + 결정적 게이트):
-            - 손실들을 원인 패턴으로 그룹핑 (프로파일/청산사유/섹터/등락률대 등)
-            - 각 패턴마다 LLM이 "어떤 설정을 어떻게 바꾸면 재발이 줄지" 제안
-              (engine.*, risk.*, profile params 등 어떤 설정이든 자유롭게 타깃)
-            - 결정적 게이트: 패턴 표본 ≥ 3 AND 설정 키가 화이트리스트(튜닝 허용 설정)에
-              속하면 자동반영 대상, 아니면 관찰 보류
-       5) 자동반영: 제안값을 가드레일로 clamp 후 settings_store.upsert_setting
-                    + 학습 메모리(active) 저장 → 다음 스크리닝/플랜 반영
-       6) 분석된 case mark_reviewed
-       7) return {applied:[...], observing:[...], analyzed_symbols:[...], refused:false}
-  └─ 완료 팝업: 반영 전략 N건 / 관찰 보류 M건 / (거부 시) 사유
+[손실분석 실행 버튼]
+  └─ POST /false-positive/analyze (preview=true)
+       1) 대상 수집: false_positive_cases 중 (범위, reviewed_at IS NULL) 손실
+       2) 전역 표본 게이트: 총 손실 < 3 → {refused:true, needed:3}
+       3) (옵션) LLM 원인 서술
+       4) 전략 제안 도출(결정적 게이트): 패턴 그룹핑 → 패턴 ≥ 3 & 화이트리스트면
+          "proposed", 아니면 "observing". 값은 가드레일 clamp.
+       5) return {proposed:[...], observing:[...], refused:false}  ← 반영/숨김 안 함
+  └─ 완료 팝업: EOD 반영 예정 전략 N건 / 관찰 M건 / (거부 시) 사유
 ```
+
+**B. EOD 종합 반영 — Review 파이프라인 (job_review_audit, 자동)**
+
+```
+15:20 S9 청산
+ 16:00 job_review_audit:
+    - generate_false_positives(today)  (기존)
+    - run_review_audit(today): 리포트에 False+Missed+당일거래 종합 (기존)
+ → 종합 반영 단계 (신규/S11 확장):
+    1) Missed 제안 + False 제안 도출 (loss_strategy.derive_strategies 재사용)
+    2) 충돌 조정: 같은 설정 키는 더 보수적(손실 방어적) 값 채택
+    3) 일괄 자동반영: clamp → settings_store.upsert_setting + audit + 학습메모리
+    4) 반영에 쓰인 False case → reviewed 처리(숨김)
+```
+
+핵심: **반영·숨김은 B(EOD)에서만.** A(버튼)는 같은 도출 로직으로 "제안 미리보기"만 한다.
 
 ### 모듈 경계 (단일 책임)
 
