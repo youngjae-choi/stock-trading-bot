@@ -5,6 +5,7 @@ from typing import Any
 
 from ..db import get_connection
 from ..settings_store import upsert_setting
+from . import loss_strategy
 
 _GLOBAL_MIN_SAMPLE = 3
 
@@ -49,3 +50,15 @@ def apply_strategies(applied: list[dict[str, Any]], cases: list[dict[str, Any]])
             f"손실분석 자동반영: {s.get('reason','')}", actor="loss_analysis",
         )
     _mark_reviewed([str(c["id"]) for c in cases if c.get("id")])
+
+
+def analyze(start: str, end: str) -> dict[str, Any]:
+    """미리보기: 수집 → 전역 게이트 → 전략 제안 도출. 반영/숨김은 하지 않는다(EOD에서 수행)."""
+    cases = collect_unreviewed_losses(start, end)
+    if is_sample_insufficient(cases):
+        return {"refused": True, "reason": "손실 표본 부족", "have": len(cases),
+                "needed": _GLOBAL_MIN_SAMPLE, "proposed": [], "observing": [],
+                "analyzed_symbols": []}
+    proposed, observing = loss_strategy.derive_strategies(cases)
+    return {"refused": False, "proposed": proposed, "observing": observing,
+            "analyzed_symbols": [c.get("symbol") for c in cases]}

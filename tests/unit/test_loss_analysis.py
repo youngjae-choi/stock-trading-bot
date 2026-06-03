@@ -50,3 +50,24 @@ class ApplyTest(unittest.TestCase):
             loss_analysis.apply_strategies(applied, cases)
         self.assertEqual(len(calls["upsert"]), 1)
         self.assertEqual(set(calls["reviewed"]), {"1", "2", "3"})
+
+
+class AnalyzeTest(unittest.TestCase):
+    def test_refused_when_insufficient(self):
+        with patch.object(loss_analysis, "collect_unreviewed_losses", return_value=[{"id": "1"}]):
+            res = loss_analysis.analyze("2026-05-01", "2026-06-03")
+        self.assertTrue(res["refused"])
+        self.assertEqual(res["needed"], 3)
+
+    def test_success_returns_proposals_without_applying(self):
+        cases = [
+            {"id": str(i), "symbol": f"S{i}", "exit_reason": "INITIAL_STOP_LOSS",
+             "assigned_profile": "MID_VOL", "pnl_pct": -0.01}
+            for i in range(3)
+        ]
+        with patch.object(loss_analysis, "collect_unreviewed_losses", return_value=cases), \
+             patch.object(loss_analysis, "apply_strategies") as apply_mock:
+            res = loss_analysis.analyze("2026-05-01", "2026-06-03")
+        self.assertFalse(res["refused"])
+        self.assertGreaterEqual(len(res["proposed"]), 1)
+        apply_mock.assert_not_called()
