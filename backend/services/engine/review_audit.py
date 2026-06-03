@@ -989,10 +989,14 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
             ),
         )
 
-    total_trades = len(signals)
+    # 거래/손익 집계는 "체결된 신호"만 기준으로 한다. 차단(preflight_blocked)·대기 신호는
+    # 거래가 아니며, 같은 포지션의 실현손익이 그 신호들에도 back-fill되어 합산 시 N배로
+    # 부풀던 버그를 막는다(예: 2026-06-02 246690 -185,755가 4개 신호에 중복 → -743,020 오집계).
+    _EXECUTED_STATUSES = {"executed", "filled"}
     total_pnl = 0.0
     win_count = 0
     loss_count = 0
+    executed_trades = 0
     profile_bucket: dict[str, dict[str, float]] = defaultdict(
         lambda: {"count": 0, "win": 0, "pnl": 0.0, "executed": 0, "failed": 0, "preflight_blocked": 0}
     )
@@ -1001,23 +1005,28 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
     early_trailing_count = 0
 
     for signal in signals:
+        status = str(signal.get("status") or "").lower()
+        profile = str(
+            _signal_value(signal, "risk_profile", _signal_value(signal, "profile_assigned", "UNKNOWN"))
+        )
+        # 상태별 카운트는 전체 신호 기준(차단/실패 가시성 유지)
+        if status in profile_bucket[profile]:
+            profile_bucket[profile][status] += 1
+
+        # 거래·손익·승패는 체결된 신호만 집계
+        if status not in _EXECUTED_STATUSES:
+            continue
+
+        executed_trades += 1
         pnl = _safe_float(signal.get("realized_pnl"))
         total_pnl += pnl
         if pnl > 0:
             win_count += 1
+            profile_bucket[profile]["win"] += 1
         else:
             loss_count += 1
-
-        profile = str(
-            _signal_value(signal, "risk_profile", _signal_value(signal, "profile_assigned", "UNKNOWN"))
-        )
         profile_bucket[profile]["count"] += 1
         profile_bucket[profile]["pnl"] += pnl
-        status = str(signal.get("status") or "").lower()
-        if status in profile_bucket[profile]:
-            profile_bucket[profile][status] += 1
-        if pnl > 0:
-            profile_bucket[profile]["win"] += 1
 
         exit_reason = _fallback_exit_reason(signal)
         exit_bucket[exit_reason]["count"] += 1
@@ -1029,6 +1038,8 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
             trailing_recovery_rates.append(recovery_rate)
             if recovery_rate < 0.5:
                 early_trailing_count += 1
+
+    total_trades = executed_trades
 
     profile_summary = {
         profile: {
