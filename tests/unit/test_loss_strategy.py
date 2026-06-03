@@ -21,5 +21,24 @@ class ClampTest(unittest.TestCase):
         self.assertFalse(loss_strategy.is_tunable("risk.emergency_halt_enabled"))
 
 
+class DeriveStrategyTest(unittest.TestCase):
+    def _cases(self, n, exit_reason="INITIAL_STOP_LOSS", profile="MID_VOL", pnl=-0.018):
+        return [
+            {"symbol": f"00{i}", "exit_reason": exit_reason,
+             "assigned_profile": profile, "pnl_pct": pnl}
+            for i in range(n)
+        ]
+
+    def test_stop_loss_pattern_3plus_yields_apply(self):
+        applied, observing = loss_strategy.derive_strategies(self._cases(3))
+        self.assertTrue(any(s["setting_key"] == "engine.min_price_change_pct" for s in applied))
+        self.assertEqual(observing, [])
+
+    def test_pattern_below_3_goes_observing(self):
+        applied, observing = loss_strategy.derive_strategies(self._cases(2))
+        self.assertEqual(applied, [])
+        self.assertEqual(len(observing), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
