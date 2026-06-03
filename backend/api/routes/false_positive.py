@@ -14,6 +14,7 @@ from ...services.engine.false_positive import (
     get_today_false_positives,
     mark_false_positive_reviewed,
 )
+from ...services.engine.loss_analysis import analyze as analyze_losses
 
 router = APIRouter(prefix="/api/v1/false-positive", tags=["false-positive"])
 logger = logging.getLogger("FalsePositiveAPI")
@@ -58,6 +59,16 @@ def review_case(fp_id: str) -> dict:
         return JSONResponse(status_code=404, content={"ok": False, "error": "not found"})
     logger.info("SUCCESS: PATCH /api/v1/false-positive/%s/review", fp_id)
     return {"ok": True}
+
+
+@router.post("/analyze")
+def post_analyze(start: str, end: str):
+    """범위 내 미분석 손실을 분석해 EOD 반영 예정 전략을 미리보기로 반환한다(직접 반영 안 함)."""
+    logger.info("START: POST /api/v1/false-positive/analyze start=%s end=%s", start, end)
+    result = analyze_losses(start, end)
+    logger.info("SUCCESS: POST /api/v1/false-positive/analyze refused=%s proposed=%d",
+                result.get("refused"), len(result.get("proposed", [])))
+    return {"ok": True, "payload": result}
 
 
 @router.post("/generate")
