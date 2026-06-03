@@ -123,23 +123,29 @@
 
     async function generateFalsePositive() {
       _initFpDates();
-      var e         = document.getElementById('fp-end-date');
-      var tradeDate = e ? e.value : '';
-      if (!tradeDate) { alert('날짜를 입력해주세요.'); return; }
-      if (!confirm(tradeDate + ' 기준 손실 거래를 분석해 False Positive 데이터를 생성할까요?')) return;
+      var s     = document.getElementById('fp-start-date');
+      var e     = document.getElementById('fp-end-date');
+      var start = s ? s.value : '';
+      var end   = e ? e.value : '';
+      if (!start || !end) { alert('날짜를 입력해주세요.'); return; }
+      await runLossAnalysis(start, end);
+    }
+
+    async function runLossAnalysis(start, end) {
       try {
-        var data = await fetchJson(
-          '/api/v1/false-positive/generate?trade_date=' + tradeDate,
-          { method: 'POST' }
-        );
-        var p = data.payload || {};
-        alert(
-          '분석 완료\n'
-          + '  전체 손실 거래: ' + (p.total_losing || 0) + '건\n'
-          + '  신규 저장: '      + (p.saved  || []).length + '건\n'
-          + '  중복 스킵: '      + (p.skipped || []).length + '건'
-        );
-        searchFalsePositive();
+        var r = await fetchJson('/api/v1/false-positive/analyze?start=' + start + '&end=' + end, { method: 'POST' });
+        var p = (r && r.payload) || {};
+        if (p.refused) {
+          alert('분석 거부 — 손실 표본 부족 (현재 ' + (p.have || 0) + '건 / 최소 ' + (p.needed || 3) + '건 필요).\n더 쌓인 뒤 다시 시도하세요.');
+          return;
+        }
+        var proposed = p.proposed || [], observing = p.observing || [];
+        if (proposed.length === 0) {
+          alert('분석 완료 — EOD에 반영할 전략 없음.\n관찰 보류 ' + observing.length + '건.');
+        } else {
+          var lines = proposed.map(function (s) { return '· ' + s.setting_key + ' → ' + s.new_value + ' (' + s.reason + ')'; }).join('\n');
+          alert('분석 완료 — 장마감 Review에서 반영 예정 ' + proposed.length + '건 / 관찰 보류 ' + observing.length + '건.\n(실제 반영은 장마감 후 Missed와 함께 일괄 적용됩니다)\n\n' + lines);
+        }
       } catch (ex) {
         alert('실행 실패: ' + ex.message);
       }
