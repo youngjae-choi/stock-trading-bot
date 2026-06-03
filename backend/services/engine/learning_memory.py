@@ -331,40 +331,6 @@ async def run_learning_memory_builder(trade_date: str) -> dict:
                 )
             )
 
-    total_exit_trades = sum(int(row.get("trade_count") or 0) for row in exit_rows)
-    stop_loss_rows = [row for row in exit_rows if str(row.get("exit_reason") or "").lower() == "stop_loss"]
-    stop_loss_count = sum(int(row.get("trade_count") or 0) for row in stop_loss_rows)
-    if total_exit_trades > 0 and stop_loss_count / total_exit_trades > 0.3:
-        stop_loss_avg_pnl = (
-            sum(float(row.get("avg_pnl") or 0.0) * int(row.get("trade_count") or 0) for row in stop_loss_rows)
-            / stop_loss_count
-            if stop_loss_count
-            else 0.0
-        )
-        auto_apply_allowed, requires_approval = _auto_apply_flags(stop_loss_count, stop_loss_avg_pnl)
-        memories.append(
-            _make_memory(
-                trade_date=trade_date,
-                scope="S4_HYBRID_SCREENING",
-                category="screening_weight",
-                summary=f"Stop-loss exits exceeded threshold at ratio={stop_loss_count / total_exit_trades:.2f}.",
-                evidence={
-                    "stop_loss_count": stop_loss_count,
-                    "total_exit_trades": total_exit_trades,
-                    "stop_loss_ratio": stop_loss_count / total_exit_trades,
-                    "avg_pnl": stop_loss_avg_pnl,
-                },
-                recommendation={
-                    "action": "raise_ai_confidence_min",
-                    "reason": "high_stop_loss_ratio",
-                },
-                auto_apply_allowed=auto_apply_allowed,
-                requires_approval=requires_approval,
-                created_at=created_at,
-                expires_at=expires_at,
-            )
-        )
-
     for entry in report.get("missed_entries", []):
         if not isinstance(entry, dict):
             continue

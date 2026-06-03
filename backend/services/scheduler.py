@@ -1012,6 +1012,15 @@ async def job_review_audit() -> None:
     except Exception as exc:
         logger.error("FAIL: [Job ReviewAudit] 손실 스트릭 차단 실패 — reason=%s", exc)
 
+    # ── Step 5: EOD 손실전략 종합 반영 (Missed + False 병합 → 1회 자동 upsert)
+    try:
+        from .engine.loss_analysis import consolidate_and_apply
+        applied = consolidate_and_apply(today)
+        logger.info("SUCCESS: [ReviewAudit] 손실전략 종합 반영 applied=%d case=%d",
+                    len(applied.get("applied", [])), applied.get("case_count", 0))
+    except Exception as exc:
+        logger.error("FAIL: [ReviewAudit] 손실전략 종합 반영 실패 — %s", exc)
+
 
 async def job_missed_returns_update() -> None:
     """Run missed-opportunity return updates independently of S9/S10 review.
