@@ -1463,7 +1463,7 @@
 }
 .mb-market-value { font-weight: 600; font-size: 12px; }
 .mb-market-value.up   { color: #f85149; }  /* 한국 기준: 상승=빨강 */
-.mb-market-value.down { color: #3fb950; }  /* 하락=초록 */
+.mb-market-value.down { color: #4493f8; }  /* 하락=파랑 (PM 지시 2026-06-03) */
 .mb-market-value.flat { color: var(--muted); }
 
 /* 분석 섹션 */
