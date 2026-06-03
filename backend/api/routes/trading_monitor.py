@@ -739,7 +739,13 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
                     mtr.confidence AS tone_confidence
                 FROM daily_review_reports drr
                 LEFT JOIN daily_trade_summary dts ON drr.trade_date = dts.trade_date
-                LEFT JOIN market_tone_results mtr ON drr.trade_date = mtr.trade_date
+                -- market_tone_results는 장중 슬롯마다 기록되어 날짜당 여러 행이다.
+                -- 날짜당 장 마감 최신 톤 1건만 조인해 일별 결과가 fan-out되지 않게 한다.
+                LEFT JOIN market_tone_results mtr ON mtr.id = (
+                    SELECT m2.id FROM market_tone_results m2
+                    WHERE m2.trade_date = drr.trade_date
+                    ORDER BY m2.created_at DESC LIMIT 1
+                )
                 """
         if start_date and end_date:
             rows = conn.execute(
