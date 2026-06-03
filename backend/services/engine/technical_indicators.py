@@ -116,7 +116,7 @@ def calculate_indicators(symbol: str, trade_date: str) -> dict[str, Any]:
         logger.warning("WARN: calculate_indicators invalid date symbol=%s date=%s error=%s", symbol, trade_date, exc)
         return result
 
-    start = (dt - timedelta(days=40)).strftime("%Y%m%d")
+    start = (dt - timedelta(days=120)).strftime("%Y%m%d")
     end = dt.strftime("%Y%m%d")
 
     try:

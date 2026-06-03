@@ -1182,7 +1182,7 @@ class DecisionEngine:
         # AI가 생성한 진입 임계값에 Settings 가드레일을 적용한다.
         floor = _get_setting_float("engine.min_confidence_floor", 0.40)
         ai_conf_min = max(ai_conf_min, floor)
-        price_floor = _get_setting_float("engine.min_price_change_pct", 0.5)
+        price_floor = _get_setting_float("engine.min_price_change_pct", 1.5)
         price_ceil = _get_setting_float("engine.max_price_change_pct", 8.0)
         price_min_pct = max(price_min_pct, price_floor)
         price_max_pct = min(price_max_pct, price_ceil)
