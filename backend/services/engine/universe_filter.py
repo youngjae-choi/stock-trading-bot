@@ -61,7 +61,7 @@ _ETF_NAME_PREFIXES: tuple[str, ...] = (
 # - "단일종목": 단일종목 선물 ETF (개별주 파생)
 _EXCLUDED_NAME_KEYWORDS: tuple[str, ...] = (
     "액티브", "ETN", "인버스", "Inverse", "레버리지", "Leverage",
-    "2X", "3X", "2배", "3배", "단일종목",
+    "2X", "3X", "2배", "3배", "단일종목", "스팩",
 )
 
 # 종목 코드 패턴 — 코드 자체로 파생/ETN/단일종목 ETF 식별 가능한 경우.
@@ -72,6 +72,10 @@ _EXCLUDED_CODE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^Q\d{6}$"),
     re.compile(r"^\d{4}[A-Z]\d$"),
 )
+
+# 우선주: 종목명이 '우' / 'N우' / '우B' / 'N우B' / '우C' 로 끝남 (예: 삼성전자우, 진흥기업2우B, 금강공업우).
+# 단타봇은 보통주만 거래 — 우선주는 유동성 제한·괴리로 제외한다.
+_PREFERRED_NAME_PATTERN = re.compile(r"\d*우[A-Z]?$")
 
 
 def _is_excluded_product(symbol: str, name: str) -> bool:
@@ -97,6 +101,8 @@ def _is_excluded_product(symbol: str, name: str) -> bool:
     if any(keyword in raw for keyword in _EXCLUDED_NAME_KEYWORDS):
         return True
     if any(keyword.upper() in upper for keyword in _EXCLUDED_NAME_KEYWORDS):
+        return True
+    if _PREFERRED_NAME_PATTERN.search(raw):
         return True
     return False
 
