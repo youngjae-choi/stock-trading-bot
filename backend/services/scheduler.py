@@ -938,26 +938,62 @@ async def job_decision_engine_stop() -> None:
         logger.error("FAIL: [Job9] 비활성화 실패 — reason=%s", exc)
 
 
+def _within_late_plan_window() -> bool:
+    """늦은-플랜 자가 활성화 허용 시간대 (09:00~15:00 KST). EOD 청산 이후 재활성 방지."""
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    return 9 <= now.hour < 15
+
+
+def _s6_activated_today() -> bool:
+    """오늘 S6 Decision Engine 활성화가 성공한 적 있는지(audit 기준).
+
+    True면 이미 한 번 켜졌던 것 — 늦은-플랜 자가활성화 대상이 아니다(수동 정지 등 존중).
+    """
+    try:
+        from .db import get_connection
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM pipeline_run_audit WHERE step='S6' AND status='success' AND started_at >= ? LIMIT 1",
+                (_today_kst(),),
+            ).fetchone()
+        return row is not None
+    except Exception as exc:
+        logger.warning("WARN: S6 금일 활성화 이력 조회 실패 — %s", exc)
+        return False
+
+
 async def job_decision_engine_watchdog() -> None:
     """매수 엔진 자동복구 워치독.
 
-    "활성이어야 하는데(should_be_active) 꺼진" 상태를 감지하면 Job6 경로로
-    재활성화한다. 장중 서버 재기동이나 예기치 못한 비활성을 자가 복구한다.
-    수동 긴급정지(risk.emergency_halt_enabled)는 존중해 재활성화하지 않는다.
+    ① should_be_active=True인데 꺼진 경우 재활성화(기존).
+    ② should_be_active=False라도 '장중 + 활성 Daily Plan 존재 + 금일 S6 미활성'이면
+       늦은-플랜 자가 활성화(오전 S6가 플랜 없음으로 차단되고 장중 재선별로 플랜이
+       늦게 생긴 경우). 수동 긴급정지/수동 정지는 존중한다.
     """
     try:
-        if not _get_engine_should_be_active():
-            return  # EOD 이후 또는 미개시 — 복구 대상 아님
         if _is_emergency_halt_active():
-            return  # 운영자가 수동 정지 — 존중
+            return  # 운영자 수동 정지 — 존중
         from .engine.decision_engine import decision_engine
-
         if decision_engine.is_active():
-            return  # 이미 정상 — 무동작
-        logger.warning(
-            "WARN: [Watchdog] Decision Engine 비활성 감지 (should_be_active=True, halt=False) — 재활성화 시도"
-        )
-        await job_decision_engine_start()
+            return  # 이미 정상
+
+        if _get_engine_should_be_active():
+            logger.warning(
+                "WARN: [Watchdog] Decision Engine 비활성 감지 (should_be_active=True, halt=False) — 재활성화 시도"
+            )
+            await job_decision_engine_start()
+            return
+
+        # 늦은-플랜 자가 활성화 (should_be_active=False 케이스)
+        if (
+            _within_late_plan_window()
+            and not _s6_activated_today()
+            and _get_active_daily_plan_for_s6()
+        ):
+            logger.info(
+                "INFO: [Watchdog] 장중 활성 Daily Plan 감지(should_be_active=False, 금일 S6 미활성) — 늦은-플랜 엔진 활성화 시도"
+            )
+            await job_decision_engine_start()
     except Exception as exc:
         logger.error("FAIL: [Watchdog] Decision Engine 자동복구 실패 — reason=%s", exc)
 
