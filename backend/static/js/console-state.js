@@ -73,11 +73,11 @@
   var mfaState = null;
   var overviewData = null;
   var OPS_STEPS = [
-    { id: 's1', label: 'S1 토큰 갱신', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 프로세스 하위 단계 · KIS token-refresh' },
-    { id: 's2', label: 'S2 시장톤 분석', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 프로세스 하위 단계 · LLM -> market_tone_results' },
-    { id: 's3', label: 'S3 유니버스 필터', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 프로세스 하위 단계 · KIS -> universe_filter_results' },
-    { id: 's4', label: 'S4 하이브리드 스크리닝', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 프로세스 하위 단계 · LLM 정성 평가 -> hybrid_screening_results' },
-    { id: 's5', label: 'S5 Daily Plan 생성', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 프로세스 하위 단계 · Scheduler -> daily_trading_plans' },
+    { id: 's1', label: 'S1 토큰 갱신', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 하위 단계 · KIS token-refresh · ⚠️ 실효 09:01(장 개시 가드)' },
+    { id: 's2', label: 'S2 시장톤 분석', defaultTime: '08:30', settingKey: 'schedule_s2_time', detail: '프리마켓 독립 잡 (장 개시 전) · 야간데이터 기반 LLM -> market_tone_results · 09:01 파이프라인은 이 결과 재사용' },
+    { id: 's3', label: 'S3 유니버스 필터', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 하위 단계 · KIS -> universe_filter_results · ⚠️ 실효 09:01(장 개시 후 랭킹데이터 필요)' },
+    { id: 's4', label: 'S4 하이브리드 스크리닝', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 하위 단계 · LLM 정성 평가 -> hybrid_screening_results · ⚠️ 실효 09:01' },
+    { id: 's5', label: 'S5 Daily Plan 생성', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 하위 단계 · Scheduler -> daily_trading_plans · ⚠️ 실효 09:01' },
     { id: 's5v', label: 'S5-V Daily Plan 검증', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 프로세스 하위 단계 · Schema/Risk Guard 검증' },
     { id: 's5a', label: 'S5-A Daily Plan 활성화 확인', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time', detail: '거래준비 프로세스 하위 단계 · active plan 상태 확인' },
     { id: 's6', label: 'S6 Decision Engine 활성화', defaultTime: '09:45', settingKey: 'schedule_s6_time', detail: 'WS 연결 + RulePack + Risk Profile + Daily Plan 조건 감시' },
@@ -87,8 +87,9 @@
     { id: 's10', label: 'S10 Review & Audit', defaultTime: '15:20', settingKey: 'schedule_postprocess_time', detail: '후처리 프로세스 하위 단계 · review_audit -> daily_review_reports' },
   ];
   var SCHEDULED_OPERATIONS = [
-    { id: 'trade-prep', label: '거래준비 프로세스 시작 (S1~S5-A 순차 실행)', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time' },
-    { id: 's6', label: 'S6 Decision Engine 시간', defaultTime: '09:45', settingKey: 'schedule_s6_time' },
+    { id: 'premarket-tone', label: 'S2 프리마켓 시장톤 (장 개시 전 독립 실행)', defaultTime: '08:30', settingKey: 'schedule_s2_time' },
+    { id: 'trade-prep', label: '거래준비 프로세스 시작 (S1·S3~S5-A, 실효 09:01)', defaultTime: '07:45', settingKey: 'schedule_trade_prep_time' },
+    { id: 's6', label: 'S6 Decision Engine 시간 (실효 09:10)', defaultTime: '09:45', settingKey: 'schedule_s6_time' },
     { id: 'postprocess', label: '후처리 프로세스 시작 (S9~S10 순차 실행)', defaultTime: '15:20', settingKey: 'schedule_postprocess_time' },
   ];
   var timeline = SCHEDULED_OPERATIONS

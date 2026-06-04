@@ -1,15 +1,21 @@
   var schedulerKeys = [
     {
+      key: "schedule_s2_time",
+      label: "S2 프리마켓 시장톤 시간",
+      default: "08:30",
+      description: "장 개시 전 독립 실행 · 야간데이터 기반 시장톤 분석. 09:01 거래준비 파이프라인이 이 결과를 재사용."
+    },
+    {
       key: "schedule_trade_prep_time",
       label: "거래준비 프로세스 시작 시간",
       default: "07:45",
-      description: "S1 토큰 갱신 -> S2 시장톤 -> S3 유니버스 -> S4 스크리닝 -> S5 Daily Plan -> S5-V 검증 -> S5-A 활성화 확인"
+      description: "S1 토큰 -> S3 유니버스 -> S4 스크리닝 -> S5 Daily Plan -> S5-V/S5-A. ⚠️ 장 개시 후 랭킹데이터가 필요해 09:01 이전 설정은 09:01로 자동 보정됨(S2는 프리마켓에서 선행)."
     },
     {
       key: "schedule_s6_time",
       label: "S6 Decision Engine 시간",
       default: "09:45",
-      description: "기존 S6 자동 활성화 스케줄 유지"
+      description: "기존 S6 자동 활성화 스케줄 유지. ⚠️ 거래준비+5분(최소 09:10)로 자동 보정됨."
     },
     {
       key: "schedule_s7_time",
