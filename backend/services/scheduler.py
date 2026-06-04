@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from .engine.market_tone import get_today_market_tone, run_market_tone_analysis
 from .kis.common.client import kis_client
 from .kis.domestic.service import get_balance
 
@@ -721,6 +722,36 @@ def _get_recent_pre_s6_audit_context() -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def _s2_already_done(trade_date: str) -> bool:
+    """오늘 시장 톤(S2)이 이미 산출됐는지 — 프리마켓 잡 결과 재사용 판단."""
+    try:
+        return get_today_market_tone(trade_date) is not None
+    except Exception as exc:
+        logger.warning("WARN: S2 존재 확인 실패 trade_date=%s reason=%s", trade_date, exc)
+        return False
+
+
+async def job_premarket_market_tone() -> None:
+    """Job (프리마켓 08:30 KST): 장 개시 전 시장 톤(S2)을 독립 실행해 미리 확보한다.
+
+    09:01 거래준비 파이프라인은 이 결과가 있으면 S2를 재사용(스킵)한다.
+    """
+    trade_date = _today_kst()
+    logger.info("START: [PremarketTone] S2 프리마켓 시장 톤 trade_date=%s", trade_date)
+    run_id = _audit_step_start("S2", {"pipeline": "premarket_tone"})
+    try:
+        await job_refresh_kis_token()  # 야간선물 KIS 호출용 토큰 보장
+        result = await run_market_tone_analysis(trigger_source="auto_scheduler")
+        _audit_step_finish(run_id=run_id, status="success",
+                           message=f"tone={result.get('tone')} provider={result.get('provider')}",
+                           metadata={"pipeline": "premarket_tone"})
+        logger.info("SUCCESS: [PremarketTone] tone=%s", result.get("tone"))
+    except Exception as exc:
+        _audit_step_finish(run_id=run_id, status="failed", message=str(exc),
+                           metadata={"pipeline": "premarket_tone"})
+        logger.error("FAIL: [PremarketTone] %s", exc)
+
+
 async def job_trade_preparation_pipeline() -> None:
     """Run S1 through S5-A sequentially from one trade-preparation schedule key."""
     logger.info("START: [TradePrep] S1~S5-A 거래준비 프로세스")
@@ -763,14 +794,17 @@ async def job_trade_preparation_pipeline() -> None:
 
         from .engine.daily_plan import run_daily_plan_generation
         from .engine.hybrid_screening import run_hybrid_screening
-        from .engine.market_tone import run_market_tone_analysis
         from .engine.universe_filter import run_universe_filter
 
-        await _run_trade_prep_callable(
-            "S2",
-            "시장 톤 분석",
-            lambda: run_market_tone_analysis(trigger_source="auto_scheduler"),
-        )
+        if _s2_already_done(_today_kst()):
+            logger.info("INFO: [TradePrep] S2 프리마켓 시장 톤 재사용 — 스킵")
+            _audit_skipped_step("S2", "프리마켓 시장 톤 재사용", {"pipeline": "trade_preparation"}, status="skipped")
+        else:
+            await _run_trade_prep_callable(
+                "S2",
+                "시장 톤 분석",
+                lambda: run_market_tone_analysis(trigger_source="auto_scheduler"),
+            )
         await _run_trade_prep_callable(
             "S3",
             "유니버스 필터",
@@ -1249,6 +1283,7 @@ def _build_scheduler() -> AsyncIOScheduler:
     job 실패 시 예외가 외부로 전파되지 않도록 각 job 함수에서 try/except 처리한다.
     """
     schedule_times = {
+        "premarket_tone": "08:30",
         "trade_prep": "07:45",
         "s6": "09:45",
         "postprocess": "15:20",
@@ -1263,6 +1298,7 @@ def _build_scheduler() -> AsyncIOScheduler:
             if isinstance(item.get("key"), str) and item["key"].startswith("schedule_")
         }
         key_map = {
+            "premarket_tone": "schedule_s2_time",
             "trade_prep": "schedule_trade_prep_time",
             "s6": "schedule_s6_time",
             "postprocess": "schedule_postprocess_time",
@@ -1292,6 +1328,7 @@ def _build_scheduler() -> AsyncIOScheduler:
         except Exception as exc:
             logger.warning("WARN: Scheduler invalid time key=%s value=%s reason=%s", setting_key, raw_time, exc)
             fallback = {
+                "premarket_tone": (8, 30),
                 "trade_prep": (7, 45),
                 "s6": (9, 45),
                 "postprocess": (15, 20),
@@ -1301,6 +1338,14 @@ def _build_scheduler() -> AsyncIOScheduler:
 
     scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
 
+    hour, minute = _parse_time("premarket_tone")
+    scheduler.add_job(
+        job_premarket_market_tone,
+        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
+        id="job_premarket_market_tone",
+        name="프리마켓 시장 톤 분석 (S2)",
+        replace_existing=True,
+    )
     hour, minute = _parse_time("trade_prep")
     scheduler.add_job(
         job_trade_preparation_pipeline,
