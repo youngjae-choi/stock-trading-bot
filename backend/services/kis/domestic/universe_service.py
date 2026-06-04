@@ -214,6 +214,14 @@ async def get_price_rank(
         mrkt_map = {"J": "J", "STK": "STK", "KSQ": "KSQ"}
         segment_rows = [await _fetch_rows(mrkt_map.get(market_code, "J"), "0")]
 
+    if limit > 30 and market_code == "J" and sum(len(s) for s in segment_rows) == 0:
+        logger.warning(
+            "RETRY: price-rank segmented fetch returned 0 rows — fallback to J/0 sort_by=%s top_n=%s",
+            safe_sort_by,
+            limit,
+        )
+        segment_rows = [await _fetch_rows("J", "0")]
+
     for rows in segment_rows:
         for row in rows:
             sym = str(_pick(row, *_SYMBOL_KEYS, default=""))
