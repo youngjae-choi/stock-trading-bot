@@ -13,7 +13,7 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..db import get_connection
@@ -536,8 +536,8 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
         candidates = cost_passed
 
     # --- TSI 부착 + WS 한도까지 블렌드 top-up (매수 적극성) ---
-    from datetime import datetime, timedelta
-
+    # datetime/timedelta 는 모듈 레벨 import 사용 (지역 import 시 함수 앞부분의
+    # datetime.now() 가 UnboundLocalError 를 일으켜 S4 전체가 차단됨 — 2026-06-04 수정)
     from ..settings_store import get_setting as _get_setting
     from .technical_indicators import _pykrx_ohlcv
     from .tsi import tsi_for_closes
