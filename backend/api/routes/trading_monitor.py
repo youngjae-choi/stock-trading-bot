@@ -488,10 +488,19 @@ def get_candidates():
     overrides = plan.get("daily_overrides", {})
 
     latest_ticks = _latest_ticks_by_symbol()
+    # 이미 보유 중인 종목은 매수 대기 목록에서 제외한다.
+    # 엔진은 종목당 1회 진입(single-entry)이라 보유 종목은 재매수하지 않으므로
+    # (decision_engine._on_tick: `if symbol in managed_symbols: return`),
+    # 매수 준비도를 계산·표시하는 것은 낭비이자 오해 소지다. 보유 패널엔 그대로 남는다.
+    held_symbols = {
+        str(p.get("symbol") or "").strip()
+        for p in position_manager.get_positions()
+        if p.get("symbol")
+    }
     result = []
     for c in raw_candidates:
         code = str(c.get("symbol") or c.get("ticker") or "").strip()
-        if not code or code in excluded:
+        if not code or code in excluded or code in held_symbols:
             continue
         assignment = assignments.get(code, {})
         rule = all_rules.get(code) or {}
