@@ -24,6 +24,7 @@ _VALID_ALERT_TYPES = {
     "preflight_block",
     "dq_degraded",
     "emergency_halt",
+    "morning_diagnostic",
 }
 _VALID_SEVERITIES = {"INFO", "WARNING", "CRITICAL"}
 

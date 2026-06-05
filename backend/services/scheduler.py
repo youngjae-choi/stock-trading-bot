@@ -938,6 +938,38 @@ async def job_decision_engine_stop() -> None:
         logger.error("FAIL: [Job9] 비활성화 실패 — reason=%s", exc)
 
 
+async def job_morning_self_diagnostic() -> None:
+    """Job (09:15 KST): 아침 거래 준비 자가진단 — 문제 발견 시에만 Alert + Telegram."""
+    trade_date = _today_kst()
+    if _should_skip_auto_job("S6"):
+        logger.info("SKIP: [MorningDiag] 비거래일/스킵 — trade_date=%s", trade_date)
+        return
+    logger.info("START: [MorningDiag] 아침 자가진단 trade_date=%s", trade_date)
+    try:
+        from .engine.morning_diagnostic import run_morning_diagnostic
+        result = run_morning_diagnostic(trade_date)
+        if result["ok"]:
+            logger.info("SUCCESS: [MorningDiag] 정상 — 이슈 없음")
+            return
+        from .engine.alert_center import create_alert
+        from .alert_service import send_telegram_alert
+        lines = []
+        for iss in result["issues"]:
+            try:
+                create_alert(iss["alert_type"], iss["title"], iss["severity"], iss["detail"])
+            except Exception as exc:
+                logger.warning("WARN: [MorningDiag] alert 생성 실패 — %s", exc)
+            lines.append(f"[{iss['severity']}] {iss['title']}")
+        body = "오늘 09:15 트레이딩 자가진단 이상 감지:\n" + "\n".join(lines)
+        try:
+            await send_telegram_alert("⚠️ 트레이딩 아침 점검 이상", body)
+        except Exception as exc:
+            logger.warning("WARN: [MorningDiag] 텔레그램 발송 실패 — %s", exc)
+        logger.warning("WARN: [MorningDiag] %d개 이슈 감지 — 알림 발송 완료", len(result["issues"]))
+    except Exception as exc:
+        logger.error("FAIL: [MorningDiag] 자가진단 실패 — %s", exc)
+
+
 def _within_late_plan_window() -> bool:
     """늦은-플랜 자가 활성화 허용 시간대 (09:00~15:00 KST). EOD 청산 이후 재활성 방지."""
     now = datetime.now(ZoneInfo("Asia/Seoul"))
@@ -1449,6 +1481,15 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour=13, minute=0, timezone="Asia/Seoul"),
         id="job_dividend_alert_pm",
         name="배당락일 알림 (오후)",
+        replace_existing=True,
+    )
+
+    # 09:15 아침 거래준비 자가진단 — 문제 발견 시에만 Alert+Telegram
+    scheduler.add_job(
+        job_morning_self_diagnostic,
+        CronTrigger(hour=9, minute=15, timezone="Asia/Seoul"),
+        id="job_morning_self_diagnostic",
+        name="아침 거래준비 자가진단 (09:15)",
         replace_existing=True,
     )
 
