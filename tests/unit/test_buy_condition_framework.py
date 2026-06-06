@@ -159,3 +159,41 @@ def test_seed_is_idempotent():
     n2 = len(bcf.load_conditions())
     assert n1 == n2  # 중복 시드 안 함
     bcf._clear_all_for_test()
+
+
+def test_seed_defaults_include_tuning_params():
+    bcf._ensure_tables()
+    bcf._clear_all_for_test()
+    bcf.seed_defaults()
+    conds = bcf.load_conditions()
+    assert conds["cond_tsi"]["params"] == {"min": 0}
+    assert conds["cond_breakout"]["params"] == {"buffer_pct": 0}
+    assert conds["cond_vwap"]["params"] == {"margin_pct": 0}
+    bcf._clear_all_for_test()
+
+
+def test_migrate_fills_empty_params_only():
+    bcf._ensure_tables()
+    bcf._clear_all_for_test()
+    bcf.seed_defaults()
+    # 빈 {}로 강제(기존 DB 시뮬레이션)
+    with bcf.get_connection() as conn:
+        conn.execute("UPDATE buy_conditions SET params_json='{}' WHERE id='cond_tsi'")
+        # 운영자 커스텀 값(비어있지 않음) → 보존되어야 함
+        conn.execute("UPDATE buy_conditions SET params_json='{\"margin_pct\": 2}' WHERE id='cond_vwap'")
+    bcf.migrate_condition_params()
+    conds = bcf.load_conditions()
+    assert conds["cond_tsi"]["params"] == {"min": 0}          # 빈 → 채워짐
+    assert conds["cond_vwap"]["params"] == {"margin_pct": 2}  # 커스텀 → 보존
+    bcf._clear_all_for_test()
+
+
+def test_migrate_is_idempotent():
+    bcf._ensure_tables()
+    bcf._clear_all_for_test()
+    bcf.seed_defaults()
+    bcf.migrate_condition_params()
+    bcf.migrate_condition_params()  # 재호출
+    conds = bcf.load_conditions()
+    assert conds["cond_breakout"]["params"] == {"buffer_pct": 0}
+    bcf._clear_all_for_test()

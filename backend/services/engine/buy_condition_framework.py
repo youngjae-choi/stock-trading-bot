@@ -124,16 +124,23 @@ def _now() -> str:
 
 # 기본 조건 정의: (고정 id, name, ctype, params)
 _DEFAULT_CONDITIONS = [
-    ("cond_breakout", "당일고가 돌파", "day_high_breakout", {}),
+    ("cond_breakout", "당일고가 돌파", "day_high_breakout", {"buffer_pct": 0}),
     ("cond_pullback", "눌림 후 반등", "pullback_rebound", {}),
     ("cond_momentum", "10초봉 3연속 상승", "momentum_rising_bars", {"min_bars": 3}),
     ("cond_gangdo", "체결강도 55%+", "chegyeol_gangdo_min", {"min": 0.55}),
     ("cond_tickvol", "틱거래량 2배+", "tick_volume_mult_min", {"min": 2.0}),
-    ("cond_vwap", "VWAP 상단", "vwap_above", {}),
+    ("cond_vwap", "VWAP 상단", "vwap_above", {"margin_pct": 0}),
     ("cond_crband", "등락률 1.5~5%", "change_rate_band", {"min": 1.5, "max": 5.0}),
-    ("cond_tsi", "일봉 TSI>0", "tsi_positive", {}),
+    ("cond_tsi", "일봉 TSI>0", "tsi_positive", {"min": 0}),
     ("cond_time", "시간창 09:30~15:00", "time_window", {"start": "09:30", "end": "15:00"}),
 ]
+
+# 튜닝 파라미터 마이그레이션 대상: (id, no-op 기본 params)
+_TUNING_PARAM_DEFAULTS = {
+    "cond_tsi": {"min": 0},
+    "cond_breakout": {"buffer_pct": 0},
+    "cond_vwap": {"margin_pct": 0},
+}
 
 # 기본 그룹: (고정 id, name, [condition_ids])
 _DEFAULT_GROUPS = [
@@ -160,6 +167,34 @@ def seed_defaults() -> None:
                 "INSERT OR IGNORE INTO condition_groups (id, name, condition_ids_json, enabled, weight, assigned_to, created_at) "
                 "VALUES (?, ?, ?, 1, 1.0, '', ?)",
                 (gid, name, json.dumps(cond_ids, ensure_ascii=False), now),
+            )
+    # 시드 후, 기존 DB의 빈 params를 no-op 튜닝 기본값으로 채움(운영자 커스텀 보존)
+    migrate_condition_params()
+
+
+def migrate_condition_params() -> None:
+    """3개 알려진 조건(cond_tsi/cond_breakout/cond_vwap)의 params_json이
+    비어있을 때(`{}`)만 no-op 튜닝 기본값으로 UPDATE. idempotent하며
+    운영자가 커스텀한 값(비어있지 않음)은 덮어쓰지 않는다.
+    """
+    _ensure_tables()
+    with get_connection() as conn:
+        for cid, params in _TUNING_PARAM_DEFAULTS.items():
+            row = conn.execute(
+                "SELECT params_json FROM buy_conditions WHERE id = ?", (cid,)
+            ).fetchone()
+            if row is None:
+                continue
+            raw = (dict(row).get("params_json") or "").strip()
+            try:
+                current = json.loads(raw) if raw else {}
+            except (ValueError, TypeError):
+                current = {}
+            if current:  # 비어있지 않으면(커스텀) 보존
+                continue
+            conn.execute(
+                "UPDATE buy_conditions SET params_json = ? WHERE id = ?",
+                (json.dumps(params, ensure_ascii=False), cid),
             )
 
 
