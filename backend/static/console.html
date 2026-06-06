@@ -1729,6 +1729,48 @@
 
           <div class="section-gap"></div>
 
+          <!-- ①-2 탐색엔진 원자 조건 / 그룹 / 할당 -->
+          <div class="card">
+            <div class="settings-card-hd">
+              <div class="settings-card-meta">
+                <span class="settings-tag">탐색엔진</span>
+                <div class="settings-card-title-txt">원자 매수 조건</div>
+                <div class="settings-card-desc">조건별 임계치(params)와 활성 여부를 편집합니다. 변경 즉시 저장됩니다.</div>
+              </div>
+              <button type="button" class="btn" data-action="loadConditionEditor">새로고침</button>
+            </div>
+            <table class="settings-table">
+              <thead><tr><th>조건명</th><th>타입</th><th>파라미터(JSON)</th><th>활성</th></tr></thead>
+              <tbody id="atomic-condition-tbody">
+                <tr><td colspan="4" class="muted" style="text-align:center;">로딩중...</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="section-gap"></div>
+
+          <div class="card">
+            <div class="settings-card-hd">
+              <div class="settings-card-meta">
+                <span class="settings-tag">탐색엔진</span>
+                <div class="settings-card-title-txt">조건 그룹 (AND 전략) · 할당</div>
+                <div class="settings-card-desc">조건들을 AND로 묶은 전략. 활성/가중치/레짐·프로파일 할당을 편집합니다.</div>
+              </div>
+            </div>
+            <div id="condition-group-list" style="display:flex; flex-direction:column; gap:10px;">
+              <div class="muted">로딩중...</div>
+            </div>
+            <div style="margin-top:12px; border-top:1px solid var(--line); padding-top:12px;">
+              <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">새 그룹 만들기 (AND)</div>
+              <input id="new-group-name" type="text" placeholder="그룹명 (예: 돌파전략2)"
+                     style="padding:6px; border-radius:4px; background:var(--panel-2); color:var(--text); border:1px solid var(--border); margin-right:6px;">
+              <div id="new-group-conditions" style="margin:8px 0; display:flex; flex-wrap:wrap; gap:8px;"></div>
+              <button type="button" class="btn primary" data-action="createConditionGroup">그룹 생성</button>
+            </div>
+          </div>
+
+          <div class="section-gap"></div>
+
           <!-- ② 거래 비용 설정 -->
           <div class="card">
             <div class="settings-card-hd">

@@ -74,7 +74,10 @@
       rejectKnowledge: function() { return rejectKnowledge(element.dataset.id); },
       saveSchedulerSetting: function() { return saveSchedulerSetting(element.dataset.key); },
       saveExitOverrideSetting: function() { return saveExitOverrideSetting(element.dataset.key); },
-      loadDailyResults: function() { return loadDailyResults(); }
+      loadDailyResults: function() { return loadDailyResults(); },
+      loadConditionEditor: function() { return loadConditionEditor(); },
+      createConditionGroup: function() { return createConditionGroup(); },
+      loadGroupStatsScaffold: function() { return loadGroupStatsScaffold(); }
     };
     if (actionMap[action]) return actionMap[action]();
     return undefined;
@@ -95,6 +98,11 @@
         Number(element.dataset.scale || '1')
       );
     }
+    if (action === 'saveConditionParams') return saveConditionParams(element.dataset.cid, element.value);
+    if (action === 'toggleCondition') return toggleCondition(element.dataset.cid, element.checked);
+    if (action === 'toggleGroup') return toggleGroup(element.dataset.gid, element.checked);
+    if (action === 'saveGroupWeight') return saveGroupWeight(element.dataset.gid, element.value);
+    if (action === 'assignGroup') return assignGroup(element.dataset.gid, element.value);
     return undefined;
   }
 

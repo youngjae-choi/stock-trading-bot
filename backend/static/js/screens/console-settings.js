@@ -405,6 +405,156 @@
     }
   }
 
+  /* ── 탐색엔진 조건/그룹 편집기 ── */
+  var _bcConditions = [];   // [{id,name,ctype,params,enabled}]
+  var _bcGroups = [];       // [{id,name,condition_ids,enabled,weight,assigned_to}]
+  var _bcAssignTargets = { regimes: [], profiles: [] };
+
+  async function loadConditionEditor() {
+    try {
+      var [cData, gData, aData] = await Promise.all([
+        fetchJson('/api/v1/buy-conditions/conditions'),
+        fetchJson('/api/v1/buy-conditions/groups'),
+        fetchJson('/api/v1/buy-conditions/assign-targets'),
+      ]);
+      _bcConditions = (cData.payload && cData.payload.conditions) || [];
+      _bcGroups = (gData.payload && gData.payload.groups) || [];
+      _bcAssignTargets = (aData.payload) || { regimes: [], profiles: [] };
+      renderAtomicConditions();
+      renderConditionGroups();
+      renderNewGroupCheckboxes();
+    } catch (e) {
+      var tb = document.getElementById('atomic-condition-tbody');
+      if (tb) tb.innerHTML = '<tr><td colspan="4" class="muted">로드 실패: ' + escapeHtml(e.message) + '</td></tr>';
+    }
+  }
+
+  function renderAtomicConditions() {
+    var tb = document.getElementById('atomic-condition-tbody');
+    if (!tb) return;
+    if (!_bcConditions.length) { tb.innerHTML = '<tr><td colspan="4" class="muted">조건 없음</td></tr>'; return; }
+    tb.innerHTML = _bcConditions.map(function(c) {
+      var pjson = escapeHtml(JSON.stringify(c.params || {}));
+      return '<tr style="border-bottom:1px solid var(--border);">'
+        + '<td style="padding:8px 0;">' + escapeHtml(c.name) + '</td>'
+        + '<td style="padding:8px 4px; font-size:11px; color:var(--muted);">' + escapeHtml(c.ctype) + '</td>'
+        + '<td style="padding:8px 4px;">'
+        + '<input type="text" value="' + pjson + '" data-action="saveConditionParams" data-cid="' + escapeHtml(c.id) + '" '
+        + 'style="width:200px; padding:4px; border-radius:4px; background:var(--panel-2); color:var(--text); border:1px solid var(--border); font-size:11px;">'
+        + '</td>'
+        + '<td style="padding:8px 4px;">'
+        + '<input type="checkbox" ' + (c.enabled ? 'checked' : '') + ' data-action="toggleCondition" data-cid="' + escapeHtml(c.id) + '">'
+        + '</td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  function _assignSelectHtml(group) {
+    var opts = ['<option value="">미할당</option>'];
+    _bcAssignTargets.regimes.forEach(function(r) {
+      var v = 'regime:' + r;
+      opts.push('<option value="' + escapeHtml(v) + '"' + (group.assigned_to === v ? ' selected' : '') + '>레짐 · ' + escapeHtml(r) + '</option>');
+    });
+    _bcAssignTargets.profiles.forEach(function(p) {
+      var v = 'profile:' + p;
+      opts.push('<option value="' + escapeHtml(v) + '"' + (group.assigned_to === v ? ' selected' : '') + '>프로파일 · ' + escapeHtml(p) + '</option>');
+    });
+    return '<select data-action="assignGroup" data-gid="' + escapeHtml(group.id) + '" '
+      + 'style="padding:4px; border-radius:4px; background:var(--panel-2); color:var(--text); border:1px solid var(--border); font-size:11px;">'
+      + opts.join('') + '</select>';
+  }
+
+  function renderConditionGroups() {
+    var box = document.getElementById('condition-group-list');
+    if (!box) return;
+    if (!_bcGroups.length) { box.innerHTML = '<div class="muted">그룹 없음</div>'; return; }
+    var nameById = {};
+    _bcConditions.forEach(function(c) { nameById[c.id] = c.name; });
+    box.innerHTML = _bcGroups.map(function(g) {
+      var condNames = (g.condition_ids || []).map(function(id) { return escapeHtml(nameById[id] || id); }).join(' AND ');
+      return '<div style="border:1px solid var(--line); border-radius:6px; padding:10px;">'
+        + '<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">'
+        + '<input type="checkbox" ' + (g.enabled ? 'checked' : '') + ' data-action="toggleGroup" data-gid="' + escapeHtml(g.id) + '">'
+        + '<strong style="font-size:13px;">' + escapeHtml(g.name) + '</strong>'
+        + '<span style="font-size:10px; color:var(--muted);">가중치</span>'
+        + '<input type="number" step="0.1" value="' + (g.weight != null ? g.weight : 1.0) + '" data-action="saveGroupWeight" data-gid="' + escapeHtml(g.id) + '" '
+        + 'style="width:60px; padding:3px; border-radius:4px; background:var(--panel-2); color:var(--text); border:1px solid var(--border); font-size:11px;">'
+        + _assignSelectHtml(g)
+        + '</div>'
+        + '<div style="margin-top:6px; font-size:11px; color:var(--muted);">' + (condNames || '(조건 없음)') + '</div>'
+        + '</div>';
+    }).join('');
+  }
+
+  function renderNewGroupCheckboxes() {
+    var box = document.getElementById('new-group-conditions');
+    if (!box) return;
+    box.innerHTML = _bcConditions.map(function(c) {
+      return '<label style="font-size:11px; color:var(--muted); display:inline-flex; align-items:center; gap:3px;">'
+        + '<input type="checkbox" class="new-group-cond" value="' + escapeHtml(c.id) + '"> ' + escapeHtml(c.name) + '</label>';
+    }).join('');
+  }
+
+  async function _putCondition(cid, payload) {
+    await fetchJson('/api/v1/buy-conditions/conditions/' + encodeURIComponent(cid), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+  }
+
+  async function saveConditionParams(cid, value) {
+    try {
+      var parsed = JSON.parse(value);
+      await _putCondition(cid, { params: parsed });
+    } catch (e) {
+      alert('파라미터 저장 실패(JSON 형식 확인): ' + e.message);
+    }
+  }
+
+  async function toggleCondition(cid, checked) {
+    try { await _putCondition(cid, { enabled: !!checked }); }
+    catch (e) { alert('조건 토글 실패: ' + e.message); }
+  }
+
+  async function _putGroup(gid, payload) {
+    await fetchJson('/api/v1/buy-conditions/groups/' + encodeURIComponent(gid), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+  }
+
+  async function toggleGroup(gid, checked) {
+    try { await _putGroup(gid, { enabled: !!checked }); }
+    catch (e) { alert('그룹 토글 실패: ' + e.message); }
+  }
+
+  async function saveGroupWeight(gid, value) {
+    try { await _putGroup(gid, { weight: parseFloat(value) }); }
+    catch (e) { alert('가중치 저장 실패: ' + e.message); }
+  }
+
+  async function assignGroup(gid, value) {
+    try { await _putGroup(gid, { assigned_to: value || '' }); }
+    catch (e) { alert('할당 저장 실패: ' + e.message); }
+  }
+
+  async function createConditionGroup() {
+    var nameEl = document.getElementById('new-group-name');
+    var name = nameEl ? nameEl.value.trim() : '';
+    if (!name) { alert('그룹명을 입력하세요.'); return; }
+    var checked = Array.prototype.slice.call(document.querySelectorAll('.new-group-cond:checked'))
+      .map(function(el) { return el.value; });
+    if (!checked.length) { alert('조건을 1개 이상 선택하세요(AND).'); return; }
+    try {
+      await fetchJson('/api/v1/buy-conditions/groups', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name, condition_ids: checked }),
+      });
+      if (nameEl) nameEl.value = '';
+      await loadConditionEditor();
+    } catch (e) {
+      alert('그룹 생성 실패: ' + e.message);
+    }
+  }
+
   /* ── Positions & Exit: Monitoring & Orders ── */
 
   async function loadDataAndApi() {
@@ -611,6 +761,7 @@
 
   function initSettingsUI() {
     loadBuyConditions();
+    loadConditionEditor();
     loadRiskSettings();
     loadSchedulerSettings();
     loadExitOverrideSettings();
