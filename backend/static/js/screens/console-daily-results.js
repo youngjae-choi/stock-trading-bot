@@ -87,7 +87,7 @@
       var pnlSign = pnl >= 0 ? '+' : '';
 
       return [
-        '<div class="daily-result-item" onclick="dailyResultsGoToReview(\'' + escapeHtml(row.trade_date) + '\')">',
+        '<div class="daily-result-item" onclick="openDayReview(\'' + escapeHtml(row.trade_date) + '\')">',
           '<div>',
             '<div class="daily-result-date">' + escapeHtml(row.trade_date) + '</div>',
             '<div class="daily-result-trades">' + (row.trade_count || 0) + ' trades · ' + (row.win_count || 0) + 'W ' + (row.loss_count || 0) + 'L</div>',
@@ -262,7 +262,7 @@
 
       var toneCell = '<td style="text-align:center;">' + _toneBadge(row.market_tone) + '</td>';
 
-      return '<tr style="cursor:pointer;" data-action="toggleDayReview" data-date="' + escapeHtml(row.trade_date) + '">'
+      return '<tr style="cursor:pointer;" data-action="openDayReview" data-date="' + escapeHtml(row.trade_date) + '">'
         + '<td style="font-size:13px; color:var(--accent);">' + escapeHtml(row.trade_date) + pnlStatusBadge + '</td>'
         + toneCell
         + '<td style="text-align:right;">' + pnlHtml + '</td>'
@@ -280,14 +280,6 @@
         + '<td style="text-align:right;">' + winRateHtml + '</td>'
         + '<td style="text-align:right; color:var(--muted); font-size:12px;">' + (row.missed_entries_count || 0) + '</td>'
         + '<td style="text-align:center;">' + integrityHtml + '</td>'
-        + '</tr>'
-        + '<tr id="dr-detail-' + escapeHtml(row.trade_date) + '" style="display:none;">'
-        + '<td colspan="9" style="padding:0; background:var(--bg2);">'
-        + '<div id="dr-detail-content-' + escapeHtml(row.trade_date) + '" style="padding:12px 16px;">'
-        + '<div class="muted" style="font-size:12px;">로딩 중...</div>'
-        + '</div>'
-        + '<div id="day-review-' + escapeHtml(row.trade_date) + '" style="padding:0 16px 16px;"></div>'
-        + '</td>'
         + '</tr>';
     }).join('');
 
@@ -301,125 +293,16 @@
       + '</div>';
   }
 
-  var _drDetailCache = {};
-  var _drOpenDate = null;   // 현재 펼쳐진 날짜 (한 번에 하나만)
-
-  /* 공유 Trade Review 호스트(#ra-report / #ra-empty)를 원래 위치(#screen-review)로 되돌림.
-     fixed-id 재사용을 위해 항상 하나의 호스트만 DOM에 둔다(중복 id 방지). */
-  function _detachDayReviewHost() {
-    var screen = document.getElementById('screen-review');
-    var report = document.getElementById('ra-report');
-    var empty  = document.getElementById('ra-empty');
-    if (screen) {
-      if (empty)  { empty.style.display = 'none';  screen.appendChild(empty); }
-      if (report) { report.style.display = 'none'; screen.appendChild(report); }
+  /* 날짜 행/카드 클릭 → 그 날짜의 Trade Review 상세 화면(#screen-review)으로 이동.
+     인라인 아코디언 대신 master-list → detail-page 패턴. */
+  function openDayReview(tradeDate) {
+    if (!tradeDate) return;
+    if (typeof showScreen === 'function') showScreen('review');
+    var input = document.getElementById('ra-date-input');
+    if (input) input.value = tradeDate;
+    if (typeof _loadReviewByDateStr === 'function') {
+      _loadReviewByDateStr(tradeDate);
     }
-  }
-
-  /* 날짜 행을 클릭하면 그 날짜의 복기(Trade Review)를 인라인으로 펼친다.
-     레짐 day-detail 요약 + 공유 Trade Review 렌더(_loadReviewByDateStr 재사용)를 함께 표시. */
-  async function toggleDayReview(tradeDate) {
-    var detailRow = document.getElementById('dr-detail-' + tradeDate);
-    if (!detailRow) return;
-
-    // 이미 열린 행을 다시 클릭 → 접기
-    if (_drOpenDate === tradeDate && detailRow.style.display !== 'none') {
-      detailRow.style.display = 'none';
-      _detachDayReviewHost();
-      _drOpenDate = null;
-      return;
-    }
-
-    // 다른 행이 열려 있으면 먼저 접기 (한 번에 하나만)
-    if (_drOpenDate && _drOpenDate !== tradeDate) {
-      var prev = document.getElementById('dr-detail-' + _drOpenDate);
-      if (prev) prev.style.display = 'none';
-    }
-    _detachDayReviewHost();
-
-    detailRow.style.display = 'table-row';
-    _drOpenDate = tradeDate;
-
-    // 1) 레짐 day-detail 요약 (기존 동작 유지, 캐시)
-    var summaryEl = document.getElementById('dr-detail-content-' + tradeDate);
-    if (_drDetailCache[tradeDate]) {
-      if (summaryEl) summaryEl.innerHTML = _drDetailCache[tradeDate];
-    } else {
-      try {
-        var r = await fetch('/api/v1/regime/day-detail?trade_date=' + encodeURIComponent(tradeDate));
-        var d = await r.json();
-        var html = _renderDayDetail(d);
-        _drDetailCache[tradeDate] = html;
-        if (summaryEl) summaryEl.innerHTML = html;
-      } catch(e) {
-        if (summaryEl) summaryEl.innerHTML = '<div class="muted">조회 실패</div>';
-      }
-    }
-
-    // 2) 공유 Trade Review 호스트를 이 행으로 이동 후 렌더 재사용
-    var host = document.getElementById('day-review-' + tradeDate);
-    var report = document.getElementById('ra-report');
-    var empty  = document.getElementById('ra-empty');
-    if (host) {
-      if (empty)  host.appendChild(empty);
-      if (report) host.appendChild(report);
-      if (typeof _loadReviewByDateStr === 'function') {
-        await _loadReviewByDateStr(tradeDate);
-      }
-    }
-  }
-
-  function _renderDayDetail(d) {
-    var parts = [];
-    
-    // 레짐 SET 정보
-    var app = d.regime_application;
-    if (app) {
-      var REGIME_COLORS = {risk_on:'#3fb950', neutral:'#8b9bb4', risk_off:'#f85149', volatile:'#d29922'};
-      var rc = REGIME_COLORS[app.regime_label] || '#8b9bb4';
-      parts.push(
-        '<div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">'
-        + '<span style="font-size:11px; color:var(--muted);">레짐 SET</span>'
-        + '<span style="font-weight:700; font-size:13px;">' + escapeHtml(app.set_name || '-') + '</span>'
-        + (app.is_prebuilt ? '<span style="font-size:10px; background:#d29922; color:#000; border-radius:3px; padding:1px 5px;">예측 SET</span>' : '')
-        + '<span style="color:' + rc + '; font-size:12px;">' + escapeHtml(app.regime_label || '-') + '</span>'
-        + '<span style="font-size:11px; color:var(--muted);">매칭 ' + Math.round((app.match_score || 0) * 100) + '%</span>'
-        + '</div>'
-        + '<div style="font-size:12px; color:var(--muted); margin-bottom:10px;">' + escapeHtml(app.match_reason || '') + '</div>'
-      );
-    } else {
-      parts.push('<div style="font-size:12px; color:var(--muted); margin-bottom:10px;">레짐 SET 기록 없음 (이전 거래일)</div>');
-    }
-    
-    // Risk Profile별 성과
-    var profiles = d.profile_breakdown || [];
-    if (profiles.length > 0) {
-      var PROFILE_COLORS = {LOW_VOL:'#6cb6ff', MID_VOL:'#3fb950', HIGH_VOL:'#d29922', THEME_SPIKE:'#f85149'};
-      parts.push(
-        '<div style="display:flex; gap:8px; flex-wrap:wrap;">'
-        + profiles.map(function(p) {
-            var pc = PROFILE_COLORS[p.profile] || '#8b9bb4';
-            var pnlSign = (p.total_pnl || 0) >= 0 ? '+' : '';
-            var pnlCls = (p.total_pnl || 0) > 0 ? 'color:var(--green)' : (p.total_pnl || 0) < 0 ? 'color:var(--red)' : 'color:var(--muted)';
-            return '<div style="background:var(--panel-2); border-radius:6px; padding:8px 12px; min-width:120px;">'
-              + '<div style="font-size:11px; font-weight:700; color:' + pc + '; margin-bottom:4px;">' + escapeHtml(p.profile) + '</div>'
-              + '<div style="font-size:13px; font-weight:700;">' + (p.win_rate_pct || 0) + '% <span style="font-size:11px; color:var(--muted);">승률</span></div>'
-              + '<div style="font-size:11px; color:var(--muted);">' + (p.trades || 0) + '건 (' + (p.win_count || 0) + '승)</div>'
-              + '<div style="font-size:11px; ' + pnlCls + ';">' + pnlSign + Math.round(p.total_pnl || 0).toLocaleString() + '원</div>'
-              + '</div>';
-          }).join('')
-        + '</div>'
-      );
-    } else {
-      parts.push('<div style="font-size:12px; color:var(--muted);">Risk Profile별 성과 데이터 없음</div>');
-    }
-    
-    return '<div style="padding:4px 0;">' + parts.join('') + '</div>';
-  }
-
-  /* 모바일 카드 클릭 → 데스크톱과 동일하게 인라인 복기 토글 (드릴다운 통합 후 전용 화면 없음) */
-  function dailyResultsGoToReview(date) {
-    if (typeof toggleDayReview === 'function') toggleDayReview(date);
   }
 
   function applyDailyResultsFilter() { _applyDailyResultsFilter(); }
@@ -427,5 +310,4 @@
   window.loadDailyResults = loadDailyResults;
   window.setDailyResultsPreset = setDailyResultsPreset;
   window.applyDailyResultsFilter = applyDailyResultsFilter;
-  window.dailyResultsGoToReview = dailyResultsGoToReview;
-  window.toggleDayReview = toggleDayReview;
+  window.openDayReview = openDayReview;
