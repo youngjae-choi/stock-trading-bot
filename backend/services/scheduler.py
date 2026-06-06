@@ -1200,6 +1200,23 @@ async def job_review_audit() -> None:
     except Exception as exc:
         logger.error("FAIL: [ReviewAudit] 손실전략 종합 반영 실패 — %s", exc)
 
+    # ── Step 6: 탐색엔진 EV 가지치기 + 자동가중 (Phase 3 — 기존 학습루프에 얹는 스텝)
+    # 멀티데이 태그(trade_entry_tags)로 그룹/선정소스/레짐별 EV 집계 → 음수 우선 가지치기
+    # 추천 → condition_groups.weight 자동 반영 → "사지/고르지 말아야 할" negative-knowledge
+    # 메모리 기록. 표본 부족 시 추천 없이 관측만(탐색 중 고손실일 자동 방어전환 방지).
+    try:
+        from .engine.ev_pruning import run_ev_pruning
+
+        ev_result = run_ev_pruning(today, lookback_days=10, min_sample=30, apply=True)
+        logger.info(
+            "SUCCESS: [ReviewAudit] EV 가지치기 sample=%d recs=%d adjusted=%d",
+            ev_result.get("sample_size", 0),
+            len(ev_result.get("recommendations", [])),
+            ev_result.get("applied", {}).get("adjusted", 0),
+        )
+    except Exception as exc:
+        logger.error("FAIL: [ReviewAudit] EV 가지치기 실패 — %s", exc)
+
 
 async def job_missed_returns_update() -> None:
     """Run missed-opportunity return updates independently of S9/S10 review.
