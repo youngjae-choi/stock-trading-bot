@@ -15,6 +15,7 @@ from fastapi.responses import StreamingResponse
 
 from ...api.routes.account import _build_balance_payload
 from ...services.engine.daily_plan import get_today_daily_plan
+from ...services.engine.trade_tagging import build_selection_reason
 from ...services.engine.rule_cache import get_all_cached, get_rule
 from ...services.engine.position_manager import position_manager
 from ...services.kis.domestic.service import get_balance as get_kis_balance
@@ -525,6 +526,7 @@ def get_candidates():
             "latest_trade_time": latest_tick.get("trade_time"),
             "latest_volume": latest_tick.get("trade_volume"),
             "latest_received_at": latest_tick.get("received_at"),
+            "selection_reason": build_selection_reason(c),
             "buy_readiness": readiness,
         })
 
