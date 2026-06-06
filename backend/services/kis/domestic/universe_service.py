@@ -28,6 +28,9 @@ _PRICE_KEYS = ("stck_prpr", "stck_prc", "prpr", "now_prc", "price")
 _CHANGE_RATE_KEYS = ("prdy_ctrt", "prdy_vrss_rate", "fluctuation_rate", "change_rate")
 _VOLUME_KEYS = ("acml_vol", "acc_trdvol", "cntg_vol", "vol", "volume")
 _TRADE_AMOUNT_KEYS = ("acml_tr_pbmn", "acc_trdval", "tr_pbmn", "trade_amount", "turnover", "stck_avls")
+# 전일대비 거래량 증가율 (퍼센트). KIS volume-rank(FHPST01710000) 응답 필드 `vol_inrt`(거래량증가율).
+# 단위: 퍼센트 — acml_vol/prdy_vol*100 의 의미 (예: 200 = 전일 대비 2배). 단타 모멘텀 급증 지표.
+_VOLUME_SURGE_KEYS = ("vol_inrt", "prdy_vol_vrss_acml_vol_rate", "prdy_vol_vrss_pric_rate", "volume_surge")
 
 
 def _clamp_top_n(top_n: int) -> int:
@@ -125,6 +128,8 @@ async def get_volume_rank(market_code: str = "J", top_n: int = 100) -> Dict[str,
                 "volume": _pick_int(row, _VOLUME_KEYS),
                 "price": _pick_int(row, _PRICE_KEYS),
                 "change_rate": _pick_float(row, _CHANGE_RATE_KEYS),
+                # 전일대비 거래량 증가율(%) — 단타 모멘텀 급증 점수의 원천. 부재 시 0.0.
+                "volume_surge": _pick_float(row, _VOLUME_SURGE_KEYS),
                 "sector": str(_pick(row, "bstp_kor_isnm", default="")),
             }
         )
