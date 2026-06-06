@@ -84,7 +84,6 @@
           <option value="dividend-stats">Statistics</option>
           <option value="statistics">Trade History</option>
           <option value="funnel">Funnel Monitor</option>
-          <option value="data">System Status</option>
           <option value="settings">Settings</option>
         </select>
         <span class="mobile-date-label">기준일<strong id="mobileDateLabel">--</strong></span>
@@ -110,7 +109,6 @@
           <button type="button" data-screen="confidence-cal" style="display:none">CALIBRATION <small>cal</small></button>
           <button type="button" data-screen="daily-results">Daily Results <small>daily</small></button>
 
-          <button type="button" data-screen="data">System Status <small>health</small></button>
           <button type="button" data-screen="engine-test">System Diagnostics <small>diag</small></button>
           <button type="button" data-screen="settings">Settings <small>admin</small></button>
 
@@ -1154,167 +1152,6 @@
           </div>
         </section>
 
-        <section class="screen" id="screen-data">
-          <div class="page-head">
-            <div>
-              <h1 class="page-title">System Status</h1>
-              <p class="page-desc">연결 상태 · 시스템 구성 · LLM 공급자를 확인합니다.</p>
-            </div>
-            <button type="button" class="btn" data-action="loadDataAndApi">새로고침</button>
-          </div>
-
-          <!-- 연결 상태 — 5개 연결을 한눈에 -->
-          <div class="card" style="margin-bottom:16px;">
-            <div class="card-title" style="margin-bottom:12px;">연결 상태</div>
-            <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:12px;">
-              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
-                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">KIS REST</div>
-                <div style="font-size:20px; font-weight:700;" id="dh-kisRest">-</div>
-                <div style="font-size:11px; color:var(--muted);" id="dh-kisRestDetail">확인중</div>
-              </div>
-              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
-                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">KIS WebSocket</div>
-                <div style="font-size:20px; font-weight:700;" id="dh-kisWs">-</div>
-                <div style="font-size:11px; color:var(--muted);" id="dh-kisWsDetail">확인중</div>
-              </div>
-              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
-                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">LLM Router</div>
-                <div style="font-size:20px; font-weight:700;" id="dh-llm">-</div>
-                <div style="font-size:11px; color:var(--muted);" id="dh-llmDetail">provider 확인중</div>
-              </div>
-              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
-                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">SQLite DB</div>
-                <div style="font-size:20px; font-weight:700; color:var(--green);" id="dh-db">로컬</div>
-                <div style="font-size:11px; color:var(--muted);" id="dh-dbDetail">data/ 디렉토리</div>
-              </div>
-              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
-                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">Telegram</div>
-                <div style="font-size:20px; font-weight:700;" id="da-telegram-status">-</div>
-                <div style="font-size:11px; color:var(--muted);" id="da-telegram-detail">상태 확인 중</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 시스템 구성 — 엔진 상태 + 룰 구성 2열 -->
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
-            <!-- 엔진 상태 -->
-            <div class="card">
-              <div class="card-title" style="margin-bottom:12px;">엔진 상태</div>
-              <div style="display:flex; flex-direction:column; gap:10px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px;">Auto Engine</span>
-                  <div style="text-align:right;">
-                    <span class="status ok" id="kisTokenStatus">확인중</span>
-                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="kisTokenDetail">Auto Engine 상태</div>
-                  </div>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px;">Rule Composition</span>
-                  <div style="text-align:right;">
-                    <span class="status ok" id="rulepackStatus">확인중</span>
-                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="rulepackDetail">오늘 활성 룰</div>
-                  </div>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px;">WebSocket 구독</span>
-                  <div style="text-align:right;">
-                    <span class="status ok" id="websocketStatus">확인중</span>
-                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="websocketDetail">S4 완료 후 자동 구독</div>
-                  </div>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px;">Risk Guard</span>
-                  <div style="text-align:right;">
-                    <span class="status ok" id="riskStatus">확인중</span>
-                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="riskDetail">긴급정지 상태</div>
-                  </div>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px;">Schedule Skip</span>
-                  <div style="text-align:right;">
-                    <span class="status ok" id="scheduleSkipStatus">확인중</span>
-                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="scheduleSkipDetail">S2~S6 자동 스킵 여부</div>
-                  </div>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px;">Data Quality</span>
-                  <div style="text-align:right;">
-                    <span class="status ok" id="dq-overall-status">NORMAL</span>
-                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="dq-overall-detail">데이터 이상 없음</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- 룰 구성 -->
-            <div class="card">
-              <div class="card-title" style="margin-bottom:12px;">룰 구성</div>
-              <div style="display:flex; flex-direction:column; gap:10px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px; color:var(--muted);">Base RulePack</span>
-                  <span style="font-size:12px; font-weight:600; color:var(--text);" id="da-base-id">-</span>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px; color:var(--muted);">Risk Profile Pack</span>
-                  <span style="font-size:12px; font-weight:600; color:var(--text);" id="da-profile-id">-</span>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px; color:var(--muted);">Daily Plan</span>
-                  <span style="font-size:12px; font-weight:600; color:var(--text);" id="da-plan-id">미수집</span>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px; color:var(--muted);">배정 종목 수</span>
-                  <span style="font-size:18px; font-weight:700; color:var(--text);" id="da-assignments-n">-개</span>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px; color:var(--muted);">고정 익절 / 트레일링</span>
-                  <span style="font-size:12px;"><span style="color:#f85149;">OFF</span> / <span style="color:#3fb950;">ON</span></span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- LLM 공급자 -->
-          <div class="card" style="margin-bottom:16px;">
-            <div class="card-title">LLM 공급자 <span style="font-weight:400; color:var(--muted);">llm_router 우선순위</span></div>
-            <div class="table-wrap" style="margin-top:10px;">
-              <table>
-                <thead>
-                  <tr><th>Provider</th><th>역할</th><th>모델</th><th>상태</th></tr>
-                </thead>
-                <tbody id="llmProvidersTableBody">
-                  <tr><td colspan="4" class="muted">불러오는 중...</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <!-- API 호출 로그 -->
-          <div class="card">
-            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-              <span>API 호출 로그 <span style="font-size:10px; font-weight:400; color:var(--muted);">당일</span></span>
-              <button type="button" class="btn" style="font-size:11px;" data-action="loadDataApiLogs">새로고침</button>
-            </div>
-            <div class="table-wrap" style="max-height:300px; overflow-y:auto; margin-top:10px;">
-              <table>
-                <thead>
-                  <tr><th>시간</th><th>메서드</th><th>경로</th><th>상태</th><th>응답시간</th></tr>
-                </thead>
-                <tbody id="da-api-logs-tbody">
-                  <tr><td colspan="5" class="muted" style="text-align:center;">로딩중</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <!-- 사용되지 않는 hidden IDs — JS 호환성 유지 -->
-          <span id="telegram-status" style="display:none;"></span>
-          <span id="dq-event-count" style="display:none;">0</span>
-          <span id="dq-event-detail" style="display:none;"></span>
-          <span id="dq-event-breakdown" style="display:none;"></span>
-          <div id="da-rule-system" style="display:none;"></div>
-        </section>
-
         <section class="screen" id="screen-review">
           <button type="button" class="btn secondary" data-action="backToDailyResults" style="margin-bottom:12px;">← Daily Results</button>
           <div class="page-head">
@@ -1709,6 +1546,166 @@
             </div>
             <pre id="et-server-log" style="font-size:11px; max-height:400px; overflow-y:auto; white-space:pre-wrap; word-break:break-all; background:var(--code-bg, #111); padding:12px; border-radius:4px; color:var(--code-text, #ccc);">로그를 불러오려면 위 [불러오기] 버튼을 클릭하세요.</pre>
           </div>
+
+          <hr style="border:none; border-top:1px solid var(--line); margin:28px 0 20px;">
+          <div class="page-head">
+            <div>
+              <h2 class="card-title" style="font-size:18px; margin:0;">시스템 상태</h2>
+              <p class="page-desc">연결 상태 · 시스템 구성 · LLM 공급자를 확인합니다.</p>
+            </div>
+            <button type="button" class="btn" data-action="loadDataAndApi">새로고침</button>
+          </div>
+
+          <!-- 연결 상태 — 5개 연결을 한눈에 -->
+          <div class="card" style="margin-bottom:16px;">
+            <div class="card-title" style="margin-bottom:12px;">연결 상태</div>
+            <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:12px;">
+              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
+                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">KIS REST</div>
+                <div style="font-size:20px; font-weight:700;" id="dh-kisRest">-</div>
+                <div style="font-size:11px; color:var(--muted);" id="dh-kisRestDetail">확인중</div>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
+                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">KIS WebSocket</div>
+                <div style="font-size:20px; font-weight:700;" id="dh-kisWs">-</div>
+                <div style="font-size:11px; color:var(--muted);" id="dh-kisWsDetail">확인중</div>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
+                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">LLM Router</div>
+                <div style="font-size:20px; font-weight:700;" id="dh-llm">-</div>
+                <div style="font-size:11px; color:var(--muted);" id="dh-llmDetail">provider 확인중</div>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
+                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">SQLite DB</div>
+                <div style="font-size:20px; font-weight:700; color:var(--green);" id="dh-db">로컬</div>
+                <div style="font-size:11px; color:var(--muted);" id="dh-dbDetail">data/ 디렉토리</div>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
+                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">Telegram</div>
+                <div style="font-size:20px; font-weight:700;" id="da-telegram-status">-</div>
+                <div style="font-size:11px; color:var(--muted);" id="da-telegram-detail">상태 확인 중</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 시스템 구성 — 엔진 상태 + 룰 구성 2열 -->
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
+            <!-- 엔진 상태 -->
+            <div class="card">
+              <div class="card-title" style="margin-bottom:12px;">엔진 상태</div>
+              <div style="display:flex; flex-direction:column; gap:10px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px;">Auto Engine</span>
+                  <div style="text-align:right;">
+                    <span class="status ok" id="kisTokenStatus">확인중</span>
+                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="kisTokenDetail">Auto Engine 상태</div>
+                  </div>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px;">Rule Composition</span>
+                  <div style="text-align:right;">
+                    <span class="status ok" id="rulepackStatus">확인중</span>
+                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="rulepackDetail">오늘 활성 룰</div>
+                  </div>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px;">WebSocket 구독</span>
+                  <div style="text-align:right;">
+                    <span class="status ok" id="websocketStatus">확인중</span>
+                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="websocketDetail">S4 완료 후 자동 구독</div>
+                  </div>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px;">Risk Guard</span>
+                  <div style="text-align:right;">
+                    <span class="status ok" id="riskStatus">확인중</span>
+                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="riskDetail">긴급정지 상태</div>
+                  </div>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px;">Schedule Skip</span>
+                  <div style="text-align:right;">
+                    <span class="status ok" id="scheduleSkipStatus">확인중</span>
+                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="scheduleSkipDetail">S2~S6 자동 스킵 여부</div>
+                  </div>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px;">Data Quality</span>
+                  <div style="text-align:right;">
+                    <span class="status ok" id="dq-overall-status">NORMAL</span>
+                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="dq-overall-detail">데이터 이상 없음</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 룰 구성 -->
+            <div class="card">
+              <div class="card-title" style="margin-bottom:12px;">룰 구성</div>
+              <div style="display:flex; flex-direction:column; gap:10px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px; color:var(--muted);">Base RulePack</span>
+                  <span style="font-size:12px; font-weight:600; color:var(--text);" id="da-base-id">-</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px; color:var(--muted);">Risk Profile Pack</span>
+                  <span style="font-size:12px; font-weight:600; color:var(--text);" id="da-profile-id">-</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px; color:var(--muted);">Daily Plan</span>
+                  <span style="font-size:12px; font-weight:600; color:var(--text);" id="da-plan-id">미수집</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px; color:var(--muted);">배정 종목 수</span>
+                  <span style="font-size:18px; font-weight:700; color:var(--text);" id="da-assignments-n">-개</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+                  <span style="font-size:13px; color:var(--muted);">고정 익절 / 트레일링</span>
+                  <span style="font-size:12px;"><span style="color:#f85149;">OFF</span> / <span style="color:#3fb950;">ON</span></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- LLM 공급자 -->
+          <div class="card" style="margin-bottom:16px;">
+            <div class="card-title">LLM 공급자 <span style="font-weight:400; color:var(--muted);">llm_router 우선순위</span></div>
+            <div class="table-wrap" style="margin-top:10px;">
+              <table>
+                <thead>
+                  <tr><th>Provider</th><th>역할</th><th>모델</th><th>상태</th></tr>
+                </thead>
+                <tbody id="llmProvidersTableBody">
+                  <tr><td colspan="4" class="muted">불러오는 중...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- API 호출 로그 -->
+          <div class="card">
+            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+              <span>API 호출 로그 <span style="font-size:10px; font-weight:400; color:var(--muted);">당일</span></span>
+              <button type="button" class="btn" style="font-size:11px;" data-action="loadDataApiLogs">새로고침</button>
+            </div>
+            <div class="table-wrap" style="max-height:300px; overflow-y:auto; margin-top:10px;">
+              <table>
+                <thead>
+                  <tr><th>시간</th><th>메서드</th><th>경로</th><th>상태</th><th>응답시간</th></tr>
+                </thead>
+                <tbody id="da-api-logs-tbody">
+                  <tr><td colspan="5" class="muted" style="text-align:center;">로딩중</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 사용되지 않는 hidden IDs — JS 호환성 유지 -->
+          <span id="telegram-status" style="display:none;"></span>
+          <span id="dq-event-count" style="display:none;">0</span>
+          <span id="dq-event-detail" style="display:none;"></span>
+          <span id="dq-event-breakdown" style="display:none;"></span>
+          <div id="da-rule-system" style="display:none;"></div>
 
         </section>
 
@@ -2405,7 +2402,6 @@
       <button class="more-drawer-item" data-screen="dividend-stats">Statistics</button>
       <button class="more-drawer-item" data-screen="statistics">Trade History</button>
       <button class="more-drawer-item" data-screen="funnel">Funnel Monitor</button>
-      <button class="more-drawer-item" data-screen="data">System Status</button>
       <button class="more-drawer-item" data-screen="settings">Settings</button>
     </div>
   </div>

@@ -44,6 +44,9 @@
     if (name === "missed-opportunity") {
       name = "shadow-trading";
     }
+    if (name === "data") {
+      name = "engine-test";
+    }
     sessionStorage.setItem('currentScreen', name);
 
     if (!opts.skipHistory) {
@@ -89,9 +92,6 @@
 
     if (name === "engine-test") {
       engineTestLoadTodayResults();
-    }
-
-    if (name === "data") {
       loadDataAndApi();
       loadDQStatus();
     }
