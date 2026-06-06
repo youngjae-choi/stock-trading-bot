@@ -74,6 +74,10 @@ class _Bar:
 @dataclass
 class _SymbolState:
     bars: deque = field(default_factory=deque)
+    vwap_pv_sum: float = 0.0      # Σ(price*vol)
+    vwap_vol_sum: float = 0.0     # Σ(vol)
+    day_high: float = 0.0
+    prior_day_high: float | None = None
 
 
 class BarEngine:
@@ -110,6 +114,32 @@ class BarEngine:
             b.volume += vol
         else:
             st.bars.append(_Bar(bucket=bucket, open=price, high=price, low=price, close=price, volume=vol))
+
+        # running VWAP 누적
+        if vol > 0:
+            st.vwap_pv_sum += price * vol
+            st.vwap_vol_sum += vol
+        # 당일 고가
+        if price > st.day_high:
+            st.day_high = price
+
+    def get_vwap(self, symbol: str) -> float | None:
+        st = self._states.get(symbol)
+        if st is None or st.vwap_vol_sum <= 0:
+            return None
+        return st.vwap_pv_sum / st.vwap_vol_sum
+
+    def get_day_high(self, symbol: str) -> float:
+        st = self._states.get(symbol)
+        return st.day_high if st is not None else 0.0
+
+    def set_prior_day_high(self, symbol: str, value: float) -> None:
+        """전일 일봉 고가를 외부에서 주입(돌파 기준선)."""
+        self._state(symbol).prior_day_high = float(value)
+
+    def get_prior_day_high(self, symbol: str) -> float | None:
+        st = self._states.get(symbol)
+        return st.prior_day_high if st is not None else None
 
     def get_bars(self, symbol: str) -> list[_Bar]:
         st = self._states.get(symbol)

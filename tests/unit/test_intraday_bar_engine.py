@@ -78,3 +78,38 @@ def test_rolling_window_caps_bar_count():
     assert len(bars) == 3            # 최근 3개만 유지
     assert bars[0].bucket == "103020"
     assert bars[-1].bucket == "103040"
+
+
+def test_running_vwap_is_volume_weighted():
+    eng = ibe.BarEngine()
+    eng.ingest_tick(_tick(price=1000.0, cntg_vol=10, stck_cntg_hour="103001"))
+    eng.ingest_tick(_tick(price=1020.0, cntg_vol=30, stck_cntg_hour="103004"))
+    # VWAP = (1000*10 + 1020*30) / (10+30) = (10000+30600)/40 = 1015.0
+    assert eng.get_vwap("005930") == 1015.0
+
+
+def test_vwap_none_when_no_volume():
+    eng = ibe.BarEngine()
+    assert eng.get_vwap("005930") is None
+    eng.ingest_tick(_tick(price=1000.0, cntg_vol=0, stck_cntg_hour="103000"))
+    # 거래량 0뿐이면 VWAP 정의 불가 → None
+    assert eng.get_vwap("005930") is None
+
+
+def test_day_high_tracks_max_price():
+    eng = ibe.BarEngine()
+    eng.ingest_tick(_tick(price=1000.0, cntg_vol=1, stck_cntg_hour="103000"))
+    eng.ingest_tick(_tick(price=1030.0, cntg_vol=1, stck_cntg_hour="103010"))
+    eng.ingest_tick(_tick(price=1010.0, cntg_vol=1, stck_cntg_hour="103020"))
+    assert eng.get_day_high("005930") == 1030.0
+
+
+def test_prior_day_high_seed_and_breakout_basis():
+    eng = ibe.BarEngine()
+    # 전일 고가를 외부(전일 일봉)에서 주입
+    eng.set_prior_day_high("005930", 1050.0)
+    assert eng.get_prior_day_high("005930") == 1050.0
+    # 당일 고가는 prior-day high와 별개로 추적
+    eng.ingest_tick(_tick(price=1000.0, cntg_vol=1, stck_cntg_hour="103000"))
+    assert eng.get_day_high("005930") == 1000.0
+    assert eng.get_prior_day_high("005930") == 1050.0
