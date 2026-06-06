@@ -26,7 +26,7 @@ class DecisionEngineWatchdogTest(unittest.IsolatedAsyncioTestCase):
             scheduler, "_within_late_plan_window", return_value=False
         ), patch.object(scheduler, "_s6_activated_today", return_value=False), patch.object(
             scheduler, "_get_active_daily_plan_for_s6", return_value=None
-        ), patch(
+        ), patch.object(scheduler, "_is_trading_day_today", return_value=True), patch(
             "backend.services.engine.decision_engine.decision_engine", fake_engine
         ):
             await scheduler.job_decision_engine_watchdog()

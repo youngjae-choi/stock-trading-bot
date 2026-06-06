@@ -3,6 +3,7 @@ import backend.services.scheduler as sched
 
 
 def _setup(monkeypatch, *, halt, active, should_be, plan, s6_today, in_window):
+    monkeypatch.setattr(sched, "_is_trading_day_today", lambda: True)
     monkeypatch.setattr(sched, "_is_emergency_halt_active", lambda: halt)
     monkeypatch.setattr(sched, "_get_engine_should_be_active", lambda: should_be)
     monkeypatch.setattr(sched, "_get_active_daily_plan_for_s6", lambda: ({"id": "p"} if plan else None))
@@ -61,5 +62,13 @@ def test_existing_reactivation_still_works(monkeypatch):
 
 def test_no_action_when_already_active(monkeypatch):
     calls = _setup(monkeypatch, halt=False, active=True, should_be=True, plan=True, s6_today=False, in_window=True)
+    asyncio.run(sched.job_decision_engine_watchdog())
+    assert calls["start"] == 0
+
+
+def test_no_activation_on_non_trading_day(monkeypatch):
+    # 비거래일(주말·공휴일)이면 활성 플랜이 있어도 엔진을 켜지 않는다(2026-06-06 현충일 사례).
+    calls = _setup(monkeypatch, halt=False, active=False, should_be=True, plan=True, s6_today=False, in_window=True)
+    monkeypatch.setattr(sched, "_is_trading_day_today", lambda: False)
     asyncio.run(sched.job_decision_engine_watchdog())
     assert calls["start"] == 0

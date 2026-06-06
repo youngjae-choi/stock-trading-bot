@@ -755,6 +755,20 @@ async def job_premarket_market_tone() -> None:
 async def job_trade_preparation_pipeline() -> None:
     """Run S1 through S5-A sequentially from one trade-preparation schedule key."""
     logger.info("START: [TradePrep] S1~S5-A 거래준비 프로세스")
+    # 휴장일 가드 — holidays 라이브러리로 비거래일이면 전 단계 스킵한다.
+    # S1의 KIS 거래일 체크가 실패해 'unknown'으로 그냥 진행하던 사고 방지(2026-06-06 현충일 사례).
+    _td_prep = _today_kst()
+    try:
+        from .engine.trading_calendar import is_trading_day, non_trading_reason
+
+        if not is_trading_day(_td_prep):
+            logger.info(
+                "SKIP: [TradePrep] 비거래일(%s) — S1~S5-A 전체 스킵 trade_date=%s",
+                non_trading_reason(_td_prep), _td_prep,
+            )
+            return
+    except Exception as _cal_exc:
+        logger.warning("WARN: [TradePrep] 거래일 판정 실패 — 차단 없이 진행 reason=%s", _cal_exc)
     try:
         run_id = _audit_step_start("S1", {"pipeline": "trade_preparation"})
         s1_result = await job_refresh_kis_token()
@@ -994,6 +1008,16 @@ def _s6_activated_today() -> bool:
         return False
 
 
+def _is_trading_day_today() -> bool:
+    """오늘이 거래일인지(holidays 라이브러리 기준). 판정 실패 시 True(차단 안 함)."""
+    try:
+        from .engine.trading_calendar import is_trading_day
+        return bool(is_trading_day(_today_kst()))
+    except Exception as exc:
+        logger.warning("WARN: 거래일 판정 실패 — %s", exc)
+        return True
+
+
 async def job_decision_engine_watchdog() -> None:
     """매수 엔진 자동복구 워치독.
 
@@ -1003,6 +1027,8 @@ async def job_decision_engine_watchdog() -> None:
        늦게 생긴 경우). 수동 긴급정지/수동 정지는 존중한다.
     """
     try:
+        if not _is_trading_day_today():
+            return  # 비거래일(주말·공휴일) — 자동복구/활성화 대상 아님
         if _is_emergency_halt_active():
             return  # 운영자 수동 정지 — 존중
         from .engine.decision_engine import decision_engine
