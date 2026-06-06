@@ -14,6 +14,11 @@ from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 
 from ...api.routes.account import _build_balance_payload
+from ...services.engine.buy_condition_framework import (
+    evaluate_condition,
+    load_conditions,
+    load_groups,
+)
 from ...services.engine.daily_plan import get_today_daily_plan
 from ...services.engine.trade_tagging import build_selection_reason
 from ...services.engine.rule_cache import get_all_cached, get_rule
@@ -37,104 +42,163 @@ def _today_kst() -> str:
     return datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
 
 
-def _compute_buy_readiness(
-    candidate: dict[str, Any],
-    rule: dict[str, Any] | None,
-    tick: dict[str, Any] | None = None,
+# ── 매수 준비도: 설정된 조건 GROUP들(OR of AND-그룹) 기반 ──
+# 2026-06-06: 레거시 고정 3조건(거래량/등락률/TSI 평균%) 폐기.
+# 매수엔진(buy_condition_framework)과 동일하게 enabled 그룹들을 평가하고,
+# ANY 그룹 완전충족 시 "매수 가능(OR)"로 표시한다.
+
+# state dict 키 → 사람이 읽는 현재값 (조건 ctype별)
+def _condition_current_value(ctype: str, state: dict[str, Any]) -> Any:
+    """조건 ctype이 평가하는 state 키의 현재값을 표시용으로 반환."""
+    if ctype == "change_rate_band":
+        return round(float(state.get("change_rate") or 0.0), 2)
+    if ctype == "chegyeol_gangdo_min":
+        return round(float(state.get("체결강도") or 0.0), 2)
+    if ctype == "tick_volume_mult_min":
+        return round(float(state.get("tick_vol_mult") or 0.0), 2)
+    if ctype == "tsi_positive":
+        tsi = state.get("tsi")
+        return round(float(tsi), 1) if tsi is not None else "—"
+    if ctype == "vwap_above":
+        pos = state.get("vwap_position")
+        return str(pos) if pos is not None else "—"
+    if ctype == "day_high_breakout":
+        return "돌파" if state.get("day_high_breakout") else "미돌파"
+    if ctype == "pullback_rebound":
+        return "반등" if state.get("pullback_rebound") else "—"
+    if ctype == "momentum_rising_bars":
+        return int(float(state.get("rising_bars") or 0))
+    if ctype == "time_window":
+        return str(state.get("time_hhmm") or "—")
+    return "—"
+
+
+def _condition_threshold_label(ctype: str, params: dict[str, Any]) -> str:
+    """조건 params를 사람이 읽는 기준 문구로 변환."""
+    p = params or {}
+    if ctype == "change_rate_band":
+        return f"{float(p.get('min', 0)):.1f}% ~ {float(p.get('max', 999)):.1f}%"
+    if ctype == "chegyeol_gangdo_min":
+        return f">= {float(p.get('min', 0)) * 100:.0f}%"
+    if ctype == "tick_volume_mult_min":
+        return f">= {float(p.get('min', 0)):.1f}x"
+    if ctype == "tsi_positive":
+        return f"> {float(p.get('min', 0)):.0f}"
+    if ctype == "vwap_above":
+        margin = float(p.get("margin_pct", 0) or 0)
+        return "VWAP 상단" if margin == 0 else f"VWAP +{margin:.1f}% 위"
+    if ctype == "day_high_breakout":
+        buf = float(p.get("buffer_pct", 0) or 0)
+        return "당일고가 돌파" if buf == 0 else f"당일고가 +{buf:.1f}% 돌파"
+    if ctype == "pullback_rebound":
+        return "눌림 후 반등"
+    if ctype == "momentum_rising_bars":
+        return f">= {int(float(p.get('min_bars', 1)))}연속 상승"
+    if ctype == "time_window":
+        return f"{p.get('start', '00:00')} ~ {p.get('end', '23:59')}"
+    return ""
+
+
+def _compute_group_readiness(
+    state: dict[str, Any],
+    groups: list[dict[str, Any]],
+    conditions_by_id: dict[str, Any],
 ) -> dict[str, Any]:
-    """매수 준비도 계산.
+    """설정된 조건 GROUP들(OR of AND-groups) 기반 매수 준비도.
 
-    조건 목록과 임계치는 rule + candidate에서 동적으로 구성한다.
-    tick이 제공되면 realtime 등락률·거래량 배수를 우선 사용한다.
-    각 조건은 {name, label, current_value, threshold_label, score_pct, met} 형태.
-    score_pct: 0.0~100.0 (조건 근접 정도)
+    - 각 그룹: 소속 조건들을 evaluate_condition으로 평가(AND).
+    - any_met: 어느 한 그룹이라도 완전충족(OR).
+    - overall_pct: 가장 근접한 그룹의 met_count/total * 100.
     """
-    tick = tick or {}
-    conditions: list[dict[str, Any]] = []
-
-    # AI 신뢰도(정성 점수)는 2026-06-01 매수 게이트에서 분리되어 준비도 조건에서도 제외한다.
-    # (정량 지표만 게이트로 사용 — decision_engine._rules_allow_signal 와 일치)
-
-    # 거래량 배수 — realtime tick (prev_volume_ratio) 우선, S4 정적값 폴백
-    # 조건이 0이어도 항상 표시 (숨기면 100% 오표시 발생)
-    vol_ratio = float(tick.get("prev_volume_ratio") or 0.0)
-    if vol_ratio == 0.0:
-        vol_ratio = float(candidate.get("volume_ratio") or candidate.get("vol_ratio") or 0.0)
-    vol_min = float((rule or {}).get("volume_ratio_min", 2.0))
-    vol_score = min(vol_ratio / vol_min, 1.0) * 100 if vol_min > 0 and vol_ratio > 0 else 0.0
-    conditions.append({
-        "name": "volume_ratio",
-        "label": "거래량 배수",
-        "current_value": round(vol_ratio, 2),
-        "threshold_label": f">= {vol_min:.1f}x",
-        "score_pct": round(vol_score, 1),
-        "met": vol_ratio >= vol_min,
-    })
-
-    # 등락률 — realtime tick 우선, S4 정적값 폴백
-    # 기준은 rule의 min/max_price_change_pct (AI가 시장톤 반영해 설정)
-    change_rate = float(tick.get("change_rate") or 0.0)
-    if change_rate == 0.0:
-        change_rate = float(candidate.get("change_rate") or candidate.get("chg_rate") or 0.0)
-    rate_min = float((rule or {}).get("min_price_change_pct", 0.8))
-    rate_max = float((rule or {}).get("max_price_change_pct", 6.0))
-    rate_met = rate_min <= change_rate <= rate_max
-    # score: 범위 중간값에 가까울수록 100
-    rate_mid = (rate_min + rate_max) / 2
-    if change_rate > 0 and rate_max > rate_min:
-        rate_score = max(0.0, 1.0 - abs(change_rate - rate_mid) / ((rate_max - rate_min) / 2)) * 100
-    else:
-        rate_score = 0.0
-    conditions.append({
-        "name": "change_rate",
-        "label": "등락률",
-        "current_value": round(change_rate, 2),
-        "threshold_label": f"{rate_min:.1f}% ~ {rate_max:.1f}%",
-        "score_pct": round(rate_score, 1),
-        "met": rate_met,
-    })
-
-    # VWAP (candidate에 vwap_position 있으면 표시)
-    vwap_pos = candidate.get("vwap_position")
-    if vwap_pos is not None:
-        vwap_met = str(vwap_pos).lower() in ("above", "상단", "위")
-        conditions.append({
-            "name": "vwap_position",
-            "label": "VWAP 상단",
-            "current_value": str(vwap_pos),
-            "threshold_label": "상단",
-            "score_pct": 100.0 if vwap_met else 0.0,
-            "met": vwap_met,
+    out_groups: list[dict[str, Any]] = []
+    for g in groups:
+        cond_ids = g.get("condition_ids") or []
+        conds: list[dict[str, Any]] = []
+        met_count = 0
+        for cid in cond_ids:
+            cond = conditions_by_id.get(cid)
+            if cond is None:
+                continue
+            ctype = str(cond.get("ctype") or "")
+            params = cond.get("params") or {}
+            met = bool(evaluate_condition(cond, state))
+            if met:
+                met_count += 1
+            conds.append({
+                "name": cond.get("name") or cid,
+                "label": cond.get("name") or cid,
+                "ctype": ctype,
+                "met": met,
+                "current_value": _condition_current_value(ctype, state),
+                "threshold_label": _condition_threshold_label(ctype, params),
+            })
+        total = len(conds)
+        group_met = total > 0 and met_count == total
+        out_groups.append({
+            "name": g.get("name") or g.get("id") or "",
+            "met": group_met,
+            "met_count": met_count,
+            "total": total,
+            "conditions": conds,
         })
 
-    # TSI 추세 (candidate.tsi 있을 때만 표시)
+    any_met = any(g["met"] for g in out_groups)
+    ratios = [
+        (g["met_count"] / g["total"]) for g in out_groups if g["total"] > 0
+    ]
+    overall_pct = round(max(ratios) * 100, 1) if ratios else 0.0
+    return {
+        "mode": "or_groups",
+        "any_met": any_met,
+        "groups": out_groups,
+        "overall_pct": overall_pct,
+    }
+
+
+def _build_readiness_state(
+    candidate: dict[str, Any],
+    tick: dict[str, Any] | None,
+    live_state: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """live_state(엔진 신호) + candidate/tick을 병합해 평가용 state 생성.
+
+    - 시작점은 live_state(compute_signal_state 결과) 또는 {}.
+    - change_rate: tick.change_rate > candidate.change_rate 순으로 보정.
+    - tsi: candidate.tsi (live_state의 tsi는 항상 None — 일봉 외부값).
+    - time_hhmm: 비어있으면 현재 KST HH:MM.
+    - 체결강도/tick_vol_mult: live_state에 없을 때만 0 폴백.
+    """
+    tick = tick or {}
+    state: dict[str, Any] = dict(live_state or {})
+
+    # change_rate: realtime tick 우선, candidate 폴백
+    change_rate = float(tick.get("change_rate") or 0.0)
+    if change_rate == 0.0:
+        change_rate = float(
+            candidate.get("change_rate") or candidate.get("chg_rate") or 0.0
+        )
+    if change_rate != 0.0 or "change_rate" not in state:
+        state["change_rate"] = change_rate
+
+    # tsi: 일봉 TSI는 candidate에서만 옴(live_state는 None)
     tsi_val = candidate.get("tsi")
     if tsi_val is not None:
         try:
-            tsi_f = float(tsi_val)
-            conditions.append({
-                "name": "tsi",
-                "label": "TSI 추세",
-                "current_value": round(tsi_f, 1),
-                "threshold_label": "> 0 (상승추세)",
-                "score_pct": 100.0 if tsi_f > 0 else 0.0,
-                "met": tsi_f > 0,
-            })
+            state["tsi"] = float(tsi_val)
         except (TypeError, ValueError):
             pass
 
-    # 종합 점수 계산 (단순 평균)
-    if conditions:
-        overall = sum(c["score_pct"] for c in conditions) / len(conditions)
-    else:
-        overall = 0.0
+    # time_hhmm: 비어있으면 현재 KST
+    if not state.get("time_hhmm"):
+        state["time_hhmm"] = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%H:%M")
 
-    return {
-        "overall_pct": round(overall, 1),
-        "met_count": sum(1 for c in conditions if c["met"]),
-        "total_count": len(conditions),
-        "conditions": conditions,
-    }
+    # 체결강도/tick_vol_mult: live 데이터 없으면 0 폴백
+    if "체결강도" not in state:
+        state["체결강도"] = 0.0
+    if "tick_vol_mult" not in state:
+        state["tick_vol_mult"] = 0.0
+
+    return state
 
 
 def _latest_ticks_by_symbol() -> dict[str, dict[str, Any]]:
@@ -489,6 +553,15 @@ def get_candidates():
     overrides = plan.get("daily_overrides", {})
 
     latest_ticks = _latest_ticks_by_symbol()
+
+    # 매수 준비도: 설정된 조건 그룹들(OR of AND-그룹)을 1회 로드.
+    # 엔진이 활성이면 라이브 신호(BarEngine.compute_signal_state)를 종목별로 사용.
+    readiness_groups = load_groups(enabled_only=True)
+    readiness_conds = load_conditions(enabled_only=False)
+    from ...services.engine.decision_engine import decision_engine
+    bar_engine = getattr(decision_engine, "_bar_engine", None)
+    engine_live = bool(decision_engine.is_active()) and bar_engine is not None
+
     # 이미 보유 중인 종목은 매수 대기 목록에서 제외한다.
     # 엔진은 종목당 1회 진입(single-entry)이라 보유 종목은 재매수하지 않으므로
     # (decision_engine._on_tick: `if symbol in managed_symbols: return`),
@@ -513,7 +586,15 @@ def get_candidates():
         if overrides.get("volume_filter_multiplier"):
             rule["volume_ratio_min"] = overrides["volume_filter_multiplier"]
 
-        readiness = _compute_buy_readiness(c, rule, latest_tick)
+        if engine_live:
+            try:
+                live_state = bar_engine.compute_signal_state(code)
+            except Exception:
+                live_state = {}
+        else:
+            live_state = {}
+        state = _build_readiness_state(c, latest_tick, live_state)
+        readiness = _compute_group_readiness(state, readiness_groups, readiness_conds)
         result.append({
             "code": code,
             "name": c.get("name") or "",
