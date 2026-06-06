@@ -1,17 +1,17 @@
 """유니버스 필터 서비스 (S3 — 08:15 KST).
 
-KIS 거래량/거래대금 순위를 병렬로 가져와 1차 유니버스를 구성하고
-정량 점수로 정렬한 뒤 DB에 저장한다.
+KIS 거래량 순위 + 등락률 순위를 병렬로 가져와 1차 유니버스를 구성하고
+단타 모멘텀 정량 점수로 정렬한 뒤 DB에 저장한다.
 
 필터 기준 (Layer 1):
 - 상한가/하한가 제외: 변동률 ±29% 초과 종목
 - 가격 0원 종목 제외
 - 거래량 0 종목 제외
 
-점수 계산 (가중 합산):
-- 거래대금 순위 점수: 50%
-- 거래량 순위 점수: 30%
-- 등락률 점수 (양수 선호): 20%
+점수 계산 (단타 모멘텀 — 가중 합산):
+- 상승폭(등락률) 점수: 50%
+- 거래량급증(전일대비 거래량증가율%) 점수: 50%
+  (거래대금 trade_amount 은 소스/점수에서 제거됨)
 
 결과는 universe_filter_results 테이블에 저장된다.
 """
@@ -158,14 +158,15 @@ def _ensure_table() -> None:
 
 def _merge_and_deduplicate(
     volume_items: list[dict[str, Any]],
-    trade_items: list[dict[str, Any]],
     change_items: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """거래량·거래대금·등락률 순위를 병합하고 중복을 제거한다.
+    """거래량·등락률 순위를 병합하고 중복을 제거한다.
+
+    단타 모멘텀 선정으로 전환하며 거래대금(trade_amount) 소스를 제거했다.
+    소스는 거래량 순위 + 등락률 순위 2종이다.
 
     Args:
-        volume_items: 거래량 순위 리스트(순서=순위).
-        trade_items: 거래대금 순위 리스트(순서=순위).
+        volume_items: 거래량 순위 리스트(순서=순위). 항목에 volume_surge(전일대비 거래량증가율%)를 carry-through 한다.
         change_items: 등락률(상승률) 순위 리스트(순서=순위). None이면 등락률 소스 미사용.
     """
     merged: dict[str, dict[str, Any]] = {}
@@ -180,31 +181,12 @@ def _merge_and_deduplicate(
             "price": item.get("price", 0),
             "change_rate": item.get("change_rate", 0.0),
             "volume": item.get("volume", 0),
+            # 거래대금 sanity 게이트(volume==0 AND trade_amount==0) 유지를 위해 trade_amount 키는 남기되 항상 0.
             "trade_amount": 0,
+            "volume_surge": item.get("volume_surge", 0.0),
             "volume_rank": idx + 1,
-            "trade_rank": 9999,
             "change_rate_rank": 9999,
         }
-
-    for idx, item in enumerate(trade_items):
-        sym = item.get("symbol", "")
-        if not sym:
-            continue
-        if sym in merged:
-            merged[sym]["trade_amount"] = item.get("trade_amount", 0)
-            merged[sym]["trade_rank"] = idx + 1
-        else:
-            merged[sym] = {
-                "symbol": sym,
-                "name": item.get("name", ""),
-                "price": item.get("price", 0),
-                "change_rate": item.get("change_rate", 0.0),
-                "volume": 0,
-                "trade_amount": item.get("trade_amount", 0),
-                "volume_rank": 9999,
-                "trade_rank": idx + 1,
-                "change_rate_rank": 9999,
-            }
 
     for idx, item in enumerate(change_items or []):
         sym = item.get("symbol", "")
@@ -222,8 +204,8 @@ def _merge_and_deduplicate(
                 "change_rate": item.get("change_rate", 0.0),
                 "volume": 0,
                 "trade_amount": 0,
+                "volume_surge": 0.0,
                 "volume_rank": 9999,
-                "trade_rank": 9999,
                 "change_rate_rank": idx + 1,
             }
 
@@ -299,11 +281,13 @@ def _market_data_readiness_status(merged_count: int, rejection_counts: dict[str,
     return "ready_or_mixed"
 
 
+# 단타 모멘텀 선정: 상승폭(등락률) 50% + 거래량급증(전일대비 거래량증가율) 50%.
+# 거래대금(trade) 팩터는 제거됐다. (PM: "일단 50/50" — 모든 톤 동일)
 _TONE_WEIGHTS: dict[str, dict[str, float]] = {
-    "positive": {"trade": 0.40, "volume": 0.40, "change": 0.20},
-    "neutral":  {"trade": 0.50, "volume": 0.30, "change": 0.20},
-    "negative": {"trade": 0.60, "volume": 0.30, "change": 0.10},
-    "mixed":    {"trade": 0.50, "volume": 0.30, "change": 0.20},
+    "positive": {"change": 0.5, "volume_surge": 0.5},
+    "neutral":  {"change": 0.5, "volume_surge": 0.5},
+    "negative": {"change": 0.5, "volume_surge": 0.5},
+    "mixed":    {"change": 0.5, "volume_surge": 0.5},
 }
 _DEFAULT_WEIGHTS = _TONE_WEIGHTS["neutral"]
 
@@ -346,7 +330,7 @@ def _apply_memory_adjustments(weights: dict[str, float], memories: list[dict[str
     """S3 learning memories 기반으로 유니버스 필터 점수 가중치를 미세 조정한다.
 
     Args:
-        weights: 시장 톤으로 산출된 trade/volume/change 가중치.
+        weights: 시장 톤으로 산출된 change/volume_surge 가중치.
         memories: S3_UNIVERSE_FILTER 범위의 활성 Learning Memory 목록.
     """
     adjusted = dict(weights)
@@ -364,27 +348,28 @@ def _apply_memory_adjustments(weights: dict[str, float], memories: list[dict[str
     return adjusted
 
 
-def _score_and_rank(items: list[dict[str, Any]], total: int, weights: dict[str, float]) -> list[dict[str, Any]]:
-    """정량 점수를 계산하고 내림차순으로 정렬한다.
+# 거래량급증(전일대비 거래량증가율%) 정규화 분모.
+# vol_inrt 단위는 퍼센트(acml_vol/prdy_vol*100). 300% = 전일 대비 3배 → 점수 1.0 포화.
+_VOLUME_SURGE_SATURATION_PCT = 300.0
 
-    점수 = 거래대금 순위 점수 * trade_w + 거래량 순위 점수 * volume_w + 등락률 점수 * change_w
+
+def _score_and_rank(items: list[dict[str, Any]], total: int, weights: dict[str, float]) -> list[dict[str, Any]]:
+    """단타 모멘텀 정량 점수를 계산하고 내림차순으로 정렬한다.
+
+    점수 = 등락률 점수 * change_w + 거래량급증 점수 * surge_w   (거래대금 항 제거)
+    - change_score: change_rate_rank 있으면 순위 점수, 없으면(=9999) 등락률 정규화 (change_rate+30)/60.
+    - surge_score: volume_surge(전일대비 거래량증가율%) 정규화 = min(1.0, surge/300).
+                   surge 가 0/부재이면 거래량 RANK 점수로 폴백해 여전히 정렬되게 한다.
     순위 점수 = (total - rank + 1) / total  (1등이 가장 높음)
-    등락률 점수 = (change_rate + 30) / 60  (양수 선호, -30~+30 범위 정규화)
     """
     if total == 0:
         total = 1
 
-    trade_w = weights.get("trade", 0.50)
-    volume_w = weights.get("volume", 0.30)
-    change_w = weights.get("change", 0.20)
+    change_w = weights.get("change", 0.5)
+    surge_w = weights.get("volume_surge", 0.5)
 
     scored = []
     for item in items:
-        # trade_rank가 total을 초과하면(KIS 거래대금 미수신 시 sentinel 9999) 0점 처리
-        raw_trade_rank = item.get("trade_rank", total)
-        trade_score = (total - raw_trade_rank + 1) / total if raw_trade_rank <= total else 0.0
-        raw_volume_rank = item.get("volume_rank", total)
-        volume_score = (total - raw_volume_rank + 1) / total if raw_volume_rank <= total else 0.0
         # 등락률 순위가 있으면 순위 점수, 없으면(=9999 sentinel) 등락률 정규화 점수로 폴백
         raw_change_rank = item.get("change_rate_rank", 9999)
         if raw_change_rank <= total:
@@ -393,11 +378,16 @@ def _score_and_rank(items: list[dict[str, Any]], total: int, weights: dict[str, 
             change_score = (item.get("change_rate", 0.0) + 30.0) / 60.0
         change_score = max(0.0, min(1.0, change_score))
 
-        total_score = (
-            trade_w * trade_score +
-            volume_w * volume_score +
-            change_w * change_score
-        )
+        # 거래량급증 점수: vol_inrt(%) 정규화. 0/부재 시 거래량 RANK 점수로 폴백.
+        surge = float(item.get("volume_surge", 0.0) or 0.0)
+        if surge > 0.0:
+            surge_score = min(1.0, surge / _VOLUME_SURGE_SATURATION_PCT)
+        else:
+            raw_volume_rank = item.get("volume_rank", total)
+            surge_score = (total - raw_volume_rank + 1) / total if raw_volume_rank <= total else 0.0
+        surge_score = max(0.0, min(1.0, surge_score))
+
+        total_score = change_w * change_score + surge_w * surge_score
         scored.append({**item, "score": round(total_score, 4)})
 
     scored.sort(key=lambda x: x["score"], reverse=True)
@@ -430,15 +420,13 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
     knowledge_items = get_active_knowledge(scope="S3_UNIVERSE_FILTER")
     knowledge_refs = [k["id"] for k in knowledge_items]
 
-    # KIS 병렬 호출
+    # KIS 병렬 호출 — 단타 모멘텀: 거래량 순위 + 등락률 순위 2종 (거래대금 소스 제거)
     try:
-        volume_result, trade_result, change_result = await asyncio.gather(
+        volume_result, change_result = await asyncio.gather(
             get_volume_rank(market_code="J", top_n=_MAX_UNIVERSE),
-            get_price_rank(sort_by="trade_amount", market_code="J", top_n=_MAX_UNIVERSE),
             get_price_rank(sort_by="change_rate", market_code="J", top_n=_MAX_UNIVERSE),
         )
         volume_items = volume_result.get("items", [])
-        trade_items = trade_result.get("items", [])
         change_items = change_result.get("items", [])
     except Exception as exc:
         finish_pipeline_run(
@@ -456,11 +444,10 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
 
     raw_split_counts = {
         "volume": len(volume_items),
-        "trade_amount": len(trade_items),
         "change_rate": len(change_items),
     }
-    raw_count = raw_split_counts["volume"] + raw_split_counts["trade_amount"] + raw_split_counts["change_rate"]
-    merged = _merge_and_deduplicate(volume_items, trade_items, change_items)
+    raw_count = raw_split_counts["volume"] + raw_split_counts["change_rate"]
+    merged = _merge_and_deduplicate(volume_items, change_items)
     rejection_counts = _count_filter_rejections(merged)
     filtered = _apply_filters(merged)
     ranked = _score_and_rank(filtered, total=len(merged), weights=weights)
@@ -507,7 +494,7 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
         "data_readiness_status": _market_data_readiness_status(len(merged), rejection_counts),
         "sample_symbols": {
             "volume": _sample_symbols(volume_items),
-            "trade_amount": _sample_symbols(trade_items),
+            "change_rate": _sample_symbols(change_items),
             "merged": _sample_symbols(merged),
             "filtered": _sample_symbols(filtered),
         },
@@ -554,11 +541,11 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
         "id": record_id,
     }
     logger.info(
-        "SUCCESS: UniverseFilter trade_date=%s tone=%s raw_volume=%d raw_trade=%d raw=%d merged=%d filtered=%d top_n=%d rejections=%s samples=%s memories=%d knowledge=%d",
+        "SUCCESS: UniverseFilter trade_date=%s tone=%s raw_volume=%d raw_change=%d raw=%d merged=%d filtered=%d top_n=%d rejections=%s samples=%s memories=%d knowledge=%d",
         today,
         tone_used,
         raw_split_counts["volume"],
-        raw_split_counts["trade_amount"],
+        raw_split_counts["change_rate"],
         raw_count,
         len(merged),
         len(filtered),
