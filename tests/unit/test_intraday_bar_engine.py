@@ -113,3 +113,48 @@ def test_prior_day_high_seed_and_breakout_basis():
     eng.ingest_tick(_tick(price=1000.0, cntg_vol=1, stck_cntg_hour="103000"))
     assert eng.get_day_high("005930") == 1000.0
     assert eng.get_prior_day_high("005930") == 1050.0
+
+
+def test_chegyeol_gangdo_from_shnu_rate():
+    eng = ibe.BarEngine()
+    eng.ingest_tick(_tick(price=1000.0, cntg_vol=1, shnu_rate=62.0, stck_cntg_hour="103000"))
+    # 62.0 / 100 = 0.62
+    assert abs(eng.get_chegyeol_gangdo("005930") - 0.62) < 1e-9
+
+
+def test_chegyeol_gangdo_falls_back_to_csnu_ratio():
+    eng = ibe.BarEngine()
+    # shnu_rate 없음(None) → 매수/(매수+매도) = 30/(30+10) = 0.75
+    t = _tick(price=1000.0, cntg_vol=1, shnu_rate=None,
+              shnu_cntg_csnu=30, seln_cntg_csnu=10, stck_cntg_hour="103000")
+    eng.ingest_tick(t)
+    assert abs(eng.get_chegyeol_gangdo("005930") - 0.75) < 1e-9
+
+
+def test_chegyeol_gangdo_zero_when_no_data():
+    eng = ibe.BarEngine()
+    t = _tick(price=1000.0, cntg_vol=1, shnu_rate=None,
+              shnu_cntg_csnu=0, seln_cntg_csnu=0, stck_cntg_hour="103000")
+    eng.ingest_tick(t)
+    assert eng.get_chegyeol_gangdo("005930") == 0.0
+
+
+def test_tick_volume_mult_single_tick_is_one():
+    eng = ibe.BarEngine()
+    eng.ingest_tick(_tick(price=1000.0, cntg_vol=50, stck_cntg_hour="103000"))
+    assert eng.get_tick_vol_mult("005930") == 1.0
+
+
+def test_tick_volume_mult_against_baseline_average():
+    eng = ibe.BarEngine()
+    eng.ingest_tick(_tick(price=1000.0, cntg_vol=10, stck_cntg_hour="103000"))
+    eng.ingest_tick(_tick(price=1001.0, cntg_vol=10, stck_cntg_hour="103001"))
+    eng.ingest_tick(_tick(price=1002.0, cntg_vol=40, stck_cntg_hour="103002"))
+    # baseline = (10+10+40)/3 = 20.0, 현재(마지막 틱) = 40 → 40/20 = 2.0
+    assert abs(eng.get_tick_vol_mult("005930") - 2.0) < 1e-9
+
+
+def test_tick_volume_mult_zero_baseline_returns_zero():
+    eng = ibe.BarEngine()
+    eng.ingest_tick(_tick(price=1000.0, cntg_vol=0, stck_cntg_hour="103000"))
+    assert eng.get_tick_vol_mult("005930") == 0.0

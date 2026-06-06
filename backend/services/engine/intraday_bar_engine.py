@@ -78,6 +78,10 @@ class _SymbolState:
     vwap_vol_sum: float = 0.0     # Σ(vol)
     day_high: float = 0.0
     prior_day_high: float | None = None
+    last_chegyeol_gangdo: float = 0.0     # 마지막 틱 체결강도 0~1
+    tick_vol_sum: float = 0.0             # Σ 틱거래량(baseline용)
+    tick_count: int = 0                   # 틱 수
+    last_tick_vol: float = 0.0            # 마지막 틱 거래량
 
 
 class BarEngine:
@@ -122,6 +126,34 @@ class BarEngine:
         # 당일 고가
         if price > st.day_high:
             st.day_high = price
+
+        # 체결강도: shnu_rate(0~100) 우선, 없으면 매수/(매수+매도) 체결건수 비율
+        shnu_rate_raw = _pick(tick, "shnu_rate", _IDX_SHNU_RATE)
+        if shnu_rate_raw not in (None, ""):
+            st.last_chegyeol_gangdo = max(0.0, min(1.0, _to_float(shnu_rate_raw) / 100.0))
+        else:
+            buy_cnt = _to_float(_pick(tick, "shnu_cntg_csnu", _IDX_SHNU_CSNU))
+            sell_cnt = _to_float(_pick(tick, "seln_cntg_csnu", _IDX_SELN_CSNU))
+            denom = buy_cnt + sell_cnt
+            st.last_chegyeol_gangdo = (buy_cnt / denom) if denom > 0 else 0.0
+
+        # 틱거래량 baseline/현재
+        st.tick_vol_sum += vol
+        st.tick_count += 1
+        st.last_tick_vol = vol
+
+    def get_chegyeol_gangdo(self, symbol: str) -> float:
+        st = self._states.get(symbol)
+        return st.last_chegyeol_gangdo if st is not None else 0.0
+
+    def get_tick_vol_mult(self, symbol: str) -> float:
+        st = self._states.get(symbol)
+        if st is None or st.tick_count <= 0:
+            return 0.0
+        baseline = st.tick_vol_sum / st.tick_count
+        if baseline <= 0:
+            return 0.0
+        return st.last_tick_vol / baseline
 
     def get_vwap(self, symbol: str) -> float | None:
         st = self._states.get(symbol)
