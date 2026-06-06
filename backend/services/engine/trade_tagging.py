@@ -169,16 +169,18 @@ def build_selection_reason(candidate: dict) -> dict:
     """
     candidate = candidate or {}
 
+    # 단타 모멘텀 선정: 거래량순위 / 등락률순위 / 거래량급증 (거래대금 소스 제거)
     sources: list[str] = []
-    trade_rank = candidate.get("trade_rank")
-    if isinstance(trade_rank, (int, float)) and 0 < trade_rank <= 100:
-        sources.append(f"거래대금순위#{int(trade_rank)}")
     volume_rank = candidate.get("volume_rank")
     if isinstance(volume_rank, (int, float)) and 0 < volume_rank <= 100:
         sources.append(f"거래량순위#{int(volume_rank)}")
     change_rate_rank = candidate.get("change_rate_rank")
     if isinstance(change_rate_rank, (int, float)) and 0 < change_rate_rank <= 100:
         sources.append(f"등락률순위#{int(change_rate_rank)}")
+    # 전일대비 거래량증가율(%)이 유의미하면(>=100% = 전일 대비 이상) 거래량급증 태그
+    volume_surge = candidate.get("volume_surge")
+    if isinstance(volume_surge, (int, float)) and volume_surge >= 100.0:
+        sources.append("거래량급증")
 
     scores: dict[str, float] = {}
     universe_score = _maybe_float(candidate.get("score"))

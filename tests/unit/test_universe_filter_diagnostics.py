@@ -38,17 +38,22 @@ class UniverseFilterDiagnosticsTest(unittest.TestCase):
         self.assertEqual(counts["empty_liquidity"], 2)
         self.assertEqual(universe_filter._market_data_readiness_status(2, counts), "liquidity_not_ready")
 
-    def test_trade_amount_rows_survive_without_volume(self) -> None:
-        """Trade-amount ranked rows remain candidates even when volume rank is absent."""
+    def test_volume_ranked_rows_survive_filters(self) -> None:
+        """Volume-ranked momentum rows remain candidates and carry volume_surge.
+
+        단타 모멘텀 전환: 거래대금 소스 제거. 거래량 순위 행은 volume>0 으로
+        유동성 floor 를 통과하며 volume_surge(전일대비 거래량증가율%)를 carry 한다.
+        """
         merged = universe_filter._merge_and_deduplicate(
-            [],
-            [{"symbol": "005930", "name": "삼성전자", "price": 70000, "change_rate": 1.0, "trade_amount": 1000000}],
+            [{"symbol": "005930", "name": "삼성전자", "price": 70000,
+              "change_rate": 1.0, "volume": 5_000_000, "volume_surge": 180.0}],
         )
 
         filtered = universe_filter._apply_filters(merged)
 
         self.assertEqual(len(filtered), 1)
         self.assertEqual(filtered[0]["symbol"], "005930")
+        self.assertEqual(filtered[0]["volume_surge"], 180.0)
 
 
 class SchedulerMarketOpenGuardTest(unittest.TestCase):

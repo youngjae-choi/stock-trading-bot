@@ -9,7 +9,7 @@ def test_record_and_load_roundtrip():
         order_id="ord-1",
         symbol="005930",
         trade_date=d,
-        selection_reason={"sources": ["등락률순위#3", "거래대금상위"],
+        selection_reason={"sources": ["등락률순위#3", "거래량급증"],
                           "scores": {"universe_score": 0.36, "llm_suitability": 0.72},
                           "llm_note": "반도체 섹터 강세"},
         fired_groups=["돌파전략"],
@@ -27,7 +27,7 @@ def test_record_and_load_roundtrip():
     assert row["symbol"] == "005930"
     assert row["trade_date"] == d
     # JSON 필드가 파이썬 객체로 복원됨
-    assert row["selection_reason"]["sources"] == ["등락률순위#3", "거래대금상위"]
+    assert row["selection_reason"]["sources"] == ["등락률순위#3", "거래량급증"]
     assert row["selection_reason"]["scores"]["llm_suitability"] == 0.72
     assert row["fired_groups"] == ["돌파전략"]
     assert row["condition_states"]["돌파"] is True
@@ -53,7 +53,7 @@ def test_set_outcome_fills_by_order_id():
         order_id="ord-out",
         symbol="000660",
         trade_date=d,
-        selection_reason={"sources": ["거래대금상위"], "scores": {}, "llm_note": ""},
+        selection_reason={"sources": ["거래량급증"], "scores": {}, "llm_note": ""},
         fired_groups=["눌림전략"],
         condition_states={"체결강도": 0.55},
         market_context={"regime": "neutral", "market_tone": "neutral",
@@ -85,13 +85,14 @@ def test_build_selection_reason_full_candidate():
         "symbol": "005930", "name": "삼성전자",
         "score": 0.36, "suitability_score": 0.72,
         "change_rate": 2.3, "tsi": 42.0,
-        "volume_rank": 5, "trade_rank": 3,
+        "volume_rank": 5, "volume_surge": 220.0,
         "llm_note": "반도체 섹터 강세 모멘텀",
     }
     sr = tt.build_selection_reason(candidate)
-    # sources: 순위 기반 surfacing 근거
-    assert "거래대금순위#3" in sr["sources"]
+    # sources: 단타 모멘텀 surfacing 근거 (거래대금 제거)
+    assert all("거래대금" not in s for s in sr["sources"])
     assert "거래량순위#5" in sr["sources"]
+    assert "거래량급증" in sr["sources"]
     # scores: 점수 근거 (universe_score = score, llm_suitability = suitability_score)
     assert sr["scores"]["universe_score"] == 0.36
     assert sr["scores"]["llm_suitability"] == 0.72
@@ -109,9 +110,17 @@ def test_build_selection_reason_sparse_candidate():
     assert sr["llm_note"] == ""
 
 
-def test_build_selection_reason_ignores_sentinel_trade_rank():
-    # trade_rank 미수신 sentinel(>100, 예 9999)은 source 로 넣지 않는다
-    candidate = {"symbol": "005930", "trade_rank": 9999, "volume_rank": 2}
+def test_build_selection_reason_ignores_trade_amount_entirely():
+    # 단타 모멘텀: trade_rank 가 있어도 거래대금 source 는 생성하지 않는다
+    candidate = {"symbol": "005930", "trade_rank": 3, "volume_rank": 2}
     sr = tt.build_selection_reason(candidate)
     assert "거래량순위#2" in sr["sources"]
     assert all("거래대금" not in s for s in sr["sources"])
+
+
+def test_build_selection_reason_skips_weak_volume_surge():
+    # volume_surge 가 100% 미만이면 거래량급증 태그를 붙이지 않는다
+    candidate = {"symbol": "005930", "volume_rank": 2, "volume_surge": 40.0}
+    sr = tt.build_selection_reason(candidate)
+    assert "거래량급증" not in sr["sources"]
+    assert "거래량순위#2" in sr["sources"]
