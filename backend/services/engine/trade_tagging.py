@@ -147,6 +147,27 @@ def _parse_row(row: dict) -> dict:
     }
 
 
+def set_outcome(*, order_id: str, outcome: dict) -> int:
+    """청산 후 order_id 로 태그의 outcome_json 을 갱신하고 갱신된 행 수를 반환한다.
+
+    Args:
+        order_id: 매수 주문의 trading_orders.id.
+        outcome: {"realized_pnl", "win", "hold_sec", "exit_reason"} dict.
+    """
+    _ensure_table()
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "UPDATE trade_entry_tags SET outcome_json = ? WHERE order_id = ?",
+            (_dumps(outcome), str(order_id or "")),
+        )
+        updated = cursor.rowcount
+    if updated == 0:
+        logger.warning("WARN: set_outcome 매칭 태그 없음 order_id=%s", order_id)
+    else:
+        logger.info("SUCCESS: outcome 갱신 order_id=%s rows=%d", order_id, updated)
+    return updated
+
+
 def _delete_for_test(trade_date: str) -> None:
     """테스트 정리용: 해당 거래일 태그를 모두 삭제한다."""
     _ensure_table()
