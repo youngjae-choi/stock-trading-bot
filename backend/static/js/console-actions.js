@@ -76,7 +76,8 @@
       saveSchedulerSetting: function() { return saveSchedulerSetting(element.dataset.key); },
       saveExitOverrideSetting: function() { return saveExitOverrideSetting(element.dataset.key); },
       loadDailyResults: function() { return loadDailyResults(); },
-      toggleDayReview: function() { return toggleDayReview(element.dataset.date); },
+      openDayReview: function() { return openDayReview(element.dataset.date); },
+      backToDailyResults: function() { return showScreen('daily-results'); },
       loadConditionEditor: function() { return loadConditionEditor(); },
       createConditionGroup: function() { return createConditionGroup(); },
       loadGroupStatsScaffold: function() { return loadGroupStatsScaffold(); }
