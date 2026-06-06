@@ -1890,6 +1890,49 @@
 
           <div class="section-gap"></div>
 
+          <!-- ②-B 탐색모드 (Exploration) -->
+          <div class="card">
+            <div class="settings-card-hd">
+              <div class="settings-card-meta">
+                <span class="settings-tag">system_settings</span>
+                <div class="settings-card-title-txt">탐색모드 (Exploration)
+                  <span id="exploration-status-badge" class="settings-badge-off" style="margin-left:8px;">OFF</span>
+                </div>
+                <div class="settings-card-desc">🔒 모의계좌에서만 발동. ON이면 매수는 OR 폭증·풀예수금(95%)·최대 40종목으로 동작하며 아래 기존 리스크 설정의 종목수/비중은 무시됩니다.</div>
+              </div>
+            </div>
+
+            <div class="settings-policy-grid">
+              <div class="settings-policy-row">
+                <label style="font-size:12px; display:flex; align-items:center; gap:8px; cursor:pointer;">
+                  <input type="checkbox" id="exploration-mode-toggle" data-action="toggleExplorationMode">
+                  탐색모드 활성화 (engine.exploration_mode)
+                </label>
+              </div>
+            </div>
+
+            <div class="settings-divider"></div>
+
+            <div class="form-grid">
+              <div class="field">
+                <label>풀예수금 사이징 비율 (budget_rate)</label>
+                <input id="exploration-budget-rate" type="number" step="0.01" min="0" max="1" value="0.95">
+                <small class="muted">매수에 사용할 예수금 비율 (예: 0.95 = 95%)</small>
+              </div>
+              <div class="field">
+                <label>최대 보유 종목 수 (max_positions)</label>
+                <input id="exploration-max-positions" type="number" step="1" min="1" value="40">
+                <small class="muted">탐색모드 시 아래 리스크 종목수 대신 적용</small>
+              </div>
+            </div>
+
+            <div class="settings-card-ft">
+              <button type="button" class="btn primary" data-action="saveExplorationSettings">저장</button>
+            </div>
+          </div>
+
+          <div class="section-gap"></div>
+
           <!-- ③ 리스크 & 운용 설정 (포트폴리오 한도 + 청산 정책 통합) -->
           <div class="card">
             <div class="settings-card-hd">
@@ -1900,6 +1943,7 @@
               </div>
             </div>
 
+            <div id="risk-exploration-note" style="display:none; margin-bottom:10px; padding:8px 12px; border-radius:6px; background:rgba(210,153,34,0.12); border:1px solid #d29922; color:#d29922; font-size:12px;">⚠️ 탐색모드 활성 — 실제 매수는 풀예수금 95% / 최대 40종목 사용(아래 종목수·비중 대신 적용)</div>
             <div class="settings-sublabel">포트폴리오 위험 한도</div>
             <div class="form-grid" id="riskSettingsForm">
               <div class="field">
@@ -2386,7 +2430,7 @@
   <script src="/static/js/screens/console-missed-tracking.js"></script>
   <script src="/static/js/screens/console-false-positive.js"></script>
   <script src="/static/js/screens/console-confidence-calibration.js"></script>
-  <script src="/static/js/screens/console-settings.js?v=8"></script>
+  <script src="/static/js/screens/console-settings.js?v=9"></script>
   <script src="/static/js/screens/console-funnel-data-health.js?v=1"></script>
   <script src="/static/js/screens/console-review.js?v=8"></script>
   <script src="/static/js/screens/console-statistics.js?v=2"></script>
@@ -2397,7 +2441,7 @@
   <script src="/static/js/screens/console-dividend-stats.js"></script>
   <script src="/static/js/screens/console-daily-results.js?v=7"></script>
   <script src="/static/js/console-navigation.js?v=8"></script>
-  <script src="/static/js/console-actions.js?v=8"></script>
+  <script src="/static/js/console-actions.js?v=9"></script>
   <script src="/static/js/console-events.js?v=7"></script>
   <script src="/static/js/console-main.js?v=7"></script>
 </body>

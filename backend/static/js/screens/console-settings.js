@@ -131,6 +131,84 @@
     }
   }
 
+  /* Reflect exploration_mode ON/OFF on the badge and the risk-card warning line. */
+  function _applyExplorationState(isOn) {
+    var badge = document.getElementById("exploration-status-badge");
+    if (badge) {
+      badge.textContent = isOn ? "ON" : "OFF";
+      badge.className = isOn ? "settings-badge-on" : "settings-badge-off";
+    }
+    var toggle = document.getElementById("exploration-mode-toggle");
+    if (toggle) toggle.checked = !!isOn;
+    var note = document.getElementById("risk-exploration-note");
+    if (note) note.style.display = isOn ? "block" : "none";
+  }
+
+  /* Load exploration-mode flag + sizing keys into the Settings card. */
+  async function loadExplorationSettings() {
+    try {
+      var settingsMap = await loadSettingsMap();
+      var isOn = settingsMap["engine.exploration_mode"] === true
+        || settingsMap["engine.exploration_mode"] === "true";
+      _applyExplorationState(isOn);
+
+      var rate = document.getElementById("exploration-budget-rate");
+      var maxPos = document.getElementById("exploration-max-positions");
+      if (rate) rate.value = settingsMap["exploration.budget_rate"] ?? "0.95";
+      if (maxPos) maxPos.value = settingsMap["exploration.max_positions"] ?? "40";
+    } catch (e) {
+      console.error("Failed to load exploration settings", e);
+    }
+  }
+
+  /* Toggle engine.exploration_mode boolean from the checkbox. */
+  async function toggleExplorationMode(checked) {
+    try {
+      await fetchJson("/api/v1/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "engine.exploration_mode", value: !!checked, value_type: "boolean" })
+      });
+      _applyExplorationState(!!checked);
+      showToast(checked ? "탐색모드 ON — 저장됨" : "탐색모드 OFF — 저장됨", "ok");
+    } catch (e) {
+      showToast("저장 실패: " + e.message, "err");
+      _applyExplorationState(!checked);
+    }
+  }
+
+  /* Persist exploration sizing keys (budget_rate, max_positions). */
+  async function saveExplorationSettings() {
+    var rate = Number(document.getElementById("exploration-budget-rate")?.value);
+    var maxPos = Number(document.getElementById("exploration-max-positions")?.value);
+
+    if (!Number.isFinite(rate) || rate <= 0 || rate > 1) {
+      alert("풀예수금 사이징 비율은 0 초과 1 이하 숫자로 입력하세요 (예: 0.95).");
+      return;
+    }
+    if (!Number.isInteger(maxPos) || maxPos < 1) {
+      alert("최대 보유 종목 수는 1 이상의 정수로 입력하세요 (예: 40).");
+      return;
+    }
+    var items = [
+      { key: "exploration.budget_rate", value: rate, value_type: "number" },
+      { key: "exploration.max_positions", value: maxPos, value_type: "number" }
+    ];
+    try {
+      await Promise.all(items.map(function(item) {
+        return fetchJson("/api/v1/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(item)
+        });
+      }));
+      showToast("탐색모드 설정이 저장되었습니다.", "ok");
+      loadExplorationSettings();
+    } catch (e) {
+      showToast("저장 실패: " + e.message, "err");
+    }
+  }
+
   /* Load editable global risk settings into the Settings form. */
   async function loadRiskSettings() {
     try {
@@ -762,6 +840,7 @@
   function initSettingsUI() {
     loadBuyConditions();
     loadConditionEditor();
+    loadExplorationSettings();
     loadRiskSettings();
     loadSchedulerSettings();
     loadExitOverrideSettings();

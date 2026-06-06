@@ -62,6 +62,7 @@
       engineTestRun: function() { return engineTestRun(element.dataset.step); },
       engineTestClearLog: function() { return engineTestClearLog(); },
       saveRiskSettings: function() { return saveRiskSettings(); },
+      saveExplorationSettings: function() { return saveExplorationSettings(); },
       saveRiskProfilePack: function() { return saveRiskProfilePack(); },
       saveTradingCostSettings: function() { return saveTradingCostSettings(); },
       loadRegimeSets: function() { return loadRegimeSets(); },
@@ -89,6 +90,7 @@
     if (action === 'loadReviewByDate') return loadReviewByDate(element.value);
     if (action === 'loadStatisticsDetail') return loadStatisticsDetail(element.value);
     if (action === 'saveGuardrail') return saveGuardrail(element.dataset.key, element.value);
+    if (action === 'toggleExplorationMode') return toggleExplorationMode(element.checked);
     if (action === 'updateSettingsProfileField') {
       return updateSettingsProfileField(
         element.dataset.profile,
