@@ -174,6 +174,15 @@
     }
   }
 
+  /* 후보 선정사유 한 줄 요약 (sources · llm_note) */
+  function _candidateSelectionText(c) {
+    var sr = c.selection_reason || {};
+    var sources = (sr.sources || []).map(function(s) { return String(s); }).join(" · ");
+    var note = (sr.llm_note || "").trim();
+    if (sources && note) return sources + " · " + note;
+    return sources || note || "";
+  }
+
   function renderCandidateRow(c) {
     var readiness = c.buy_readiness || {};
     var pct = readiness.overall_pct || 0;
@@ -234,6 +243,13 @@
       + (c.ws_subscribed ? '● WS' : '○ WS')
       + '</div>'
       + '</div>'
+      + (function() {
+          var selText = _candidateSelectionText(c);
+          return selText
+            ? '<div style="padding:4px 10px; font-size:11px; color:var(--muted); background:var(--panel);">'
+              + '<span style="color:var(--accent);">선정사유</span> ' + escapeHtml(selText) + '</div>'
+            : '';
+        })()
       + '<div id="' + detailId + '" style="display:none; padding:8px 10px; background:var(--panel);">'
       + '<table style="width:100%; border-collapse:collapse;">'
       + '<thead><tr style="font-size:10px; color:var(--muted);">'
