@@ -1,0 +1,118 @@
+"""WS H0STCNT0 틱 → 종목별 10초 OHLCV 봉 집계 + 라이브 신호 → state dict.
+
+순수 인메모리. KIS/WS/DB 의존 없음. Phase 1a의 evaluate_condition이 소비하는
+state dict를 채운다. tsi(일봉)는 외부 주입이므로 본 엔진은 항상 None을 채운다.
+
+틱 입력은 합성(명명 키) 또는 WS 콜백(원본 fields 리스트) 둘 다 받는다.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections import deque
+from dataclasses import dataclass, field
+from typing import Any
+
+logger = logging.getLogger("IntradayBarEngine")
+
+# _H0STCNT0_FIELDS 순서와 동일한 인덱스 (realtime_ws._H0STCNT0_FIELDS 기준)
+_IDX_SYMBOL = 0
+_IDX_CNTG_HOUR = 1
+_IDX_PRPR = 2
+_IDX_PRDY_CTRT = 5
+_IDX_CNTG_VOL = 12
+_IDX_SELN_CSNU = 15
+_IDX_SHNU_CSNU = 16
+_IDX_SHNU_RATE = 22
+
+_BUCKET_SECONDS = 10
+
+
+def _to_float(v: Any, default: float = 0.0) -> float:
+    try:
+        if v is None or v == "":
+            return default
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _from_fields(fields: list[Any], idx: int) -> Any:
+    if not isinstance(fields, (list, tuple)) or len(fields) <= idx:
+        return None
+    return fields[idx]
+
+
+def _pick(tick: dict[str, Any], named_key: str, field_idx: int) -> Any:
+    """명명 키 우선, 없으면 원본 fields[idx]."""
+    if named_key in tick and tick[named_key] not in (None, ""):
+        return tick[named_key]
+    return _from_fields(tick.get("fields") or [], field_idx)
+
+
+def _bucket_label(hhmmss: str) -> str:
+    """HHMMSS 체결시각 → 10초 버킷 라벨(초를 10초 단위로 내림). 비정상은 원문 반환."""
+    s = str(hhmmss or "").strip()
+    if len(s) < 6 or not s[:6].isdigit():
+        return s or "000000"
+    hhmm = s[:4]
+    sec = int(s[4:6])
+    floored = (sec // _BUCKET_SECONDS) * _BUCKET_SECONDS
+    return f"{hhmm}{floored:02d}"
+
+
+@dataclass
+class _Bar:
+    bucket: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float = 0.0
+
+
+@dataclass
+class _SymbolState:
+    bars: deque = field(default_factory=deque)
+
+
+class BarEngine:
+    """종목별 틱 → 10초 OHLCV 봉 집계."""
+
+    def __init__(self, max_bars: int = 360):
+        self._max_bars = max(1, int(max_bars))
+        self._states: dict[str, _SymbolState] = {}
+
+    def _state(self, symbol: str) -> _SymbolState:
+        st = self._states.get(symbol)
+        if st is None:
+            st = _SymbolState(bars=deque(maxlen=self._max_bars))
+            self._states[symbol] = st
+        return st
+
+    def ingest_tick(self, tick: dict[str, Any]) -> None:
+        symbol = str(_pick(tick, "symbol", _IDX_SYMBOL) or "").strip()
+        if not symbol:
+            return
+        price = _to_float(_pick(tick, "price", _IDX_PRPR))
+        if price <= 0:
+            return
+        vol = _to_float(_pick(tick, "cntg_vol", _IDX_CNTG_VOL))
+        hhmmss = str(_pick(tick, "stck_cntg_hour", _IDX_CNTG_HOUR) or "")
+        bucket = _bucket_label(hhmmss)
+
+        st = self._state(symbol)
+        if st.bars and st.bars[-1].bucket == bucket:
+            b = st.bars[-1]
+            b.high = max(b.high, price)
+            b.low = min(b.low, price)
+            b.close = price
+            b.volume += vol
+        else:
+            st.bars.append(_Bar(bucket=bucket, open=price, high=price, low=price, close=price, volume=vol))
+
+    def get_bars(self, symbol: str) -> list[_Bar]:
+        st = self._states.get(symbol)
+        if st is None:
+            return []
+        return list(st.bars)
