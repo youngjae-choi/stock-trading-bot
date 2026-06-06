@@ -235,3 +235,73 @@ def test_pullback_rebound_false_without_spike():
     eng.ingest_tick(_tick(price=1002.0, cntg_vol=1, stck_cntg_hour="103020"))
     eng.ingest_tick(_tick(price=1006.0, cntg_vol=1, stck_cntg_hour="103029"))
     assert eng.is_pullback_rebound("005930") is False
+
+
+import backend.services.engine.buy_condition_framework as bcf
+
+
+def test_compute_signal_state_full_shape():
+    eng = ibe.BarEngine()
+    eng.set_prior_day_high("005930", 1050.0)
+    eng.ingest_tick(_tick(price=1000.0, cntg_vol=10, shnu_rate=60.0,
+                          prdy_ctrt=2.0, stck_cntg_hour="103000"))
+    eng.ingest_tick(_tick(price=1060.0, cntg_vol=30, shnu_rate=62.0,
+                          prdy_ctrt=3.0, stck_cntg_hour="103010"))
+    s = eng.compute_signal_state("005930")
+    assert set(s.keys()) == {
+        "change_rate", "체결강도", "tick_vol_mult", "tsi", "vwap_position",
+        "day_high_breakout", "pullback_rebound", "rising_bars", "time_hhmm",
+    }
+    assert s["change_rate"] == 3.0            # 마지막 틱 등락률
+    assert abs(s["체결강도"] - 0.62) < 1e-9
+    assert s["tsi"] is None                   # 일봉 TSI는 외부 주입
+    assert s["time_hhmm"] == "10:30"
+    assert s["vwap_position"] == "above"      # 1060 > vwap
+    assert s["day_high_breakout"] is True     # 1060 > 1050
+    assert s["rising_bars"] == 1              # 1060 > 1000
+    assert isinstance(s["pullback_rebound"], bool)
+
+
+def test_compute_signal_state_unknown_symbol_safe_defaults():
+    eng = ibe.BarEngine()
+    s = eng.compute_signal_state("NOPE")
+    assert s["change_rate"] == 0.0
+    assert s["체결강도"] == 0.0
+    assert s["tick_vol_mult"] == 0.0
+    assert s["tsi"] is None
+    assert s["vwap_position"] is None
+    assert s["day_high_breakout"] is False
+    assert s["pullback_rebound"] is False
+    assert s["rising_bars"] == 0
+    assert s["time_hhmm"] == ""
+
+
+def test_vwap_position_below():
+    eng = ibe.BarEngine()
+    eng.ingest_tick(_tick(price=1000.0, cntg_vol=100, stck_cntg_hour="103000"))
+    eng.ingest_tick(_tick(price=980.0, cntg_vol=1, stck_cntg_hour="103010"))
+    # vwap ≈ (1000*100+980*1)/101 ≈ 999.8, 마지막가 980 < vwap → below
+    assert eng.compute_signal_state("005930")["vwap_position"] == "below"
+
+
+def test_state_feeds_phase1a_evaluate_condition():
+    """본 엔진 출력이 Phase 1a 평가기에 그대로 호환되는지 통합 검증."""
+    eng = ibe.BarEngine()
+    eng.set_prior_day_high("005930", 1050.0)
+    eng.ingest_tick(_tick(price=1000.0, cntg_vol=10, shnu_rate=60.0,
+                          prdy_ctrt=2.3, stck_cntg_hour="103000"))
+    eng.ingest_tick(_tick(price=1060.0, cntg_vol=30, shnu_rate=62.0,
+                          prdy_ctrt=2.3, stck_cntg_hour="103010"))
+    s = eng.compute_signal_state("005930")
+    # 등락률 1.5~5% 밴드 통과
+    assert bcf.evaluate_condition(
+        {"ctype": "change_rate_band", "params": {"min": 1.5, "max": 5.0}}, s) is True
+    # 체결강도 0.55+ 통과
+    assert bcf.evaluate_condition(
+        {"ctype": "chegyeol_gangdo_min", "params": {"min": 0.55}}, s) is True
+    # 당일고가 돌파 통과
+    assert bcf.evaluate_condition(
+        {"ctype": "day_high_breakout", "params": {}}, s) is True
+    # tsi None → tsi_positive는 통과(결손은 차단 안 함)
+    assert bcf.evaluate_condition(
+        {"ctype": "tsi_positive", "params": {}}, s) is True

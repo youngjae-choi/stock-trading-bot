@@ -82,6 +82,8 @@ class _SymbolState:
     tick_vol_sum: float = 0.0             # Σ 틱거래량(baseline용)
     tick_count: int = 0                   # 틱 수
     last_tick_vol: float = 0.0            # 마지막 틱 거래량
+    last_change_rate: float = 0.0    # 마지막 틱 prdy_ctrt
+    last_hhmmss: str = ""            # 마지막 틱 stck_cntg_hour
 
 
 class BarEngine:
@@ -143,6 +145,10 @@ class BarEngine:
         st.tick_vol_sum += vol
         st.tick_count += 1
         st.last_tick_vol = vol
+
+        # 마지막 틱 메타(등락률·시각)
+        st.last_change_rate = _to_float(_pick(tick, "prdy_ctrt", _IDX_PRDY_CTRT), st.last_change_rate)
+        st.last_hhmmss = str(_pick(tick, "stck_cntg_hour", _IDX_CNTG_HOUR) or st.last_hhmmss)
 
     def get_chegyeol_gangdo(self, symbol: str) -> float:
         st = self._states.get(symbol)
@@ -222,6 +228,48 @@ class BarEngine:
         # (3) 마지막 10초봉 양봉
         rebounded = last_bar.close > last_bar.open
         return bool(rebounded)
+
+    def _vwap_position(self, symbol: str) -> str | None:
+        vwap = self.get_vwap(symbol)
+        last = self.get_last_price(symbol)
+        if vwap is None or last is None:
+            return None
+        if last > vwap:
+            return "above"
+        if last < vwap:
+            return "below"
+        return None
+
+    @staticmethod
+    def _hhmm(hhmmss: str) -> str:
+        s = str(hhmmss or "").strip()
+        if len(s) >= 4 and s[:4].isdigit():
+            return f"{s[:2]}:{s[2:4]}"
+        return ""
+
+    def compute_signal_state(self, symbol: str) -> dict[str, Any]:
+        """Phase 1a evaluate_condition이 소비하는 state dict.
+
+        tsi는 일봉 TSI(외부 주입)이므로 항상 None. 미관측 종목은 안전 기본값.
+        """
+        st = self._states.get(symbol)
+        if st is None:
+            return {
+                "change_rate": 0.0, "체결강도": 0.0, "tick_vol_mult": 0.0, "tsi": None,
+                "vwap_position": None, "day_high_breakout": False,
+                "pullback_rebound": False, "rising_bars": 0, "time_hhmm": "",
+            }
+        return {
+            "change_rate": st.last_change_rate,
+            "체결강도": self.get_chegyeol_gangdo(symbol),
+            "tick_vol_mult": self.get_tick_vol_mult(symbol),
+            "tsi": None,
+            "vwap_position": self._vwap_position(symbol),
+            "day_high_breakout": self.is_day_high_breakout(symbol),
+            "pullback_rebound": self.is_pullback_rebound(symbol),
+            "rising_bars": self.get_rising_bars(symbol),
+            "time_hhmm": self._hhmm(st.last_hhmmss),
+        }
 
     def get_bars(self, symbol: str) -> list[_Bar]:
         st = self._states.get(symbol)
