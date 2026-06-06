@@ -250,9 +250,17 @@ class OrderExecutor:
             balance = await self._get_cached_balance()
             deposit = self._extract_deposit(balance)
             from .daily_capital import get_baseline, get_active_budget_rate
+            from .exploration_gate import select_sizing_params
             baseline = get_baseline(today)
-            budget_rate = get_active_budget_rate(today)
-            max_positions = int(_to_float(final_rule.get("max_positions"), 7.0) or 7)
+            explore_budget_rate, max_positions = select_sizing_params(final_rule)
+            if explore_budget_rate is not None:
+                budget_rate = explore_budget_rate
+                logger.info(
+                    "INFO: [S7] 탐색모드 풀예수금 사이징 symbol=%s budget_rate=%.2f max_positions=%d",
+                    symbol, budget_rate, max_positions,
+                )
+            else:
+                budget_rate = get_active_budget_rate(today)
             qty = self._calc_budget_qty(baseline, budget_rate, max_positions, price, deposit)
             if qty <= 0:
                 position_size_pct = self._position_size_pct(final_rule)
