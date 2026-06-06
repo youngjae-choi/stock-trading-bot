@@ -92,25 +92,34 @@ async def reconcile_orders_with_kis(trade_date: str) -> dict[str, Any]:
     """orphan 주문을 KIS 당일 체결과 대조해 해소. {resolved, cancelled, checked}."""
     orphans = _load_orphan_orders(trade_date)
     if not orphans:
-        return {"checked": 0, "resolved": [], "cancelled": []}
+        return {"checked": 0, "resolved": [], "cancelled": [], "skipped": []}
     logger.info("START: [Reconcile] orphan 주문 %d건 trade_date=%s", len(orphans), trade_date)
     date_str = trade_date.replace("-", "")
     from ..kis.domestic.service import get_daily_order_inquiry
 
     # side별 KIS 체결조회 1회씩
     kis_rows_by_side: dict[str, list[dict[str, Any]]] = {}
-    resolved, cancelled = [], []
+    kis_query_ok: dict[str, bool] = {}
+    resolved, cancelled, skipped = [], [], []
     for o in orphans:
         side = str(o.get("side") or "buy").lower()
         if side not in kis_rows_by_side:
             try:
                 resp = await get_daily_order_inquiry(date_str, side if side in ("buy", "sell") else "all")
                 kis_rows_by_side[side] = resp.get("output1") or []
+                kis_query_ok[side] = True
             except Exception as exc:
                 logger.warning("WARN: [Reconcile] KIS 체결조회 실패 side=%s reason=%s", side, exc)
                 kis_rows_by_side[side] = []
-        match = _match_orphan_to_kis_fills(o, kis_rows_by_side[side])
+                kis_query_ok[side] = False
         oid = str(o.get("id") or "")
+        # ⚠️ KIS 조회 자체가 실패하면 '체결 없음'으로 단정해 취소하면 안 된다(실주문 유실 위험).
+        # 보류하고 다음 EOD/재실행 때 다시 시도한다.
+        if not kis_query_ok.get(side, False):
+            skipped.append({"order_id": oid, "symbol": o.get("symbol"), "reason": "kis_query_failed"})
+            logger.warning("WARN: [Reconcile] KIS 조회 실패로 보류(취소 안 함) symbol=%s", o.get("symbol"))
+            continue
+        match = _match_orphan_to_kis_fills(o, kis_rows_by_side[side])
         if match:
             try:
                 # odno 보정
@@ -130,5 +139,8 @@ async def reconcile_orders_with_kis(trade_date: str) -> dict[str, Any]:
             _set_order_cancelled(oid, "eod_reconcile_no_kis_fill")
             cancelled.append({"order_id": oid, "symbol": o.get("symbol")})
             logger.info("INFO: [Reconcile] orphan 취소(KIS 체결 없음) symbol=%s", o.get("symbol"))
-    logger.info("SUCCESS: [Reconcile] resolved=%d cancelled=%d", len(resolved), len(cancelled))
-    return {"checked": len(orphans), "resolved": resolved, "cancelled": cancelled}
+    logger.info(
+        "SUCCESS: [Reconcile] resolved=%d cancelled=%d skipped=%d",
+        len(resolved), len(cancelled), len(skipped),
+    )
+    return {"checked": len(orphans), "resolved": resolved, "cancelled": cancelled, "skipped": skipped}

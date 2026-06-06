@@ -28,3 +28,24 @@ def test_match_prefers_qty_match_when_multiple_same_symbol():
     ]
     m = orc._match_orphan_to_kis_fills({"symbol": "005380", "qty": 17}, kis_rows)
     assert m["odno"] == "B"
+
+
+def test_query_failure_skips_not_cancels(monkeypatch):
+    """KIS 조회가 실패하면 orphan을 취소하지 말고 보류해야 한다(실주문 유실 방지)."""
+    import asyncio
+    orphan = {"id": "o1", "symbol": "005380", "side": "buy", "qty": 17}
+    monkeypatch.setattr(orc, "_load_orphan_orders", lambda _d: [orphan])
+    cancelled = []
+    monkeypatch.setattr(orc, "_set_order_cancelled", lambda oid, reason: cancelled.append(oid))
+
+    async def boom(*a, **k):
+        raise RuntimeError("token issuance failed")
+
+    import backend.services.kis.domestic.service as svc
+    monkeypatch.setattr(svc, "get_daily_order_inquiry", boom)
+
+    r = asyncio.run(orc.reconcile_orders_with_kis("2026-06-05"))
+    assert cancelled == []                # 취소 안 함
+    assert r["cancelled"] == []
+    assert len(r["skipped"]) == 1         # 보류
+    assert r["skipped"][0]["reason"] == "kis_query_failed"
