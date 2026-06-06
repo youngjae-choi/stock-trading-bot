@@ -15,16 +15,21 @@
 00:01  S2  아침 시장 톤 분석 (LLM, 야간 해외 데이터)
        → market_tone_results / morning_context INSERT
 
-08:00  S1  시장 개장 점검 (휴장일 확인, 토큰 발급)
+09:01  S1~S5-A  거래준비 프로세스 (job_trade_preparation_pipeline)
+       ※ DB schedule_trade_prep_time=08:25 → 개장 가드로 09:01 하한 보정
+       S1  시장 개장 점검 (휴장일 가드, 토큰 발급)
+       S3  Universe Filter — KIS 거래량+등락률 순위 상위 60종목
+           → 0거래/상한가/하한가/ETP/우선주/스팩 제외
+           → 단타 모멘텀 점수(상승폭 0.5 + 거래량급증 0.5) top_n 30
+       S4  Hybrid Screening (LLM) — 후보 30 → 정성 점수 6~10개
+           → entry_rules 산출 (min_ai_confidence, price 범위 등)
+       S5  Daily Plan (LLM) — Risk Profile 배정 + trading_intensity 결정
+       S5-A 플랜 정합성 검증 + 활성화
 08:00  배당락일 D-2 알림 (오전)
-08:00  S3  Universe Filter — KIS 거래량/거래대금 상위 60종목
-       → 상한가/하한가/거래정지/ETF 제외 → top_n 30 (시장톤별 조정)
-08:30  S4  Hybrid Screening (LLM) — 후보 30 → 정성 점수 6~10개
-       → entry_rules 산출 (min_ai_confidence, price 범위 등)
-08:45  S5  Daily Plan (LLM) — Risk Profile 배정 + trading_intensity 결정
-       → daily_trading_plans INSERT
+08:30  S2-프리마켓  장 개시 전 시장 톤 독립 재확보 (당일 이미 산출 시 재사용)
 
-09:00  S6  Decision Engine 활성화 — 실시간 tick 수신 시작
+09:10  S6  Decision Engine 활성화 — 실시간 tick 수신 시작 (장중 워치독 자동복구)
+       ※ DB schedule_s6_time=08:59 → 가드로 09:10 하한 보정 (max 09:10, trade_prep+5)
 
 09:30  슬롯1  스냅샷 + S2 장중 재실행 + (trigger 시) S3→S4→S5→S6 재선별
 10:30  슬롯2  동일
@@ -51,10 +56,10 @@
 |---|---|---|---|
 | S2 아침 | LLM 호출 1회, market_tone_results 1건 INSERT | tone ∈ {positive,neutral,negative,mixed}, confidence ≥ 0.3 | confidence=0.0 또는 tone=neutral confidence<0.3 (LLM 실패) |
 | S2 장중 | 슬롯마다 LLM 호출 1회, morning_context 새 행 | 5회/거래일 | 0~3회면 슬롯 trigger 미발동 또는 LLM 실패 |
-| S3 | 60→30 (시장톤별), filtered>0 | top_n_count ≥ 20 | 0건 = KIS 호출 실패 |
+| S3 | 60→30 단타 모멘텀(상승폭+거래량급증), filtered>0 | top_n_count ≥ 20 | 0건 = KIS 호출 실패 |
 | S4 | 30→6~10, overall_confidence ≥ 0.4 | output_count ≥ 5 | output_count=0 또는 confidence<0.3 |
 | S5 | trading_intensity ∈ {aggressive,normal,defensive} | symbol_assignments ≥ 5 | assignments=0 = LLM 실패 |
-| S6 매수 신호 | confidence ≥ min_ai_confidence + 가격/거래량 조건 통과 | 일 평균 5~15건 | <2건이면 보수성 과다 |
+| S6 매수 신호 | (기본) AND 게이트 통과 / (탐색 ON·모의) OR 조건 그룹 발화 | 일 평균 5~15건, 탐색 ON 시 폭증 | <2건이면 보수성 과다 |
 | 슬롯 trigger | avg_change ≥ threshold(2~3%) | triggered=True 1~2회/일 | 강세장에서 0회면 retrigger delta 또는 sector_rotation 문제 |
 | S9 청산 | 모든 보유 포지션 매도 | liquidated 보유수와 일치 | 잔여 포지션 있으면 KIS 동기화 문제 |
 | missed_returns | EOD 가격으로 tracked 갱신 | tracked = total | tracked=0이면 cron 미실행 또는 KIS rate limit |
@@ -116,13 +121,14 @@
 - `max_positions`: 30
 - `position_size`: 5% (1억 시드 → 종목당 333만원)
 
-### Exploration Mode (도입 예정)
-- `min_ai_confidence`: 0.40
-- `max_price_change_pct`: 30 (사실상 무제한, 추격 매수 허용)
-- `top_n`: 50~60
-- `trading_intensity`: aggressive 고정
-- `THEME_SPIKE` 제한 해제
+### 탐색 엔진 (Exploration Mode — 구현됨, 모의계좌 전용)
+탐색모드가 켜지면 매수 = **OR 조건 그룹**(돌파/눌림/모멘텀/베이스라인)으로 바뀌고, S3 선정은 단타 모멘텀(상승폭+거래량급증)이다.
+- 켜기/끄기: Settings 탐색모드 카드 → `engine.exploration_mode` (기본 OFF)
+- 풀예수금 사이징: `exploration.budget_rate`=0.95, `exploration.max_positions`=40
+- 🔒 KIS 모의계좌일 때만 활성, 실계좌면 하드 차단
+- EOD EV(승률×손익비) 가지치기로 음수 그룹 weight 자동 하향(floor 0.1)
 - 유지: stop_loss -5%, daily_loss -10%, max_position_size 30% (안전 가드)
+- 상세: [`EXPLORATION_ENGINE.md`](EXPLORATION_ENGINE.md)
 
 ### Exploration 종료 조건
 - 100거래 이상 누적

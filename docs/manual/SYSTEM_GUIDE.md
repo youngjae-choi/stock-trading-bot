@@ -1,6 +1,6 @@
 # Kairos 시스템 가이드 — 철학·알고리즘·프로세스
 
-> 최종 수정: 2026-05-26
+> 최종 수정: 2026-06-06
 > 대상: 운영자(PM) + Sisyphus(Orchestrator)
 > 본 문서는 **시스템이 왜 이렇게 만들어졌는가**를 정의한다.
 > 일일 운영 시간표·헬스 지표는 [`OPERATION_SPEC.md`](OPERATION_SPEC.md)에, EOD 체크리스트는 [`EOD_CHECKLIST.md`](EOD_CHECKLIST.md)에 분리.
@@ -49,7 +49,7 @@
 |---|---|---|
 | 이미 +5% 이상 오른 종목 추격은 위험 | `max_price_change_pct = 5.0` | improvement_candidate 중 change_rate > 5% 비율 |
 | risk_on 장에서는 인버스 진입 부적합 | S4 LLM이 자동 회피 | 인버스 종목 max_return_until_eod 추적 |
-| 거래대금 상위 = 단타 좋은 종목 | S3 거래대금 가중치 0.50 | 상위 종목과 미진입 상승 종목 분포 비교 |
+| 상승폭+거래량급증 = 단타 좋은 종목 | S3 모멘텀 점수 (상승폭 0.5 + 거래량급증 0.5) | 상위 종목과 미진입 상승 종목 분포 비교 |
 
 → **데이터가 가설을 부정하면 가설을 바꾼다**. 가설을 지키려고 데이터를 무시하지 않는다.
 
@@ -104,7 +104,7 @@ Backend (FastAPI · Port 8000)
   │       ├── missed_opportunity   ← 미진입 추적
   │       ├── false_positive       ← 손실 거래 자동 분석
   │       ├── loss_streak_guard    ← 연속 손실 자동 차단
-  │       ├── llm_router           ← Opus 4.7 / 4.6 라우팅
+  │       ├── llm_router           ← Anthropic Opus 4.8 (claude-opus-4-8) 라우팅
   │       └── prompt_loader        ← 프롬프트 렌더링
   └── static/console.html    ← 운영 콘솔 (SPA)
 
@@ -137,12 +137,13 @@ Notifications:
 | 단계 | 시간 | 함수 | 핵심 동작 | 출력 SSOT |
 |:---:|:---:|---|---|---|
 | **S2** | 00:01 | `run_market_tone_analysis(trigger_source="auto_scheduler")` | 야간 해외 데이터 → LLM tone 분석 | `market_tone_results`, `morning_context` |
-| **S1** | 08:00 | `job_trade_preparation_pipeline` 1단계 | KIS 토큰, 거래일 확인 | `schedule_skip_today` |
-| **S3** | 08:00 | `run_universe_filter` | KIS volume/trade rank 60 → top_n 30 (시장톤별), ETF 제외 | `universe_results` |
-| **S4** | 08:30 | `run_hybrid_screening` | 30 → 6~10 + LLM 점수 + entry_rules | `screening_results` |
-| **S5** | 08:45 | `run_daily_plan_generation` | Risk Profile 배정 + trading_intensity | `daily_trading_plans` |
-| **S5-A** | 08:50 | `activate_daily_plan` | 플랜 정합성 검증 + 활성화 | (in-memory + DB flag) |
-| **S6** | 09:00 | `decision_engine.activate()` | 실시간 틱 구독 시작 | `trading_signals`, `shadow_trades` |
+| **S2-프리마켓** | 08:30 | `job_premarket_market_tone` | 장 개시 전 시장 톤 독립 재확보(당일 이미 산출 시 재사용) | `market_tone_results`, `morning_context` |
+| **S1~S5-A** | **09:01** | `job_trade_preparation_pipeline` | KIS 토큰·거래일 확인(휴장일 가드) → S3 → S4 → S5 → S5-A. DB `schedule_trade_prep_time`(현재 08:25) 설정값은 **개장 가드로 09:01 하한 보정**(S3 랭킹데이터 개장 후 확보) | `schedule_trade_prep_time`, `schedule_skip_today` |
+| **S3** | (S1~S5-A 내) | `run_universe_filter` | 거래량+등락률 순위 60 → 단타 모멘텀 점수 top_n 30, ETP/우선주/스팩 제외 | `universe_filter_results` |
+| **S4** | (S1~S5-A 내) | `run_hybrid_screening` | 30 → 6~10 + LLM 점수 + entry_rules | `screening_results` |
+| **S5** | (S1~S5-A 내) | `run_daily_plan_generation` | Risk Profile 배정 + trading_intensity | `daily_trading_plans` |
+| **S5-A** | (S1~S5-A 내) | `activate_daily_plan` | 플랜 정합성 검증 + 활성화 | (in-memory + DB flag) |
+| **S6** | **09:10** | `decision_engine.activate()` | 실시간 틱 구독 시작 (장중 워치독 자동복구). DB `schedule_s6_time`(현재 08:59) 설정값은 **가드로 09:10 하한 보정**(max 09:10, trade_prep+5) | `trading_signals`, `shadow_trades` |
 | **S7** | 장중 | `order_executor.execute_buy()` | S6 신호 → KIS 시장가 주문 | `trading_orders` |
 | **S8** | 장중 | `position_manager.evaluate_exit()` | 트레일링·손절·시간 청산 | `trading_orders (sell)` |
 | **슬롯** | 09:30/10:30/11:30/13:00/14:00 | `check_and_refresh` | 매 슬롯 스냅샷 + S2 장중 + (trigger 시) S3~S6 재실행 | `morning_context` 갱신, `intraday_refresh.{date}.{slot}` |
@@ -166,7 +167,7 @@ Notifications:
 매수 신호가 실제 주문이 되기까지 통과해야 하는 4계층 게이트:
 
 ```
-S3 정량 게이트     KIS 거래량/거래대금 상위 + 가격·거래량 0 제외 + 상한가/하한가 제외 + ETF 제외
+S3 정량 게이트     KIS 거래량+등락률 순위 + 단타 모멘텀 점수(상승폭 0.5+거래량급증 0.5) + 0거래/상하한가 제외 + ETP/우선주/스팩 제외
   ↓ 30개 (시장톤별 20~35)
 S4 LLM 정성 게이트  LLM이 시장톤/메모리/뉴스 기반으로 suitability_score 0.0~1.0 부여
   ↓ 6~10개 + 종목별 confidence
@@ -222,6 +223,22 @@ _MAX_HOLDING_MIN_L1   = 390    # 분
 ```
 
 LLM이 더 위험한 값을 제안해도 L1에 clamp된다.
+
+### 4.5 탐색 엔진 (Exploration Mode)
+
+`engine.exploration_mode`가 켜지고 **KIS 모의계좌**일 때만, S6 매수 판정이 위 AND 게이트 대신(정확히는 그와 병렬로) **OR 조건 그룹**으로 바뀐다:
+
+```
+매수신호 = OR(활성 조건 그룹들 중 하나라도 발화)   # 돌파/눌림/모멘텀/베이스라인 등
+```
+
+- WS 틱→10초봉 라이브 신호(체결강도·VWAP·돌파·눌림·모멘텀·틱거래량)가 각 조건 `state`를 채운다.
+- 매수마다 `trade_entry_tags`에 선정사유+발화그룹+조건상태+맥락을 통째 기록, 청산 시 결과 채움.
+- EOD(S10)에 EV(승률×손익비) 가지치기로 음수 EV 그룹의 weight를 자동 하향(floor 0.1).
+- 풀예수금 사이징(budget_rate 0.95 / max_positions 40)으로 하루 다종목 매매.
+
+> 🔒 실계좌면 설정 무관 하드 차단. 초기 고손실은 의도된 데이터 수집 단계다.
+> 상세는 [`EXPLORATION_ENGINE.md`](EXPLORATION_ENGINE.md) 참조.
 
 ---
 
@@ -369,7 +386,7 @@ S5 daily_plan:
 
 ```
 [수집]
-  KIS volume-rank, trade-amount-rank → universe_filter → universe_results
+  KIS volume-rank, price-rank(등락률) → universe_filter (단타 모멘텀 점수) → universe_filter_results
   KIS index/sector                    → fetch_intraday_kr_market_snapshot
   KIS WebSocket H0STCNT0              → decision_engine
   KIS REST inquire-balance            → position_manager (60초 주기 sync)
