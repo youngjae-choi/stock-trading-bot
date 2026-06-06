@@ -76,6 +76,7 @@
       saveSchedulerSetting: function() { return saveSchedulerSetting(element.dataset.key); },
       saveExitOverrideSetting: function() { return saveExitOverrideSetting(element.dataset.key); },
       loadDailyResults: function() { return loadDailyResults(); },
+      toggleDayReview: function() { return toggleDayReview(element.dataset.date); },
       loadConditionEditor: function() { return loadConditionEditor(); },
       createConditionGroup: function() { return createConditionGroup(); },
       loadGroupStatsScaffold: function() { return loadGroupStatsScaffold(); }

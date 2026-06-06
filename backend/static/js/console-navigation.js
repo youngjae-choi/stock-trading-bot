@@ -44,6 +44,10 @@
     if (name === "missed-opportunity") {
       name = "shadow-trading";
     }
+    // Trade Review는 Daily Results 드릴다운으로 통합됨 — 구 링크/#review는 Daily Results로 리다이렉트
+    if (name === "review") {
+      name = "daily-results";
+    }
     sessionStorage.setItem('currentScreen', name);
 
     if (!opts.skipHistory) {
@@ -153,11 +157,6 @@
 
     if (name === "risk") {
       loadExecutionRisk();
-    }
-
-    if (name === "review") {
-      loadReviewAuditScreen();
-      if (typeof loadGroupStatsScaffold === 'function') loadGroupStatsScaffold();
     }
 
     if (name === "dividends") {
