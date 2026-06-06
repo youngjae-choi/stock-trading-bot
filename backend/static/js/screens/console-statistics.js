@@ -52,7 +52,7 @@
   async function loadTradePairs() {
     var tbody = document.getElementById("st-orders-tbody");
     var title = document.getElementById("st-table-title");
-    if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;">로딩중...</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="12" class="muted" style="text-align:center;">로딩중...</td></tr>';
 
     var filterLabel = { today: "오늘", week: "이번주", month: "이번달", lastmonth: "지난달", all: "전체", range: "기간검색" };
     if (title) title.textContent = (filterLabel[stFilter] || "") + " 거래 결과";
@@ -66,7 +66,7 @@
       renderTradePairs(stCurrentPairs);
     } catch (e) {
       console.error("[ERROR]", "loadTradePairs", "-", e.message);
-      if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;">조회 실패: ' + escapeHtml(e.message) + '</td></tr>';
+      if (tbody) tbody.innerHTML = '<tr><td colspan="12" class="muted" style="text-align:center;">조회 실패: ' + escapeHtml(e.message) + '</td></tr>';
     }
   }
 
@@ -97,7 +97,7 @@
     var tbody = document.getElementById("st-orders-tbody");
     if (!tbody) return;
     if (!pairs || pairs.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;">해당 기간 거래 내역 없음</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="12" class="muted" style="text-align:center;">해당 기간 거래 내역 없음</td></tr>';
       renderPagination(0);
       return;
     }
@@ -145,12 +145,15 @@
         + '<td style="text-align:right;">' + (p.sell_qty != null ? p.sell_qty + "주" : "-") + '</td>'
         + '<td style="text-align:right;">' + pnlHtml + '</td>'
         + '<td style="text-align:right;">' + pnlPctHtml + '</td>'
+        + '<td style="font-size:11px; color:var(--muted); max-width:160px;">' + escapeHtml(p.selection_summary || "-") + '</td>'
+        + '<td style="font-size:11px; color:var(--accent);">' + escapeHtml(p.buy_reason_summary || "-") + '</td>'
         + '<td style="font-size:11px; color:var(--muted);">' + escapeHtml(p.exit_reason || "-") + '</td>'
         + '<td><span class="status ' + statusCls + '">' + escapeHtml(p.status) + '</span></td>'
         + '</tr>';
 
       var detailRow = '<tr class="pair-detail-row" id="detail-' + escapeHtml(rowKey) + '" style="display:' + (isExpanded ? "table-row" : "none") + ';">'
-        + '<td colspan="10" style="padding:0; background:var(--panel-2);">'
+        + '<td colspan="12" style="padding:0; background:var(--panel-2);">'
+        + renderEntryTagDetail(p.entry_tag)
         + renderOrderDetail(p.orders)
         + '</td></tr>';
 
@@ -159,6 +162,40 @@
 
     tbody.innerHTML = html;
     renderPagination(pairs.length);
+  }
+
+  /* ── 태깅 상세 (선정·조건상태·맥락·결과) ── */
+  function renderEntryTagDetail(tag) {
+    if (!tag) {
+      return '<div style="padding:8px 16px; color:var(--muted); font-size:12px;">태깅 데이터 없음 (탐색엔진 비활성 시점 거래)</div>';
+    }
+    var sr = tag.selection_reason || {};
+    var sources = (sr.sources || []).map(function(s) { return escapeHtml(String(s)); }).join(", ") || "-";
+    var note = escapeHtml(sr.llm_note || "-");
+    var fired = (tag.fired_groups || []).map(function(g) { return escapeHtml(String(g)); }).join(", ") || "-";
+
+    function kvBlock(title, obj) {
+      var keys = Object.keys(obj || {});
+      if (!keys.length) return '';
+      var cells = keys.map(function(k) {
+        var v = obj[k];
+        var vs = (typeof v === "boolean") ? (v ? "✓" : "✗") : String(v);
+        return '<span style="display:inline-block; margin:2px 8px 2px 0; font-size:11px;">'
+          + '<span style="color:var(--muted);">' + escapeHtml(k) + '</span> '
+          + '<strong>' + escapeHtml(vs) + '</strong></span>';
+      }).join("");
+      return '<div style="margin-top:6px;"><div style="font-size:10px; color:var(--muted); margin-bottom:2px;">' + title + '</div>' + cells + '</div>';
+    }
+
+    return '<div style="padding:10px 16px; border-bottom:1px solid var(--line);">'
+      + '<div style="font-size:11px; color:var(--muted); font-weight:600; margin-bottom:4px;">탐색엔진 태깅</div>'
+      + '<div style="font-size:12px;"><span style="color:var(--muted);">선정사유</span> ' + sources + '</div>'
+      + '<div style="font-size:12px;"><span style="color:var(--muted);">LLM 메모</span> ' + note + '</div>'
+      + '<div style="font-size:12px;"><span style="color:var(--muted);">매수사유(발화그룹)</span> <strong style="color:var(--accent);">' + fired + '</strong></div>'
+      + kvBlock("진입 조건상태", tag.condition_states)
+      + kvBlock("시장맥락", tag.market_context)
+      + kvBlock("결과", tag.outcome)
+      + '</div>';
   }
 
   /* ── 주문 상세 (accordion 내부) ── */
