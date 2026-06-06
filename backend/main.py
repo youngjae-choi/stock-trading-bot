@@ -38,6 +38,7 @@ from .api.routes.strategy import router as strategy_router
 from .api.routes.testing import router as testing_router
 from .api.routes.settings import router as settings_router
 from .api.routes.trades import router as trades_router
+from .api.routes.buy_conditions import router as buy_conditions_router
 from .api.routes.trading_data import router as trading_data_router
 from .api.routes.screening import router as screening_router
 from .api.routes.rule import router as rule_router
@@ -172,6 +173,7 @@ app.include_router(bot_router)
 app.include_router(rulepack_router)
 app.include_router(settings_router)
 app.include_router(trades_router)
+app.include_router(buy_conditions_router)
 app.include_router(trading_data_router)
 app.include_router(scheduler_router)
 app.include_router(market_tone_router)
