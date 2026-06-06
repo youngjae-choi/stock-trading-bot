@@ -176,6 +176,9 @@ def build_selection_reason(candidate: dict) -> dict:
     volume_rank = candidate.get("volume_rank")
     if isinstance(volume_rank, (int, float)) and 0 < volume_rank <= 100:
         sources.append(f"거래량순위#{int(volume_rank)}")
+    change_rate_rank = candidate.get("change_rate_rank")
+    if isinstance(change_rate_rank, (int, float)) and 0 < change_rate_rank <= 100:
+        sources.append(f"등락률순위#{int(change_rate_rank)}")
 
     scores: dict[str, float] = {}
     universe_score = _maybe_float(candidate.get("score"))

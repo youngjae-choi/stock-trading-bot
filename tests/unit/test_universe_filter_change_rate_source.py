@@ -71,3 +71,20 @@ def test_score_falls_back_to_change_rate_normalized_when_no_rank():
     by_sym = {r["symbol"]: r for r in ranked}
     # 순위 없을 땐 등락률 정규화로 폴백 — +20%가 -10%보다 높은 점수
     assert by_sym["A"]["score"] > by_sym["B"]["score"]
+
+
+import backend.services.engine.trade_tagging as tt
+
+
+def test_build_selection_reason_includes_change_rate_rank():
+    candidate = {"symbol": "005930", "change_rate_rank": 3, "trade_rank": 5, "volume_rank": 9999}
+    sr = tt.build_selection_reason(candidate)
+    assert "등락률순위#3" in sr["sources"]
+    assert "거래대금순위#5" in sr["sources"]
+
+
+def test_build_selection_reason_ignores_sentinel_change_rate_rank():
+    candidate = {"symbol": "005930", "change_rate_rank": 9999, "volume_rank": 2}
+    sr = tt.build_selection_reason(candidate)
+    assert all("등락률순위" not in s for s in sr["sources"])
+    assert "거래량순위#2" in sr["sources"]

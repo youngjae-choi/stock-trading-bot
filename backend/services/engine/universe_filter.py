@@ -432,12 +432,14 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
 
     # KIS 병렬 호출
     try:
-        volume_result, trade_result = await asyncio.gather(
+        volume_result, trade_result, change_result = await asyncio.gather(
             get_volume_rank(market_code="J", top_n=_MAX_UNIVERSE),
             get_price_rank(sort_by="trade_amount", market_code="J", top_n=_MAX_UNIVERSE),
+            get_price_rank(sort_by="change_rate", market_code="J", top_n=_MAX_UNIVERSE),
         )
         volume_items = volume_result.get("items", [])
         trade_items = trade_result.get("items", [])
+        change_items = change_result.get("items", [])
     except Exception as exc:
         finish_pipeline_run(
             run_id=run_audit_id,
@@ -452,9 +454,13 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
     weights, tone_used = _get_tone_weights(today)
     weights = _apply_memory_adjustments(weights, memories)
 
-    raw_split_counts = {"volume": len(volume_items), "trade_amount": len(trade_items)}
-    raw_count = raw_split_counts["volume"] + raw_split_counts["trade_amount"]
-    merged = _merge_and_deduplicate(volume_items, trade_items)
+    raw_split_counts = {
+        "volume": len(volume_items),
+        "trade_amount": len(trade_items),
+        "change_rate": len(change_items),
+    }
+    raw_count = raw_split_counts["volume"] + raw_split_counts["trade_amount"] + raw_split_counts["change_rate"]
+    merged = _merge_and_deduplicate(volume_items, trade_items, change_items)
     rejection_counts = _count_filter_rejections(merged)
     filtered = _apply_filters(merged)
     ranked = _score_and_rank(filtered, total=len(merged), weights=weights)
