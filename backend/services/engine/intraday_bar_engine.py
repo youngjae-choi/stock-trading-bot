@@ -258,6 +258,7 @@ class BarEngine:
                 "change_rate": 0.0, "체결강도": 0.0, "tick_vol_mult": 0.0, "tsi": None,
                 "vwap_position": None, "day_high_breakout": False,
                 "pullback_rebound": False, "rising_bars": 0, "time_hhmm": "",
+                "price": None, "vwap": None, "prior_day_high": None,
             }
         return {
             "change_rate": st.last_change_rate,
@@ -269,6 +270,10 @@ class BarEngine:
             "pullback_rebound": self.is_pullback_rebound(symbol),
             "rising_bars": self.get_rising_bars(symbol),
             "time_hhmm": self._hhmm(st.last_hhmmss),
+            # 튜닝 파라미터(buffer_pct/margin_pct) 평가에 쓰이는 raw 값
+            "price": self.get_last_price(symbol),
+            "vwap": self.get_vwap(symbol),
+            "prior_day_high": self.get_prior_day_high(symbol),
         }
 
     def get_bars(self, symbol: str) -> list[_Bar]:

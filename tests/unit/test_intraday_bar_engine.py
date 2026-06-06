@@ -251,6 +251,7 @@ def test_compute_signal_state_full_shape():
     assert set(s.keys()) == {
         "change_rate", "체결강도", "tick_vol_mult", "tsi", "vwap_position",
         "day_high_breakout", "pullback_rebound", "rising_bars", "time_hhmm",
+        "price", "vwap", "prior_day_high",
     }
     assert s["change_rate"] == 3.0            # 마지막 틱 등락률
     assert abs(s["체결강도"] - 0.62) < 1e-9
@@ -260,6 +261,10 @@ def test_compute_signal_state_full_shape():
     assert s["day_high_breakout"] is True     # 1060 > 1050
     assert s["rising_bars"] == 1              # 1060 > 1000
     assert isinstance(s["pullback_rebound"], bool)
+    # 신규 raw 값: 튜닝 파라미터 평가용 (price/vwap/prior_day_high)
+    assert s["price"] == 1060.0               # get_last_price (마지막 봉 close)
+    assert s["prior_day_high"] == 1050.0      # 외부 주입값 그대로 노출
+    assert s["vwap"] == eng.get_vwap("005930")  # running VWAP raw 값
 
 
 def test_compute_signal_state_unknown_symbol_safe_defaults():
@@ -274,6 +279,9 @@ def test_compute_signal_state_unknown_symbol_safe_defaults():
     assert s["pullback_rebound"] is False
     assert s["rising_bars"] == 0
     assert s["time_hhmm"] == ""
+    assert s["price"] is None
+    assert s["vwap"] is None
+    assert s["prior_day_high"] is None
 
 
 def test_vwap_position_below():
