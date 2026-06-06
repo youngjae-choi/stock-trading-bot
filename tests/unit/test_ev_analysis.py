@@ -114,3 +114,50 @@ def test_unknown_dimension_raises():
     import pytest
     with pytest.raises(ValueError):
         ev.compute_ev_by_dimension([], "nonsense_dim")
+
+
+def test_recommend_pruning_negative_first_downweight():
+    ev_results = {
+        "돌파전략": {"n": 40, "wins": 24, "win_rate": 0.6, "avg_win": 1500,
+                   "avg_loss": 800, "ev": 580.0},     # 양수 → 추천 없음
+        "눌림전략": {"n": 40, "wins": 10, "win_rate": 0.25, "avg_win": 200,
+                   "avg_loss": 1000, "ev": -700.0},   # 음수+표본충분 → downweight
+        "소표본전략": {"n": 5, "wins": 1, "win_rate": 0.2, "avg_win": 100,
+                    "avg_loss": 900, "ev": -700.0},   # 음수지만 표본부족 → 제외
+    }
+    recs = ev.recommend_pruning(ev_results, min_sample=30)
+    targets = {r["target"]: r for r in recs}
+    assert "눌림전략" in targets
+    assert targets["눌림전략"]["action"] == "downweight"
+    assert "돌파전략" not in targets        # 양수 EV
+    assert "소표본전략" not in targets      # 표본 부족
+    # reason 에 n·ev 가 들어간다(설명가능성)
+    assert "EV" in targets["눌림전략"]["reason"]
+
+
+def test_recommend_pruning_disable_only_huge_sample():
+    ev_results = {
+        "대표본음수": {"n": 120, "wins": 30, "win_rate": 0.25, "avg_win": 200,
+                    "avg_loss": 1200, "ev": -850.0},
+    }
+    recs = ev.recommend_pruning(ev_results, min_sample=30, disable_sample=90)
+    assert recs[0]["target"] == "대표본음수"
+    assert recs[0]["action"] == "disable"
+
+
+def test_recommend_pruning_sorted_negative_first():
+    ev_results = {
+        "약음수": {"n": 50, "wins": 22, "win_rate": 0.44, "avg_win": 900,
+                 "avg_loss": 1000, "ev": -100.0},
+        "강음수": {"n": 50, "wins": 12, "win_rate": 0.24, "avg_win": 300,
+                 "avg_loss": 1100, "ev": -800.0},
+    }
+    recs = ev.recommend_pruning(ev_results, min_sample=30)
+    # 더 나쁜(EV 더 낮은) 대상이 먼저
+    assert [r["target"] for r in recs] == ["강음수", "약음수"]
+
+
+def test_recommend_pruning_empty_when_all_positive():
+    ev_results = {"좋은전략": {"n": 50, "wins": 40, "win_rate": 0.8, "avg_win": 1000,
+                            "avg_loss": 500, "ev": 700.0}}
+    assert ev.recommend_pruning(ev_results, min_sample=30) == []

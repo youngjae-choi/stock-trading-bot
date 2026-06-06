@@ -94,3 +94,37 @@ def compute_ev_by_dimension(tags: list[dict[str, Any]], dimension: str) -> dict[
             "ev": round(ev, 6),
         }
     return results
+
+
+def recommend_pruning(
+    ev_results: dict[str, dict[str, float]],
+    min_sample: int = 30,
+    disable_sample: int = 90,
+) -> list[dict[str, Any]]:
+    """EV 음수 대상을 negative-first 로 가지치기 추천한다 — "사지/고르지 말아야 할" 도출.
+
+    표본 n≥min_sample AND ev<0 인 대상만 추천한다. 기본 action 은 "downweight",
+    표본이 매우 크고(n≥disable_sample) 지속 음수일 때만 "disable"(운 좋은 전략 안 죽임).
+    출력은 EV 오름차순(가장 나쁜 것 먼저).
+
+    Args:
+        ev_results: compute_ev_by_dimension() 출력 {key: {n, ev, ...}}.
+        min_sample: 가지치기 최소 표본(기본 30).
+        disable_sample: disable 로 격상할 대표본 임계(기본 90).
+    """
+    recs: list[dict[str, Any]] = []
+    for target, stat in ev_results.items():
+        n = int(stat.get("n", 0))
+        ev_value = float(stat.get("ev", 0.0))
+        if n < min_sample or ev_value >= 0.0:
+            continue
+        action = "disable" if n >= disable_sample else "downweight"
+        win_rate = float(stat.get("win_rate", 0.0))
+        reason = (
+            f"표본 {n}건 · 승률 {win_rate:.0%} · EV {ev_value:+.0f} "
+            f"({'대표본 지속 음수 → 비활성' if action == 'disable' else 'EV 음수 → 가중 하향'})"
+        )
+        recs.append({"target": target, "action": action, "reason": reason,
+                     "n": n, "ev": round(ev_value, 6)})
+    recs.sort(key=lambda r: r["ev"])  # 가장 나쁜 것 먼저 (negative-first)
+    return recs
