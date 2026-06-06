@@ -940,6 +940,17 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
         "START: [S10] deterministic Review & Audit trade_date=%s prompt_template=1600_opus_review.md",
         trade_date,
     )
+    # orphan 주문(odno 없이 submitted)을 KIS 실체결과 대조해 해소 → pnl 검증 가능하게
+    try:
+        from .order_reconciliation import reconcile_orders_with_kis
+
+        _rec = await reconcile_orders_with_kis(trade_date)
+        if _rec.get("checked"):
+            logger.info("INFO: [S10] orphan reconcile resolved=%d cancelled=%d",
+                        len(_rec.get("resolved", [])), len(_rec.get("cancelled", [])))
+    except Exception as _rec_exc:
+        logger.warning("WARN: [S10] orphan reconcile 실패(비차단) — %s", _rec_exc)
+
     _ensure_review_integrity_columns()
     now_iso = _now_kst_iso()
     _sync_realized_pnl_from_trade_pairs(trade_date)
