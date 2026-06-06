@@ -760,6 +760,10 @@ class DecisionEngine:
         self._account_sync_seq = 0
         self._account_sync_rate_limit_hits: deque[float] = deque()
 
+        from .intraday_bar_engine import BarEngine
+
+        self._bar_engine = BarEngine()
+
     def _record_account_sync_rate_limit_hits(self, hits: int) -> int:
         """Record EGW00201 hits observed during PositionSync and return the 30-minute count.
 
@@ -798,6 +802,7 @@ class DecisionEngine:
         self._signal_sent = _load_sent_symbols(today)
         self._active = True
         realtime_ws_manager.register_tick_callback(self._on_tick)
+        realtime_ws_manager.register_tick_callback(self._bar_engine.ingest_tick)
         from .position_manager import position_manager
         from .fill_poller import fill_poller
 
@@ -815,6 +820,7 @@ class DecisionEngine:
             position_manager.deactivate()
             fill_poller.stop()
             realtime_ws_manager.unregister_tick_callback(self._on_tick)
+            realtime_ws_manager.unregister_tick_callback(self._bar_engine.ingest_tick)
             logger.warning("WARN: [S6] S4 후보와 KIS 실보유 포지션 모두 없어 Decision Engine 비활성")
             return {"ok": False, "reason": "no_candidates_or_positions"}
 
@@ -1086,6 +1092,7 @@ class DecisionEngine:
         self._active = False
         await self._stop_account_sync_loop()
         realtime_ws_manager.unregister_tick_callback(self._on_tick)
+        realtime_ws_manager.unregister_tick_callback(self._bar_engine.ingest_tick)
         from .position_manager import position_manager
         from .fill_poller import fill_poller
 
@@ -1152,6 +1159,121 @@ class DecisionEngine:
 
         if _rules_allow_signal(matched):
             await self._emit_signal(symbol, candidate, price, matched)
+            return
+
+        # 탐색모드: 기존 게이트 미통과여도 OR 그룹이 발화하면 추가 매수 트리거(모의 전용)
+        await self._maybe_exploration_buy(symbol, candidate, price)
+
+    async def _maybe_exploration_buy(
+        self, symbol: str, candidate: dict[str, Any], price: float
+    ) -> None:
+        """탐색 허용 시 OR 그룹 발화를 평가해 매수 신호를 추가 발행한다.
+
+        가드(보유/중복/쿨다운/price>0)는 호출부 _on_tick 에서 이미 통과한 상태다.
+        실계좌·탐색 OFF면 즉시 반환(하드 차단).
+
+        Args:
+            symbol: 평가 대상 종목.
+            candidate: S4 후보 dict.
+            price: 트리거 가격.
+        """
+        from .exploration_gate import is_exploration_allowed
+
+        if not is_exploration_allowed():
+            return
+        try:
+            from .buy_condition_framework import load_conditions, load_groups
+            from .exploration_decision import evaluate_exploration_buy
+
+            groups = load_groups()
+            conditions = load_conditions()
+            if not groups or not conditions:
+                return
+            tsi = _first_float(candidate.get("tsi"), candidate.get("tsi_value"))
+            decision = evaluate_exploration_buy(
+                symbol=symbol,
+                bar_engine=self._bar_engine,
+                groups=groups,
+                conditions=conditions,
+                tsi=tsi,
+            )
+        except Exception as exc:
+            logger.warning("WARN: [S6/탐색] OR 평가 실패 symbol=%s reason=%s", symbol, exc)
+            return
+
+        if not decision.get("any"):
+            return
+
+        logger.info(
+            "SIGNAL: [S6/탐색] OR 발화 symbol=%s fired=%s", symbol, decision.get("fired")
+        )
+        await self._emit_signal(symbol, candidate, price, {"exploration": True, "fired_groups": decision["fired"]})
+        self._record_exploration_tag(symbol, candidate, decision)
+
+    def _record_exploration_tag(
+        self, symbol: str, candidate: dict[str, Any], decision: dict[str, Any]
+    ) -> None:
+        """OR 발화 매수의 선정사유·발화그룹·조건상태·시장맥락을 태깅한다.
+
+        order_id 는 비동기 주문 제출 전이라 알 수 없으므로 빈 문자열로 기록하고,
+        Phase 1c set_outcome(order_id)는 별도 결선(범위 밖)에서 채운다.
+
+        Args:
+            symbol: 매수 종목.
+            candidate: S4 후보 dict.
+            decision: evaluate_exploration_buy 결과.
+        """
+        try:
+            from .exploration_decision import build_exploration_tag_payload
+            from .trade_tagging import record_entry_tag
+
+            today = _today_kst()
+            market_context = self._build_market_context(today)
+            payload = build_exploration_tag_payload(
+                order_id="",
+                symbol=symbol,
+                trade_date=today,
+                candidate=candidate,
+                decision=decision,
+                market_context=market_context,
+            )
+            record_entry_tag(**payload)
+        except Exception as exc:
+            logger.warning("WARN: [S6/탐색] 태깅 실패 symbol=%s reason=%s", symbol, exc)
+
+    def _build_market_context(self, today: str) -> dict[str, Any]:
+        """태깅용 시장맥락 dict 를 daily_context_snapshot / market_tone_results 에서 조립한다.
+
+        Args:
+            today: YYYY-MM-DD 거래일.
+        """
+        regime = "neutral"
+        market_tone = "neutral"
+        vix: float | None = None
+        try:
+            with get_connection() as conn:
+                row = conn.execute(
+                    "SELECT regime FROM daily_context_snapshot WHERE trade_date = ? "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (today,),
+                ).fetchone()
+                if row and row["regime"]:
+                    regime = str(row["regime"])
+                tone_row = conn.execute(
+                    "SELECT tone FROM market_tone_results WHERE trade_date = ? "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (today,),
+                ).fetchone()
+                if tone_row and tone_row["tone"]:
+                    market_tone = str(tone_row["tone"])
+        except Exception as exc:
+            logger.warning("WARN: [S6/탐색] market_context 조회 실패 reason=%s", exc)
+        return {
+            "regime": regime,
+            "market_tone": market_tone,
+            "time_bucket": _now_kst().strftime("%H:%M"),
+            "vix": vix,
+        }
 
     def _evaluate_rules(
         self,

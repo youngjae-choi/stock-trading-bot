@@ -67,3 +67,27 @@ def test_evaluate_keeps_tsi_none_when_not_injected():
     # tsi None → tsi_positive 통과(결손 차단 금지) → 발화
     assert out["any"] is True
     assert out["condition_states"]["tsi"] is None
+
+
+def test_build_exploration_tag_payload_shapes_record_entry_tag_kwargs():
+    candidate = {"symbol": "005930", "name": "삼성전자", "score": 0.36,
+                 "suitability_score": 0.72, "change_rate_rank": 3, "trade_rank": 5,
+                 "tsi": 42.0, "llm_note": "반도체 강세"}
+    decision = {"any": True, "fired": ["돌파전략"],
+                "condition_states": {"체결강도": 0.62, "tsi": 11.0}}
+    market_context = {"regime": "neutral", "market_tone": "negative",
+                      "time_bucket": "10:30", "vix": 18.2}
+    payload = ed.build_exploration_tag_payload(
+        order_id="ord-1", symbol="005930", trade_date="2099-03-01",
+        candidate=candidate, decision=decision, market_context=market_context,
+    )
+    # record_entry_tag 키워드 시그니처와 1:1 매칭
+    assert payload["order_id"] == "ord-1"
+    assert payload["symbol"] == "005930"
+    assert payload["trade_date"] == "2099-03-01"
+    assert payload["fired_groups"] == ["돌파전략"]
+    assert payload["condition_states"]["체결강도"] == 0.62
+    assert payload["market_context"]["regime"] == "neutral"
+    # selection_reason 은 build_selection_reason 산출 — 등락률순위 포함
+    assert "등락률순위#3" in payload["selection_reason"]["sources"]
+    assert payload["selection_reason"]["scores"]["llm_suitability"] == 0.72

@@ -45,3 +45,35 @@ def evaluate_exploration_buy(
         "fired": list(result.get("fired") or []),
         "condition_states": state,
     }
+
+
+def build_exploration_tag_payload(
+    *,
+    order_id: str,
+    symbol: str,
+    trade_date: str,
+    candidate: dict[str, Any],
+    decision: dict[str, Any],
+    market_context: dict[str, Any],
+) -> dict[str, Any]:
+    """record_entry_tag 키워드 인자 dict 를 조립한다(태깅 페이로드).
+
+    Args:
+        order_id: 매수 주문 로컬 id(없으면 빈 문자열).
+        symbol: 종목 코드.
+        trade_date: YYYY-MM-DD 거래일.
+        candidate: S4 후보 dict(선정사유 추출 원천).
+        decision: evaluate_exploration_buy 결과({any, fired, condition_states}).
+        market_context: {"regime","market_tone","time_bucket","vix"} dict.
+    """
+    from .trade_tagging import build_selection_reason
+
+    return {
+        "order_id": str(order_id or ""),
+        "symbol": str(symbol or ""),
+        "trade_date": str(trade_date or ""),
+        "selection_reason": build_selection_reason(candidate or {}),
+        "fired_groups": list(decision.get("fired") or []),
+        "condition_states": dict(decision.get("condition_states") or {}),
+        "market_context": dict(market_context or {}),
+    }
