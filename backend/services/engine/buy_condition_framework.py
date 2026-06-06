@@ -37,10 +37,23 @@ def evaluate_condition(condition: dict[str, Any], state: dict[str, Any]) -> bool
         return _f(state.get("tick_vol_mult")) >= _f(p.get("min"))
     if ctype == "tsi_positive":
         tsi = state.get("tsi")
-        return True if tsi is None else _f(tsi) > 0  # 결손은 통과(차단 금지)
+        # min=0(기본) → 현재 동작(tsi>0)과 동일. 결손은 통과(차단 금지).
+        return True if tsi is None else _f(tsi) > _f(p.get("min"))
     if ctype == "vwap_above":
+        # raw vwap/price 있으면 margin_pct 적용, 없으면 기존 vwap_position 폴백.
+        # margin_pct=0(기본) → price>=vwap 로 above와 동일.
+        vwap = state.get("vwap")
+        price = state.get("price")
+        if vwap is not None and price is not None and _f(vwap) > 0:
+            return _f(price) >= _f(vwap) * (1 + _f(p.get("margin_pct")) / 100.0)
         return str(state.get("vwap_position")) == "above"
     if ctype == "day_high_breakout":
+        # raw prior_day_high/price 있으면 buffer_pct 적용, 없으면 기존 bool 폴백.
+        # buffer_pct=0(기본) → price>=prior_day_high 로 돌파와 동일.
+        pdh = state.get("prior_day_high")
+        price = state.get("price")
+        if pdh is not None and price is not None and _f(pdh) > 0:
+            return _f(price) >= _f(pdh) * (1 + _f(p.get("buffer_pct")) / 100.0)
         return bool(state.get("day_high_breakout"))
     if ctype == "pullback_rebound":
         return bool(state.get("pullback_rebound"))

@@ -34,15 +34,53 @@ def test_tsi_positive_passes_on_missing():
     assert bcf.evaluate_condition(c, {**_S, "tsi": -5.0}) is False
 
 
+def test_tsi_positive_min_param():
+    # min=0 (기본/no-op) → 현재 동작과 동일: tsi>0
+    c0 = {"ctype": "tsi_positive", "params": {"min": 0}}
+    assert bcf.evaluate_condition(c0, {**_S, "tsi": 11.0}) is True
+    assert bcf.evaluate_condition(c0, {**_S, "tsi": None}) is True   # 결손은 통과
+    assert bcf.evaluate_condition(c0, {**_S, "tsi": -5.0}) is False
+    # min=5 → 더 엄격: tsi>5
+    c5 = {"ctype": "tsi_positive", "params": {"min": 5}}
+    assert bcf.evaluate_condition(c5, {**_S, "tsi": 3.0}) is False
+    assert bcf.evaluate_condition(c5, {**_S, "tsi": 11.0}) is True
+
+
 def test_vwap_above():
     c = {"ctype": "vwap_above", "params": {}}
     assert bcf.evaluate_condition(c, _S) is True
     assert bcf.evaluate_condition(c, {**_S, "vwap_position": "below"}) is False
 
 
+def test_vwap_above_margin_pct_param():
+    base = {**_S, "price": 1000.0, "vwap": 1000.0}
+    # margin_pct=0 (기본/no-op) → price>=vwap
+    c0 = {"ctype": "vwap_above", "params": {"margin_pct": 0}}
+    assert bcf.evaluate_condition(c0, base) is True
+    # margin_pct=1 → price>=vwap*1.01 = 1010 필요 → 1000은 실패
+    c1 = {"ctype": "vwap_above", "params": {"margin_pct": 1}}
+    assert bcf.evaluate_condition(c1, base) is False
+    # raw vwap 결손 → 기존 vwap_position 폴백
+    c_fb = {"ctype": "vwap_above", "params": {"margin_pct": 0}}
+    assert bcf.evaluate_condition(c_fb, {**_S, "vwap_position": "above"}) is True
+
+
 def test_bool_conditions():
     assert bcf.evaluate_condition({"ctype": "day_high_breakout", "params": {}}, _S) is True
     assert bcf.evaluate_condition({"ctype": "pullback_rebound", "params": {}}, _S) is False
+
+
+def test_day_high_breakout_buffer_pct_param():
+    base = {**_S, "price": 1000.0, "prior_day_high": 1000.0}
+    # buffer_pct=0 (기본/no-op) → price>=prior_day_high
+    c0 = {"ctype": "day_high_breakout", "params": {"buffer_pct": 0}}
+    assert bcf.evaluate_condition(c0, base) is True
+    # buffer_pct=1 → price>=prior_day_high*1.01 = 1010 필요 → 1000은 실패
+    c1 = {"ctype": "day_high_breakout", "params": {"buffer_pct": 1}}
+    assert bcf.evaluate_condition(c1, base) is False
+    # raw prior_day_high 결손 → 기존 day_high_breakout bool 폴백
+    c_fb = {"ctype": "day_high_breakout", "params": {"buffer_pct": 0}}
+    assert bcf.evaluate_condition(c_fb, {**_S, "day_high_breakout": True}) is True
 
 
 def test_momentum_rising_bars():
