@@ -74,3 +74,120 @@ def evaluate_groups_or(
         if evaluate_group(g, conditions_by_id, state)
     ]
     return {"any": len(fired) > 0, "fired": fired}
+
+
+def _ensure_tables() -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS buy_conditions (
+                id          TEXT PRIMARY KEY,
+                name        TEXT NOT NULL,
+                ctype       TEXT NOT NULL,
+                params_json TEXT NOT NULL DEFAULT '{}',
+                enabled     INTEGER NOT NULL DEFAULT 1,
+                created_at  TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS condition_groups (
+                id                 TEXT PRIMARY KEY,
+                name               TEXT NOT NULL,
+                condition_ids_json TEXT NOT NULL DEFAULT '[]',
+                enabled            INTEGER NOT NULL DEFAULT 1,
+                weight             REAL NOT NULL DEFAULT 1.0,
+                assigned_to        TEXT NOT NULL DEFAULT '',
+                created_at         TEXT NOT NULL
+            )
+            """
+        )
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+# 기본 조건 정의: (고정 id, name, ctype, params)
+_DEFAULT_CONDITIONS = [
+    ("cond_breakout", "당일고가 돌파", "day_high_breakout", {}),
+    ("cond_pullback", "눌림 후 반등", "pullback_rebound", {}),
+    ("cond_momentum", "10초봉 3연속 상승", "momentum_rising_bars", {"min_bars": 3}),
+    ("cond_gangdo", "체결강도 55%+", "chegyeol_gangdo_min", {"min": 0.55}),
+    ("cond_tickvol", "틱거래량 2배+", "tick_volume_mult_min", {"min": 2.0}),
+    ("cond_vwap", "VWAP 상단", "vwap_above", {}),
+    ("cond_crband", "등락률 1.5~5%", "change_rate_band", {"min": 1.5, "max": 5.0}),
+    ("cond_tsi", "일봉 TSI>0", "tsi_positive", {}),
+    ("cond_time", "시간창 09:30~15:00", "time_window", {"start": "09:30", "end": "15:00"}),
+]
+
+# 기본 그룹: (고정 id, name, [condition_ids])
+_DEFAULT_GROUPS = [
+    ("grp_breakout", "돌파전략", ["cond_breakout", "cond_gangdo", "cond_tickvol", "cond_vwap"]),
+    ("grp_pullback", "눌림전략", ["cond_pullback", "cond_gangdo", "cond_vwap"]),
+    ("grp_momentum", "모멘텀전략", ["cond_momentum", "cond_gangdo", "cond_tickvol"]),
+    ("grp_baseline", "베이스라인(기존게이트)", ["cond_crband", "cond_tsi", "cond_time"]),
+]
+
+
+def seed_defaults() -> None:
+    """기본 조건/그룹을 시드. 고정 id라 INSERT OR IGNORE 로 idempotent."""
+    _ensure_tables()
+    now = _now()
+    with get_connection() as conn:
+        for cid, name, ctype, params in _DEFAULT_CONDITIONS:
+            conn.execute(
+                "INSERT OR IGNORE INTO buy_conditions (id, name, ctype, params_json, enabled, created_at) "
+                "VALUES (?, ?, ?, ?, 1, ?)",
+                (cid, name, ctype, json.dumps(params, ensure_ascii=False), now),
+            )
+        for gid, name, cond_ids in _DEFAULT_GROUPS:
+            conn.execute(
+                "INSERT OR IGNORE INTO condition_groups (id, name, condition_ids_json, enabled, weight, assigned_to, created_at) "
+                "VALUES (?, ?, ?, 1, 1.0, '', ?)",
+                (gid, name, json.dumps(cond_ids, ensure_ascii=False), now),
+            )
+
+
+def load_conditions(enabled_only: bool = True) -> dict[str, dict[str, Any]]:
+    """{id: {id, name, ctype, params, enabled}}."""
+    _ensure_tables()
+    sql = "SELECT * FROM buy_conditions"
+    if enabled_only:
+        sql += " WHERE enabled = 1"
+    out: dict[str, dict[str, Any]] = {}
+    with get_connection() as conn:
+        for row in conn.execute(sql).fetchall():
+            d = dict(row)
+            out[d["id"]] = {
+                "id": d["id"], "name": d["name"], "ctype": d["ctype"],
+                "params": json.loads(d.get("params_json") or "{}"),
+                "enabled": bool(d.get("enabled")),
+            }
+    return out
+
+
+def load_groups(enabled_only: bool = True) -> list[dict[str, Any]]:
+    """[{id, name, condition_ids, enabled, weight, assigned_to}]."""
+    _ensure_tables()
+    sql = "SELECT * FROM condition_groups"
+    if enabled_only:
+        sql += " WHERE enabled = 1"
+    out: list[dict[str, Any]] = []
+    with get_connection() as conn:
+        for row in conn.execute(sql).fetchall():
+            d = dict(row)
+            out.append({
+                "id": d["id"], "name": d["name"],
+                "condition_ids": json.loads(d.get("condition_ids_json") or "[]"),
+                "enabled": bool(d.get("enabled")), "weight": float(d.get("weight") or 1.0),
+                "assigned_to": d.get("assigned_to") or "",
+            })
+    return out
+
+
+def _clear_all_for_test() -> None:
+    with get_connection() as conn:
+        conn.execute("DELETE FROM buy_conditions")
+        conn.execute("DELETE FROM condition_groups")

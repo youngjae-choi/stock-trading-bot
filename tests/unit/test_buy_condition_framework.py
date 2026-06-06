@@ -90,3 +90,34 @@ def test_evaluate_groups_or():
     out2 = bcf.evaluate_groups_or(groups, conds, {**_S, "day_high_breakout": False})
     assert out2["any"] is False
     assert out2["fired"] == []
+
+
+def test_seed_and_load_roundtrip():
+    bcf._ensure_tables()
+    bcf._clear_all_for_test()
+    bcf.seed_defaults()
+    conds = bcf.load_conditions()
+    groups = bcf.load_groups()
+    # 기본 조건에 핵심 ctype 존재
+    ctypes = {c["ctype"] for c in conds.values()}
+    assert "day_high_breakout" in ctypes
+    assert "chegyeol_gangdo_min" in ctypes
+    # 기본 그룹 3패턴 + 베이스라인
+    names = {g["name"] for g in groups}
+    assert {"돌파전략", "눌림전략", "모멘텀전략"}.issubset(names)
+    # 그룹의 condition_ids가 실제 conditions를 가리킴 (참조 무결성)
+    for g in groups:
+        for cid in g["condition_ids"]:
+            assert cid in conds
+    bcf._clear_all_for_test()
+
+
+def test_seed_is_idempotent():
+    bcf._ensure_tables()
+    bcf._clear_all_for_test()
+    bcf.seed_defaults()
+    n1 = len(bcf.load_conditions())
+    bcf.seed_defaults()  # 재호출
+    n2 = len(bcf.load_conditions())
+    assert n1 == n2  # 중복 시드 안 함
+    bcf._clear_all_for_test()
