@@ -49,13 +49,23 @@ async def get_trade_pairs(
     start: str = Query(..., description="YYYY-MM-DD"),
     end: str = Query(..., description="YYYY-MM-DD"),
 ):
-    """날짜 범위 내 (날짜 × 종목) 거래 결과 페어 조회.
+    """날짜 범위 내 (날짜 × 종목) 거래 결과 페어 조회 (선정/매수 사유 태그 포함).
 
-    매수/매도 주문을 날짜+종목 기준으로 묶어 손익을 계산해 반환한다.
+    매수/매도 주문을 날짜+종목 기준으로 묶어 손익을 계산하고,
+    trade_entry_tags(선정사유·발화그룹·조건상태·맥락·결과)를 매수 order_id 기준 병합한다.
     """
     from ...services.engine.trade_pairs import get_trade_pairs as _get
+    from ...services.engine.trade_tagging import load_tags
+    from ...services.engine.trade_pairs_tags import enrich_pairs_with_tags
+
     pairs = _get(start, end)
-    return {"ok": True, "payload": {"pairs": pairs, "count": len(pairs)}}
+    # pair에 등장한 거래일 전부의 태그를 모아 병합 (범위가 좁아 비용 작음)
+    trade_dates = sorted({str(p.get("trade_date") or "") for p in pairs if p.get("trade_date")})
+    tags: list = []
+    for d in trade_dates:
+        tags.extend(load_tags(d))
+    enriched = enrich_pairs_with_tags(pairs, tags)
+    return {"ok": True, "payload": {"pairs": enriched, "count": len(enriched)}}
 
 
 @router.get("/debug-kis-orders")
