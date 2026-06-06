@@ -159,8 +159,15 @@ def _ensure_table() -> None:
 def _merge_and_deduplicate(
     volume_items: list[dict[str, Any]],
     trade_items: list[dict[str, Any]],
+    change_items: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """거래량 순위와 거래대금 순위를 병합하고 중복을 제거한다."""
+    """거래량·거래대금·등락률 순위를 병합하고 중복을 제거한다.
+
+    Args:
+        volume_items: 거래량 순위 리스트(순서=순위).
+        trade_items: 거래대금 순위 리스트(순서=순위).
+        change_items: 등락률(상승률) 순위 리스트(순서=순위). None이면 등락률 소스 미사용.
+    """
     merged: dict[str, dict[str, Any]] = {}
 
     for idx, item in enumerate(volume_items):
@@ -176,6 +183,7 @@ def _merge_and_deduplicate(
             "trade_amount": 0,
             "volume_rank": idx + 1,
             "trade_rank": 9999,
+            "change_rate_rank": 9999,
         }
 
     for idx, item in enumerate(trade_items):
@@ -195,6 +203,28 @@ def _merge_and_deduplicate(
                 "trade_amount": item.get("trade_amount", 0),
                 "volume_rank": 9999,
                 "trade_rank": idx + 1,
+                "change_rate_rank": 9999,
+            }
+
+    for idx, item in enumerate(change_items or []):
+        sym = item.get("symbol", "")
+        if not sym:
+            continue
+        if sym in merged:
+            merged[sym]["change_rate_rank"] = idx + 1
+            if not merged[sym].get("change_rate"):
+                merged[sym]["change_rate"] = item.get("change_rate", 0.0)
+        else:
+            merged[sym] = {
+                "symbol": sym,
+                "name": item.get("name", ""),
+                "price": item.get("price", 0),
+                "change_rate": item.get("change_rate", 0.0),
+                "volume": 0,
+                "trade_amount": 0,
+                "volume_rank": 9999,
+                "trade_rank": 9999,
+                "change_rate_rank": idx + 1,
             }
 
     return list(merged.values())
