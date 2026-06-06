@@ -35,3 +35,34 @@ def test_setting_string_truthy_is_coerced():
             assert eg.is_exploration_allowed() is True
         with patch.object(eg, "get_setting", return_value="0"):
             assert eg.is_exploration_allowed() is False
+
+
+def test_sizing_params_exploration_uses_full_deposit_params():
+    def _fake_setting(key, default=None):
+        return {
+            "engine.exploration_mode": True,
+            "exploration.budget_rate": 0.95,
+            "exploration.max_positions": 40,
+        }.get(key, default)
+
+    with patch.object(eg, "_is_virtual", return_value=True), \
+         patch.object(eg, "get_setting", side_effect=_fake_setting):
+        budget_rate, max_positions = eg.select_sizing_params({"max_positions": 7})
+    assert budget_rate == 0.95
+    assert max_positions == 40
+
+
+def test_sizing_params_non_exploration_keeps_existing_max_and_none_rate():
+    with patch.object(eg, "_is_virtual", return_value=False), \
+         patch.object(eg, "get_setting", return_value=True):
+        budget_rate, max_positions = eg.select_sizing_params({"max_positions": 5})
+    assert budget_rate is None
+    assert max_positions == 5
+
+
+def test_sizing_params_non_exploration_defaults_max_to_7_when_missing():
+    with patch.object(eg, "_is_virtual", return_value=False), \
+         patch.object(eg, "get_setting", return_value=True):
+        budget_rate, max_positions = eg.select_sizing_params({})
+    assert budget_rate is None
+    assert max_positions == 7
