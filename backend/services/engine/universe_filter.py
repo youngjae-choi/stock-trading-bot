@@ -385,13 +385,18 @@ def _score_and_rank(items: list[dict[str, Any]], total: int, weights: dict[str, 
         trade_score = (total - raw_trade_rank + 1) / total if raw_trade_rank <= total else 0.0
         raw_volume_rank = item.get("volume_rank", total)
         volume_score = (total - raw_volume_rank + 1) / total if raw_volume_rank <= total else 0.0
-        change_normalized = (item.get("change_rate", 0.0) + 30.0) / 60.0
-        change_normalized = max(0.0, min(1.0, change_normalized))
+        # 등락률 순위가 있으면 순위 점수, 없으면(=9999 sentinel) 등락률 정규화 점수로 폴백
+        raw_change_rank = item.get("change_rate_rank", 9999)
+        if raw_change_rank <= total:
+            change_score = (total - raw_change_rank + 1) / total
+        else:
+            change_score = (item.get("change_rate", 0.0) + 30.0) / 60.0
+        change_score = max(0.0, min(1.0, change_score))
 
         total_score = (
             trade_w * trade_score +
             volume_w * volume_score +
-            change_w * change_normalized
+            change_w * change_score
         )
         scored.append({**item, "score": round(total_score, 4)})
 

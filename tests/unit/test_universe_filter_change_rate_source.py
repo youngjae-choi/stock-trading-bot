@@ -47,3 +47,27 @@ def test_merge_two_arg_call_still_works():
     row = {r["symbol"]: r for r in merged}["005930"]
     assert row["change_rate_rank"] == 9999
     assert row["trade_rank"] == 1
+
+
+def test_score_uses_change_rate_rank_when_present():
+    weights = {"trade": 0.5, "volume": 0.3, "change": 0.2}
+    items = [
+        {"symbol": "A", "change_rate": 1.0, "trade_rank": 9999, "volume_rank": 9999, "change_rate_rank": 1},
+        {"symbol": "B", "change_rate": 1.0, "trade_rank": 9999, "volume_rank": 9999, "change_rate_rank": 5},
+    ]
+    ranked = uf._score_and_rank(items, total=5, weights=weights)
+    by_sym = {r["symbol"]: r for r in ranked}
+    # 등락률 순위 1위가 5위보다 높은 점수
+    assert by_sym["A"]["score"] > by_sym["B"]["score"]
+
+
+def test_score_falls_back_to_change_rate_normalized_when_no_rank():
+    weights = {"trade": 0.5, "volume": 0.3, "change": 0.2}
+    items = [
+        {"symbol": "A", "change_rate": 20.0, "trade_rank": 9999, "volume_rank": 9999, "change_rate_rank": 9999},
+        {"symbol": "B", "change_rate": -10.0, "trade_rank": 9999, "volume_rank": 9999, "change_rate_rank": 9999},
+    ]
+    ranked = uf._score_and_rank(items, total=5, weights=weights)
+    by_sym = {r["symbol"]: r for r in ranked}
+    # 순위 없을 땐 등락률 정규화로 폴백 — +20%가 -10%보다 높은 점수
+    assert by_sym["A"]["score"] > by_sym["B"]["score"]
