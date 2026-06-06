@@ -951,6 +951,17 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
     except Exception as _rec_exc:
         logger.warning("WARN: [S10] orphan reconcile 실패(비차단) — %s", _rec_exc)
 
+    # legacy 잔여(phantom) 포지션을 KIS 실보유와 대조해 reconciliation 기록으로 정리
+    # (거래기록 미수정·P&L 보존). 조회 실패 시 아무것도 하지 않는다.
+    try:
+        from .residual_reconciliation import reconcile_residual_positions_with_kis
+
+        _rr = await reconcile_residual_positions_with_kis(trade_date)
+        if _rr.get("reconciled"):
+            logger.info("INFO: [S10] residual reconcile reconciled=%d", _rr.get("reconciled"))
+    except Exception as _rr_exc:
+        logger.warning("WARN: [S10] residual reconcile 실패(비차단) — %s", _rr_exc)
+
     _ensure_review_integrity_columns()
     now_iso = _now_kst_iso()
     _sync_realized_pnl_from_trade_pairs(trade_date)

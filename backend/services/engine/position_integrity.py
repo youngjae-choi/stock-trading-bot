@@ -433,11 +433,59 @@ def load_db_open_positions(trade_date: str) -> tuple[list[dict[str, Any]], list[
     return positions, skipped
 
 
-def detect_legacy_residual_positions(trade_date: str) -> list[dict[str, Any]]:
-    """Detect strategy-owned net positions from dates before the target trade date.
+def _ensure_position_reconciliations_table() -> None:
+    """Create position_reconciliations table when missing (additive reconciliation log)."""
+    with get_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS position_reconciliations (
+                id TEXT PRIMARY KEY,
+                symbol TEXT,
+                reconciled_qty INTEGER,
+                db_net_qty INTEGER,
+                kis_qty INTEGER,
+                trade_date TEXT,
+                reason TEXT,
+                created_at TEXT
+            )
+            """
+        )
+
+
+def _reconciled_qty_by_symbol(trade_date: str) -> dict[str, int]:
+    """Sum already-reconciled (phantom) qty per symbol. Returns {} if table missing.
 
     Args:
-        trade_date: YYYY-MM-DD trade date whose prior residuals should be flagged.
+        trade_date: YYYY-MM-DD trade date (unused filter — all prior reconciliations apply).
+    """
+    if not _table_exists("position_reconciliations"):
+        return {}
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT symbol, SUM(reconciled_qty) AS total
+            FROM position_reconciliations
+            GROUP BY symbol
+            """
+        ).fetchall()
+    out: dict[str, int] = {}
+    for row in rows:
+        item = dict(row)
+        symbol = str(item.get("symbol") or "").strip()
+        if not symbol:
+            continue
+        try:
+            out[symbol] = int(item.get("total") or 0)
+        except (TypeError, ValueError):
+            out[symbol] = 0
+    return out
+
+
+def _raw_residual_rows(trade_date: str) -> list[dict[str, Any]]:
+    """Aggregate raw residual rows (net_qty > 0) from verified orders before trade_date.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date whose prior residuals should be aggregated.
     """
     if not _table_exists("trading_orders"):
         return []
@@ -484,6 +532,31 @@ def detect_legacy_residual_positions(trade_date: str) -> list[dict[str, Any]]:
         if item["net_qty"] > 0:
             residuals.append(dict(item))
     return sorted(residuals, key=lambda item: (str(item.get("first_trade_date") or ""), str(item.get("symbol") or "")))
+
+
+def detect_legacy_residual_positions(trade_date: str) -> list[dict[str, Any]]:
+    """Detect strategy-owned net positions from dates before the target trade date.
+
+    Subtracts already-reconciled (KIS-confirmed phantom) qty so reconciled positions
+    drop out of the flagged list. Only positions with net_qty > 0 after subtraction
+    are returned. trading_orders/fills are never modified (P&L preserved).
+
+    Args:
+        trade_date: YYYY-MM-DD trade date whose prior residuals should be flagged.
+    """
+    raw_rows = _raw_residual_rows(trade_date)
+    if not raw_rows:
+        return []
+    reconciled = _reconciled_qty_by_symbol(trade_date)
+    out: list[dict[str, Any]] = []
+    for row in raw_rows:
+        item = dict(row)
+        symbol = str(item.get("symbol") or "").strip()
+        reduced = int(item.get("net_qty") or 0) - int(reconciled.get(symbol, 0))
+        if reduced > 0:
+            item["net_qty"] = reduced
+            out.append(item)
+    return sorted(out, key=lambda item: (str(item.get("first_trade_date") or ""), str(item.get("symbol") or "")))
 
 
 def _ensure_system_alerts_table() -> None:
