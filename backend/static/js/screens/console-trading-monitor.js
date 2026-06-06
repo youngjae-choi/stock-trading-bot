@@ -183,7 +183,8 @@
     return sources || note || "";
   }
 
-  function renderCandidateRow(c) {
+  /* Legacy flat-conditions render (back-compat when readiness.mode !== "or_groups"). */
+  function _renderCandidateRowLegacy(c) {
     var readiness = c.buy_readiness || {};
     var pct = readiness.overall_pct || 0;
     var metCount = readiness.met_count || 0;
@@ -263,6 +264,103 @@
       + '</table>'
       + '<div style="margin-top:8px; font-size:11px; font-weight:600; color:' + barColor + '; text-align:right;">'
       + '종합 준비도 ' + pct + '% — ' + (pct >= 70 ? '매수 가능' : pct >= 50 ? '접근 중' : '조건 미달')
+      + '</div>'
+      + '</div>'
+      + '</div>';
+  }
+
+  /* OR-group readiness render: per-GROUP rows + overall "매수 가능(OR)" badge. */
+  function renderCandidateRow(c) {
+    var readiness = c.buy_readiness || {};
+    // back-compat: 옛 평면 조건 응답이면 레거시 렌더로 폴백.
+    if (readiness.mode !== 'or_groups') {
+      return _renderCandidateRowLegacy(c);
+    }
+
+    var groups = readiness.groups || [];
+    var anyMet = Boolean(readiness.any_met);
+    var pct = readiness.overall_pct || 0;
+
+    var profileColors = {LOW_VOL:'#6cb6ff', MID_VOL:'#3fb950', HIGH_VOL:'#d29922', THEME_SPIKE:'#f85149'};
+    var profileColor = profileColors[c.profile] || '#aaa';
+
+    var badgeColor = anyMet ? '#3fb950' : '#f85149';
+    var badgeBg = anyMet ? '#12351f' : '#3b1d1d';
+    var badgeText = anyMet ? '매수 가능(OR)' : '조건 미달';
+
+    // 헤더에 보이는 그룹 요약 행 (그룹명 + met_count/total + ✓/✗)
+    var groupSummaryHtml = groups.map(function(g) {
+      var gColor = g.met ? '#3fb950' : 'var(--muted)';
+      var gIcon = g.met ? '✓' : '✗';
+      return '<div style="display:flex; justify-content:space-between; align-items:center; font-size:10px; padding:1px 0;">'
+        + '<span style="color:' + (g.met ? '#3fb950' : 'var(--muted)') + ';">' + gIcon + ' ' + escapeHtml(g.name || '') + '</span>'
+        + '<span style="color:' + gColor + '; font-weight:600;">' + (g.met_count || 0) + '/' + (g.total || 0) + '</span>'
+        + '</div>';
+    }).join('');
+
+    // 상세: 각 그룹별 조건표 (조건명·현재값·기준·충족)
+    var detailHtml = groups.map(function(g) {
+      var gColor = g.met ? '#3fb950' : '#f85149';
+      var condRows = (g.conditions || []).map(function(cond) {
+        var cColor = cond.met ? '#3fb950' : '#f85149';
+        var cIcon = cond.met ? '✓' : '✗';
+        return '<tr>'
+          + '<td style="padding:3px 6px; font-size:11px; color:var(--muted);">' + escapeHtml(cond.label || cond.name || '') + '</td>'
+          + '<td style="padding:3px 6px; font-size:11px;">' + escapeHtml(String(cond.current_value != null ? cond.current_value : '')) + '</td>'
+          + '<td style="padding:3px 6px; font-size:11px; color:var(--muted);">' + escapeHtml(cond.threshold_label || '') + '</td>'
+          + '<td style="padding:3px 6px; text-align:center; color:' + cColor + '; font-size:11px;">' + cIcon + '</td>'
+          + '</tr>';
+      }).join('');
+      return '<div style="margin-bottom:8px;">'
+        + '<div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; font-weight:600; margin-bottom:3px;">'
+        + '<span style="color:' + gColor + ';">' + (g.met ? '✓' : '✗') + ' ' + escapeHtml(g.name || '') + ' 그룹</span>'
+        + '<span style="color:' + gColor + ';">' + (g.met_count || 0) + '/' + (g.total || 0) + (g.met ? ' · 충족' : '') + '</span>'
+        + '</div>'
+        + '<table style="width:100%; border-collapse:collapse;">'
+        + '<thead><tr style="font-size:10px; color:var(--muted);">'
+        + '<th style="text-align:left; padding:2px 6px;">조건</th>'
+        + '<th style="text-align:left; padding:2px 6px;">현재값</th>'
+        + '<th style="text-align:left; padding:2px 6px;">기준</th>'
+        + '<th style="padding:2px 6px;">충족</th>'
+        + '</tr></thead>'
+        + '<tbody>' + condRows + '</tbody>'
+        + '</table>'
+        + '</div>';
+    }).join('');
+
+    var rowId = 'cand-' + c.code;
+    var detailId = 'cand-detail-' + c.code;
+
+    return '<div style="border:1px solid var(--line); border-radius:6px; overflow:hidden;">'
+      + '<div id="' + rowId + '" data-action="toggleCandidateDetail" data-code="' + escapeHtml(c.code) + '"'
+      + ' style="display:flex; align-items:flex-start; gap:10px; padding:8px 10px; cursor:pointer; background:var(--panel-2);">'
+      + '<div style="min-width:80px;">'
+      + '<div style="font-size:13px; font-weight:600;">' + escapeHtml(c.name || c.code) + '</div>'
+      + '<div style="font-size:10px; color:' + profileColor + '; font-weight:600;">' + escapeHtml(c.profile || '') + '</div>'
+      + '<div style="font-size:10px; color:var(--muted); margin-top:3px;">현재가 ' + (c.latest_price ? Number(c.latest_price).toLocaleString() : '-') + '</div>'
+      + '</div>'
+      + '<div style="flex:1;">'
+      + '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">'
+      + '<span style="font-size:10px; font-weight:700; color:' + badgeColor + '; background:' + badgeBg + '; border:1px solid ' + badgeColor + '; border-radius:3px; padding:1px 6px;">' + badgeText + '</span>'
+      + '<span style="font-size:10px; color:var(--muted);">근접 ' + pct + '%</span>'
+      + '</div>'
+      + groupSummaryHtml
+      + '</div>'
+      + '<div style="font-size:11px; color:' + (c.ws_subscribed ? '#3fb950' : 'var(--muted)') + '; min-width:34px; text-align:right;">'
+      + (c.ws_subscribed ? '● WS' : '○ WS')
+      + '</div>'
+      + '</div>'
+      + (function() {
+          var selText = _candidateSelectionText(c);
+          return selText
+            ? '<div style="padding:4px 10px; font-size:11px; color:var(--muted); background:var(--panel);">'
+              + '<span style="color:var(--accent);">선정사유</span> ' + escapeHtml(selText) + '</div>'
+            : '';
+        })()
+      + '<div id="' + detailId + '" style="display:none; padding:8px 10px; background:var(--panel);">'
+      + detailHtml
+      + '<div style="margin-top:4px; font-size:11px; font-weight:600; color:' + badgeColor + '; text-align:right;">'
+      + (anyMet ? '한 그룹 이상 충족 — 매수 가능(OR)' : '충족 그룹 없음 — 조건 미달')
       + '</div>'
       + '</div>'
       + '</div>';
