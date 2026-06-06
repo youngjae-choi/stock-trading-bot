@@ -59,3 +59,34 @@ def test_time_window():
 
 def test_unknown_ctype_is_false():
     assert bcf.evaluate_condition({"ctype": "nonsense", "params": {}}, _S) is False
+
+
+def test_group_and_all_pass():
+    conds = {
+        "c1": {"id": "c1", "ctype": "day_high_breakout", "params": {}},
+        "c2": {"id": "c2", "ctype": "chegyeol_gangdo_min", "params": {"min": 0.55}},
+    }
+    group = {"id": "g1", "name": "돌파", "condition_ids": ["c1", "c2"]}
+    assert bcf.evaluate_group(group, conds, _S) is True
+    assert bcf.evaluate_group(group, conds, {**_S, "체결강도": 0.4}) is False  # AND 하나 실패
+
+
+def test_group_empty_conditions_is_false():
+    assert bcf.evaluate_group({"id": "g", "name": "x", "condition_ids": []}, {}, _S) is False
+
+
+def test_evaluate_groups_or():
+    conds = {
+        "c1": {"id": "c1", "ctype": "day_high_breakout", "params": {}},
+        "c2": {"id": "c2", "ctype": "pullback_rebound", "params": {}},
+    }
+    groups = [
+        {"id": "g1", "name": "돌파", "condition_ids": ["c1"]},
+        {"id": "g2", "name": "눌림", "condition_ids": ["c2"]},
+    ]
+    out = bcf.evaluate_groups_or(groups, conds, _S)  # 돌파만 충족
+    assert out["any"] is True
+    assert out["fired"] == ["돌파"]
+    out2 = bcf.evaluate_groups_or(groups, conds, {**_S, "day_high_breakout": False})
+    assert out2["any"] is False
+    assert out2["fired"] == []

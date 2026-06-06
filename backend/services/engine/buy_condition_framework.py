@@ -50,3 +50,27 @@ def evaluate_condition(condition: dict[str, Any], state: dict[str, Any]) -> bool
         t = str(state.get("time_hhmm") or "")
         return str(p.get("start") or "00:00") <= t <= str(p.get("end") or "23:59")
     return False
+
+
+def evaluate_group(group: dict[str, Any], conditions_by_id: dict[str, Any], state: dict[str, Any]) -> bool:
+    """그룹의 모든 조건(AND) 충족 여부. 조건 없으면 False."""
+    cond_ids = group.get("condition_ids") or []
+    if not cond_ids:
+        return False
+    for cid in cond_ids:
+        cond = conditions_by_id.get(cid)
+        if cond is None or not evaluate_condition(cond, state):
+            return False
+    return True
+
+
+def evaluate_groups_or(
+    groups: list[dict[str, Any]], conditions_by_id: dict[str, Any], state: dict[str, Any]
+) -> dict[str, Any]:
+    """그룹들 OR — 발화한 그룹명 리스트와 any 여부."""
+    fired = [
+        str(g.get("name") or g.get("id"))
+        for g in groups
+        if evaluate_group(g, conditions_by_id, state)
+    ]
+    return {"any": len(fired) > 0, "fired": fired}
