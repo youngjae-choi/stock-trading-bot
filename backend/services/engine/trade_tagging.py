@@ -147,6 +147,55 @@ def _parse_row(row: dict) -> dict:
     }
 
 
+def _maybe_float(value: Any) -> float | None:
+    """숫자로 변환 가능하면 float, 아니면 None 을 반환한다."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_selection_reason(candidate: dict) -> dict:
+    """S4 후보 dict 에서 record_entry_tag 용 selection_reason 을 추출한다.
+
+    선정사유 = 어떤 소스가 종목을 surfacing 했나(sources) + 점수 근거(scores) + LLM 메모(llm_note).
+    빠진 필드는 안전하게 누락한다. (hybrid_screening candidates 항목 기준:
+    score=유니버스 블렌드 점수, suitability_score=LLM 적합도, trade_rank>100 은 미수신 sentinel)
+
+    Args:
+        candidate: S3/S4 후보 종목 dict.
+    """
+    candidate = candidate or {}
+
+    sources: list[str] = []
+    trade_rank = candidate.get("trade_rank")
+    if isinstance(trade_rank, (int, float)) and 0 < trade_rank <= 100:
+        sources.append(f"거래대금순위#{int(trade_rank)}")
+    volume_rank = candidate.get("volume_rank")
+    if isinstance(volume_rank, (int, float)) and 0 < volume_rank <= 100:
+        sources.append(f"거래량순위#{int(volume_rank)}")
+
+    scores: dict[str, float] = {}
+    universe_score = _maybe_float(candidate.get("score"))
+    if universe_score is not None:
+        scores["universe_score"] = universe_score
+    suitability = _maybe_float(candidate.get("suitability_score"))
+    if suitability is not None:
+        scores["llm_suitability"] = suitability
+    change_rate = _maybe_float(candidate.get("change_rate"))
+    if change_rate is not None:
+        scores["change_rate"] = change_rate
+    tsi = _maybe_float(candidate.get("tsi"))
+    if tsi is not None:
+        scores["일봉TSI"] = tsi
+
+    llm_note = str(candidate.get("llm_note") or candidate.get("reason") or "").strip()
+
+    return {"sources": sources, "scores": scores, "llm_note": llm_note}
+
+
 def set_outcome(*, order_id: str, outcome: dict) -> int:
     """청산 후 order_id 로 태그의 outcome_json 을 갱신하고 갱신된 행 수를 반환한다.
 

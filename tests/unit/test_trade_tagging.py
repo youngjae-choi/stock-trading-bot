@@ -78,3 +78,40 @@ def test_set_outcome_fills_by_order_id():
 def test_set_outcome_missing_order_returns_zero():
     updated = tt.set_outcome(order_id="no-such-order", outcome={"win": True})
     assert updated == 0
+
+
+def test_build_selection_reason_full_candidate():
+    candidate = {
+        "symbol": "005930", "name": "삼성전자",
+        "score": 0.36, "suitability_score": 0.72,
+        "change_rate": 2.3, "tsi": 42.0,
+        "volume_rank": 5, "trade_rank": 3,
+        "llm_note": "반도체 섹터 강세 모멘텀",
+    }
+    sr = tt.build_selection_reason(candidate)
+    # sources: 순위 기반 surfacing 근거
+    assert "거래대금순위#3" in sr["sources"]
+    assert "거래량순위#5" in sr["sources"]
+    # scores: 점수 근거 (universe_score = score, llm_suitability = suitability_score)
+    assert sr["scores"]["universe_score"] == 0.36
+    assert sr["scores"]["llm_suitability"] == 0.72
+    assert sr["scores"]["change_rate"] == 2.3
+    assert sr["scores"]["일봉TSI"] == 42.0
+    assert sr["llm_note"] == "반도체 섹터 강세 모멘텀"
+
+
+def test_build_selection_reason_sparse_candidate():
+    candidate = {"symbol": "000660", "score": 0.1}
+    sr = tt.build_selection_reason(candidate)
+    # 누락 필드는 sources/scores 에서 빠지고, 존재하는 것만 들어간다
+    assert sr["sources"] == []
+    assert sr["scores"] == {"universe_score": 0.1}
+    assert sr["llm_note"] == ""
+
+
+def test_build_selection_reason_ignores_sentinel_trade_rank():
+    # trade_rank 미수신 sentinel(>100, 예 9999)은 source 로 넣지 않는다
+    candidate = {"symbol": "005930", "trade_rank": 9999, "volume_rank": 2}
+    sr = tt.build_selection_reason(candidate)
+    assert "거래량순위#2" in sr["sources"]
+    assert all("거래대금" not in s for s in sr["sources"])
