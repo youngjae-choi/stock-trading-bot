@@ -158,3 +158,80 @@ def test_tick_volume_mult_zero_baseline_returns_zero():
     eng = ibe.BarEngine()
     eng.ingest_tick(_tick(price=1000.0, cntg_vol=0, stck_cntg_hour="103000"))
     assert eng.get_tick_vol_mult("005930") == 0.0
+
+
+def test_rising_bars_counts_consecutive_up_closes():
+    eng = ibe.BarEngine()
+    # 4개 버킷, 종가 1000 1005 1010 1008 → 마지막 봉은 하락 → rising_bars=0
+    for sec, price in [("103000", 1000.0), ("103010", 1005.0),
+                       ("103020", 1010.0), ("103030", 1008.0)]:
+        eng.ingest_tick(_tick(price=price, cntg_vol=1, stck_cntg_hour=sec))
+    assert eng.get_rising_bars("005930") == 0
+
+
+def test_rising_bars_three_in_a_row():
+    eng = ibe.BarEngine()
+    for sec, price in [("103000", 1000.0), ("103010", 1005.0),
+                       ("103020", 1010.0), ("103030", 1015.0)]:
+        eng.ingest_tick(_tick(price=price, cntg_vol=1, stck_cntg_hour=sec))
+    # 1005>1000, 1010>1005, 1015>1010 → 3 연속 상승
+    assert eng.get_rising_bars("005930") == 3
+
+
+def test_rising_bars_single_bar_is_zero():
+    eng = ibe.BarEngine()
+    eng.ingest_tick(_tick(price=1000.0, cntg_vol=1, stck_cntg_hour="103000"))
+    assert eng.get_rising_bars("005930") == 0
+
+
+def test_day_high_breakout_true_above_prior_high():
+    eng = ibe.BarEngine()
+    eng.set_prior_day_high("005930", 1050.0)
+    eng.ingest_tick(_tick(price=1060.0, cntg_vol=1, stck_cntg_hour="103000"))
+    assert eng.is_day_high_breakout("005930") is True
+
+
+def test_day_high_breakout_false_below_prior_high():
+    eng = ibe.BarEngine()
+    eng.set_prior_day_high("005930", 1050.0)
+    eng.ingest_tick(_tick(price=1040.0, cntg_vol=1, stck_cntg_hour="103000"))
+    assert eng.is_day_high_breakout("005930") is False
+
+
+def test_day_high_breakout_false_without_prior_high():
+    eng = ibe.BarEngine()
+    eng.ingest_tick(_tick(price=9999.0, cntg_vol=1, stck_cntg_hour="103000"))
+    assert eng.is_day_high_breakout("005930") is False
+
+
+def test_pullback_rebound_true_after_spike_dip_then_up_bar():
+    eng = ibe.BarEngine(max_bars=360)
+    # 1) 초반 VWAP ~1000 형성
+    eng.ingest_tick(_tick(price=1000.0, cntg_vol=100, stck_cntg_hour="103000"))
+    # 2) 스파이크: day_high를 VWAP 대비 +3% 이상 위로
+    eng.ingest_tick(_tick(price=1035.0, cntg_vol=1, stck_cntg_hour="103010"))
+    # 3) VWAP 근처로 되눌림(다음 봉 시작 저가)
+    eng.ingest_tick(_tick(price=1002.0, cntg_vol=1, stck_cntg_hour="103020"))
+    # 4) 마지막 10초봉 양봉: 같은 버킷 안에서 close>open 되게 상승 마감
+    eng.ingest_tick(_tick(price=1008.0, cntg_vol=1, stck_cntg_hour="103029"))
+    assert eng.is_pullback_rebound("005930") is True
+
+
+def test_pullback_rebound_false_when_last_bar_down():
+    eng = ibe.BarEngine()
+    eng.ingest_tick(_tick(price=1000.0, cntg_vol=100, stck_cntg_hour="103000"))
+    eng.ingest_tick(_tick(price=1035.0, cntg_vol=1, stck_cntg_hour="103010"))
+    # 마지막 봉이 음봉(open 1003 > close 999) → 반등 아님
+    eng.ingest_tick(_tick(price=1003.0, cntg_vol=1, stck_cntg_hour="103020"))
+    eng.ingest_tick(_tick(price=999.0, cntg_vol=1, stck_cntg_hour="103029"))
+    assert eng.is_pullback_rebound("005930") is False
+
+
+def test_pullback_rebound_false_without_spike():
+    eng = ibe.BarEngine()
+    # 스파이크 없이 완만: day_high가 VWAP 대비 +3% 미만
+    eng.ingest_tick(_tick(price=1000.0, cntg_vol=100, stck_cntg_hour="103000"))
+    eng.ingest_tick(_tick(price=1005.0, cntg_vol=1, stck_cntg_hour="103010"))
+    eng.ingest_tick(_tick(price=1002.0, cntg_vol=1, stck_cntg_hour="103020"))
+    eng.ingest_tick(_tick(price=1006.0, cntg_vol=1, stck_cntg_hour="103029"))
+    assert eng.is_pullback_rebound("005930") is False

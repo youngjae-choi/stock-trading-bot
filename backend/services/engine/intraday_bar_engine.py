@@ -87,8 +87,10 @@ class _SymbolState:
 class BarEngine:
     """종목별 틱 → 10초 OHLCV 봉 집계."""
 
-    def __init__(self, max_bars: int = 360):
+    def __init__(self, max_bars: int = 360, spike_pct: float = 0.03, near_pct: float = 0.005):
         self._max_bars = max(1, int(max_bars))
+        self._spike_pct = float(spike_pct)   # 스파이크 판정: day_high가 VWAP 대비 +N%
+        self._near_pct = float(near_pct)     # 되눌림 근접: 저가가 VWAP의 ±N% 이내
         self._states: dict[str, _SymbolState] = {}
 
     def _state(self, symbol: str) -> _SymbolState:
@@ -172,6 +174,54 @@ class BarEngine:
     def get_prior_day_high(self, symbol: str) -> float | None:
         st = self._states.get(symbol)
         return st.prior_day_high if st is not None else None
+
+    def get_last_price(self, symbol: str) -> float | None:
+        st = self._states.get(symbol)
+        if st is None or not st.bars:
+            return None
+        return st.bars[-1].close
+
+    def get_rising_bars(self, symbol: str) -> int:
+        st = self._states.get(symbol)
+        if st is None or len(st.bars) < 2:
+            return 0
+        bars = list(st.bars)
+        count = 0
+        for i in range(len(bars) - 1, 0, -1):
+            if bars[i].close > bars[i - 1].close:
+                count += 1
+            else:
+                break
+        return count
+
+    def is_day_high_breakout(self, symbol: str) -> bool:
+        st = self._states.get(symbol)
+        if st is None or st.prior_day_high is None:
+            return False
+        last = self.get_last_price(symbol)
+        if last is None:
+            return False
+        return last > st.prior_day_high
+
+    def is_pullback_rebound(self, symbol: str) -> bool:
+        st = self._states.get(symbol)
+        if st is None or not st.bars:
+            return False
+        vwap = self.get_vwap(symbol)
+        if vwap is None or vwap <= 0:
+            return False
+        # (1) 스파이크: 당일고가가 VWAP 대비 +spike_pct 이상
+        spiked = st.day_high >= vwap * (1.0 + self._spike_pct)
+        if not spiked:
+            return False
+        last_bar = st.bars[-1]
+        # (2) 되눌림: 마지막 봉 저가가 VWAP의 ±near_pct 이내까지 근접
+        dipped = abs(last_bar.low - vwap) <= vwap * self._near_pct
+        if not dipped:
+            return False
+        # (3) 마지막 10초봉 양봉
+        rebounded = last_bar.close > last_bar.open
+        return bool(rebounded)
 
     def get_bars(self, symbol: str) -> list[_Bar]:
         st = self._states.get(symbol)
