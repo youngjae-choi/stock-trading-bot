@@ -62,6 +62,55 @@
     }
   }
 
+  /* 탐색엔진 그룹/조건 성과 스캐폴드 — EV는 Phase 3가 채움(현재 표본/승률/EV = "—") */
+  async function loadGroupStatsScaffold() {
+    var tb = document.getElementById('group-stats-tbody');
+    if (!tb) return;
+    tb.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">로딩중...</td></tr>';
+    try {
+      var [gData, cData] = await Promise.all([
+        fetchJson('/api/v1/buy-conditions/groups'),
+        fetchJson('/api/v1/buy-conditions/conditions'),
+      ]);
+      var groups = (gData.payload && gData.payload.groups) || [];
+      var conds = (cData.payload && cData.payload.conditions) || [];
+      var rows = [];
+
+      groups.forEach(function(g) {
+        rows.push(_statsRow('그룹', g.name, g.enabled, g.weight,
+          g.stats || null));   // g.stats 는 Phase 3가 추가할 필드
+      });
+      conds.forEach(function(c) {
+        rows.push(_statsRow('조건', c.name, c.enabled, null, c.stats || null));
+      });
+
+      if (!rows.length) {
+        tb.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;">조건/그룹 없음</td></tr>';
+        return;
+      }
+      tb.innerHTML = rows.join('');
+    } catch (e) {
+      tb.innerHTML = '<tr><td colspan="7" class="muted">로드 실패: ' + escapeHtml(e.message) + '</td></tr>';
+    }
+  }
+
+  function _statsRow(kind, name, enabled, weight, stats) {
+    // stats 가 있으면(Phase 3) 표본/승률/EV 표시, 없으면 "—" placeholder.
+    var sample = (stats && stats.sample != null) ? String(stats.sample) : '—';
+    var winrate = (stats && stats.winrate != null) ? (stats.winrate * 100).toFixed(0) + '%' : '—';
+    var ev = (stats && stats.ev != null) ? Number(stats.ev).toLocaleString() : '—';
+    var evCls = (stats && stats.ev != null) ? (stats.ev >= 0 ? 'good' : 'bad') : '';
+    return '<tr style="border-bottom:1px solid var(--border);">'
+      + '<td style="padding:6px 0; font-size:11px; color:var(--muted);">' + escapeHtml(kind) + '</td>'
+      + '<td style="padding:6px 4px;">' + escapeHtml(name) + '</td>'
+      + '<td style="padding:6px 4px;">' + (enabled ? '✓' : '✗') + '</td>'
+      + '<td style="padding:6px 4px;">' + (weight != null ? weight : '-') + '</td>'
+      + '<td style="padding:6px 4px;">' + sample + '</td>'
+      + '<td style="padding:6px 4px;">' + winrate + '</td>'
+      + '<td style="padding:6px 4px;" class="' + evCls + '">' + ev + '</td>'
+      + '</tr>';
+  }
+
   async function runDailySummary() {
     if (!confirm("오늘 거래를 집계하고 DB를 백업할까요? (S10 실행)")) return;
     try {

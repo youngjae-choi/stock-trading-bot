@@ -1421,6 +1421,26 @@
 
           </div><!-- /ra-report -->
 
+          <div class="section-gap"></div>
+
+          <!-- 탐색엔진 — 그룹/조건 EV 스캐폴드 (Phase 3 채움) -->
+          <div class="card">
+            <div class="settings-card-hd">
+              <div class="settings-card-meta">
+                <span class="settings-tag">탐색엔진</span>
+                <div class="settings-card-title-txt">매수 그룹·조건 성과 (EV)</div>
+                <div class="settings-card-desc">그룹/조건별 표본·승률·기대값(EV). EV 집계는 Phase 3에서 채워집니다.</div>
+              </div>
+              <button type="button" class="btn" data-action="loadGroupStatsScaffold">새로고침</button>
+            </div>
+            <table class="settings-table">
+              <thead><tr><th>구분</th><th>이름</th><th>활성</th><th>가중치</th><th>표본</th><th>승률</th><th>EV</th></tr></thead>
+              <tbody id="group-stats-tbody">
+                <tr><td colspan="7" class="muted" style="text-align:center;">새로고침을 눌러 로드</td></tr>
+              </tbody>
+            </table>
+          </div>
+
           <!-- Markdown 자세히 보기 모달 -->
           <div id="ra-detail-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:1000;overflow:auto;padding:20px;">
             <div style="max-width:860px;margin:0 auto;background:var(--bg);border-radius:12px;padding:28px;position:relative;">

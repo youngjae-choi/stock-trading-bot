@@ -157,6 +157,7 @@
 
     if (name === "review") {
       loadReviewAuditScreen();
+      if (typeof loadGroupStatsScaffold === 'function') loadGroupStatsScaffold();
     }
 
     if (name === "dividends") {
