@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from ...config import settings, validate_config
 from ...services.kis.domestic.service import get_balance
+from ...services.settings_store import get_setting
 from ..dependencies import kis_config_error_response
 
 logger = logging.getLogger("BackendAccountAPI")
@@ -126,9 +127,24 @@ def _build_balance_payload(data: dict[str, Any]) -> dict[str, Any]:
                 buyable_cash = candidate
                 break
 
+    # 원금(시드) 대비 누적 수익률: KIS 자산증감수익률(0%)과 별개로 시드 대비 누적을 표기.
+    try:
+        principal = int(_to_float(get_setting("account.principal", 100000000), 100000000))
+    except Exception:
+        principal = 100000000
+    if principal > 0:
+        cumulative_pnl = total_eval - principal
+        cumulative_return_pct = round((total_eval - principal) / principal * 100, 2)
+    else:
+        cumulative_pnl = 0
+        cumulative_return_pct = 0.0
+
     account_no = f"{settings.KIS_CANO}{settings.KIS_ACNT_PRDT_CD}"
     return {
         "account_no": account_no,
+        "principal": principal,                       # 계좌 원금(시드)
+        "cumulative_pnl": cumulative_pnl,             # 시드 대비 누적 손익 (원)
+        "cumulative_return_pct": cumulative_return_pct,  # 시드 대비 누적 수익률 (%)
         "deposit": deposit,                           # 예탁금 총액 (계좌 한도)
         "buyable_cash": buyable_cash,                 # 주문 가능 예수금 (현금 잔액)
         "available_cash": buyable_cash,

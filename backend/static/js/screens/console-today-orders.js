@@ -4,7 +4,8 @@
       loadConsoleData(),
       loadTodayAlertSummary(),
       loadTodayOrders(5),
-      loadKrIndexLive()
+      loadKrIndexLive(),
+      loadCumulativeReturn()
     ]);
   }
 
@@ -63,6 +64,42 @@
       renderCard(p.kospi, 'tc-kospi-price', 'tc-kospi-change', 'tc-kospi-badge');
       renderCard(p.kosdaq, 'tc-kosdaq-price', 'tc-kosdaq-change', 'tc-kosdaq-badge');
     } catch (e) { console.warn('loadKrIndexLive error', e); }
+  }
+
+  // 누적 수익률 — Today Control 카드 (계좌 balance 기반)
+  async function loadCumulativeReturn() {
+    try {
+      const res = await fetch('/api/v1/account/balance');
+      if (!res.ok) return;
+      const data = await res.json();
+      const p = (data && data.payload) || {};
+      const pnl = p.cumulative_pnl;
+      const rate = p.cumulative_return_pct;
+
+      const pnlEl = document.getElementById('tc-cum-pnl');
+      const rateEl = document.getElementById('tc-cum-rate');
+
+      if (pnlEl) {
+        if (pnl != null && !isNaN(pnl)) {
+          const sign = pnl >= 0 ? '+' : '';
+          pnlEl.textContent = sign + Number(pnl).toLocaleString('en-US') + '원';
+          pnlEl.style.color = pnl >= 0 ? 'var(--good, #3fb950)' : 'var(--bad, #f85149)';
+        } else {
+          pnlEl.textContent = '-';
+          pnlEl.style.color = '';
+        }
+      }
+      if (rateEl) {
+        if (rate != null && !isNaN(rate)) {
+          const sign = rate >= 0 ? '+' : '';
+          rateEl.textContent = sign + Number(rate).toFixed(2) + '%';
+          rateEl.style.color = rate >= 0 ? 'var(--good, #3fb950)' : 'var(--bad, #f85149)';
+        } else {
+          rateEl.textContent = '-';
+          rateEl.style.color = '';
+        }
+      }
+    } catch (e) { console.warn('loadCumulativeReturn error', e); }
   }
 
   async function loadTodayAlertSummary() {

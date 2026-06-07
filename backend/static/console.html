@@ -6,7 +6,7 @@
   <title>Kairos Control Console</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/console.css?v=1">
+  <link rel="stylesheet" href="/static/css/console.css?v=2">
 </head>
 
 <body class="auth-required">
@@ -179,7 +179,7 @@
             </div>
           </div>
 
-          <div class="grid cols-5">
+          <div class="grid cols-6">
             <div class="card compact">
               <div class="card-title">운용 모드 <span>mode</span></div>
               <div class="metric" id="modeMetric">AUTO</div>
@@ -189,6 +189,11 @@
               <div class="card-title">당일 손익 <span>pnl</span></div>
               <div class="metric good" id="pnlMetric">+0.12%</div>
               <div class="muted" id="pnlDetail">일일 손실한도 -2.00%</div>
+            </div>
+            <div class="card compact">
+              <div class="card-title">누적 수익 <span>profit</span></div>
+              <div class="metric" id="tc-cum-pnl">-</div>
+              <div class="muted" id="tc-cum-rate">-</div>
             </div>
             <div class="card compact">
               <div class="card-title">현재 포지션 <span>positions</span></div>
@@ -230,6 +235,19 @@
               <div class="metric" id="tc-trading-intensity">-</div>
               <div class="muted" id="tc-theme-spike-limit">THEME_SPIKE 허용 -개</div>
             </div>
+            <!-- Alert Center Summary -->
+            <div class="card compact" id="tc-alert-summary-card">
+              <div class="card-title">Alert Center 요약</div>
+              <div style="display:flex; gap:20px; align-items:center;">
+                <div id="tc-alert-count" style="font-size:24px; font-weight:800;">0</div>
+                <div style="flex:1; display:flex; gap:12px;">
+                  <span class="status bad" id="tc-alert-critical" style="font-size:11px;">CRITICAL 0</span>
+                  <span class="status warn" id="tc-alert-warning" style="font-size:11px;">WARNING 0</span>
+                  <span class="status info" id="tc-alert-unack" style="font-size:11px;">미확인 0</span>
+                </div>
+                <button type="button" class="btn" style="font-size:11px;" data-action="showScreen" data-screen="alerts">자세히보기 →</button>
+              </div>
+            </div>
           </div>
 
           <div class="section-gap"></div>
@@ -267,22 +285,6 @@
               <button type="button" class="btn" style="font-size:11px;" data-action="showScreen" data-screen="engine-test">
                 자세히보기 (System Diagnostics) →
               </button>
-            </div>
-          </div>
-
-          <div class="section-gap"></div>
-
-          <!-- Alert Center Summary -->
-          <div class="card" id="tc-alert-summary-card">
-            <div class="card-title">Alert Center 요약</div>
-            <div style="display:flex; gap:20px; align-items:center;">
-              <div id="tc-alert-count" style="font-size:24px; font-weight:800;">0</div>
-              <div style="flex:1; display:flex; gap:12px;">
-                <span class="status bad" id="tc-alert-critical" style="font-size:11px;">CRITICAL 0</span>
-                <span class="status warn" id="tc-alert-warning" style="font-size:11px;">WARNING 0</span>
-                <span class="status info" id="tc-alert-unack" style="font-size:11px;">미확인 0</span>
-              </div>
-              <button type="button" class="btn" style="font-size:11px;" data-action="showScreen" data-screen="alerts">자세히보기 →</button>
             </div>
           </div>
 

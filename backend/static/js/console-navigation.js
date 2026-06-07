@@ -144,12 +144,14 @@
         loadMorningBrief(td);
         loadTodayRegimeTimeline(td);
         loadKrIndexLive();
+        loadCumulativeReturn();
       });
       _todayTimer = setInterval(function() {
         _safeLoadConsoleData();
         var td = window._tcTradeDate || null;
         loadTodayRegimeTimeline(td);
         loadKrIndexLive();
+        loadCumulativeReturn();
       }, 30000);
     }
 

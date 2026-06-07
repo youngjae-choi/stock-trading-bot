@@ -383,6 +383,7 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
         ("intraday_refresh.max_replacement_per_symbol", 1, "number", "종목당 일일 교체 신호 최대 횟수"),
         ("intraday_refresh.max_replacement_per_day", 5, "number", "일일 교체 신호 최대 횟수"),
         ("missed.improvement_threshold", 2.0, "number", "Missed 개선후보 판정 임계치(장중 최고가 상승률 %, 기본 2.0)"),
+        ("account.principal", 100000000, "number", "계좌 원금(시드). 누적 수익률 계산 기준. 모의계좌 기본 1억, 실계좌 전환/증액 시 조정"),
     ]
     for key, value, value_type, description in defaults:
         connection.execute(
