@@ -6,7 +6,7 @@
   <title>Kairos Control Console</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/console.css?v=4">
+  <link rel="stylesheet" href="/static/css/console.css?v=5">
 </head>
 
 <body class="auth-required">
@@ -337,32 +337,32 @@
                 <span id="tm-sync-time" style="color:var(--muted);">-</span>
               </div>
               <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
-                <div style="background:var(--panel-2); border-radius:6px; padding:8px 10px;">
-                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">주문가능 예수금</div>
-                  <div style="font-size:15px; font-weight:700; color:var(--green);" id="tm-buyable-cash">-</div>
-                  <div style="font-size:10px; color:var(--muted);" id="tm-deposit-limit">한도 -</div>
-                  <div style="font-size:10px; color:var(--muted); display:none;" id="tm-settlement"></div>
+                <div class="kpi-cell">
+                  <div class="kpi-cell__label">주문가능 예수금</div>
+                  <div class="kpi-cell__value" style="color:var(--green);" id="tm-buyable-cash">-</div>
+                  <div class="kpi-cell__sub" id="tm-deposit-limit">한도 -</div>
+                  <div class="kpi-cell__sub" style="display:none;" id="tm-settlement"></div>
                 </div>
-                <div style="background:var(--panel-2); border-radius:6px; padding:8px 10px;">
-                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">주식 평가금액</div>
-                  <div style="font-size:15px; font-weight:700;" id="tm-stock-eval">-</div>
-                  <div style="font-size:10px; color:var(--muted);" id="tm-holdings-count">보유 -종목</div>
+                <div class="kpi-cell">
+                  <div class="kpi-cell__label">주식 평가금액</div>
+                  <div class="kpi-cell__value" id="tm-stock-eval">-</div>
+                  <div class="kpi-cell__sub" id="tm-holdings-count">보유 -종목</div>
                 </div>
-                <div style="background:var(--panel-2); border-radius:6px; padding:8px 10px;">
-                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">총평가금액</div>
-                  <div style="font-size:15px; font-weight:700;" id="tm-total-eval">-</div>
+                <div class="kpi-cell">
+                  <div class="kpi-cell__label">총평가금액</div>
+                  <div class="kpi-cell__value" id="tm-total-eval">-</div>
                 </div>
-                <div style="background:var(--panel-2); border-radius:6px; padding:8px 10px;">
-                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">평가손익 / 수익률</div>
-                  <div style="font-size:15px; font-weight:700;" id="tm-pnl-today">-</div>
+                <div class="kpi-cell">
+                  <div class="kpi-cell__label">평가손익 / 수익률</div>
+                  <div class="kpi-cell__value" id="tm-pnl-today">-</div>
                   <div style="font-size:10px;" id="tm-pnl-rate">-</div>
                 </div>
-                <div style="background:var(--panel-2); border-radius:6px; padding:8px 10px;">
-                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">당일 매수</div>
+                <div class="kpi-cell">
+                  <div class="kpi-cell__label">당일 매수</div>
                   <div style="font-size:13px; font-weight:600;" id="tm-today-buy">-</div>
                 </div>
-                <div style="background:var(--panel-2); border-radius:6px; padding:8px 10px;">
-                  <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">당일 매도</div>
+                <div class="kpi-cell">
+                  <div class="kpi-cell__label">당일 매도</div>
                   <div style="font-size:13px; font-weight:600;" id="tm-today-sell">-</div>
                 </div>
               </div>
@@ -2431,7 +2431,7 @@
   </div>
 
   <script src="/static/js/console-state.js"></script>
-  <script src="/static/js/console-utils.js?v=2"></script>
+  <script src="/static/js/console-utils.js?v=3"></script>
   <script src="/static/js/console-api.js"></script>
   <script src="/static/js/console-auth.js"></script>
   <script src="/static/js/screens/console-today-orders.js?v=4"></script>

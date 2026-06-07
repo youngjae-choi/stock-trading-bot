@@ -276,36 +276,32 @@
         var sTime = stepDisplayTime(step, settingsMap);
         var state = stepStates[step.id];
         
-        var bgColor = 'var(--panel-2)';
-        var borderColor = 'var(--border)';
+        var boxModifier = '';
         var statusText = '대기';
-        
+
         if (state === 'completed') {
-          bgColor = 'var(--green-soft)';
-          borderColor = 'var(--green)';
+          boxModifier = ' is-done';
           statusText = '완료';
         } else if (state === 'running') {
-          bgColor = 'var(--blue-soft)';
-          borderColor = 'var(--blue)';
+          boxModifier = ' is-running';
           statusText = '실행중';
         } else if (state === 'skipped') {
-          bgColor = 'var(--yellow-soft)';
-          borderColor = 'var(--yellow)';
+          boxModifier = ' is-skipped';
           statusText = '스킵';
         } else if (state === 'missing') {
           statusText = '미생성';
         }
 
-        html += '<div style="flex:0 0 104px; text-align:center;">'
-          + '<div style="font-size:10px; color:var(--muted); margin-bottom:4px;">' + sTime + '</div>'
-          + '<div style="min-height:40px; display:flex; align-items:center; justify-content:center; line-height:1.25; word-break:keep-all; padding:6px 4px; border-radius:6px; font-size:11px; font-weight:600; background:' + bgColor + '; border: 1px solid ' + borderColor + ';">'
+        html += '<div class="ops-col">'
+          + '<div class="ops-col__time">' + sTime + '</div>'
+          + '<div class="ops-step__box' + boxModifier + '">'
           + step.label
           + '</div>'
-          + '<div style="font-size:10px; margin-top:4px; color:var(--muted)">' + statusText + '</div>'
+          + '<div class="ops-col__status">' + statusText + '</div>'
           + '</div>';
-        
+
         if (index < OPS_STEPS.length - 1) {
-          html += '<div style="flex:0 0 16px; display:flex; align-items:center; color:var(--muted); justify-content:center;">→</div>';
+          html += '<div class="ops-arrow">→</div>';
         }
       });
       feed.innerHTML = html;

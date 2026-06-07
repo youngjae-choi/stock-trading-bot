@@ -438,6 +438,76 @@
 
     .card.compact {
       padding: 16px;
+      min-height: 104px;
+    }
+
+    /* ── Ops 운영현황 스텝 (Today Feed) ── */
+    .ops-col {
+      flex: 0 0 104px;
+      text-align: center;
+    }
+    .ops-col__time {
+      font-size: 10px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .ops-step__box {
+      min-height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1.25;
+      word-break: keep-all;
+      padding: 6px 4px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+    }
+    .ops-step__box.is-done {
+      background: var(--green-soft);
+      border-color: var(--green);
+    }
+    .ops-step__box.is-running {
+      background: var(--blue-soft);
+      border-color: var(--blue);
+    }
+    .ops-step__box.is-skipped {
+      background: var(--yellow-soft);
+      border-color: var(--yellow);
+    }
+    .ops-col__status {
+      font-size: 10px;
+      margin-top: 4px;
+      color: var(--muted);
+    }
+    .ops-arrow {
+      flex: 0 0 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+    }
+
+    /* ── KPI 셀 (Trading Monitor 계좌) ── */
+    .kpi-cell {
+      background: var(--panel-2);
+      border-radius: 6px;
+      padding: 8px 10px;
+    }
+    .kpi-cell__label {
+      font-size: 10px;
+      color: var(--muted);
+      margin-bottom: 2px;
+    }
+    .kpi-cell__value {
+      font-size: 15px;
+      font-weight: 700;
+    }
+    .kpi-cell__sub {
+      font-size: 10px;
+      color: var(--muted);
     }
 
     .card-title {
@@ -850,8 +920,8 @@
 
     @media (max-width: 1180px) {
       .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .grid.cols-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .grid.cols-6 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid.cols-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .grid.cols-6 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .grid.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .split { grid-template-columns: 1fr; }
       .timeline { grid-template-columns: repeat(4, minmax(130px, 1fr)); }
@@ -861,6 +931,9 @@
       :root {
         --sidebar: 0px;
       }
+
+      .grid.cols-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid.cols-6 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
       .topbar {
         height: var(--header);
