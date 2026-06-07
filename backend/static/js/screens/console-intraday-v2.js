@@ -53,8 +53,11 @@
         // Sector Rotation info (Task 2)
         const rotation = rotations.find(r => r.slot === slot.slot);
         if (rotation) {
-          const top = (rotation.top_sectors || []).join(', ');
-          const bottom = (rotation.bottom_sectors || []).join(', ');
+          const _fmtSector = (s) => (s && typeof s === 'object')
+            ? (s.sector + (s.avg_change != null ? ' (' + (s.avg_change > 0 ? '+' : '') + s.avg_change + '%)' : ''))
+            : String(s);
+          const top = (rotation.top_sectors || []).map(_fmtSector).join(', ');
+          const bottom = (rotation.bottom_sectors || []).map(_fmtSector).join(', ');
           html += `
             <div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--line); font-size:12px;">
               <div style="display:flex; align-items:center; gap:4px; font-weight:600; color:var(--yellow);">

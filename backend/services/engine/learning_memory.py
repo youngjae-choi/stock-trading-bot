@@ -441,23 +441,57 @@ def get_today_memories(trade_date: str) -> list[dict]:
     return memories
 
 
-def get_active_memories(scope: str | None = None) -> list[dict]:
-    """Return active learning memories, optionally scoped to a pipeline stage.
+def get_active_memories(scope: str | None = None, today: str | None = None) -> list[dict]:
+    """Return active, non-expired learning memories, optionally scoped to a stage.
+
+    만료(expires_at < 오늘)된 메모리는 비활성화 잡이 아직 돌지 않았더라도
+    파이프라인이 소비하지 않도록 조회 시점에 제외한다.
 
     Args:
         scope: Optional S3/S4/S5 scope filter.
+        today: KST 기준 오늘 날짜('YYYY-MM-DD'). 미지정 시 현재 KST 날짜 사용.
     """
-    logger.info("START: [S11] get_active_memories scope=%s", scope or "all")
+    today = today or _now_kst().strftime("%Y-%m-%d")
+    logger.info("START: [S11] get_active_memories scope=%s today=%s", scope or "all", today)
     with get_connection() as conn:
         if scope:
             rows = conn.execute(
-                "SELECT * FROM learning_memories WHERE status = 'active' AND scope = ? ORDER BY created_at DESC",
-                (scope,),
+                "SELECT * FROM learning_memories "
+                "WHERE status = 'active' AND scope = ? "
+                "AND (expires_at IS NULL OR expires_at >= ?) "
+                "ORDER BY created_at DESC",
+                (scope, today),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM learning_memories WHERE status = 'active' ORDER BY created_at DESC"
+                "SELECT * FROM learning_memories "
+                "WHERE status = 'active' "
+                "AND (expires_at IS NULL OR expires_at >= ?) "
+                "ORDER BY created_at DESC",
+                (today,),
             ).fetchall()
     memories = [_hydrate_memory(row) for row in rows]
     logger.info("SUCCESS: [S11] get_active_memories scope=%s count=%d", scope or "all", len(memories))
     return memories
+
+
+def expire_stale_memories(today: str | None = None) -> int:
+    """만료된(active + expires_at < 오늘) 메모리를 'expired'로 비활성화한다.
+
+    Args:
+        today: KST 기준 오늘 날짜('YYYY-MM-DD'). 미지정 시 현재 KST 날짜 사용.
+
+    Returns:
+        'expired'로 전환된 행 수.
+    """
+    today = today or _now_kst().strftime("%Y-%m-%d")
+    logger.info("START: [S11] expire_stale_memories today=%s", today)
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "UPDATE learning_memories SET status = 'expired' "
+            "WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at < ?",
+            (today,),
+        )
+        expired_count = cursor.rowcount
+    logger.info("SUCCESS: [S11] expire_stale_memories today=%s expired=%d", today, expired_count)
+    return expired_count

@@ -1217,6 +1217,16 @@ async def job_review_audit() -> None:
     except Exception as exc:
         logger.error("FAIL: [ReviewAudit] EV 가지치기 실패 — %s", exc)
 
+    # ── Step 7: 만료 학습메모리 비활성화 — expires_at(생성+7일) 지난 active 메모리를
+    # 'expired'로 전환해 S3/S4/S5 파이프라인이 더는 소비하지 않도록 한다.
+    try:
+        from .engine.learning_memory import expire_stale_memories
+
+        expired_count = expire_stale_memories(today)
+        logger.info("SUCCESS: [ReviewAudit] 만료 학습메모리 비활성화 expired=%d", expired_count)
+    except Exception as exc:
+        logger.error("FAIL: [ReviewAudit] 만료 학습메모리 비활성화 실패 — %s", exc)
+
 
 async def job_missed_returns_update() -> None:
     """Run missed-opportunity return updates independently of S9/S10 review.
