@@ -204,3 +204,138 @@ async def get_funnel_summary():
     except Exception as exc:
         logger.error("FAIL: GET %s - %s", endpoint, exc)
         return JSONResponse(status_code=500, content={"ok": False, "error": "FUNNEL_SUMMARY_FAILED"})
+
+
+def _funnel_loads(text, default):
+    """Parse a JSON column value, returning default on any failure."""
+    try:
+        return json.loads(text) if text else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _funnel_dropped(conn, trade_date: str, stage: str) -> list[dict]:
+    """Read dropped (filtered-out) stocks for one funnel stage from missed_opportunities."""
+    if not _table_exists(conn, "missed_opportunities"):
+        return []
+    rows = conn.execute(
+        "SELECT symbol, symbol_name, missed_reason, price_at_missed FROM missed_opportunities"
+        " WHERE trade_date = ? AND missed_stage = ? ORDER BY created_at",
+        (trade_date, stage),
+    ).fetchall()
+    return [
+        {
+            "symbol": r["symbol"],
+            "name": r["symbol_name"],
+            "reason": r["missed_reason"],
+            "price": r["price_at_missed"],
+        }
+        for r in rows
+    ]
+
+
+@router.get("/selection")
+async def get_selection_funnel(trade_date: str | None = None):
+    """Return the per-stock selection funnel: passed/dropped stocks with reasons at each stage.
+
+    전체 → S3 유니버스 → S4 스크리닝 → S5 Daily Plan 각 단계의 통과·탈락 종목 명단(+사유).
+    """
+    td = trade_date or _today_kst()
+    endpoint = "/api/v1/funnel/selection"
+    logger.info("START: GET %s trade_date=%s", endpoint, td)
+    try:
+        with get_connection() as conn:
+            # raw_count + S3 통과 (universe_filter_results)
+            raw_count = 0
+            s3_passed: list[dict] = []
+            if _table_exists(conn, "universe_filter_results"):
+                uf = conn.execute(
+                    "SELECT raw_count, items FROM universe_filter_results"
+                    " WHERE trade_date = ? ORDER BY created_at DESC LIMIT 1",
+                    (td,),
+                ).fetchone()
+                if uf:
+                    raw_count = int(uf["raw_count"] or 0)
+                    items = _funnel_loads(uf["items"], [])
+                    if isinstance(items, list):
+                        for it in items:
+                            if not isinstance(it, dict):
+                                continue
+                            s3_passed.append({
+                                "symbol": it.get("symbol"),
+                                "name": it.get("name"),
+                                "score": it.get("score"),
+                                "rank": it.get("rank"),
+                                "change_rate": it.get("change_rate"),
+                                "volume_surge": it.get("volume_surge"),
+                                "price": it.get("price"),
+                            })
+
+            # S4 통과 (hybrid_screening_results.candidates)
+            s4_passed: list[dict] = []
+            if _table_exists(conn, "hybrid_screening_results"):
+                sc = conn.execute(
+                    "SELECT candidates FROM hybrid_screening_results"
+                    " WHERE trade_date = ? ORDER BY created_at DESC LIMIT 1",
+                    (td,),
+                ).fetchone()
+                if sc:
+                    cands = _funnel_loads(sc["candidates"], [])
+                    if isinstance(cands, list):
+                        for c in cands:
+                            if not isinstance(c, dict):
+                                continue
+                            s4_passed.append({
+                                "symbol": c.get("ticker") or c.get("symbol"),
+                                "name": c.get("name"),
+                                "sector": c.get("sector"),
+                                "score": c.get("suitability_score"),
+                                "reason": c.get("reason"),
+                            })
+
+            # S5 통과 (daily_trading_plans.symbol_assignments)
+            s5_passed: list[dict] = []
+            if _table_exists(conn, "daily_trading_plans"):
+                dp = conn.execute(
+                    "SELECT symbol_assignments FROM daily_trading_plans"
+                    " WHERE trade_date = ? ORDER BY created_at DESC LIMIT 1",
+                    (td,),
+                ).fetchone()
+                if dp:
+                    sa = _funnel_loads(dp["symbol_assignments"], [])
+                    if isinstance(sa, list):
+                        for a in sa:
+                            if not isinstance(a, dict):
+                                continue
+                            s5_passed.append({
+                                "symbol": a.get("code") or a.get("symbol"),
+                                "name": a.get("name"),
+                                "profile": a.get("profile"),
+                                "reason": a.get("reason"),
+                            })
+
+            s3_dropped = _funnel_dropped(conn, td, "S3_UNIVERSE_FILTER")
+            s4_dropped = _funnel_dropped(conn, td, "S4_HYBRID_SCREENING")
+            s5_dropped = _funnel_dropped(conn, td, "S5_DAILY_PLAN")
+
+        stages = [
+            {"id": "raw", "label": "전체 종목", "passed_count": raw_count},
+            {"id": "s3", "label": "S3 유니버스 필터", "subtitle": "등락률+거래량급증",
+             "passed_count": len(s3_passed), "passed": s3_passed,
+             "dropped_count": len(s3_dropped), "dropped": s3_dropped},
+            {"id": "s4", "label": "S4 하이브리드 스크리닝", "subtitle": "LLM 정성 평가",
+             "passed_count": len(s4_passed), "passed": s4_passed,
+             "dropped_count": len(s4_dropped), "dropped": s4_dropped},
+            {"id": "s5", "label": "S5 Daily Plan", "subtitle": "Profile 배정",
+             "passed_count": len(s5_passed), "passed": s5_passed,
+             "dropped_count": len(s5_dropped), "dropped": s5_dropped},
+        ]
+        logger.info(
+            "SUCCESS: GET %s s3=%d/%d s4=%d/%d s5=%d/%d",
+            endpoint, len(s3_passed), len(s3_dropped),
+            len(s4_passed), len(s4_dropped), len(s5_passed), len(s5_dropped),
+        )
+        return {"ok": True, "payload": {"trade_date": td, "stages": stages}}
+    except Exception as exc:
+        logger.error("FAIL: GET %s - %s", endpoint, exc)
+        return JSONResponse(status_code=500, content={"ok": False, "error": "FUNNEL_SELECTION_FAILED"})

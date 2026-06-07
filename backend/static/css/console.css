@@ -743,6 +743,55 @@
       font-size: 12px;
     }
 
+    /* ── 선정 퍼널 (Funnel Monitor) ── */
+    .sel-stage {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel-2);
+      margin-bottom: 6px;
+      overflow: hidden;
+    }
+    .sel-stage__head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      cursor: pointer;
+      transition: background 0.12s ease;
+    }
+    .sel-stage--expandable .sel-stage__head:hover { background: var(--bg3); }
+    .sel-stage__label { font-weight: 600; font-size: 14px; color: var(--text); }
+    .sel-stage__sub { color: var(--muted); font-size: 11px; margin-left: 8px; font-weight: 400; }
+    .sel-stage__counts {
+      display: flex; gap: 16px; align-items: center;
+      font-family: var(--font-mono); font-size: 13px; font-feature-settings: 'tnum' 1;
+    }
+    .sel-pass-n { color: var(--green); font-weight: 600; }
+    .sel-drop-n { color: var(--bad); font-weight: 600; }
+    .sel-caret { color: var(--muted); transition: transform 0.15s ease; display: inline-block; }
+    .sel-stage.open .sel-caret { transform: rotate(90deg); }
+    .sel-stage__body { display: none; padding: 0 16px 14px; }
+    .sel-stage.open .sel-stage__body { display: block; }
+    .sel-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .sel-list { max-height: 280px; overflow-y: auto; padding-right: 4px; }
+    .sel-list__title {
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+      margin: 0 0 6px; font-weight: 600;
+    }
+    .sel-list__title.pass { color: var(--green); }
+    .sel-list__title.drop { color: var(--bad); }
+    .sel-item {
+      padding: 7px 9px; border-radius: 6px; background: var(--panel);
+      border: 1px solid var(--line-soft); margin-bottom: 5px; font-size: 12px;
+    }
+    .sel-item__name { font-weight: 600; color: var(--text); }
+    .sel-item__code { color: var(--muted); font-family: var(--font-mono); font-size: 11px; margin-left: 5px; }
+    .sel-item__meta { color: var(--muted); font-family: var(--font-mono); font-size: 11px; float: right; }
+    .sel-item__reason { color: var(--muted); font-size: 11px; margin-top: 3px; line-height: 1.45; clear: both; }
+    .sel-arrow { text-align: center; color: var(--muted); font-size: 13px; margin: 1px 0; }
+    @media (max-width: 720px) { .sel-cols { grid-template-columns: 1fr; } }
+
     .table-wrap {
       width: 100%;
       overflow-x: auto;

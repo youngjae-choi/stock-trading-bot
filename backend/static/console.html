@@ -6,7 +6,7 @@
   <title>Kairos Control Console</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/console.css?v=9">
+  <link rel="stylesheet" href="/static/css/console.css?v=10">
 </head>
 
 <body class="auth-required">
@@ -608,6 +608,13 @@
             </div>
           </div>
 
+          <!-- 선정 퍼널: 단계별 통과/탈락 종목 (PM 핵심 요청) -->
+          <div class="card" style="margin-top:16px;">
+            <div class="card-title">선정 퍼널 <span>오늘 종목이 어떻게 압축됐나</span></div>
+            <div id="funnel-selection"><div class="muted" style="padding:14px 4px;">로딩중…</div></div>
+          </div>
+
+          <div class="card-title" style="margin-top:20px; font-size:13px; color:var(--muted);">진단 · 장중 운영</div>
           <div class="grid cols-3" style="margin-top:8px">
             <div class="card compact">
               <div class="card-title">S3 적용 메모리</div>
@@ -2447,7 +2454,7 @@
   <script src="/static/js/screens/console-false-positive.js"></script>
   <script src="/static/js/screens/console-confidence-calibration.js"></script>
   <script src="/static/js/screens/console-settings.js?v=10"></script>
-  <script src="/static/js/screens/console-funnel-data-health.js?v=1"></script>
+  <script src="/static/js/screens/console-funnel-data-health.js?v=2"></script>
   <script src="/static/js/screens/console-review.js?v=8"></script>
   <script src="/static/js/screens/console-statistics.js?v=2"></script>
   <script src="/static/js/screens/console-regime-analytics.js?v=7"></script>

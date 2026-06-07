@@ -173,6 +173,7 @@
 
   async function loadFunnelData() {
     loadFunnelMemoryCounts();
+    loadSelectionFunnel(window._tcTradeDate || null);
     // 신규: Funnel Monitor에 통합된 장중 재선별 v2 카드 갱신
     try {
       var td = window._tcTradeDate || null;
@@ -286,5 +287,78 @@
       if (tbody2) tbody2.innerHTML = '<tr><td colspan="12" class="muted">실행 실패: 후보 선정 결과 조회 실패 - ' + escapeHtml(e.message) + '</td></tr>';
     }
   }
+
+  /* ── 선정 퍼널: 단계별 통과/탈락 종목 (PM 핵심 요청) ── */
+  async function loadSelectionFunnel(tradeDate) {
+    var box = document.getElementById('funnel-selection');
+    if (!box) return;
+    try {
+      var url = '/api/v1/funnel/selection' + (tradeDate ? ('?trade_date=' + encodeURIComponent(tradeDate)) : '');
+      var r = await fetchJson(url);
+      var stages = (r && r.payload && r.payload.stages) || [];
+      box.innerHTML = renderSelectionFunnel(stages);
+      box.querySelectorAll('.sel-stage--expandable .sel-stage__head').forEach(function (h) {
+        h.addEventListener('click', function () { h.parentNode.classList.toggle('open'); });
+      });
+    } catch (e) {
+      box.innerHTML = '<div class="muted" style="padding:12px;">선정 퍼널 로드 실패: ' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  function _selItem(it, metaFn) {
+    var name = escapeHtml(it.name || '-');
+    var code = it.symbol ? '<span class="sel-item__code">' + escapeHtml(it.symbol) + '</span>' : '';
+    var metaTxt = metaFn ? metaFn(it) : '';
+    var meta = metaTxt ? '<span class="sel-item__meta">' + escapeHtml(metaTxt) + '</span>' : '';
+    var reason = it.reason ? '<div class="sel-item__reason">' + escapeHtml(it.reason) + '</div>' : '';
+    return '<div class="sel-item">' + meta + '<span class="sel-item__name">' + name + '</span>' + code + reason + '</div>';
+  }
+
+  function _selList(title, cls, items, metaFn) {
+    items = items || [];
+    var head = '<div class="sel-list__title ' + cls + '">' + title + ' (' + items.length + ')</div>';
+    if (!items.length) return '<div>' + head + '<div class="muted" style="font-size:11px;">없음</div></div>';
+    var rows = items.map(function (it) { return _selItem(it, metaFn); }).join('');
+    return '<div>' + head + '<div class="sel-list">' + rows + '</div></div>';
+  }
+
+  function renderSelectionFunnel(stages) {
+    if (!stages.length) return '<div class="muted" style="padding:12px;">오늘 선정 데이터가 아직 없습니다.</div>';
+    var html = '';
+    stages.forEach(function (s, idx) {
+      var passN = s.passed_count != null ? s.passed_count : (s.passed ? s.passed.length : 0);
+      var dropN = s.dropped_count != null ? s.dropped_count : (s.dropped ? s.dropped.length : 0);
+      var expandable = (s.id !== 'raw') && (((s.passed || []).length) || ((s.dropped || []).length));
+      var sub = s.subtitle ? '<span class="sel-stage__sub">' + escapeHtml(s.subtitle) + '</span>' : '';
+      var counts;
+      if (s.id === 'raw') {
+        counts = '<span class="sel-pass-n">' + passN + '</span>';
+      } else {
+        counts = '<span class="sel-pass-n">통과 ' + passN + '</span>'
+               + '<span class="sel-drop-n">탈락 ' + dropN + '</span>'
+               + (expandable ? '<span class="sel-caret">▶</span>' : '');
+      }
+      html += '<div class="sel-stage' + (expandable ? ' sel-stage--expandable' : '') + '">'
+        + '<div class="sel-stage__head">'
+        + '<div><span class="sel-stage__label">' + escapeHtml(s.label) + '</span>' + sub + '</div>'
+        + '<div class="sel-stage__counts">' + counts + '</div>'
+        + '</div>';
+      if (expandable) {
+        var passMeta = null;
+        if (s.id === 's3') passMeta = function (it) { return (it.score != null ? '점수 ' + it.score : '') + (it.rank != null ? ' · #' + it.rank : ''); };
+        else if (s.id === 's4') passMeta = function (it) { return it.score != null ? '적합 ' + it.score : ''; };
+        else if (s.id === 's5') passMeta = function (it) { return it.profile || ''; };
+        html += '<div class="sel-stage__body"><div class="sel-cols">'
+          + _selList('통과', 'pass', s.passed, passMeta)
+          + _selList('탈락', 'drop', s.dropped, null)
+          + '</div></div>';
+      }
+      html += '</div>';
+      if (idx < stages.length - 1) html += '<div class="sel-arrow">↓</div>';
+    });
+    return html;
+  }
+
+  window.loadSelectionFunnel = loadSelectionFunnel;
 
   /* ── Execution & Risk ── */
