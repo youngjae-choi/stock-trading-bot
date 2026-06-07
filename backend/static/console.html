@@ -6,7 +6,7 @@
   <title>Kairos Control Console</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/console.css">
+  <link rel="stylesheet" href="/static/css/console.css?v=1">
 </head>
 
 <body class="auth-required">
@@ -179,7 +179,7 @@
             </div>
           </div>
 
-          <div class="grid cols-4">
+          <div class="grid cols-5">
             <div class="card compact">
               <div class="card-title">운용 모드 <span>mode</span></div>
               <div class="metric" id="modeMetric">AUTO</div>
@@ -196,11 +196,6 @@
               <div class="muted" id="positionsDetail">신규 주문 허용</div>
             </div>
             <div class="card compact">
-              <div class="card-title">다음 작업 <span>schedule</span></div>
-              <div class="metric" id="nextJobMetric">11:30</div>
-              <div class="muted" id="nextJobText">중간 리포트</div>
-            </div>
-            <div class="card compact">
               <div class="card-title">KOSPI <span id="tc-kospi-badge" style="background:var(--accent); color:#fff; border-radius:4px; padding:1px 6px; font-size:10px;">LIVE</span></div>
               <div class="metric" id="tc-kospi-price">—</div>
               <div class="muted" id="tc-kospi-change">—</div>
@@ -210,9 +205,11 @@
               <div class="metric" id="tc-kosdaq-price">—</div>
               <div class="muted" id="tc-kosdaq-change">—</div>
             </div>
-          </div>
-
-          <div class="grid cols-4" style="margin-top:12px;">
+            <div class="card compact">
+              <div class="card-title">다음 작업 <span>schedule</span></div>
+              <div class="metric" id="nextJobMetric">11:30</div>
+              <div class="muted" id="nextJobText">중간 리포트</div>
+            </div>
             <div class="card compact">
               <div class="card-title">Base RulePack <span>version</span></div>
               <div class="metric" id="tc-base-rulepack-ver" style="font-size:14px;">-</div>
