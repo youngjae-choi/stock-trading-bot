@@ -449,7 +449,10 @@
 
     .card.compact {
       padding: 16px;
-      min-height: 104px;
+      min-height: 112px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
     }
 
     /* ── Ops 운영현황 스텝 (Today Feed) ── */
@@ -675,7 +678,7 @@
       grid-template-columns: repeat(5, minmax(120px, 1fr));
       gap: 10px;
       overflow-x: auto;
-      align-items: start;
+      align-items: stretch;
     }
 
     .funnel-step {
@@ -685,6 +688,9 @@
       border-radius: 12px;
       padding: 14px;
       min-width: 130px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
     }
 
     .funnel-step strong {
