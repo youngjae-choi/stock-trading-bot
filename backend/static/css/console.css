@@ -29,6 +29,17 @@
       --accent: var(--primary);
       --bg2: var(--panel-2);
       --border: var(--line);
+      /* 대체 네이밍 별칭 (코드 곳곳에서 --fg/--err 등 다른 컨벤션 사용 → 기존 테마변수로 매핑, 라이트/다크 자동 추종) */
+      --fg: var(--text);
+      --err: var(--red);
+      --warn: var(--yellow);
+      --good: var(--green);
+      --info: var(--blue);
+      --bg3: var(--panel-3);
+      --code-bg: var(--panel-2);
+      --code-text: var(--text);
+      --input-bg: var(--panel);
+      --border-faint: var(--line-soft);
     }
 
     body.dark {
