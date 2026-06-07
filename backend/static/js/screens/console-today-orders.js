@@ -117,9 +117,10 @@
 
       const setEl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
       setEl('tc-alert-count', total);
-      setEl('tc-alert-critical', 'CRITICAL ' + critical);
-      setEl('tc-alert-warning', 'WARNING ' + warning);
-      setEl('tc-alert-unack', '미확인 ' + unack);
+      setEl('tc-alert-detail', '위험 ' + critical + ' · 경고 ' + warning + ' · 미확인 ' + unack);
+      // 위험(CRITICAL) 알림이 있을 때만 숫자 강조(빨강), 없으면 기본색
+      const cntEl = document.getElementById('tc-alert-count');
+      if (cntEl) cntEl.style.color = critical > 0 ? 'var(--bad, #f85149)' : '';
     } catch (e) { console.warn('loadTodayAlertSummary error', e); }
   }
 

@@ -236,17 +236,10 @@
               <div class="muted" id="tc-theme-spike-limit">THEME_SPIKE 허용 -개</div>
             </div>
             <!-- Alert Center Summary -->
-            <div class="card compact" id="tc-alert-summary-card">
-              <div class="card-title">Alert Center 요약</div>
-              <div style="display:flex; gap:20px; align-items:center;">
-                <div id="tc-alert-count" style="font-size:24px; font-weight:800;">0</div>
-                <div style="flex:1; display:flex; gap:12px;">
-                  <span class="status bad" id="tc-alert-critical" style="font-size:11px;">CRITICAL 0</span>
-                  <span class="status warn" id="tc-alert-warning" style="font-size:11px;">WARNING 0</span>
-                  <span class="status info" id="tc-alert-unack" style="font-size:11px;">미확인 0</span>
-                </div>
-                <button type="button" class="btn" style="font-size:11px;" data-action="showScreen" data-screen="alerts">자세히보기 →</button>
-              </div>
+            <div class="card compact" id="tc-alert-summary-card" data-action="showScreen" data-screen="alerts" style="cursor:pointer;">
+              <div class="card-title">Alert Center 요약 <span>alerts</span></div>
+              <div class="metric" id="tc-alert-count">0</div>
+              <div class="muted" id="tc-alert-detail">위험 0 · 경고 0 · 미확인 0</div>
             </div>
           </div>
 
@@ -2441,7 +2434,7 @@
   <script src="/static/js/console-utils.js"></script>
   <script src="/static/js/console-api.js"></script>
   <script src="/static/js/console-auth.js"></script>
-  <script src="/static/js/screens/console-today-orders.js?v=2"></script>
+  <script src="/static/js/screens/console-today-orders.js?v=3"></script>
   <script src="/static/js/screens/console-positions.js"></script>
   <script src="/static/js/screens/console-trading-monitor.js?v=3"></script>
   <script src="/static/js/screens/console-live-decision.js"></script>
