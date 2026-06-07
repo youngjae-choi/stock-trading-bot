@@ -26,6 +26,9 @@
       --header: 64px;
       --font: 'Inter', system-ui, 'Helvetica Neue', Arial, sans-serif;
       --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --accent: var(--primary);
+      --bg2: var(--panel-2);
+      --border: var(--line);
     }
 
     body.dark {
@@ -462,6 +465,22 @@
       letter-spacing: -0.04em;
       margin-bottom: 4px;
       color: var(--text);
+    }
+
+    .metric.sm {
+      font-size: 14px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .badge-live {
+      background: var(--accent);
+      color: #fff;
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 10px;
+      font-weight: 600;
     }
 
     .ra-nl {

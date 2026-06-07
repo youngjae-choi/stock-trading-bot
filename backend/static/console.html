@@ -6,7 +6,7 @@
   <title>Kairos Control Console</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/console.css?v=3">
+  <link rel="stylesheet" href="/static/css/console.css?v=4">
 </head>
 
 <body class="auth-required">
@@ -133,7 +133,7 @@
             <button type="button" class="btn" data-action="refreshTodayControl">새로고침</button>
           </div>
 
-          <div id="tc-non-trading-banner" style="display:none; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:10px 16px; margin-bottom:12px; font-size:13px; color:var(--muted);">
+          <div id="tc-non-trading-banner" style="display:none; background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:10px 16px; margin-bottom:12px; font-size:13px; color:var(--muted);">
             오늘은 비거래일입니다 — <strong id="tc-non-trading-date">-</strong> 기준 데이터를 표시합니다.
           </div>
 
@@ -201,14 +201,14 @@
               <div class="muted" id="positionsDetail">신규 주문 허용</div>
             </div>
             <div class="card compact">
-              <div class="card-title">KOSPI <span id="tc-kospi-badge" style="background:var(--accent); color:#fff; border-radius:4px; padding:1px 6px; font-size:10px;">LIVE</span></div>
-              <div class="metric" id="tc-kospi-price">—</div>
-              <div class="muted" id="tc-kospi-change">—</div>
+              <div class="card-title">KOSPI <span id="tc-kospi-badge" class="badge-live">LIVE</span></div>
+              <div class="metric" id="tc-kospi-price">-</div>
+              <div class="muted" id="tc-kospi-change">-</div>
             </div>
             <div class="card compact">
-              <div class="card-title">KOSDAQ <span id="tc-kosdaq-badge" style="background:var(--accent); color:#fff; border-radius:4px; padding:1px 6px; font-size:10px;">LIVE</span></div>
-              <div class="metric" id="tc-kosdaq-price">—</div>
-              <div class="muted" id="tc-kosdaq-change">—</div>
+              <div class="card-title">KOSDAQ <span id="tc-kosdaq-badge" class="badge-live">LIVE</span></div>
+              <div class="metric" id="tc-kosdaq-price">-</div>
+              <div class="muted" id="tc-kosdaq-change">-</div>
             </div>
             <div class="card compact">
               <div class="card-title">다음 작업 <span>schedule</span></div>
@@ -217,17 +217,17 @@
             </div>
             <div class="card compact">
               <div class="card-title">Base RulePack <span>version</span></div>
-              <div class="metric" id="tc-base-rulepack-ver" style="font-size:14px;">-</div>
+              <div class="metric sm" id="tc-base-rulepack-ver">-</div>
               <div class="muted" id="tc-base-rulepack-desc">고정 룰팩</div>
             </div>
             <div class="card compact">
               <div class="card-title">Risk Profile Pack <span>version</span></div>
-              <div class="metric" id="tc-profile-pack-ver" style="font-size:14px;">-</div>
+              <div class="metric sm" id="tc-profile-pack-ver">-</div>
               <div class="muted" id="tc-profile-pack-desc">4종 프로필</div>
             </div>
             <div class="card compact">
               <div class="card-title">Daily Plan <span>today</span></div>
-              <div class="metric" id="tc-daily-plan-id" style="font-size:12px;">-</div>
+              <div class="metric sm" id="tc-daily-plan-id">-</div>
               <div class="muted" id="tc-daily-plan-status">-</div>
             </div>
             <div class="card compact">
@@ -2434,9 +2434,9 @@
   <script src="/static/js/console-utils.js?v=2"></script>
   <script src="/static/js/console-api.js"></script>
   <script src="/static/js/console-auth.js"></script>
-  <script src="/static/js/screens/console-today-orders.js?v=3"></script>
+  <script src="/static/js/screens/console-today-orders.js?v=4"></script>
   <script src="/static/js/screens/console-positions.js"></script>
-  <script src="/static/js/screens/console-trading-monitor.js?v=3"></script>
+  <script src="/static/js/screens/console-trading-monitor.js?v=4"></script>
   <script src="/static/js/screens/console-live-decision.js"></script>
   <script src="/static/js/screens/console-diagnostics.js"></script>
   <script src="/static/js/screens/console-intraday-v2.js"></script>

@@ -124,7 +124,7 @@
       var candidates = d.payload && d.payload.candidates ? d.payload.candidates : [];
       
       if (!candidates.length) {
-        container.innerHTML = '<div style="color:var(--muted); text-align:center; padding:20px 0; font-size:13px;">매수 대기 종목 없음</div>';
+        container.innerHTML = '<div style="color:var(--muted); text-align:center; padding:20px 0; font-size:12px;">매수 대기 종목 없음</div>';
         return;
       }
 
@@ -521,7 +521,7 @@
       var positions = d.payload && d.payload.positions ? d.payload.positions : [];
 
       if (!positions.length) {
-        container.innerHTML = '<div style="color:var(--muted); text-align:center; padding:20px 0; font-size:13px;">보유 포지션 없음</div>';
+        container.innerHTML = '<div style="color:var(--muted); text-align:center; padding:20px 0; font-size:12px;">보유 포지션 없음</div>';
         return;
       }
 
@@ -580,7 +580,7 @@
     if (!container) return;
 
     if (!positions || positions.length === 0) {
-      container.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px;">보유 포지션 없음</div>';
+      container.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:12px;">보유 포지션 없음</div>';
       return;
     }
 

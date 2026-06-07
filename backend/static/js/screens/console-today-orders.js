@@ -30,7 +30,7 @@
         if (priceEl) {
           priceEl.textContent = (price != null)
             ? Number(price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-            : '—';
+            : '-';
         }
 
         if (changeEl) {
@@ -44,7 +44,7 @@
               changeEl.style.color = '';
             }
           } else {
-            changeEl.textContent = '—';
+            changeEl.textContent = '-';
             changeEl.style.color = '';
           }
         }
