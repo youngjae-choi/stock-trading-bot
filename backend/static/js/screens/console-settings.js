@@ -131,6 +131,40 @@
     }
   }
 
+  /* Load missed-entry improvement threshold into the Settings form. */
+  async function loadMissedThresholdSettings() {
+    try {
+      var settingsMap = await loadSettingsMap();
+      var el = document.getElementById('missed-improvement-threshold');
+      if (el) el.value = settingsMap['missed.improvement_threshold'] ?? '2.0';
+      var fm = await loadSettingsMapFull();
+      _insertSettingTs('missed-improvement-threshold', 'missed.improvement_threshold', fm);
+    } catch (e) {
+      console.error('Failed to load missed threshold settings', e);
+    }
+  }
+
+  /* Persist missed.improvement_threshold (장중 최고가 상승률 % 기준). */
+  async function saveMissedThresholdSettings() {
+    var el = document.getElementById('missed-improvement-threshold');
+    var value = Number(el && el.value);
+    if (!Number.isFinite(value) || value < 0) {
+      alert('Missed 개선후보 임계치는 0 이상 숫자로 입력하세요 (예: 2.0).');
+      return;
+    }
+    try {
+      await fetchJson('/api/v1/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'missed.improvement_threshold', value: value, value_type: 'number' })
+      });
+      showToast('Missed 개선후보 임계치가 저장되었습니다.', 'ok');
+      loadMissedThresholdSettings();
+    } catch (e) {
+      showToast('저장 실패: ' + e.message, 'err');
+    }
+  }
+
   /* Reflect exploration_mode ON/OFF on the badge and the risk-card warning line. */
   function _applyExplorationState(isOn) {
     var badge = document.getElementById("exploration-status-badge");
@@ -848,6 +882,7 @@
     loadTradingCostSettings();
     loadRegimeSets();
     loadIntradaySettings();
+    loadMissedThresholdSettings();
   }
 
   async function loadIntradaySettings() {

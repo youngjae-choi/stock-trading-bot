@@ -83,6 +83,13 @@ def initialize_database() -> None:
             if col_name not in dividend_cols:
                 connection.execute(alter_sql)
                 logger.info("DB migration: added column %s to dividends", col_name)
+        missed_cols = {
+            row[1] for row in connection.execute("PRAGMA table_info(missed_opportunities)").fetchall()
+        }
+        for col_name, alter_sql in _missed_opportunity_migration_statements():
+            if col_name not in missed_cols:
+                connection.execute(alter_sql)
+                logger.info("DB migration: added column %s to missed_opportunities", col_name)
         _migrate_regime_set_applications(connection)
         _migrate_positions_entry_set(connection)
     logger.info("SUCCESS: db.initialize_database path=%s", _db_path())
@@ -375,6 +382,7 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
         ("intraday_refresh.replacement_score_gap", 0.15, "number", "교체 신호 신규 후보 상대 점수 우위 임계치"),
         ("intraday_refresh.max_replacement_per_symbol", 1, "number", "종목당 일일 교체 신호 최대 횟수"),
         ("intraday_refresh.max_replacement_per_day", 5, "number", "일일 교체 신호 최대 횟수"),
+        ("missed.improvement_threshold", 2.0, "number", "Missed 개선후보 판정 임계치(장중 최고가 상승률 %, 기본 2.0)"),
     ]
     for key, value, value_type, description in defaults:
         connection.execute(
@@ -1483,6 +1491,7 @@ CREATE TABLE IF NOT EXISTS missed_opportunities (
     max_return_after_10m REAL,
     max_return_after_30m REAL,
     max_return_until_eod REAL,
+    intraday_low_return REAL,
     improvement_candidate INTEGER NOT NULL DEFAULT 0,
     created_at          TEXT NOT NULL
 )
@@ -1626,4 +1635,14 @@ def _trading_signal_migration_statements() -> list[tuple[str, str]]:
     return [
         ("profile_assigned", "ALTER TABLE trading_signals ADD COLUMN profile_assigned TEXT NOT NULL DEFAULT 'MID_VOL'"),
         ("realized_pnl", "ALTER TABLE trading_signals ADD COLUMN realized_pnl REAL"),
+    ]
+
+
+def _missed_opportunity_migration_statements() -> list[tuple[str, str]]:
+    """Return migrations for missed_opportunities columns added after launch.
+
+    intraday_low_return: 장중 최저가 상승률(리스크 정보, 음수 가능). 기존 행은 NULL 보존.
+    """
+    return [
+        ("intraday_low_return", "ALTER TABLE missed_opportunities ADD COLUMN intraday_low_return REAL"),
     ]

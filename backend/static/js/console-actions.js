@@ -65,6 +65,7 @@
       saveExplorationSettings: function() { return saveExplorationSettings(); },
       saveRiskProfilePack: function() { return saveRiskProfilePack(); },
       saveTradingCostSettings: function() { return saveTradingCostSettings(); },
+      saveMissedThresholdSettings: function() { return saveMissedThresholdSettings(); },
       loadRegimeSets: function() { return loadRegimeSets(); },
       ackAlert: function() { return ackAlert(element.dataset.id); },
       approveRequest: function() { return approveRequest(element.dataset.id); },

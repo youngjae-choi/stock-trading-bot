@@ -128,25 +128,40 @@ def _build_missed_entry_memory(
     """
     stage = str(entry.get("missed_stage") or "UNKNOWN")
     symbol = str(entry.get("symbol") or "")
-    max_return = entry.get("max_return_until_eod") or entry.get("max_return_eod") or entry.get("max_return_after_30m")
+    # max_return_until_eod 는 장중 최고가 상승률(의미 재정의), intraday_low_return 은 장중 최저가 상승률(리스크)
+    high_return = entry.get("max_return_until_eod") or entry.get("max_return_eod") or entry.get("max_return_after_30m")
+    low_return = entry.get("intraday_low_return")
+    target_scope = _scope_from_missed_stage(stage)
+
+    high_str = f"{float(high_return):+.1f}" if high_return is not None else "?"
+    low_str = f"{float(low_return):+.1f}" if low_return is not None else "?"
+    opinion = (
+        f"필터에서 제외됐으나 장중 최고 {high_str}% (최저 {low_str}%) → "
+        f"다음 거래일 {target_scope} 필터에서 거르지 말 것 검토"
+    )
     return _make_memory(
         trade_date=trade_date,
-        scope=_scope_from_missed_stage(stage),
+        scope=target_scope,
         category="missed_entry",
-        summary=f"Missed entry {symbol or 'unknown'} at {stage}: {entry.get('missed_reason') or 'reason unavailable'}.",
+        summary=(
+            f"Missed entry {symbol or 'unknown'} at {stage}: "
+            f"{entry.get('missed_reason') or 'reason unavailable'}. {opinion}"
+        ),
         evidence={
             "symbol": symbol,
             "symbol_name": entry.get("symbol_name", ""),
             "missed_stage": stage,
             "missed_reason": entry.get("missed_reason", ""),
             "price_at_missed": entry.get("price_at_missed"),
-            "max_return_until_eod": max_return,
+            "max_return_until_eod": high_return,
+            "intraday_low_return": low_return,
             "source": entry.get("source", "review_audit"),
         },
         recommendation={
             "action": "review_next_day_candidate_context",
+            "opinion": opinion,
             "rag_usage": "참고 메모리로만 사용하며 모델 자체 학습이나 자동 룰 변경이 아님",
-            "target_stage": _scope_from_missed_stage(stage),
+            "target_stage": target_scope,
         },
         auto_apply_allowed=False,
         requires_approval=False,

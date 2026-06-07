@@ -512,6 +512,16 @@ def _signal_status_counts(signals: list[dict[str, Any]]) -> dict[str, int]:
     return dict(counts)
 
 
+def _missed_improvement_threshold() -> float:
+    """Read missed.improvement_threshold from settings (default 2.0%)."""
+    try:
+        from ..settings_store import get_setting
+
+        return float(get_setting("missed.improvement_threshold", 2.0))
+    except (TypeError, ValueError, Exception):  # noqa: BLE001
+        return 2.0
+
+
 def _load_missed_entries(trade_date: str) -> list[dict[str, Any]]:
     """Load Missed Entries and shadow missed-entry evidence for S10 review.
 
@@ -520,14 +530,17 @@ def _load_missed_entries(trade_date: str) -> list[dict[str, Any]]:
     """
     missed: list[dict[str, Any]] = []
     with get_connection() as conn:
+        # 개선후보(improvement_candidate=1)만 Review/메모리로 전달
+        threshold = _missed_improvement_threshold()
         if _table_exists("missed_opportunities"):
             rows = conn.execute(
                 """
                 SELECT id, symbol, symbol_name, missed_stage, missed_reason,
                        price_at_missed, max_return_after_10m, max_return_after_30m,
-                       max_return_until_eod, improvement_candidate, created_at
+                       max_return_until_eod, intraday_low_return,
+                       improvement_candidate, created_at
                 FROM missed_opportunities
-                WHERE trade_date = ?
+                WHERE trade_date = ? AND improvement_candidate = 1
                 ORDER BY created_at DESC
                 """,
                 (trade_date,),
@@ -543,10 +556,10 @@ def _load_missed_entries(trade_date: str) -> list[dict[str, Any]]:
                        max_return_10m, max_return_30m, max_return_eod,
                        shadow_pnl, status, created_at
                 FROM shadow_trades
-                WHERE trade_date = ?
+                WHERE trade_date = ? AND max_return_eod >= ?
                 ORDER BY created_at DESC
                 """,
-                (trade_date,),
+                (trade_date, threshold),
             ).fetchall()
             for row in rows:
                 item = dict(row)

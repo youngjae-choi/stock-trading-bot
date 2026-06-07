@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -130,69 +130,52 @@ def get_improvement_candidates(trade_date: str) -> list[dict]:
     return [_row_to_dict(row) for row in rows]
 
 
-def _parse_miss_time(created_at: str) -> datetime | None:
-    """Parse created_at ISO string into a KST-aware datetime."""
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
-        try:
-            dt = datetime.strptime(created_at[:26], fmt[:len(fmt)])
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=ZoneInfo("Asia/Seoul"))
-            return dt
-        except ValueError:
-            continue
-    return None
-
-
-def _add_minutes_hhmmss(base_hhmmss: str, minutes: int) -> str:
-    """Add minutes to a HHMMSS string and return HHMMSS."""
-    h = int(base_hhmmss[:2])
-    m = int(base_hhmmss[2:4])
-    s = int(base_hhmmss[4:6])
-    dt = datetime(2000, 1, 1, h, m, s) + timedelta(minutes=minutes)
-    return dt.strftime("%H%M%S")
-
-
-def _find_closest_price(candles: list[dict], target_hhmmss: str) -> float | None:
-    """Find the closing price in candles closest to target_hhmmss (HHMMSS)."""
-    target_min = int(target_hhmmss[:2]) * 60 + int(target_hhmmss[2:4])
-    best_price: float | None = None
-    best_diff = 9999
-    for c in candles:
-        t = str(c.get("stck_cntg_hour", "") or c.get("stck_bsop_hour", ""))
-        if len(t) < 6:
-            continue
-        c_min = int(t[:2]) * 60 + int(t[2:4])
-        diff = abs(c_min - target_min)
-        if diff < best_diff:
-            best_diff = diff
-            v = c.get("stck_prpr") or c.get("stck_clpr")
-            try:
-                best_price = float(v)
-            except (TypeError, ValueError):
-                pass
-    return best_price if best_diff <= 10 else None  # 10분 이내 candle만 사용
+def _to_float(value: Any) -> float | None:
+    """안전 float 변환. None/0/빈문자/파싱실패 시 None."""
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if out > 0 else None
 
 
 async def update_missed_returns(trade_date: str, improvement_threshold: float = 2.0) -> dict[str, Any]:
-    """EOD에 미진입 종목들의 실제 수익률을 계산하여 DB를 업데이트한다.
+    """EOD에 미진입 종목들의 장중 최고/최저 상승률을 계산하여 DB를 업데이트한다.
 
-    - 10분 후 / 30분 후: get_intraday_chart() 로 분봉 데이터 조회
-    - 장마감: get_daily_chart() 로 당일 종가 조회
-    - improvement_candidate: max_return_until_eod >= improvement_threshold(%) 이면 1
+    측정값은 [제외시점가 · 장중 최고가 · 장중 최저가] 3개만 사용한다(분봉 10m/30m 폐기).
+    일봉(get_daily_chart)을 종목당 1회만 호출해 daily_rows[0]의 stck_hgpr/stck_lwpr를 읽는다.
+
+    - intraday_high_return = (stck_hgpr - price_at_missed) / price_at_missed * 100
+    - intraday_low_return  = (stck_lwpr - price_at_missed) / price_at_missed * 100  (음수 가능)
+    - improvement_candidate = 1 if intraday_high_return >= improvement_threshold(설정값)
+    - 저장: max_return_until_eod = intraday_high_return(장중 최고가 상승률로 의미 재정의),
+            intraday_low_return = intraday_low_return.
+      (max_return_after_10m/30m 은 더 이상 채우지 않음 = NULL 유지)
 
     Args:
         trade_date: YYYY-MM-DD 형식 거래일.
-        improvement_threshold: 개선 후보 판정 최소 수익률(%). 기본값 2.0%.
+        improvement_threshold: 개선 후보 판정 최소 상승률(%). 호출부에서 명시하지 않으면(기본 2.0)
+            settings 의 missed.improvement_threshold 값으로 보정한다.
     """
     logger.info("START: MissedOpportunity update_returns trade_date=%s", trade_date)
 
-    # 아직 업데이트되지 않은 레코드만 조회 (max_return_after_10m IS NULL)
+    # 임계치 설정값 보정: 명시값(기본 2.0)이 들어오면 설정값으로 덮어쓴다.
+    if improvement_threshold == 2.0:
+        try:
+            from ..settings_store import get_setting
+
+            setting_val = get_setting("missed.improvement_threshold", 2.0)
+            improvement_threshold = float(setting_val)
+        except (TypeError, ValueError, Exception) as exc:  # noqa: BLE001 - 설정 조회 실패 시 기본값 유지
+            logger.warning("WARN: missed.improvement_threshold read failed, using default=%s error=%s", improvement_threshold, exc)
+
+    # 아직 업데이트되지 않은 레코드만 조회 (max_return_until_eod IS NULL)
     with get_connection() as conn:
         rows = conn.execute(
             """
             SELECT id, symbol, price_at_missed, created_at
             FROM missed_opportunities
-            WHERE trade_date = ? AND max_return_after_10m IS NULL AND price_at_missed > 0
+            WHERE trade_date = ? AND max_return_until_eod IS NULL AND price_at_missed > 0
             ORDER BY created_at
             """,
             (trade_date,),
@@ -202,7 +185,7 @@ async def update_missed_returns(trade_date: str, improvement_threshold: float = 
         logger.info("SKIP: MissedOpportunity update_returns — no pending rows trade_date=%s", trade_date)
         return {"updated": 0, "skipped": 0, "errors": 0}
 
-    from ..kis.domestic.service import get_daily_chart, get_intraday_chart
+    from ..kis.domestic.service import get_daily_chart
 
     updated = skipped = errors = 0
 
@@ -210,59 +193,45 @@ async def update_missed_returns(trade_date: str, improvement_threshold: float = 
         row_id: str = row["id"]
         symbol: str = row["symbol"]
         price_at_missed: float = float(row["price_at_missed"])
-        created_at_str: str = row["created_at"]
 
         try:
-            miss_dt = _parse_miss_time(created_at_str)
-            miss_hhmmss = miss_dt.strftime("%H%M%S") if miss_dt else "093000"
-
-            # ── 분봉 데이터: miss 시각 +35분 기준으로 30개 candle 조회
-            target_hour = _add_minutes_hhmmss(miss_hhmmss, 35)
-            intraday_resp = await get_intraday_chart(symbol=symbol, input_hour=target_hour, include_past="Y")
-            candles: list[dict] = intraday_resp.get("output2") or []
-
-            t10_hhmmss = _add_minutes_hhmmss(miss_hhmmss, 10)
-            t30_hhmmss = _add_minutes_hhmmss(miss_hhmmss, 30)
-            price_10m = _find_closest_price(candles, t10_hhmmss)
-            price_30m = _find_closest_price(candles, t30_hhmmss)
-
-            ret_10m = round((price_10m - price_at_missed) / price_at_missed * 100, 4) if price_10m else None
-            ret_30m = round((price_30m - price_at_missed) / price_at_missed * 100, 4) if price_30m else None
-
-            # ── 당일 종가
+            # ── 일봉 1회 호출: 당일 장중 최고가/최저가
             daily_resp = await get_daily_chart(symbol=symbol, period_code="D", adjusted_price="1")
             daily_rows: list[dict] = daily_resp.get("output") or []
-            close_price: float | None = None
+            high_price: float | None = None
+            low_price: float | None = None
             if daily_rows:
-                try:
-                    close_price = float(daily_rows[0].get("stck_clpr", 0) or 0) or None
-                except (TypeError, ValueError):
-                    close_price = None
+                high_price = _to_float(daily_rows[0].get("stck_hgpr"))
+                low_price = _to_float(daily_rows[0].get("stck_lwpr"))
 
-            ret_eod = (
-                round((close_price - price_at_missed) / price_at_missed * 100, 4)
-                if close_price and close_price > 0
+            intraday_high_return = (
+                round((high_price - price_at_missed) / price_at_missed * 100, 4)
+                if high_price is not None
+                else None
+            )
+            intraday_low_return = (
+                round((low_price - price_at_missed) / price_at_missed * 100, 4)
+                if low_price is not None
                 else None
             )
 
-            is_candidate = 1 if (ret_eod is not None and ret_eod >= improvement_threshold) else 0
+            is_candidate = 1 if (intraday_high_return is not None and intraday_high_return >= improvement_threshold) else 0
 
             with get_connection() as conn:
                 conn.execute(
                     """
                     UPDATE missed_opportunities
-                    SET max_return_after_10m = ?,
-                        max_return_after_30m = ?,
-                        max_return_until_eod = ?,
+                    SET max_return_until_eod = ?,
+                        intraday_low_return = ?,
                         improvement_candidate = ?
                     WHERE id = ?
                     """,
-                    (ret_10m, ret_30m, ret_eod, is_candidate, row_id),
+                    (intraday_high_return, intraday_low_return, is_candidate, row_id),
                 )
 
             logger.info(
-                "UPDATED: MissedOpportunity id=%s symbol=%s ret10m=%s ret30m=%s retEOD=%s candidate=%d",
-                row_id, symbol, ret_10m, ret_30m, ret_eod, is_candidate,
+                "UPDATED: MissedOpportunity id=%s symbol=%s high=%s low=%s candidate=%d",
+                row_id, symbol, intraday_high_return, intraday_low_return, is_candidate,
             )
             updated += 1
 

@@ -12,7 +12,7 @@
   /* Refresh merged missed-tracking data from Shadow Trading and Missed Opportunity endpoints. */
   async function loadMissedTracking() {
     var tbody = document.getElementById('missed-tracking-tbody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">로딩중...</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="muted" style="text-align:center;">로딩중...</td></tr>';
 
     try {
       var fetchJson = function(url) {
@@ -34,17 +34,17 @@
       }
 
       // Shadow Trading rows represent S6 candidates that reached monitoring but never emitted a buy signal.
+      // intraday_high = 장중 최고가 상승률(%), intraday_low = 장중 최저가 상승률(%).
       var shadowRows = getPayloadRows(shadowRes).map(function(r) {
         return {
           symbol: r.symbol || '',
           symbol_name: r.symbol_name || '',
           missed_stage: r.missed_stage || 'S6_NO_SIGNAL',
           missed_reason: r.missed_reason || '신호 조건 미달',
-          entry_price: r.entry_price || 0,
-          ret_10m: r.max_return_10m,
-          ret_30m: r.max_return_30m,
-          ret_eod: r.max_return_eod,
-          improvement_candidate: 0,
+          price_at_missed: r.entry_price || 0,
+          intraday_high: r.max_return_until_eod,
+          intraday_low: r.intraday_low_return,
+          improvement_candidate: r.improvement_candidate || 0,
         };
       });
 
@@ -55,10 +55,9 @@
           symbol_name: r.symbol_name || '',
           missed_stage: r.missed_stage || 'S3_FILTER',
           missed_reason: r.missed_reason || '-',
-          entry_price: r.price_at_missed || 0,
-          ret_10m: r.max_return_after_10m,
-          ret_30m: r.max_return_after_30m,
-          ret_eod: r.max_return_until_eod,
+          price_at_missed: r.price_at_missed || 0,
+          intraday_high: r.max_return_until_eod,
+          intraday_low: r.intraday_low_return,
           improvement_candidate: r.improvement_candidate || 0,
         };
       });
@@ -81,7 +80,7 @@
       renderMissedTracking();
     } catch (e) {
       console.error('[ERROR] loadMissedTracking - render failed', e.message);
-      if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">로드 실패. 새로고침으로 다시 시도해주세요.</td></tr>';
+      if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="muted" style="text-align:center;">로드 실패. 새로고침으로 다시 시도해주세요.</td></tr>';
     }
   }
 
@@ -113,7 +112,7 @@
     });
 
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;">해당 항목 없음</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="muted" style="text-align:center;">해당 항목 없음</td></tr>';
       return;
     }
 
@@ -124,17 +123,17 @@
       'S6_NO_SIGNAL': 'S6 신호미발생',
     };
 
-    var fmtPct = function(v) {
+    // 장중 최고/최저 상승률 — 최고는 녹색, 최저는 적색으로 고정 강조.
+    var fmtPctFixed = function(v, color) {
       if (v == null) return '-';
       var n = parseFloat(v);
       if (isNaN(n)) return '-';
-      var color = n > 0 ? 'var(--green)' : n < 0 ? 'var(--red)' : 'var(--muted)';
       return '<span style="color:' + color + ';">' + (n >= 0 ? '+' : '') + n.toFixed(2) + '%</span>';
     };
 
     tbody.innerHTML = rows.map(function(r) {
       var stage = stageLabel[r.missed_stage] || r.missed_stage;
-      var priceNum = Number(r.entry_price);
+      var priceNum = Number(r.price_at_missed);
       var price = priceNum ? priceNum.toLocaleString() + '원' : '-';
       var candiBadge = r.improvement_candidate
         ? '<span style="color:var(--warn); font-size:11px;">개선후보</span>'
@@ -145,9 +144,8 @@
         + '<td><span style="font-size:11px; color:var(--muted);">' + escapeHtml(stage) + '</span></td>'
         + '<td style="font-size:11px; color:var(--muted);">' + escapeHtml(r.missed_reason || '-') + '</td>'
         + '<td>' + price + '</td>'
-        + '<td>' + fmtPct(r.ret_10m) + '</td>'
-        + '<td>' + fmtPct(r.ret_30m) + '</td>'
-        + '<td>' + fmtPct(r.ret_eod) + '</td>'
+        + '<td>' + fmtPctFixed(r.intraday_high, 'var(--green)') + '</td>'
+        + '<td>' + fmtPctFixed(r.intraday_low, 'var(--red)') + '</td>'
         + '<td>' + candiBadge + '</td>'
         + '</tr>';
     }).join('');
@@ -175,31 +173,35 @@
       return;
     }
 
-    var fmtPctRaw = function(v) {
+    var fmtPctRaw = function(v, color) {
       if (v == null) return '-';
       var n = parseFloat(v);
       if (isNaN(n)) return '-';
-      var color = n > 0 ? '#22c55e' : n < 0 ? '#ef4444' : 'var(--muted)';
       return '<span style="color:' + color + '; font-weight:700;">' + (n >= 0 ? '+' : '') + n.toFixed(2) + '%</span>';
     };
 
     container.innerHTML = rows.map(function(r) {
+      var priceNum = Number(r.price_at_missed);
+      var price = priceNum ? priceNum.toLocaleString() + '원' : '-';
+      var candiBadge = r.improvement_candidate
+        ? ' <span style="color:var(--warn); font-size:10px; font-weight:600;">· 개선후보</span>'
+        : '';
       return [
         '<div class="missed-card">',
           '<div class="missed-card-top">',
             '<div>',
-              '<div class="missed-card-symbol">' + escapeHtml(r.symbol) + '</div>',
+              '<div class="missed-card-symbol">' + escapeHtml(r.symbol) + candiBadge + '</div>',
               '<div style="font-size:11px; color:var(--muted);">' + escapeHtml(r.symbol_name) + '</div>',
             '</div>',
-            '<div class="missed-card-pnl">' + fmtPctRaw(r.ret_eod) + '</div>',
+            '<div class="missed-card-pnl">' + fmtPctRaw(r.intraday_high, '#22c55e') + '</div>',
           '</div>',
           '<div style="font-size:11px; margin-bottom:8px;">',
             '<span style="color:var(--primary); font-weight:600;">' + escapeHtml(r.missed_stage) + '</span> · ',
             '<span>' + escapeHtml(r.missed_reason || '-') + '</span>',
           '</div>',
           '<div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:11px; color:var(--muted);">',
-            '<span>10m: ' + fmtPctRaw(r.ret_10m) + '</span>',
-            '<span>30m: ' + fmtPctRaw(r.ret_30m) + '</span>',
+            '<span>제외가: ' + price + '</span>',
+            '<span>장중최저: ' + fmtPctRaw(r.intraday_low, '#ef4444') + '</span>',
           '</div>',
         '</div>'
       ].join('');
