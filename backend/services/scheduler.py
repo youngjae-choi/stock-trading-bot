@@ -1061,6 +1061,22 @@ async def job_decision_engine_watchdog() -> None:
         logger.error("FAIL: [Watchdog] Decision Engine 자동복구 실패 — reason=%s", exc)
 
 
+async def job_ops_watchdog() -> None:
+    """운영 감시봇 — 5분마다 스케줄·매매 단계 이상을 규칙기반으로 감지해 Alert Center에 기록.
+
+    LLM·코드 자동수정 없음. 이상은 PM이 Alert Center에서 보고 수정 판단.
+    비거래일·시각 게이팅·중복 억제는 ops_watchdog 모듈 내부에서 처리한다.
+    """
+    try:
+        from .engine.ops_watchdog import run_ops_watchdog
+
+        result = run_ops_watchdog()
+        if result.get("created"):
+            logger.warning("WARN: [OpsWatchdog] 신규 이상 %d건 기록", result["created"])
+    except Exception as exc:
+        logger.error("FAIL: [OpsWatchdog] 감시 실패 — reason=%s", exc)
+
+
 async def job_eod_liquidation() -> dict[str, Any]:
     """Job S9 (15:20 KST): 당일 포지션 전량 청산 후 Decision Engine을 종료한다."""
     _ntr = _non_trading_day_today()
@@ -1540,6 +1556,18 @@ def _build_scheduler() -> AsyncIOScheduler:
         id="job_dividend_alert_pm",
         name="배당락일 알림 (오후)",
         replace_existing=True,
+    )
+
+    # 운영 감시봇 — 08~15시 5분 간격. 각 단계가 됐나·잘했나를 규칙기반으로 감시.
+    # 시각 게이팅·비거래일 스킵·중복 억제는 ops_watchdog 모듈이 처리한다.
+    scheduler.add_job(
+        job_ops_watchdog,
+        CronTrigger(hour="8-15", minute="*/5", timezone="Asia/Seoul"),
+        id="job_ops_watchdog",
+        name="운영 감시봇 (5분 틱)",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
     )
 
     # 09:15 아침 거래준비 자가진단 — 문제 발견 시에만 Alert+Telegram

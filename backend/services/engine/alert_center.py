@@ -25,6 +25,7 @@ _VALID_ALERT_TYPES = {
     "dq_degraded",
     "emergency_halt",
     "morning_diagnostic",
+    "ops_watch",
 }
 _VALID_SEVERITIES = {"INFO", "WARNING", "CRITICAL"}
 
@@ -62,7 +63,8 @@ def _alert_row_to_dict(row: Any) -> dict[str, Any]:
     return alert
 
 
-def create_alert(alert_type, title, severity: str = "WARNING", detail: str = "") -> dict:
+def create_alert(alert_type, title, severity: str = "WARNING", detail: str = "",
+                  trade_date: str | None = None) -> dict:
     """Create a system alert for today's trade date.
 
     Args:
@@ -70,6 +72,7 @@ def create_alert(alert_type, title, severity: str = "WARNING", detail: str = "")
         title: Short operator-facing title.
         severity: INFO, WARNING, or CRITICAL.
         detail: Optional detailed context for operators and logs.
+        trade_date: Override trade date (YYYY-MM-DD). Defaults to today (KST).
     """
     clean_alert_type = _validate_alert_type(str(alert_type))
     clean_severity = _validate_severity(severity)
@@ -78,7 +81,7 @@ def create_alert(alert_type, title, severity: str = "WARNING", detail: str = "")
         raise ValueError("alert title is required")
     alert = {
         "id": str(uuid.uuid4()),
-        "trade_date": _today_kst(),
+        "trade_date": str(trade_date).strip() if trade_date else _today_kst(),
         "alert_type": clean_alert_type,
         "severity": clean_severity,
         "title": clean_title,
