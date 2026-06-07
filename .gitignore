@@ -40,3 +40,6 @@ cursor/
 
 # Test screenshots
 tests/e2e/img/
+
+# Runtime DB backups
+backups/
