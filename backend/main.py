@@ -16,6 +16,7 @@ from .api.routes.auth import router as auth_router
 from .api.routes.backtest import router as backtest_router
 from .api.routes.scheduler import router as scheduler_router
 from .api.routes.market_tone import router as market_tone_router
+from .api.routes.market import router as market_router
 from .api.routes.morning_context import router as morning_context_router
 from .api.routes.regime_analytics import router as regime_analytics_router
 from .api.routes.regime_sets import router as regime_sets_router
@@ -177,6 +178,7 @@ app.include_router(buy_conditions_router)
 app.include_router(trading_data_router)
 app.include_router(scheduler_router)
 app.include_router(market_tone_router)
+app.include_router(market_router)
 app.include_router(morning_context_router)
 app.include_router(regime_analytics_router)
 app.include_router(regime_sets_router)

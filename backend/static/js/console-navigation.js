@@ -143,11 +143,13 @@
         loadTodayPlanStatus(td);
         loadMorningBrief(td);
         loadTodayRegimeTimeline(td);
+        loadKrIndexLive();
       });
       _todayTimer = setInterval(function() {
         _safeLoadConsoleData();
         var td = window._tcTradeDate || null;
         loadTodayRegimeTimeline(td);
+        loadKrIndexLive();
       }, 30000);
     }
 

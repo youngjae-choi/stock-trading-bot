@@ -352,12 +352,12 @@
             'nasdaq': 'NASDAQ', 'sp500': 'S&P500',
             'vix': 'VIX', 'usdkrw': 'USD/KRW',
             'nikkei': '닛케이', 'hangseng': '항셍',
-            'kospi': 'KOSPI', 'kospi_night_futures': '코스피 야간선물',
+            'kospi': 'KOSPI', 'kosdaq': 'KOSDAQ', 'kospi_night_futures': '코스피 야간선물',
             'oil_wti': 'WTI',
             'sox': 'SOX', 'us_10y_yield': '미국10Y'
           };
           var html = '';
-          var keys = ['nasdaq', 'sp500', 'vix', 'usdkrw', 'nikkei', 'hangseng', 'kospi', 'kospi_night_futures', 'oil_wti', 'sox', 'us_10y_yield'];
+          var keys = ['nasdaq', 'sp500', 'vix', 'usdkrw', 'nikkei', 'hangseng', 'kospi', 'kosdaq', 'kospi_night_futures', 'oil_wti', 'sox', 'us_10y_yield'];
           keys.forEach(function(k) {
             var item = d.market_data[k];
             if (!item) return;

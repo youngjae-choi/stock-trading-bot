@@ -3,8 +3,66 @@
     await Promise.allSettled([
       loadConsoleData(),
       loadTodayAlertSummary(),
-      loadTodayOrders(5)
+      loadTodayOrders(5),
+      loadKrIndexLive()
     ]);
+  }
+
+  // 라이브 국내지수(KOSPI/KOSDAQ) — Today Control 카드 2개
+  async function loadKrIndexLive() {
+    try {
+      const res = await fetch('/api/v1/market/kr-index-live');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.ok || !data.payload) return;
+      const p = data.payload;
+      const marketOpen = p.market_open === true;
+
+      function renderCard(idx, priceId, changeId, badgeId) {
+        const priceEl = document.getElementById(priceId);
+        const changeEl = document.getElementById(changeId);
+        const badgeEl = document.getElementById(badgeId);
+
+        const price = idx ? idx.price : null;
+        const rate = idx ? idx.change_rate : null;
+
+        if (priceEl) {
+          priceEl.textContent = (price != null)
+            ? Number(price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+            : '—';
+        }
+
+        if (changeEl) {
+          if (rate != null) {
+            const sign = rate > 0 ? '+' : '';
+            changeEl.textContent = sign + Number(rate).toFixed(2) + '%';
+            // 상승=녹색, 하락=적색 (라이브 카드 — PM 지시)
+            if (marketOpen) {
+              changeEl.style.color = rate > 0 ? 'var(--good, #3fb950)' : (rate < 0 ? 'var(--bad, #f85149)' : '');
+            } else {
+              changeEl.style.color = '';
+            }
+          } else {
+            changeEl.textContent = '—';
+            changeEl.style.color = '';
+          }
+        }
+
+        // 개장전 '장전' 배지, 장중 'LIVE' 배지
+        if (badgeEl) {
+          if (marketOpen) {
+            badgeEl.textContent = 'LIVE';
+            badgeEl.style.display = '';
+          } else {
+            badgeEl.textContent = '장전';
+            badgeEl.style.display = '';
+          }
+        }
+      }
+
+      renderCard(p.kospi, 'tc-kospi-price', 'tc-kospi-change', 'tc-kospi-badge');
+      renderCard(p.kosdaq, 'tc-kosdaq-price', 'tc-kosdaq-change', 'tc-kosdaq-badge');
+    } catch (e) { console.warn('loadKrIndexLive error', e); }
   }
 
   async function loadTodayAlertSummary() {
