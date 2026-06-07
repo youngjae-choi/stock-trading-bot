@@ -311,7 +311,10 @@
     var metaTxt = metaFn ? metaFn(it) : '';
     var meta = metaTxt ? '<span class="sel-item__meta">' + escapeHtml(metaTxt) + '</span>' : '';
     var reason = it.reason ? '<div class="sel-item__reason">' + escapeHtml(it.reason) + '</div>' : '';
-    return '<div class="sel-item">' + meta + '<span class="sel-item__name">' + name + '</span>' + code + reason + '</div>';
+    var badge = (it.selection_source === 'quant_topup')
+      ? '<span class="sel-badge-topup" title="LLM이 보류/탈락시켰으나 정량(거래량·TSI) top-up으로 재포함된 종목. 추후 성과(EV)로 강화/제거 판단.">top-up</span>'
+      : '';
+    return '<div class="sel-item">' + meta + '<span class="sel-item__name">' + name + '</span>' + code + badge + reason + '</div>';
   }
 
   function _selList(title, cls, items, metaFn) {

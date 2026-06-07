@@ -291,6 +291,7 @@ async def get_selection_funnel(trade_date: str | None = None):
                                 "sector": c.get("sector"),
                                 "score": c.get("suitability_score"),
                                 "reason": c.get("reason"),
+                                "selection_source": c.get("selection_source"),
                             })
 
             # S5 통과 (daily_trading_plans.symbol_assignments)

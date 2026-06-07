@@ -786,6 +786,11 @@
       border: 1px solid var(--line-soft); margin-bottom: 5px; font-size: 12px;
     }
     .sel-item__name { font-weight: 600; color: var(--text); }
+    .sel-badge-topup {
+      display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px;
+      font-size: 10px; font-weight: 600; cursor: help;
+      background: var(--primary); color: #fff;
+    }
     .sel-item__code { color: var(--muted); font-family: var(--font-mono); font-size: 11px; margin-left: 5px; }
     .sel-item__meta { color: var(--muted); font-family: var(--font-mono); font-size: 11px; float: right; }
     .sel-item__reason { color: var(--muted); font-size: 11px; margin-top: 3px; line-height: 1.45; clear: both; }

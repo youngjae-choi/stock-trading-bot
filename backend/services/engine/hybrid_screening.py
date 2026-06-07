@@ -591,6 +591,7 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
     _llm_tsi = await _tsi_map(list(chosen.keys()))
     for _sym, _c in chosen.items():
         _c["tsi"] = _llm_tsi.get(_sym)
+        _c["selection_source"] = "llm"  # LLM 정성평가 통과(선정 출처 마킹)
 
     # 2) 부족분은 블렌드 점수 상위로 top-up — 단, 일봉 TSI>0(상승추세) 종목만.
     #    블렌드 = 0.4×TSI_norm + 0.4×유니버스점수_norm + 0.2×LLM확신(suitability).
@@ -619,7 +620,8 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
             _t = _pool_tsi.get(_sym)
             if _t is None or _t <= 0:
                 continue
-            chosen[_sym] = {**_it, "ticker": _it.get("symbol"), "tsi": _t, "suitability_score": _it.get("suitability_score", 0.0)}
+            # LLM이 보류/탈락시켰으나 정량 블렌드(TSI·거래량)로 재포함 — 출처 마킹(추후 EV로 강화/제거 판단)
+            chosen[_sym] = {**_it, "ticker": _it.get("symbol"), "tsi": _t, "suitability_score": _it.get("suitability_score", 0.0), "selection_source": "quant_topup"}
             if len(chosen) >= target:
                 break
 

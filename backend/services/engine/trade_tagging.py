@@ -171,6 +171,11 @@ def build_selection_reason(candidate: dict) -> dict:
 
     # 단타 모멘텀 선정: 거래량순위 / 등락률순위 / 거래량급증 (거래대금 소스 제거)
     sources: list[str] = []
+    # 선정 출처(llm | quant_topup)를 맨 앞에 — EV(selection_source) 비교의 핵심 버킷.
+    # quant_topup = LLM이 보류/탈락시켰으나 정량 블렌드로 재포함된 종목 → 추후 성과로 강화/제거 판단.
+    selection_source = str(candidate.get("selection_source") or "").strip()
+    if selection_source:
+        sources.append(selection_source)
     volume_rank = candidate.get("volume_rank")
     if isinstance(volume_rank, (int, float)) and 0 < volume_rank <= 100:
         sources.append(f"거래량순위#{int(volume_rank)}")
