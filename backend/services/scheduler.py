@@ -319,7 +319,11 @@ def _should_skip_auto_job(step: str) -> bool:
         step: Pipeline step label used in logs and audit metadata.
     """
     status = get_schedule_skip_today_status()
-    if status.get("skip"):
+    # 거래일이 아니면(주말·공휴일) schedule_skip_today 플래그와 무관하게 무조건 스킵.
+    # (플래그는 거래준비 잡이 세팅하는데, 비거래일엔 그 잡 자체가 안 돌아 플래그가 false로
+    #  남을 수 있어 morning_diagnostic 등이 "미실행" 오경보를 낸 사례가 있었음.)
+    non_trading = _non_trading_day_today()
+    if status.get("skip") or non_trading:
         try:
             from .engine.pipeline_audit import finish_pipeline_run, start_pipeline_run
 
@@ -328,23 +332,24 @@ def _should_skip_auto_job(step: str) -> bool:
                 step=step,
                 trigger_source="auto_scheduler",
                 display_source="auto_scheduler",
-                metadata=status,
+                metadata={**status, "non_trading_day": non_trading},
             )
             finish_pipeline_run(
                 run_id=run_id,
                 status="skipped",
-                message=str(status.get("reason") or "schedule_skip_today=true"),
-                metadata=status,
+                message=str(status.get("reason") or non_trading or "schedule_skip_today=true"),
+                metadata={**status, "non_trading_day": non_trading},
             )
         except Exception as exc:
             logger.warning("WARN: schedule skip audit failed step=%s reason=%s", step, exc)
         logger.warning(
-            "SKIP: [%s] schedule_skip_today=true — 오늘 S2~S6 자동 스케줄 스킵 가능 status=%s",
+            "SKIP: [%s] 비거래일/스킵 — 오늘 자동 잡 스킵 status=%s non_trading=%s",
             step,
             status,
+            non_trading,
         )
         return True
-    logger.info("INFO: [%s] schedule_skip_today=false — auto job allowed status=%s", step, status)
+    logger.info("INFO: [%s] 거래일·플래그 정상 — auto job allowed status=%s", step, status)
     return False
 
 
