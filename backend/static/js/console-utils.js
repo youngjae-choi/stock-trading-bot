@@ -32,7 +32,18 @@
   }
 
   function stepDisplayTime(step, settingsMap) {
-    return (settingsMap && settingsMap[step.settingKey]) || step.defaultTime;
+    var resolved = (settingsMap && settingsMap[step.settingKey]) || step.defaultTime;
+    // 장 개시 가드(백엔드 _apply_market_open_schedule_guards와 동일) — 실효 시각 표시
+    if (isClockTime(resolved)) {
+      var TRADE_PREP = ['s1', 's3', 's4', 's5', 's5v', 's5a'];
+      if (TRADE_PREP.indexOf(step.id) >= 0 && minutesOf(resolved) < minutesOf('09:01')) {
+        return '09:01';
+      }
+      if (step.id === 's6' && minutesOf(resolved) < minutesOf('09:10')) {
+        return '09:10';
+      }
+    }
+    return resolved;
   }
 
   function getScheduledTimeline(settingsMap) {
@@ -285,9 +296,9 @@
           statusText = '미생성';
         }
 
-        html += '<div style="flex:0 0 90px; text-align:center;">'
+        html += '<div style="flex:0 0 104px; text-align:center;">'
           + '<div style="font-size:10px; color:var(--muted); margin-bottom:4px;">' + sTime + '</div>'
-          + '<div style="padding:6px 4px; border-radius:6px; font-size:11px; font-weight:600; background:' + bgColor + '; border: 1px solid ' + borderColor + ';">'
+          + '<div style="min-height:40px; display:flex; align-items:center; justify-content:center; line-height:1.25; word-break:keep-all; padding:6px 4px; border-radius:6px; font-size:11px; font-weight:600; background:' + bgColor + '; border: 1px solid ' + borderColor + ';">'
           + step.label
           + '</div>'
           + '<div style="font-size:10px; margin-top:4px; color:var(--muted)">' + statusText + '</div>'

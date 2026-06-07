@@ -575,6 +575,7 @@
       grid-template-columns: repeat(5, minmax(120px, 1fr));
       gap: 10px;
       overflow-x: auto;
+      align-items: start;
     }
 
     .funnel-step {
