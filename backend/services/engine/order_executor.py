@@ -607,6 +607,24 @@ class OrderExecutor:
         spend = min(per_slot, available_cash if available_cash > 0 else per_slot)
         return int(spend // price)
 
+    def _calc_profile_qty(
+        self,
+        total_eval: float,
+        profile_rate: float,
+        deployable_cash: float,
+        price: float,
+    ) -> int:
+        """Profile 비중 사이징 수량 = floor(min(total_eval*profile_rate, deployable_cash) / price).
+
+        total_eval: 총자산(원), profile_rate: Risk Profile 비중(0~1),
+        deployable_cash: 95% 한도 내 추가 투입 가능 현금. 어느 하나라도 비정상이면 0.
+        """
+        if total_eval <= 0 or profile_rate <= 0 or deployable_cash <= 0 or price <= 0:
+            return 0
+        target = total_eval * profile_rate
+        spend = min(target, deployable_cash)
+        return int(spend // price)
+
     def _calc_qty(self, deposit: float, position_size_pct: float, price: float) -> int:
         """Calculate order quantity as floor(deposit * pct / 100 / price), minimum 1.
 
