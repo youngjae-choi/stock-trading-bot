@@ -37,7 +37,9 @@ def test_setting_string_truthy_is_coerced():
             assert eg.is_exploration_allowed() is False
 
 
-def test_sizing_params_exploration_uses_full_deposit_params():
+def test_sizing_params_always_non_exploration_even_when_allowed():
+    # 탐색 분기는 dead code로 제거됨: 유일한 호출부(order_executor)가 비탐색 else에서만
+    # 호출하므로, 탐색이 허용된 상태여도 항상 (None, 기존 max_positions) 를 반환한다.
     def _fake_setting(key, default=None):
         return {
             "engine.exploration_mode": True,
@@ -48,8 +50,8 @@ def test_sizing_params_exploration_uses_full_deposit_params():
     with patch.object(eg, "_is_virtual", return_value=True), \
          patch.object(eg, "get_setting", side_effect=_fake_setting):
         budget_rate, max_positions = eg.select_sizing_params({"max_positions": 7})
-    assert budget_rate == 0.95
-    assert max_positions == 40
+    assert budget_rate is None
+    assert max_positions == 7
 
 
 def test_sizing_params_non_exploration_keeps_existing_max_and_none_rate():

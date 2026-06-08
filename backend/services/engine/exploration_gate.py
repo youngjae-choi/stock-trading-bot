@@ -15,10 +15,6 @@ from ..settings_store import get_setting
 
 logger = logging.getLogger("ExplorationGate")
 
-# 탐색모드 사이징 기본값(설계서 §자본·포지션: max_positions↑·예산률↑)
-_DEFAULT_MAX_POSITIONS = 40
-_DEFAULT_BUDGET_RATE = 0.95
-
 
 def _is_virtual() -> bool:
     """KIS 클라이언트가 모의투자(openapivts) 환경인지 반환한다.
@@ -49,23 +45,19 @@ def is_exploration_allowed() -> bool:
     return _coerce_bool(get_setting("engine.exploration_mode", False))
 
 
-def select_sizing_params(final_rule: dict[str, Any]) -> tuple[float | None, int]:
+def select_sizing_params(final_rule: dict[str, Any]) -> tuple[None, int]:
     """사이징 파라미터 (budget_rate, max_positions) 를 반환한다.
 
-    탐색 허용 시 풀예수금 파라미터(exploration.budget_rate / exploration.max_positions),
-    아니면 (None, 기존 final_rule.max_positions) 를 반환한다. budget_rate=None 은
+    항상 (None, 기존 final_rule.max_positions) 를 반환한다. budget_rate=None 은
     "탐색 아님 → 호출부가 기존 daily_capital.get_active_budget_rate 를 쓰라"는 신호다.
+
+    NOTE: 유일한 호출부(order_executor)가 `if is_exploration_allowed(): ... else:`의
+    else 분기에서만 이 함수를 호출하므로, 탐색 허용 분기는 도달 불가(dead)다.
+    따라서 풀예수금 파라미터 분기를 제거하고 비탐색 경로만 유지한다.
 
     Args:
         final_rule: rule_cache.get_rule(symbol) 결과(기존 max_positions 소스).
     """
-    if is_exploration_allowed():
-        budget_rate = float(get_setting("exploration.budget_rate", _DEFAULT_BUDGET_RATE) or _DEFAULT_BUDGET_RATE)
-        max_positions = int(get_setting("exploration.max_positions", _DEFAULT_MAX_POSITIONS) or _DEFAULT_MAX_POSITIONS)
-        logger.info(
-            "INFO: [탐색] 풀예수금 사이징 적용 budget_rate=%.2f max_positions=%d", budget_rate, max_positions
-        )
-        return budget_rate, max_positions
     try:
         existing_max = int(float(final_rule.get("max_positions") or 7))
     except (TypeError, ValueError):
