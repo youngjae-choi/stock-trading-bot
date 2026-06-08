@@ -169,6 +169,7 @@ def _build_balance_payload(data: dict[str, Any]) -> dict[str, Any]:
         "today_realized_pnl": today_realized_pnl,     # 당일 청산 실현손익 (원)
         "daily_pnl_total": daily_pnl_total,           # 당일 손익 = 실현 + 미실현 (원)
         "daily_pnl_pct": daily_pnl_pct,               # 당일 손익률 = 당일손익 / 시작자본 (%)
+        "deployed_rate_pct": round((total_eval - buyable_cash) / total_eval * 100, 1) if total_eval else 0.0,
         "deposit": deposit,                           # 예탁금 총액 (계좌 한도)
         "buyable_cash": buyable_cash,                 # 주문 가능 예수금 (현금 잔액)
         "available_cash": buyable_cash,

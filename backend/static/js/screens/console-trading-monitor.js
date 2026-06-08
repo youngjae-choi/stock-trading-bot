@@ -425,6 +425,10 @@
         // 총평가금액
         setEl('tm-total-eval', fmtWon(acct.total_eval));
 
+        // 배포율 (투입/총자산)
+        var dr = acct.deployed_rate_pct;
+        setEl('tm-deployed-rate', (dr != null ? dr.toFixed(1) : '-') + '%');
+
         // 당일 손익(통합) = 당일 실현손익(청산) + 미실현 평가손익 / 당일 손익률
         var pnlEl = document.getElementById('tm-pnl-today');
         var pnlRateEl = document.getElementById('tm-pnl-rate');
