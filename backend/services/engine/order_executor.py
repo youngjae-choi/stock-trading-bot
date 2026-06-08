@@ -252,27 +252,31 @@ class OrderExecutor:
             from .daily_capital import get_baseline, get_active_budget_rate
             from .exploration_gate import select_sizing_params
             baseline = get_baseline(today)
-            explore_budget_rate, max_positions = select_sizing_params(final_rule)
-            if explore_budget_rate is not None:
-                budget_rate = explore_budget_rate
+            from .exploration_gate import is_exploration_allowed
+            from ..settings_store import get_setting as _get_setting
+            if is_exploration_allowed():
+                # 탐색: Profile 비중대로 + 95% 배포 한도 내 실시간 가용현금 기준
+                total_eval = self._extract_total_eval(balance)
+                profile_rate = self._position_size_pct(final_rule) / 100.0
+                deploy_target = float(_get_setting("exploration.deploy_target_rate", 0.95) or 0.95)
+                buffer = total_eval * (1.0 - deploy_target)
+                deployable = max(0.0, deposit - buffer)  # deposit=ord_psbl_cash(실시간)
+                qty = self._calc_profile_qty(total_eval, profile_rate, deployable, price)
                 logger.info(
-                    "INFO: [S7] 탐색모드 풀예수금 사이징 symbol=%s budget_rate=%.2f max_positions=%d",
-                    symbol, budget_rate, max_positions,
+                    "INFO: [S7] Profile비중 사이징 symbol=%s rate=%.2f total_eval=%.0f deployable=%.0f qty=%d",
+                    symbol, profile_rate, total_eval, deployable, qty,
                 )
             else:
-                budget_rate = get_active_budget_rate(today)
-            qty = self._calc_budget_qty(baseline, budget_rate, max_positions, price, deposit)
+                explore_budget_rate, max_positions = select_sizing_params(final_rule)
+                budget_rate = explore_budget_rate if explore_budget_rate is not None else get_active_budget_rate(today)
+                qty = self._calc_budget_qty(baseline, budget_rate, max_positions, price, deposit)
+                if qty <= 0:
+                    qty = self._calc_qty(deposit, self._position_size_pct(final_rule), price)
+                logger.info("INFO: [S7] 기존(보수) 사이징 symbol=%s qty=%d", symbol, qty)
             if qty <= 0:
-                position_size_pct = self._position_size_pct(final_rule)
-                qty = self._calc_qty(deposit, position_size_pct, price)
-                logger.info("INFO: [S7] 사이징 폴백(baseline 결손) symbol=%s qty=%d", symbol, qty)
-            else:
-                logger.info(
-                    "INFO: [S7] 예산 균등배분 사이징 symbol=%s baseline=%s rate=%.2f maxpos=%d qty=%d",
-                    symbol, baseline, budget_rate, max_positions, qty,
-                )
-            if qty <= 0:
-                raise ValueError("calculated quantity is zero")
+                logger.info("INFO: [S7] 배포 여력 없음 — 매수 스킵 symbol=%s", symbol)
+                self._update_signal_status(signal_id, "skipped_no_room")
+                return {"ok": False, "reason": "no_deployable_room", "symbol": symbol}
 
             current_pos_count = len(position_manager.get_positions())
             preflight = run_preflight(signal, final_rule, current_positions_count=current_pos_count)
@@ -646,6 +650,16 @@ class OrderExecutor:
         summary_rows = _as_list(data.get("output2"))
         summary = summary_rows[0] if summary_rows else {}
         for key in ("ord_psbl_cash", "dnca_tot_amt", "nass_amt", "tot_evlu_amt"):
+            value = _to_float(summary.get(key))
+            if value > 0:
+                return value
+        return 0.0
+
+    def _extract_total_eval(self, data: dict[str, Any]) -> float:
+        """KIS balance에서 총평가금액(tot_evlu_amt)을 추출. 없으면 0."""
+        summary_rows = _as_list(data.get("output2"))
+        summary = summary_rows[0] if summary_rows else {}
+        for key in ("tot_evlu_amt", "nass_amt", "dnca_tot_amt"):
             value = _to_float(summary.get(key))
             if value > 0:
                 return value

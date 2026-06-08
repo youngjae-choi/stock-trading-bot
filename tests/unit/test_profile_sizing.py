@@ -17,3 +17,9 @@ def test_calc_profile_qty_zero_when_no_room():
     ex = OrderExecutor.__new__(OrderExecutor)
     assert ex._calc_profile_qty(100_000_000, 0.08, 0, 10_000) == 0
     assert ex._calc_profile_qty(100_000_000, 0.0, 5_000_000, 10_000) == 0
+
+
+def test_extract_total_eval():
+    ex = OrderExecutor.__new__(OrderExecutor)
+    data = {"output2": [{"tot_evlu_amt": "102267986", "ord_psbl_cash": "50000000"}]}
+    assert ex._extract_total_eval(data) == 102267986.0
