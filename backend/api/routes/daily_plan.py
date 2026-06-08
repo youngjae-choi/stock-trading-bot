@@ -44,16 +44,24 @@ def get_by_date(date: str):
 
 
 @router.post("/generate")
-async def generate(trigger_source: str = Query(default="api_manual")):
-    """S5 수동 즉시 실행 — 장중(09:00~15:30 KST) 금지."""
+async def generate(
+    trigger_source: str = Query(default="api_manual"),
+    force: bool = Query(default=False, description="장중 차단 우회(운영자 인시던트 복구용)"),
+):
+    """S5 수동 즉시 실행 — 장중(09:00~15:30 KST) 금지. force=true면 우회(감사 로그 기록)."""
     now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
     market_start = now_kst.replace(hour=9, minute=0, second=0, microsecond=0)
     market_end = now_kst.replace(hour=15, minute=30, second=0, microsecond=0)
     if market_start <= now_kst <= market_end:
-        logger.warning("WARN: [DailyPlanAPI] manual generation blocked during market hours")
-        raise HTTPException(
-            status_code=403,
-            detail="장중(09:00~15:30 KST) 수동 재실행 금지. 장 종료 후 실행하세요.",
+        if not force:
+            logger.warning("WARN: [DailyPlanAPI] manual generation blocked during market hours")
+            raise HTTPException(
+                status_code=403,
+                detail="장중(09:00~15:30 KST) 수동 재실행 금지. 장 종료 후 실행하세요.",
+            )
+        logger.warning(
+            "WARN: [DailyPlanAPI] 장중 강제 재실행(force=true) — 운영자 인시던트 복구 source=%s",
+            trigger_source,
         )
     result = await run_daily_plan_generation(
         trade_date=_today_kst(),

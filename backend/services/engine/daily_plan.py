@@ -72,7 +72,11 @@ def _build_prompt(
             "name": c.get("name") or "",
             "score": round(float(c.get("suitability_score") or c.get("score") or 0), 3),
             "change_rate": c.get("change_rate") or c.get("chg_rate") or 0,
-            "trade_amount": c.get("trade_amount") or 0,
+            # 탐색 엔진은 거래대금(trade_amount)을 선정에서 제거했다(항상 0). LLM이 0을
+            # 유동성 미검증으로 오해해 전량 배제하던 문제를 막기 위해 trade_amount를 빼고,
+            # 실제 모멘텀·유동성 신호인 거래량(volume)·거래량급증(volume_surge)을 제공한다.
+            "volume": c.get("volume") or 0,
+            "volume_surge": c.get("volume_surge") or 0,
             "reason": c.get("reason") or c.get("analysis") or "",
         })
     if memories:
