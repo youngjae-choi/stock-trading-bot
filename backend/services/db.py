@@ -381,7 +381,10 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
         ("intraday_refresh.replacement_signal_enabled", True, "boolean", "포지션 교체 신호 생성 활성화"),
         ("intraday_refresh.replacement_score_gap", 0.15, "number", "교체 신호 신규 후보 상대 점수 우위 임계치"),
         ("intraday_refresh.max_replacement_per_symbol", 1, "number", "종목당 일일 교체 신호 최대 횟수"),
-        ("intraday_refresh.max_replacement_per_day", 5, "number", "일일 교체 신호 최대 횟수"),
+        ("intraday_refresh.max_replacement_per_day", 20, "number", "일일 교체 상한"),
+        ("intraday_refresh.replacement_cooldown_min", 30, "number", "동일 종목 교체 쿨다운(분)"),
+        ("intraday_refresh.replacement_execute_enabled", True, "boolean", "교체 신호 자동 실행 여부"),
+        ("exploration.deploy_target_rate", 0.95, "number", "탐색 배포 목표율(예수금 대비)"),
         ("missed.improvement_threshold", 2.0, "number", "Missed 개선후보 판정 임계치(장중 최고가 상승률 %, 기본 2.0)"),
         ("account.principal", 100000000, "number", "계좌 원금(시드). 누적 수익률 계산 기준. 모의계좌 기본 1억, 실계좌 전환/증액 시 조정"),
     ]
