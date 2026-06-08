@@ -1035,6 +1035,12 @@ class DecisionEngine:
             replacement_result = {"ok": False, "error": str(exc)}
             logger.warning("WARN: [S6] replacement signal evaluation failed — %s", exc)
 
+        try:
+            replacement_exec = await _maybe_execute_replacements(replacement_result, new_candidates)
+            logger.info("INFO: [S6] 교체 실행 결과 executed=%s", replacement_exec.get("executed"))
+        except Exception as exc:
+            logger.warning("WARN: [S6] 교체 실행 실패 — %s", exc)
+
         logger.info(
             "SUCCESS: [S6] refresh_candidates old=%d new=%d symbols=%s replacement_created=%s",
             len(old_candidates),
@@ -1496,6 +1502,17 @@ class DecisionEngine:
 
 
 decision_engine = DecisionEngine()
+
+
+async def _maybe_execute_replacements(replacement_result: dict, new_candidates: dict | None = None) -> dict:
+    """교체 신호가 있으면 자동 실행기로 넘긴다(없으면 no-op)."""
+    signals = replacement_result.get("signals") or []
+    if not signals:
+        return {"ok": True, "executed": 0}
+    from .replacement_executor import execute_replacements
+    if new_candidates is None:
+        return await execute_replacements(signals)
+    return await execute_replacements(signals, new_candidates)
 
 
 def get_today_signals(trade_date: str) -> list[dict[str, Any]]:
