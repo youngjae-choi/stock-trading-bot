@@ -564,12 +564,10 @@ def get_console_overview() -> dict[str, Any]:
                 kis_data = _asyncio.run(_get_kis_balance())
             if kis_data:
                 balance = _build_balance_payload(kis_data)
-                # pnl_rate(asst_icdc_erng_rt=자산증감수익률)는 값이 불안정 →
-                # evlu_pfls_smtl_amt / pchs_amt_smtl_amt 로 직접 계산 (Trading Monitor 기준)
-                pnl_total = balance.get("pnl_total") or 0
-                purchase_total = balance.get("purchase_total") or 0
-                if purchase_total > 0:
-                    pnl_pct = round(pnl_total / purchase_total * 100, 2)
+                # 당일 손익 = 당일 실현손익(청산 완료) + 미실현 평가손익. _build_balance_payload가
+                # daily_pnl_pct로 계산해 제공한다. (과거엔 미실현만 봐서 단타 청산 시 0이 되던 버그)
+                pnl_pct = balance.get("daily_pnl_pct")
+                if pnl_pct is not None:
                     pnl_source = "kis_realtime"
                     _pnl_cache = {"pct": pnl_pct, "ts": now_ts}
         except Exception as exc:

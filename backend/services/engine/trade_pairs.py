@@ -172,3 +172,17 @@ def get_trade_pairs(start_date: str, end_date: str) -> list[dict[str, Any]]:
 
     logger.info("SUCCESS: TradePairs count=%d start=%s end=%s", len(pairs), start_date, end_date)
     return pairs
+
+
+def get_today_realized_pnl(trade_date: str) -> float:
+    """당일 청산 완료된 매매의 실현손익 합계(원). Trade History와 동일 기준(trade_pairs).
+
+    장중 단타 청산 손익을 실시간 당일손익에 반영하기 위한 헬퍼.
+    미체결/보유 중(open) 페어는 pnl_amount=None이라 제외된다.
+    """
+    try:
+        pairs = get_trade_pairs(trade_date, trade_date)
+    except Exception as exc:
+        logger.warning("WARN: get_today_realized_pnl failed date=%s reason=%s", trade_date, exc)
+        return 0.0
+    return float(sum(p["pnl_amount"] for p in pairs if p.get("pnl_amount") is not None))

@@ -139,12 +139,36 @@ def _build_balance_payload(data: dict[str, Any]) -> dict[str, Any]:
         cumulative_pnl = 0
         cumulative_return_pct = 0.0
 
+    # 당일 손익(통합) = 당일 실현손익(청산 완료) + 미실현 평가손익(보유종목).
+    # 단타 청산 시 미실현이 0이 되며 실현분이 화면에서 누락되던 문제를 해결한다.
+    # 분모는 당일 시작자본(daily_capital_baseline) — 없으면 총평가금액으로 폴백.
+    pnl_total_unrealized = _to_int(summary.get("evlu_pfls_smtl_amt"))
+    try:
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo as _ZI
+        from ...services.engine.trade_pairs import get_today_realized_pnl
+        from ...services.engine.daily_capital import get_baseline
+
+        _today = _dt.now(_ZI("Asia/Seoul")).strftime("%Y-%m-%d")
+        today_realized_pnl = int(get_today_realized_pnl(_today))
+        _base = get_baseline(_today) or (total_eval or principal)
+        daily_pnl_total = today_realized_pnl + pnl_total_unrealized
+        daily_pnl_pct = round(daily_pnl_total / _base * 100, 2) if _base else 0.0
+    except Exception as exc:
+        logger.warning("WARN: account daily realized pnl 계산 실패 — %s", exc)
+        today_realized_pnl = 0
+        daily_pnl_total = pnl_total_unrealized
+        daily_pnl_pct = 0.0
+
     account_no = f"{settings.KIS_CANO}{settings.KIS_ACNT_PRDT_CD}"
     return {
         "account_no": account_no,
         "principal": principal,                       # 계좌 원금(시드)
         "cumulative_pnl": cumulative_pnl,             # 시드 대비 누적 손익 (원)
         "cumulative_return_pct": cumulative_return_pct,  # 시드 대비 누적 수익률 (%)
+        "today_realized_pnl": today_realized_pnl,     # 당일 청산 실현손익 (원)
+        "daily_pnl_total": daily_pnl_total,           # 당일 손익 = 실현 + 미실현 (원)
+        "daily_pnl_pct": daily_pnl_pct,               # 당일 손익률 = 당일손익 / 시작자본 (%)
         "deposit": deposit,                           # 예탁금 총액 (계좌 한도)
         "buyable_cash": buyable_cash,                 # 주문 가능 예수금 (현금 잔액)
         "available_cash": buyable_cash,

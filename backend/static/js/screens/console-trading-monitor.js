@@ -425,16 +425,16 @@
         // 총평가금액
         setEl('tm-total-eval', fmtWon(acct.total_eval));
 
-        // 평가손익 / 수익률
+        // 당일 손익(통합) = 당일 실현손익(청산) + 미실현 평가손익 / 당일 손익률
         var pnlEl = document.getElementById('tm-pnl-today');
         var pnlRateEl = document.getElementById('tm-pnl-rate');
-        var pnlVal = acct.pnl_total;
+        var pnlVal = acct.daily_pnl_total != null ? acct.daily_pnl_total : acct.pnl_total;
         if (pnlEl) {
           pnlEl.textContent = fmtWon(pnlVal);
           pnlEl.style.color = pnlVal > 0 ? 'var(--green)' : pnlVal < 0 ? 'var(--red, #f85149)' : '';
         }
-        if (pnlRateEl && acct.pnl_rate != null) {
-          var rate = Number(acct.pnl_rate);
+        var rate = acct.daily_pnl_pct != null ? Number(acct.daily_pnl_pct) : (acct.pnl_rate != null ? Number(acct.pnl_rate) : null);
+        if (pnlRateEl && rate != null) {
           pnlRateEl.textContent = (rate >= 0 ? '+' : '') + rate.toFixed(2) + '%';
           pnlRateEl.style.color = rate > 0 ? 'var(--green)' : rate < 0 ? 'var(--red, #f85149)' : 'var(--muted)';
         }
