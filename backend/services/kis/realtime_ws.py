@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import time
@@ -249,7 +250,11 @@ class RealtimeWSManager:
             }
             for cb in list(self._tick_callbacks):
                 try:
-                    await cb(tick)
+                    # 콜백은 async/sync 모두 허용 — sync 콜백(예: bar_engine.ingest_tick)은
+                    # 호출 결과가 코루틴이 아니므로 await하지 않는다(과거 'await None' 에러 방지).
+                    result = cb(tick)
+                    if inspect.isawaitable(result):
+                        await result
                 except Exception as exc:
                     logger.error("FAIL: tick callback error — %s", exc)
 
