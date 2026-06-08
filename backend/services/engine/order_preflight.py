@@ -37,6 +37,13 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _deployment_blocked(deployed: float, total_eval: float, target: float) -> bool:
+    """탐색 배포 한도 게이트: 배포율(deployed/total_eval) >= target 이면 True."""
+    if total_eval <= 0:
+        return False
+    return (deployed / total_eval) >= target
+
+
 def _to_float_or_none(value: Any) -> float | None:
     """Convert DB values to float only when the source contains a real number.
 
@@ -343,6 +350,9 @@ def run_preflight(
     signal: dict[str, Any],
     final_rule: dict[str, Any],
     current_positions_count: int = 0,
+    deployed_value: float = 0.0,
+    total_eval: float = 0.0,
+    deploy_target_rate: float = 0.0,
 ) -> dict[str, Any]:
     """주문 직전 안전 검증. 반환값: {ok, preflight_id, checks, block_reason}."""
     logger.info("START: [S6-P] preflight signal_id=%s symbol=%s", signal.get("id"), signal.get("symbol"))
@@ -380,13 +390,21 @@ def run_preflight(
     else:
         checks["position_size"] = PREFLIGHT_OK
 
-    # 4. 최대 보유 종목 수 초과
-    max_positions = int(_to_float(final_rule.get("max_positions"), 10.0) or 10)
-    if current_positions_count >= max_positions:
-        checks["max_positions"] = PREFLIGHT_BLOCK
-        block_reasons.append(f"최대 보유 종목 도달 ({current_positions_count}/{max_positions})")
+    # 4. 배포 한도/보유 종목 수
+    if deploy_target_rate > 0 and total_eval > 0:
+        # 탐색: 95% 배포 게이트(보유수 무관, 현금 한도로 제어)
+        if _deployment_blocked(deployed_value, total_eval, deploy_target_rate):
+            checks["max_positions"] = PREFLIGHT_BLOCK
+            block_reasons.append(f"배포 한도 도달 ({deployed_value/total_eval*100:.0f}%/{deploy_target_rate*100:.0f}%)")
+        else:
+            checks["max_positions"] = PREFLIGHT_OK
     else:
-        checks["max_positions"] = PREFLIGHT_OK
+        max_positions = int(_to_float(final_rule.get("max_positions"), 10.0) or 10)
+        if current_positions_count >= max_positions:
+            checks["max_positions"] = PREFLIGHT_BLOCK
+            block_reasons.append(f"최대 보유 종목 도달 ({current_positions_count}/{max_positions})")
+        else:
+            checks["max_positions"] = PREFLIGHT_OK
 
     # 5. 트리거 가격 유효성
     trigger_price = _to_float(signal.get("trigger_price"))

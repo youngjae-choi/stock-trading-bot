@@ -279,7 +279,16 @@ class OrderExecutor:
                 return {"ok": False, "reason": "no_deployable_room", "symbol": symbol}
 
             current_pos_count = len(position_manager.get_positions())
-            preflight = run_preflight(signal, final_rule, current_positions_count=current_pos_count)
+            from .exploration_gate import is_exploration_allowed
+            from ..settings_store import get_setting as _get_setting
+            if is_exploration_allowed():
+                _total_eval = self._extract_total_eval(balance)
+                _deployed = max(0.0, _total_eval - deposit)  # 총자산 - 가용현금 = 배포액
+                _target = float(_get_setting("exploration.deploy_target_rate", 0.95) or 0.95)
+                preflight = run_preflight(signal, final_rule, current_positions_count=current_pos_count,
+                                          deployed_value=_deployed, total_eval=_total_eval, deploy_target_rate=_target)
+            else:
+                preflight = run_preflight(signal, final_rule, current_positions_count=current_pos_count)
             if not preflight["ok"]:
                 logger.warning(
                     "BLOCK: [S7] Pre-Flight 차단 signal_id=%s symbol=%s reason=%s",
