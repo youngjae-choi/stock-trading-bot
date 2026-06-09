@@ -22,18 +22,15 @@ _SYMBOLS = {
     "usdkrw": "USDKRW=X",
     "us_10y_yield": "^TNX",
     "vix": "^VIX",
-    "nikkei": "^N225",
-    "hangseng": "^HSI",
-    "shanghai": "000001.SS",
-    "kospi": "^KS11",
-    "kosdaq": "^KQ11",
+    # 미국상장 한국대표 ETF(MSCI Korea). 밤사이 미국장에서 거래·마감 → KR 프리마켓(08:30)
+    # 시점에 신선한 '간밤 한국물 심리' = 갭 선행지표. (삼성 23%·SK하이닉스 22% 등 대형주 구성)
+    # KR/JP/HK/CN 현물지수·종목은 개장 전이라 전일 종가(stale) → 프리마켓 브리핑에서 제외.
+    "ewy_korea": "EWY",
     "sector_tech": "XLK",
     "sector_finance": "XLF",
     "sector_energy": "XLE",
     "sector_health": "XLV",
     "sector_industry": "XLI",
-    "kr_semiconductor": "005930.KS",
-    "kr_battery": "373220.KS",
     "sox": "^SOX",
 }
 _YAHOO_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=2d&interval=1d"
@@ -109,19 +106,13 @@ def format_for_prompt(market_data: dict[str, Any]) -> str:
         "usdkrw": "USD/KRW",
         "us_10y_yield": "미국 10년 국채금리(%)",
         "vix": "VIX 공포지수",
-        "nikkei": "닛케이",
-        "hangseng": "항셍",
-        "shanghai": "상하이종합",
-        "kospi": "KOSPI",
-        "kosdaq": "KOSDAQ",
+        "ewy_korea": "EWY(미국상장 한국대표 ETF·간밤 종가, KR 갭 선행지표)",
         "kospi_night_futures": "코스피200 야간선물(다음날 갭 선행지표)",
         "sector_tech": "미국 기술섹터 XLK",
         "sector_finance": "미국 금융섹터 XLF",
         "sector_energy": "미국 에너지섹터 XLE",
         "sector_health": "미국 헬스케어 XLV",
         "sector_industry": "미국 산업섹터 XLI",
-        "kr_semiconductor": "삼성전자(반도체 프록시)",
-        "kr_battery": "LG에너지솔루션(배터리 프록시)",
         "sox": "필라델피아 반도체지수(SOX)",
     }
     arrows = {"up": "▲", "down": "▼", "flat": "━"}
