@@ -14,7 +14,9 @@ from zoneinfo import ZoneInfo
 
 from ..db import get_connection
 from ..kis.realtime_ws import realtime_ws_manager
+from ..settings_store import get_setting
 from .hybrid_screening import get_today_screening
+from .position_manager import position_manager
 from .rule_cache import load_daily_rules, get_rule, clear_cache, get_meta
 from .shadow_trading import create_shadow_trade
 
@@ -980,6 +982,36 @@ class DecisionEngine:
     def is_active(self) -> bool:
         """Decision Engine 활성화 여부."""
         return self._active
+
+    async def add_momentum_candidates(self, candidates: list[dict[str, Any]]) -> dict[str, Any]:
+        """모멘텀 스캐너가 발굴한 신규 종목을 watchlist에 병합 추가 + WS 재구독(상한 가드).
+
+        기존 _candidates/보유는 유지하고 신규만 추가한다(교체 아님). 상한 초과 시 추가분을 자른다.
+        """
+        today = _today_kst()
+        max_sub = int(get_setting("momentum_scan.max_subscriptions", 40) or 40)
+        added = 0
+        for c in candidates:
+            sym = _candidate_symbol(c)
+            if not sym or sym in self._candidates:
+                continue
+            self._candidates[sym] = c
+            added += 1
+        if added == 0:
+            return {"ok": True, "added": 0, "subscribed": len(self._candidates)}
+        # 보유 + 후보 합집합, 상한 40 cap
+        managed = [str(p.get("symbol") or "") for p in position_manager.get_positions()]
+        all_symbols = list(dict.fromkeys([*managed, *self._candidates.keys()]))
+        if len(all_symbols) > max_sub:
+            all_symbols = all_symbols[:max_sub]
+        load_daily_rules(today, list(self._candidates.keys()))
+        try:
+            await realtime_ws_manager.start(all_symbols)
+        except Exception as exc:
+            logger.warning("WARN: [S6] 모멘텀 후보 WS 재구독 실패 — %s", exc)
+        logger.info("INFO: [S6] 모멘텀 신규편입 added=%d total_candidates=%d subscribed=%d",
+                    added, len(self._candidates), len(all_symbols))
+        return {"ok": True, "added": added, "subscribed": len(all_symbols)}
 
     async def refresh_candidates(self) -> dict[str, Any]:
         """장중 재선별 후 호출 — 후보 목록을 교체하고 WS 구독을 갱신한다.
