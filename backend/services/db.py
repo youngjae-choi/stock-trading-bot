@@ -387,6 +387,9 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
         ("exploration.deploy_target_rate", 0.95, "number", "탐색 배포 목표율(예수금 대비)"),
         ("missed.improvement_threshold", 2.0, "number", "Missed 개선후보 판정 임계치(장중 최고가 상승률 %, 기본 2.0)"),
         ("account.principal", 100000000, "number", "계좌 원금(시드). 누적 수익률 계산 기준. 모의계좌 기본 1억, 실계좌 전환/증액 시 조정"),
+        ("momentum_scan.enabled", True, "boolean", "상시 모멘텀 스캐너 활성(모의 전용)"),
+        ("momentum_scan.interval_min", 3, "number", "모멘텀 스캔 주기(분)"),
+        ("momentum_scan.max_subscriptions", 40, "number", "WS 동시 구독 상한 가드"),
     ]
     for key, value, value_type, description in defaults:
         connection.execute(
