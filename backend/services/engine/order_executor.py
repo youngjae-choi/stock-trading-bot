@@ -576,6 +576,13 @@ class OrderExecutor:
                     "uncertain": True,
                 }
             position_manager.remove_position(safe_symbol)
+            # 청산 쿨다운 등록 — 방금 판 종목을 스캐너가 즉시 재편입(churn)하지 않도록.
+            # best-effort: 스캐너 쿨다운 실패는 매도 자체를 깨뜨려선 안 됨.
+            try:
+                from .momentum_scanner import note_exit
+                note_exit(safe_symbol)
+            except Exception as cooldown_exc:
+                logger.warning("WARN: [S8/S9] note_exit cooldown failed symbol=%s reason=%s", safe_symbol, cooldown_exc)
             logger.info("SUCCESS: [S8/S9] sell order submitted order_id=%s symbol=%s qty=%d", order_id, safe_symbol, safe_qty)
             return {
                 "ok": True,
