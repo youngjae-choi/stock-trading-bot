@@ -1413,6 +1413,19 @@ async def job_intraday_regime_monitor(slot: str) -> None:
         logger.error("FAIL: [IntradayRegimeMonitor] slot=%s reason=%s", slot, exc)
 
 
+async def job_momentum_scan() -> None:
+    """상시 모멘텀 스캐너 — 3분마다 현재 movers 발굴(09~15시). 비거래일·exploration 가드는 내부에서도 처리."""
+    if _non_trading_day_today():
+        return
+    try:
+        from .engine.momentum_scanner import run_momentum_scan
+        result = await run_momentum_scan()
+        if result.get("added"):
+            logger.info("INFO: [MomentumScan] 신규편입 %d", result["added"])
+    except Exception as exc:
+        logger.error("FAIL: [MomentumScan] 실패 — reason=%s", exc)
+
+
 # ---------------------------------------------------------------------------
 # 스케줄러 싱글턴
 # ---------------------------------------------------------------------------
@@ -1511,6 +1524,17 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour="9-15", minute="*/2", timezone="Asia/Seoul"),
         id="job_decision_engine_watchdog",
         name="Decision Engine 자동복구 워치독",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # 상시 모멘텀 스캐너 — 장중(09~15시) 3분 간격. 현재 movers를 발굴해 신규 적격 종목을
+    # S6 watchlist에 병합 추가한다. 비거래일·exploration·컷오프 가드는 잡/스캐너 내부 처리.
+    scheduler.add_job(
+        job_momentum_scan,
+        CronTrigger(hour="9-15", minute="*/3", timezone="Asia/Seoul"),
+        id="job_momentum_scan",
+        name="상시 모멘텀 스캐너 (3분)",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
