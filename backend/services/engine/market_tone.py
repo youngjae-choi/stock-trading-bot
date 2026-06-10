@@ -111,6 +111,18 @@ def _format_intraday_for_prompt(snapshot: dict[str, Any]) -> str:
     return "\n\n".join(lines)
 
 
+def _should_attach_open_snapshot(now: datetime) -> bool:
+    """아침 분기에서 KIS 실시간 국내 스냅샷을 보강할지 판단.
+
+    거래일 09:00(개장) 이후에만 유효 — 그 전엔 KIS 지수가 전일 데이터라 무의미.
+    """
+    from .trading_calendar import is_trading_day
+
+    if not is_trading_day(now):
+        return False
+    return (now.hour, now.minute) >= (9, 0)
+
+
 def _parse_tone_response(raw: str) -> dict[str, Any]:
     """LLM 응답 문자열에서 JSON을 추출해 파싱한다."""
     # 마크다운 코드 블록 제거
@@ -235,6 +247,22 @@ async def run_market_tone_analysis(
             except Exception as _nf_exc:
                 logger.warning("WARN: 야간선물 보강 실패 (비치명) — %s", _nf_exc)
             market_data_text = format_for_prompt(market_data)
+            # 장 개시 후(09:00~) 실행 시 KIS 실시간 국내 스냅샷 보강 — S2가 09:01로 이동(2026-06-10).
+            # KR 지수는 반드시 KIS 사용(Yahoo는 프리마켓 stale로 6/9 사고 원인 — 부활 금지).
+            try:
+                now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+                if _should_attach_open_snapshot(now_kst):
+                    from ..kis.domestic.universe_service import fetch_intraday_kr_market_snapshot
+
+                    kr_snap = await fetch_intraday_kr_market_snapshot()
+                    if kr_snap and kr_snap.get("ok"):
+                        market_data["kr_open_snapshot"] = kr_snap
+                        market_data_text += (
+                            "\n\n[장 개시 직후 국내 현황 (KIS 실시간) — 개장 직후 수치로 장중 변동 가능]\n"
+                            + _format_intraday_for_prompt(kr_snap)
+                        )
+            except Exception as _kr_exc:
+                logger.warning("WARN: 장개시 KIS 스냅샷 보강 실패 (비치명) — %s", _kr_exc)
         except Exception as exc:
             logger.warning("WARN: MarketToneService 해외 시장 데이터 실시간 수집 실패 — %s", exc)
             # S11 overnight snapshot fallback.
