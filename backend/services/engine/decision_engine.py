@@ -1245,21 +1245,31 @@ class DecisionEngine:
         logger.info(
             "SIGNAL: [S6/탐색] OR 발화 symbol=%s fired=%s", symbol, decision.get("fired")
         )
-        await self._emit_signal(symbol, candidate, price, {"exploration": True, "fired_groups": decision["fired"]})
-        self._record_exploration_tag(symbol, candidate, decision)
+        await self._emit_signal(
+            symbol,
+            candidate,
+            price,
+            {
+                "exploration": True,
+                "fired_groups": decision["fired"],
+                "condition_states": decision.get("condition_states") or {},
+            },
+        )
 
     def _record_exploration_tag(
         self, symbol: str, candidate: dict[str, Any], decision: dict[str, Any]
     ) -> None:
-        """OR 발화 매수의 선정사유·발화그룹·조건상태·시장맥락을 태깅한다.
+        """매수 신호의 선정사유·발화그룹·조건상태·시장맥락을 태깅한다.
 
+        _emit_signal 단일 길목에서 모든 진입 경로(베이스라인/탐색OR/교체매매)에 대해
+        호출된다(2026-06-10 커버리지 갭 수정 — 이전엔 탐색OR만 태깅돼 학습 표본 누락).
         order_id 는 비동기 주문 제출 전이라 알 수 없으므로 빈 문자열로 기록하고,
-        Phase 1c set_outcome(order_id)는 별도 결선(범위 밖)에서 채운다.
+        EOD backfill_outcomes_for_date 가 symbol+trade_date 로 정산한다.
 
         Args:
             symbol: 매수 종목.
             candidate: S4 후보 dict.
-            decision: evaluate_exploration_buy 결과.
+            decision: {fired, condition_states} — _derive_tag_decision 결과.
         """
         try:
             from .exploration_decision import build_exploration_tag_payload
@@ -1501,6 +1511,8 @@ class DecisionEngine:
 
         self._signal_sent.add(symbol)
         logger.info("SIGNAL: [S6] BUY signal symbol=%s price=%.0f confidence=%.2f", symbol, price, confidence)
+        # 통짜 태깅 — 모든 진입 경로의 단일 길목. 실패해도 신호/주문 흐름은 막지 않는다.
+        self._record_exploration_tag(symbol, candidate, _derive_tag_decision(matched))
         from .order_executor import order_executor
 
         async def _execute_and_track() -> None:
@@ -1531,6 +1543,25 @@ class DecisionEngine:
                 )
 
         asyncio.create_task(_execute_and_track())
+
+
+def _derive_tag_decision(matched: dict[str, Any]) -> dict[str, Any]:
+    """_emit_signal의 matched dict에서 태깅용 {fired, condition_states}를 유도한다.
+
+    진입 경로 판별: 탐색OR(fired_groups 보유) > 교체매매(replacement) > 베이스라인 게이트.
+    베이스라인은 observed_values(관측값)와 matched(조건 통과 여부)를 합쳐 보존한다.
+    """
+    if matched.get("fired_groups"):
+        return {
+            "fired": list(matched["fired_groups"]),
+            "condition_states": dict(matched.get("condition_states") or {}),
+        }
+    if matched.get("replacement"):
+        return {"fired": ["교체매매"], "condition_states": dict(matched.get("condition_states") or {})}
+    states: dict[str, Any] = {}
+    states.update(matched.get("matched") or {})
+    states.update(matched.get("observed_values") or {})
+    return {"fired": ["베이스라인(기존게이트)"], "condition_states": states}
 
 
 decision_engine = DecisionEngine()
