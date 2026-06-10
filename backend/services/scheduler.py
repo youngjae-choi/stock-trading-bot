@@ -1350,6 +1350,15 @@ async def job_postprocess_pipeline() -> None:
         logger.info("START: [PostProcess] S10 Review & Audit")
         await job_review_audit()
         logger.info("SUCCESS: [PostProcess] S10 Review & Audit 호출 완료")
+
+        # 10초봉 잔여 flush + 보존기간(30일) 초과분 정리 — 실패해도 후처리 계속
+        try:
+            from .engine import bar_store
+            _bs_saved = bar_store.flush_bars()
+            _bs_removed = bar_store.cleanup_old_bars()
+            logger.info("SUCCESS: [PostProcess] 10초봉 정리 flush=%d cleanup=%d", _bs_saved, _bs_removed)
+        except Exception as _bs_exc:
+            logger.warning("WARN: [PostProcess] 10초봉 정리 실패 reason=%s", _bs_exc)
         if s9_failed:
             message = "S9 failed, S10 review continued"
             _audit_step_finish(
@@ -1418,6 +1427,19 @@ async def job_intraday_regime_monitor(slot: str) -> None:
         )
     except Exception as exc:
         logger.error("FAIL: [IntradayRegimeMonitor] slot=%s reason=%s", slot, exc)
+
+
+async def job_bar_store_flush() -> None:
+    """10초봉 버퍼 → intraday_bars 일괄 저장 (장중 09~15시 매 1분). 비거래일 스킵."""
+    if _non_trading_day_today():
+        return
+    try:
+        from .engine import bar_store
+        saved = bar_store.flush_bars()
+        if saved:
+            logger.info("SUCCESS: [BarStore] 10초봉 %d행 저장", saved)
+    except Exception as exc:
+        logger.error("FAIL: [BarStore] 10초봉 flush 실패 — reason=%s", exc)
 
 
 async def job_momentum_scan() -> None:
@@ -1542,6 +1564,17 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour="9-15", minute="*/3", timezone="Asia/Seoul"),
         id="job_momentum_scan",
         name="상시 모멘텀 스캐너 (3분)",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # 10초봉 영구 저장 flush — 장중(09~15시) 매 1분 버퍼를 intraday_bars에 일괄 INSERT.
+    # 비거래일 가드는 job 내부 처리. 잔여분·30일 보존 정리는 후처리(S9~S10) 말미에서 수행.
+    scheduler.add_job(
+        job_bar_store_flush,
+        CronTrigger(hour="9-15", minute="*", timezone="Asia/Seoul"),
+        id="job_bar_store_flush",
+        name="10초봉 DB 저장 flush (1분)",
         replace_existing=True,
         max_instances=1,
         coalesce=True,

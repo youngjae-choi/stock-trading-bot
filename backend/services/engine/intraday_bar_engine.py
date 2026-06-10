@@ -2,6 +2,8 @@
 
 순수 인메모리. KIS/WS/DB 의존 없음. Phase 1a의 evaluate_condition이 소비하는
 state dict를 채운다. tsi(일봉)는 외부 주입이므로 본 엔진은 항상 None을 채운다.
+봉 '마감' 시에만 bar_store 버퍼에 적재한다(버퍼 적재만, DB 쓰기는 스케줄러 flush.
+실패해도 틱 경로는 차단되지 않는다).
 
 틱 입력은 합성(명명 키) 또는 WS 콜백(원본 fields 리스트) 둘 다 받는다.
 """
@@ -121,6 +123,25 @@ class BarEngine:
             b.close = price
             b.volume += vol
         else:
+            # 새 버킷 시작 → 직전 봉 확정. 영구 저장 버퍼에 적재(백테스트 토대).
+            # 어떤 예외도 틱 경로를 차단하지 않도록 무해화한다.
+            if st.bars:
+                try:
+                    from . import bar_store
+
+                    closed = st.bars[-1]
+                    bar_store.enqueue_bar(symbol, {
+                        "bar_ts": closed.bucket,
+                        "open": closed.open,
+                        "high": closed.high,
+                        "low": closed.low,
+                        "close": closed.close,
+                        "volume": closed.volume,
+                        # 마감 시점 체결강도(0~1) — 직전 봉 마지막 틱 기준
+                        "shnu_rate": st.last_chegyeol_gangdo,
+                    })
+                except Exception:
+                    logger.debug("bar_store enqueue 실패 — 틱 경로 계속 진행", exc_info=True)
             st.bars.append(_Bar(bucket=bucket, open=price, high=price, low=price, close=price, volume=vol))
 
         # running VWAP 누적

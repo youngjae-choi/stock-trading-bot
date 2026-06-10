@@ -50,12 +50,16 @@ def test_ev_negative_group():
 
 
 def test_multi_group_tag_counts_in_each_bucket():
-    # 한 태그가 2개 그룹 발화 → 두 버킷 모두 +1
+    # 한 태그가 2개 그룹 발화 → 분할 가중(기본): 각 버킷 +0.5 (중복 집계 방지)
+    # fractional=False(하위 호환)면 기존처럼 각 버킷 +1
     tags = [_tag(fired=["돌파전략", "모멘텀전략"], sources=[], regime="neutral",
                  pnl=500, win=True)]
     out = ev.compute_ev_by_dimension(tags, "fired_group")
-    assert out["돌파전략"]["n"] == 1
-    assert out["모멘텀전략"]["n"] == 1
+    assert out["돌파전략"]["n"] == 0.5
+    assert out["모멘텀전략"]["n"] == 0.5
+    legacy = ev.compute_ev_by_dimension(tags, "fired_group", fractional=False)
+    assert legacy["돌파전략"]["n"] == 1
+    assert legacy["모멘텀전략"]["n"] == 1
 
 
 def test_selection_source_dimension():
@@ -66,8 +70,12 @@ def test_selection_source_dimension():
              pnl=-2000, win=False),
     ]
     out = ev.compute_ev_by_dimension(tags, "selection_source")
-    assert out["등락률순위#3"]["n"] == 2          # 첫·셋째
-    assert out["거래대금상위"]["n"] == 2          # 둘째·셋째
+    # 분할 가중(기본): 셋째 태그(소스 2개)는 각 버킷 0.5 기여
+    assert out["등락률순위#3"]["n"] == 1.5        # 첫(1.0)·셋째(0.5)
+    assert out["거래대금상위"]["n"] == 1.5        # 둘째(1.0)·셋째(0.5)
+    legacy = ev.compute_ev_by_dimension(tags, "selection_source", fractional=False)
+    assert legacy["등락률순위#3"]["n"] == 2       # 기존 동작(하위 호환)
+    assert legacy["거래대금상위"]["n"] == 2
 
 
 def test_regime_dimension():

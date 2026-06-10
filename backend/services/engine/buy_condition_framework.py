@@ -77,16 +77,55 @@ def evaluate_group(group: dict[str, Any], conditions_by_id: dict[str, Any], stat
     return True
 
 
+def _regime_allows(assigned_to: Any, regime: str) -> bool:
+    """그룹의 assigned_to 가 현재 regime 을 허용하는지 판단.
+
+    assigned_to 는 콤마구분 문자열(현재 DB 저장 형식) 또는 list 모두 허용.
+    빈 값/None = 모든 레짐 허용.
+    """
+    if not assigned_to:
+        return True
+    if isinstance(assigned_to, str):
+        allowed = {token.strip() for token in assigned_to.split(",") if token.strip()}
+    else:
+        allowed = {str(token).strip() for token in assigned_to if str(token).strip()}
+    if not allowed:  # 공백뿐인 값 → 전체 허용
+        return True
+    return regime in allowed
+
+
 def evaluate_groups_or(
-    groups: list[dict[str, Any]], conditions_by_id: dict[str, Any], state: dict[str, Any]
+    groups: list[dict[str, Any]],
+    conditions_by_id: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    regime: str | None = None,
+    weight_floor: float = 0.2,
 ) -> dict[str, Any]:
-    """그룹들 OR — 발화한 그룹명 리스트와 any 여부."""
-    fired = [
-        str(g.get("name") or g.get("id"))
-        for g in groups
-        if evaluate_group(g, conditions_by_id, state)
-    ]
-    return {"any": len(fired) > 0, "fired": fired}
+    """그룹들 OR — 발화한 그룹명 리스트와 any 여부.
+
+    평가 전 그룹 필터(학습이 행동을 바꾸도록):
+      - weight < weight_floor → 제외 (EV 가지치기로 깎인 그룹의 실제 비활성화)
+      - regime 지정 + assigned_to 비어있지 않음 + 현재 regime 미포함 → 제외
+        (regime=None 이면 필터 미적용 = fail-open)
+
+    Returns:
+        {"any": bool, "fired": [그룹명], "skipped": [{"name", "reason"}]}
+        reason 은 "weight_floor" | "regime_filter" (태깅/디버깅용).
+    """
+    fired: list[str] = []
+    skipped: list[dict[str, str]] = []
+    for g in groups:
+        name = str(g.get("name") or g.get("id"))
+        if float(g.get("weight") or 1.0) < weight_floor:
+            skipped.append({"name": name, "reason": "weight_floor"})
+            continue
+        if regime is not None and not _regime_allows(g.get("assigned_to"), regime):
+            skipped.append({"name": name, "reason": "regime_filter"})
+            continue
+        if evaluate_group(g, conditions_by_id, state):
+            fired.append(name)
+    return {"any": len(fired) > 0, "fired": fired, "skipped": skipped}
 
 
 def _ensure_tables() -> None:

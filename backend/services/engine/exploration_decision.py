@@ -11,9 +11,21 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from ..settings_store import get_setting
 from .buy_condition_framework import evaluate_groups_or
 
 logger = logging.getLogger("ExplorationDecision")
+
+_DEFAULT_WEIGHT_FLOOR = 0.2
+
+
+def _weight_floor_setting() -> float:
+    """exploration.weight_floor 설정 조회 — 실패/비정상 값은 기본 0.2 폴백(차단 금지)."""
+    try:
+        return float(get_setting("exploration.weight_floor", _DEFAULT_WEIGHT_FLOOR) or _DEFAULT_WEIGHT_FLOOR)
+    except Exception as exc:
+        logger.warning("WARN: [탐색] weight_floor 설정 조회 실패 → 기본 %.2f 사용 reason=%s", _DEFAULT_WEIGHT_FLOOR, exc)
+        return _DEFAULT_WEIGHT_FLOOR
 
 
 def evaluate_exploration_buy(
@@ -23,6 +35,7 @@ def evaluate_exploration_buy(
     groups: list[dict[str, Any]],
     conditions: dict[str, dict[str, Any]],
     tsi: float | None,
+    regime: str | None = None,
 ) -> dict[str, Any]:
     """탐색 OR 매수 평가 결과를 반환한다.
 
@@ -32,17 +45,22 @@ def evaluate_exploration_buy(
         groups: load_groups() 결과(활성 그룹).
         conditions: load_conditions() 결과({id: condition}).
         tsi: 일봉 TSI(외부 주입). None 이면 state 의 None 유지(결손은 차단 금지).
+        regime: 현재 레짐(예: risk_on/neutral/risk_off). None 이면 레짐 필터 미적용.
 
     Returns:
-        {"any": bool, "fired": [group_names], "condition_states": state_snapshot}.
+        {"any": bool, "fired": [group_names], "skipped": [{"name","reason"}],
+         "condition_states": state_snapshot}.
     """
     state = bar_engine.compute_signal_state(symbol)
     if tsi is not None:
         state["tsi"] = tsi
-    result = evaluate_groups_or(groups, conditions, state)
+    result = evaluate_groups_or(
+        groups, conditions, state, regime=regime, weight_floor=_weight_floor_setting()
+    )
     return {
         "any": bool(result.get("any")),
         "fired": list(result.get("fired") or []),
+        "skipped": list(result.get("skipped") or []),
         "condition_states": state,
     }
 

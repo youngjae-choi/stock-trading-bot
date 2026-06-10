@@ -93,6 +93,7 @@ def _write_ev_memory(
     ev_results: dict[str, dict[str, dict[str, float]]],
     recommendations: list[dict[str, Any]],
     sample_size: int,
+    regime_skipped: list[dict[str, Any]] | None = None,
 ) -> None:
     """negative-knowledge("고르지/사지 말아야 할") 요약을 learning_memories 에 1행 기록한다.
 
@@ -101,9 +102,10 @@ def _write_ev_memory(
 
     Args:
         trade_date: 기준 거래일.
-        ev_results: {dimension: compute_ev_by_dimension 결과}.
-        recommendations: recommend_pruning 출력(전 차원 병합).
+        ev_results: {dimension: compute_ev_by_dimension 결과} + "regime_stratified"(층화).
+        recommendations: recommend_pruning 출력(전 차원 병합, 레짐 양수층 제외 후).
         sample_size: 집계에 쓰인 정산 태그 수.
+        regime_skipped: 레짐 양수층으로 권고에서 제외된 대상(filter_regime_confounded).
     """
     now = _now_kst_iso()
     expires_at = (datetime.fromisoformat(f"{trade_date}T00:00:00") + timedelta(days=7)).date().isoformat()
@@ -121,6 +123,7 @@ def _write_ev_memory(
     recommendation = {
         "action": "prune_negative_ev_targets",
         "pruning": recommendations,
+        "skipped": regime_skipped or [],
         "guidance": "EV 음수 그룹/선정소스는 다음날 매수에서 가중↓/회피한다(negative knowledge).",
         "rag_usage": "리뷰·다음날 선정/매수 컨텍스트 — '사지/고르지 말아야 할' 참고 메모리",
     }
@@ -176,11 +179,25 @@ def run_ev_pruning(
         recommendations.extend(ev_analysis.recommend_pruning(dim_ev, min_sample=min_sample))
     recommendations.sort(key=lambda r: r["ev"])  # 전 차원 병합 후 negative-first 재정렬
 
+    # 레짐×그룹 층화 EV — "어느 레짐에서 어느 그룹이 음수인지" 메모리 evidence 에 남긴다
+    stratified = ev_analysis.compute_ev_stratified(tags)
+    ev_results["regime_stratified"] = stratified
+
+    # 레짐 교란 방어: 전체 평균은 음수라도 특정 레짐 층에서 양수(EV>0, n>=min_sample/2)인
+    # 대상은 권고에서 제외하고 skipped 에 "regime_positive_layer" 사유로 기록한다
+    recommendations, regime_skipped = ev_analysis.filter_regime_confounded(
+        recommendations, stratified, min_sample=min_sample
+    )
+    if regime_skipped:
+        logger.info("INFO: [EV] 레짐 양수층 권고 제외 %d건: %s",
+                    len(regime_skipped), [s["target"] for s in regime_skipped])
+
     applied = {"adjusted": 0, "adjusted_groups": [], "skipped": []}
     if apply:
         applied = apply_auto_weight(recommendations)
 
-    _write_ev_memory(trade_date, ev_results, recommendations, sample_size)
+    _write_ev_memory(trade_date, ev_results, recommendations, sample_size,
+                     regime_skipped=regime_skipped)
 
     logger.info("SUCCESS: [EV] run_ev_pruning trade_date=%s sample=%d recs=%d adjusted=%d",
                 trade_date, sample_size, len(recommendations), applied["adjusted"])
@@ -190,5 +207,6 @@ def run_ev_pruning(
         "sample_size": sample_size,
         "ev_results": ev_results,
         "recommendations": recommendations,
+        "skipped": regime_skipped,
         "applied": applied,
     }

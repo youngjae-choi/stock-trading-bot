@@ -1234,6 +1234,7 @@ class DecisionEngine:
                 groups=groups,
                 conditions=conditions,
                 tsi=tsi,
+                regime=self._current_regime(),
             )
         except Exception as exc:
             logger.warning("WARN: [S6/탐색] OR 평가 실패 symbol=%s reason=%s", symbol, exc)
@@ -1255,6 +1256,32 @@ class DecisionEngine:
                 "condition_states": decision.get("condition_states") or {},
             },
         )
+
+    def _current_regime(self) -> str | None:
+        """현재 레짐을 daily_context_snapshot 에서 조회한다(60초 TTL 인스턴스 캐시).
+
+        _maybe_exploration_buy 가 매 틱 호출하므로 DB 조회를 캐시로 막는다.
+        조회 실패/레코드 없음 → None 반환(레짐 필터 미적용 = fail-open).
+        """
+        now = time.monotonic()
+        cached = getattr(self, "_regime_cache", None)
+        if cached is not None and now - cached[0] < 60.0:
+            return cached[1]
+        regime: str | None = None
+        try:
+            with get_connection() as conn:
+                row = conn.execute(
+                    "SELECT regime FROM daily_context_snapshot WHERE trade_date = ? "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (_today_kst(),),
+                ).fetchone()
+                if row and row["regime"]:
+                    regime = str(row["regime"])
+        except Exception as exc:
+            logger.warning("WARN: [S6/탐색] regime 조회 실패(fail-open) reason=%s", exc)
+            regime = None
+        self._regime_cache: tuple[float, str | None] = (now, regime)
+        return regime
 
     def _record_exploration_tag(
         self, symbol: str, candidate: dict[str, Any], decision: dict[str, Any]
