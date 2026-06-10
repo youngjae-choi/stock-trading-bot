@@ -126,13 +126,15 @@ class PositionManager:
             "qty": safe_qty,
             "entry_price": safe_entry,
             "entry_time": _now_kst().isoformat(),
+            "entry_ts": _now_kst().timestamp(),
             "profile_assigned": profile,
             "auto_imported": bool(auto_imported),
             # 손절선 (절대 하향 불가)
             "initial_stop_price": initial_stop_price,
             "active_stop_price": initial_stop_price,
-            # 트레일링
+            # 트레일링 / 청산 컨텍스트(MFE·MAE)
             "highest_price_since_entry": safe_entry,
+            "trough_price": safe_entry,
             "trailing_active": False,
             "trailing_stop_price": initial_stop_price,
             "trailing_activate_profit": trailing_activate,
@@ -241,6 +243,50 @@ class PositionManager:
     def get_positions(self) -> list[dict[str, Any]]:
         return [dict(p) for p in self._positions.values()]
 
+    def get_exit_context(self, symbol: str) -> dict[str, Any] | None:
+        """청산 시점 컨텍스트(MFE/MAE/보유시간)를 반환한다. 매도 전략 검증용.
+
+        remove_position 호출 전에 읽어야 한다. auto_imported(진입 맥락 불명) 포지션과
+        entry_price가 유효하지 않은 포지션은 None 을 반환한다.
+
+        Args:
+            symbol: 보유 종목 코드.
+
+        Returns:
+            {"mfe_pct", "mae_pct", "hold_sec", "peak_price", "trough_price"} dict,
+            계산 불가 시 None.
+        """
+        safe_symbol = str(symbol or "").strip()
+        position = self._positions.get(safe_symbol)
+        if not position or bool(position.get("auto_imported")):
+            return None
+        entry_price = _to_float(position.get("entry_price"))
+        if entry_price <= 0:
+            return None
+
+        peak = max(_to_float(position.get("highest_price_since_entry")), entry_price)
+        trough = _to_float(position.get("trough_price"))
+        trough = min(trough, entry_price) if trough > 0 else entry_price
+
+        hold_sec: float | None = None
+        entry_ts = position.get("entry_ts")
+        if entry_ts is None:
+            # 구버전 포지션(entry_ts 없음) 호환 — entry_time ISO 파싱 fallback
+            try:
+                entry_ts = datetime.fromisoformat(str(position.get("entry_time"))).timestamp()
+            except (TypeError, ValueError):
+                entry_ts = None
+        if entry_ts is not None:
+            hold_sec = max(_now_kst().timestamp() - float(entry_ts), 0.0)
+
+        return {
+            "mfe_pct": round((peak - entry_price) / entry_price * 100, 4),
+            "mae_pct": round((trough - entry_price) / entry_price * 100, 4),
+            "hold_sec": round(hold_sec, 1) if hold_sec is not None else None,
+            "peak_price": peak,
+            "trough_price": trough,
+        }
+
     async def on_tick(self, tick: dict[str, Any]) -> None:
         symbol = str(tick.get("symbol") or "").strip()
         position = self._positions.get(symbol)
@@ -261,6 +307,10 @@ class PositionManager:
             except Exception:
                 pass
             return
+
+        # 청산 컨텍스트(MAE)용 보유 중 최저가 추적 — 트레일링 갱신과 동일 지점
+        prev_trough = _to_float(position.get("trough_price"))
+        position["trough_price"] = min(prev_trough, price) if prev_trough > 0 else price
 
         # 트레일링 상태 업데이트
         self._update_trailing(position, price)

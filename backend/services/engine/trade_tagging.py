@@ -227,6 +227,55 @@ def set_outcome(*, order_id: str, outcome: dict) -> int:
     return updated
 
 
+def _loads_outcome(text: Any) -> dict:
+    """outcome_json 텍스트를 dict 로 파싱한다. 실패 시 빈 dict."""
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def merge_exit_context(symbol: str, trade_date: str, ctx: "dict | None") -> int:
+    """청산 시점 컨텍스트(MFE/MAE/보유시간)를 symbol+trade_date 태그 outcome 에 merge 한다.
+
+    기존 outcome 키(realized_pnl 등)는 보존하고 ctx 키만 추가/갱신한다.
+    매도 제출 직후 호출되므로 EOD pnl 백필보다 먼저 기록될 수 있다.
+
+    Args:
+        symbol: 종목 코드.
+        trade_date: YYYY-MM-DD 거래일.
+        ctx: position_manager.get_exit_context() 결과
+             ({"mfe_pct","mae_pct","hold_sec","peak_price","trough_price"}). None/빈 dict면 no-op.
+
+    Returns:
+        갱신된 행 수.
+    """
+    if not ctx:
+        return 0
+    _ensure_table()
+    updated = 0
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, outcome_json FROM trade_entry_tags WHERE trade_date = ? AND symbol = ?",
+            (str(trade_date or ""), str(symbol or "")),
+        ).fetchall()
+        for row in rows:
+            merged = {**_loads_outcome(row["outcome_json"]), **ctx}
+            conn.execute(
+                "UPDATE trade_entry_tags SET outcome_json = ? WHERE id = ?",
+                (_dumps(merged), row["id"]),
+            )
+            updated += 1
+    if updated == 0:
+        logger.warning("WARN: merge_exit_context 매칭 태그 없음 symbol=%s trade_date=%s", symbol, trade_date)
+    else:
+        logger.info("SUCCESS: exit context merge symbol=%s trade_date=%s rows=%d", symbol, trade_date, updated)
+    return updated
+
+
 def backfill_outcomes_for_date(
     trade_date: str,
     *,
@@ -236,8 +285,10 @@ def backfill_outcomes_for_date(
     """EOD 정산: 매도완료 trade pair 실현손익을 symbol+trade_date로 태그 outcome에 백필.
 
     태그는 신호 평가 시점에 order_id 없이 기록되므로(set_outcome의 order_id 매칭은
-    실전에서 불가) 심볼 단위로 정산한다. outcome이 이미 채워진 태그와 매수가 실행되지
-    않은 심볼(차단/관찰 태그)은 건드리지 않는다. EV 가지치기 표본의 유일한 공급원.
+    실전에서 불가) 심볼 단위로 정산한다. realized_pnl이 이미 채워진 태그와 매수가
+    실행되지 않은 심볼(차단/관찰 태그)은 건드리지 않는다. 청산 시 exit context
+    (mfe_pct 등)가 먼저 기록된 행에는 pnl을 merge 한다(기존 키 보존, 덮어쓰기 금지).
+    EV 가지치기 표본의 유일한 공급원.
 
     Args:
         trade_date: YYYY-MM-DD.
@@ -269,15 +320,21 @@ def backfill_outcomes_for_date(
                 "win": pnl > 0,
                 "exit_reason": exit_map.get(symbol, ""),
             }
-            cursor = conn.execute(
-                """
-                UPDATE trade_entry_tags SET outcome_json = ?
-                WHERE trade_date = ? AND symbol = ?
-                  AND (outcome_json = '{}' OR outcome_json = '')
-                """,
-                (_dumps(outcome), trade_date, symbol),
-            )
-            updated += cursor.rowcount
+            # read-merge-write: realized_pnl이 아직 없는 행에만 pnl을 merge 한다.
+            # exit context(mfe_pct 등)가 먼저 기록된 행도 정산 대상이며 기존 키는 보존한다.
+            rows = conn.execute(
+                "SELECT id, outcome_json FROM trade_entry_tags WHERE trade_date = ? AND symbol = ?",
+                (trade_date, symbol),
+            ).fetchall()
+            for row in rows:
+                existing = _loads_outcome(row["outcome_json"])
+                if "realized_pnl" in existing:
+                    continue  # 이미 정산된 태그는 건너뜀 (덮어쓰기 금지)
+                conn.execute(
+                    "UPDATE trade_entry_tags SET outcome_json = ? WHERE id = ?",
+                    (_dumps({**existing, **outcome}), row["id"]),
+                )
+                updated += 1
     logger.info("SUCCESS: [TagBackfill] outcome 백필 trade_date=%s rows=%d", trade_date, updated)
     return updated
 

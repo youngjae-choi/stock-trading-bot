@@ -575,7 +575,19 @@ class OrderExecutor:
                     "reason": "missing_kis_order_no",
                     "uncertain": True,
                 }
+            # 청산 시점 컨텍스트(MFE/MAE/보유시간) — remove_position 전에 읽어야 한다.
+            try:
+                exit_ctx = position_manager.get_exit_context(safe_symbol)
+            except Exception as ctx_exc:
+                exit_ctx = None
+                logger.warning("WARN: [S8/S9] exit context read failed symbol=%s reason=%s", safe_symbol, ctx_exc)
             position_manager.remove_position(safe_symbol)
+            # 청산 태그 outcome 에 exit context merge — best-effort, 매도 자체를 깨뜨려선 안 됨.
+            try:
+                from . import trade_tagging
+                trade_tagging.merge_exit_context(safe_symbol, today, exit_ctx)
+            except Exception as tag_exc:
+                logger.warning("WARN: [S8/S9] exit context tagging failed symbol=%s reason=%s", safe_symbol, tag_exc)
             # 청산 쿨다운 등록 — 방금 판 종목을 스캐너가 즉시 재편입(churn)하지 않도록.
             # best-effort: 스캐너 쿨다운 실패는 매도 자체를 깨뜨려선 안 됨.
             try:

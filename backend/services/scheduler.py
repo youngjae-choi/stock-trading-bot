@@ -1172,6 +1172,17 @@ async def job_review_audit() -> None:
     except Exception as exc:
         logger.error("FAIL: [Job ReviewAudit] 실패 — reason=%s", exc)
 
+    # 반사실 추적 확대: S4 선정-미진입 종목 shadow 기록 (update_missed_returns 직전 — 같은 EOD 경로로 수익률 채움)
+    try:
+        from .engine.missed_opportunity import record_s4_unentered_shadows
+
+        s4_shadow_count = record_s4_unentered_shadows(today)
+        logger.info(
+            "SUCCESS: [Job ReviewAudit] S4 미진입 shadow 기록 완료 inserted=%d", s4_shadow_count
+        )
+    except Exception as exc:
+        logger.error("FAIL: [Job ReviewAudit] S4 미진입 shadow 기록 실패 — reason=%s", exc)
+
     # 미진입 종목 수익률 소급 계산 (S10 후처리)
     try:
         from .engine.missed_opportunity import update_missed_returns

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from datetime import datetime
@@ -130,6 +131,108 @@ def get_improvement_candidates(trade_date: str) -> list[dict]:
     return [_row_to_dict(row) for row in rows]
 
 
+def _table_exists(conn: Any, table: str) -> bool:
+    """주어진 연결에서 테이블 존재 여부를 확인한다 (lazy 생성 테이블 대비)."""
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
+    return row is not None
+
+
+def record_s4_unentered_shadows(trade_date: str) -> int:
+    """S4 선정됐지만 매수 주문이 한 번도 안 나간 종목을 shadow_trades 에 기록한다.
+
+    반사실(counterfactual) 추적 확대: 기존 shadow 는 S6 후보 중 신호 미발화
+    (S6_NO_SIGNAL)만 기록했으나, S4 스크리닝 선정 후 결국 진입하지 못한 종목도
+    missed_stage='S4_SELECTED_NOT_ENTERED' 로 기록해 필터/게이트가 좋은 종목을
+    거르는지 EOD 사후 수익률(update_missed_returns)로 검증할 수 있게 한다.
+
+    판정 규칙 (순수 DB 로직 — KIS 호출 없음):
+    - 당일 hybrid_screening_results 최신 run(created_at DESC) 의 candidates
+    - 당일 trading_orders 에 side='buy' 주문(상태 무관)이 있는 심볼은 제외
+      (cancelled/failed 도 진입 시도로 간주)
+    - 이미 shadow_trades 에 같은 trade_date+symbol 행이 있으면 skip (멱등)
+    - entry_price 는 후보의 price 필드 (없으면 0.0 — 스키마 NOT NULL,
+      update_missed_returns 의 shadow 갱신이 entry_price<=0 을 skip 하므로 안전)
+
+    Args:
+        trade_date: YYYY-MM-DD 거래일.
+
+    Returns:
+        새로 기록된 shadow 행 수.
+    """
+    logger.info("START: MissedOpportunity record_s4_unentered_shadows trade_date=%s", trade_date)
+    with get_connection() as conn:
+        if not _table_exists(conn, "hybrid_screening_results"):
+            logger.info("SKIP: record_s4_unentered_shadows — hybrid_screening_results 없음")
+            return 0
+        row = conn.execute(
+            "SELECT candidates FROM hybrid_screening_results WHERE trade_date = ? ORDER BY created_at DESC LIMIT 1",
+            (trade_date,),
+        ).fetchone()
+        if row is None:
+            logger.info("SKIP: record_s4_unentered_shadows — 당일 스크리닝 결과 없음 trade_date=%s", trade_date)
+            return 0
+        try:
+            candidates = json.loads(row["candidates"] or "[]")
+        except (TypeError, ValueError):
+            candidates = []
+        if not isinstance(candidates, list):
+            candidates = []
+
+        bought_symbols: set[str] = set()
+        if _table_exists(conn, "trading_orders"):
+            bought_symbols = {
+                str(r["symbol"])
+                for r in conn.execute(
+                    "SELECT DISTINCT symbol FROM trading_orders WHERE trade_date = ? AND side = 'buy'",
+                    (trade_date,),
+                ).fetchall()
+            }
+
+        existing_symbols: set[str] = set()
+        if _table_exists(conn, "shadow_trades"):
+            existing_symbols = {
+                str(r["symbol"])
+                for r in conn.execute(
+                    "SELECT DISTINCT symbol FROM shadow_trades WHERE trade_date = ?",
+                    (trade_date,),
+                ).fetchall()
+            }
+
+    from .shadow_trading import create_shadow_trade
+
+    inserted = 0
+    now_iso = _now_kst_iso()
+    for cand in candidates:
+        if not isinstance(cand, dict):
+            continue
+        symbol = str(cand.get("symbol") or cand.get("ticker") or "").strip()
+        if not symbol or symbol in bought_symbols or symbol in existing_symbols:
+            continue
+        try:
+            create_shadow_trade(
+                trade_date=trade_date,
+                symbol=symbol,
+                symbol_name=str(cand.get("name") or ""),
+                missed_stage="S4_SELECTED_NOT_ENTERED",
+                entry_price=float(cand.get("price") or 0.0),
+                entry_time=now_iso,
+            )
+            existing_symbols.add(symbol)
+            inserted += 1
+        except Exception as exc:
+            logger.warning(
+                "WARN: record_s4_unentered_shadows 기록 실패 symbol=%s reason=%s", symbol, exc
+            )
+
+    logger.info(
+        "SUCCESS: MissedOpportunity record_s4_unentered_shadows trade_date=%s inserted=%d candidates=%d bought=%d",
+        trade_date, inserted, len(candidates), len(bought_symbols),
+    )
+    return inserted
+
+
 def _to_float(value: Any) -> float | None:
     """안전 float 변환. None/0/빈문자/파싱실패 시 None."""
     try:
@@ -181,9 +284,23 @@ async def update_missed_returns(trade_date: str, improvement_threshold: float = 
             (trade_date,),
         ).fetchall()
 
-    if not rows:
+        # shadow_trades(S6_NO_SIGNAL / S4_SELECTED_NOT_ENTERED 등 미진입 가상 추적)도
+        # 같은 일봉 경로로 max_return_eod 를 채운다 — missed_stage 무관, 미갱신 행만.
+        shadow_rows: list[Any] = []
+        if _table_exists(conn, "shadow_trades"):
+            shadow_rows = conn.execute(
+                """
+                SELECT id, symbol, entry_price
+                FROM shadow_trades
+                WHERE trade_date = ? AND max_return_eod IS NULL AND entry_price > 0
+                ORDER BY created_at
+                """,
+                (trade_date,),
+            ).fetchall()
+
+    if not rows and not shadow_rows:
         logger.info("SKIP: MissedOpportunity update_returns — no pending rows trade_date=%s", trade_date)
-        return {"updated": 0, "skipped": 0, "errors": 0}
+        return {"updated": 0, "skipped": 0, "errors": 0, "shadow_updated": 0, "shadow_errors": 0}
 
     from ..kis.domestic.service import get_daily_chart
 
@@ -242,8 +359,49 @@ async def update_missed_returns(trade_date: str, improvement_threshold: float = 
         # KIS API rate limit 보호
         await asyncio.sleep(0.15)
 
+    # ── shadow_trades 사후 수익률 갱신: 장중 최고가 기준 max_return_eod
+    shadow_updated = shadow_errors = 0
+    for row in shadow_rows:
+        row_id = row["id"]
+        symbol = row["symbol"]
+        entry_price = float(row["entry_price"])
+        try:
+            daily_resp = await get_daily_chart(symbol=symbol, period_code="D", adjusted_price="1")
+            daily_rows = daily_resp.get("output") or []
+            high_price = _to_float(daily_rows[0].get("stck_hgpr")) if daily_rows else None
+            max_return_eod = (
+                round((high_price - entry_price) / entry_price * 100, 4)
+                if high_price is not None
+                else None
+            )
+            if max_return_eod is None:
+                logger.warning("WARN: ShadowTrade EOD update no high price id=%s symbol=%s", row_id, symbol)
+                shadow_errors += 1
+            else:
+                with get_connection() as conn:
+                    conn.execute(
+                        "UPDATE shadow_trades SET max_return_eod = ? WHERE id = ?",
+                        (max_return_eod, row_id),
+                    )
+                logger.info(
+                    "UPDATED: ShadowTrade id=%s symbol=%s max_return_eod=%s", row_id, symbol, max_return_eod
+                )
+                shadow_updated += 1
+        except Exception as exc:
+            logger.warning("WARN: ShadowTrade EOD update id=%s symbol=%s error=%s", row_id, symbol, exc)
+            shadow_errors += 1
+
+        # KIS API rate limit 보호
+        await asyncio.sleep(0.15)
+
     logger.info(
-        "SUCCESS: MissedOpportunity update_returns trade_date=%s updated=%d skipped=%d errors=%d",
-        trade_date, updated, skipped, errors,
+        "SUCCESS: MissedOpportunity update_returns trade_date=%s updated=%d skipped=%d errors=%d shadow_updated=%d shadow_errors=%d",
+        trade_date, updated, skipped, errors, shadow_updated, shadow_errors,
     )
-    return {"updated": updated, "skipped": skipped, "errors": errors}
+    return {
+        "updated": updated,
+        "skipped": skipped,
+        "errors": errors,
+        "shadow_updated": shadow_updated,
+        "shadow_errors": shadow_errors,
+    }
