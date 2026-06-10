@@ -595,11 +595,63 @@ def _load_false_positives(trade_date: str) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-def _fallback_exit_reason(signal: dict[str, Any]) -> str:
+def _normalize_exit_reason(reason: str) -> str:
+    """매도주문 reason을 복기 exit 버킷 키로 정규화. (전략 추천 로직이 'eod' 키 참조)"""
+    r = str(reason or "").strip().lower()
+    if r in ("daily_force_exit", "eod_force_exit", "force_exit"):
+        return "eod"
+    return r
+
+
+def build_exit_reason_map(trade_date: str) -> dict[str, str]:
+    """체결된 매도주문(reason 보유)을 심볼→exit버킷으로 조인.
+
+    trading_signals에는 exit_reason 컬럼이 없어 청산 정보가 누락된다(2026-06-10 버그).
+    동일 심볼 다중 매도 시 마지막(최종 청산) reason을 채택한다.
+    """
+    if not _table_exists("trading_orders"):
+        return {}
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT symbol, reason FROM trading_orders
+            WHERE trade_date = ? AND side = 'sell'
+              AND status NOT IN ('cancelled', 'failed')
+              AND COALESCE(reason, '') != ''
+            ORDER BY created_at ASC
+            """,
+            (trade_date,),
+        ).fetchall()
+    result: dict[str, str] = {}
+    for row in rows:
+        result[str(row["symbol"])] = _normalize_exit_reason(row["reason"])
+    return result
+
+
+def _load_filled_buy_symbols(trade_date: str) -> set[str]:
+    """체결 buy 주문이 존재하는 심볼 집합. EOD 취소(미체결) 시그널을 거래 집계에서 제외하는 근거."""
+    if not _table_exists("trading_orders"):
+        return set()
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT symbol FROM trading_orders
+            WHERE trade_date = ? AND side = 'buy'
+              AND status NOT IN ('cancelled', 'failed')
+            """,
+            (trade_date,),
+        ).fetchall()
+    return {str(row["symbol"]) for row in rows}
+
+
+def _fallback_exit_reason(signal: dict[str, Any], exit_map: dict[str, str] | None = None) -> str:
     """Derive an actionable exit bucket when exit_reason is absent from the signal schema."""
     explicit = str(_signal_value(signal, "exit_reason", "")).strip().lower()
     if explicit:
         return explicit
+    mapped = (exit_map or {}).get(str(signal.get("symbol") or ""))
+    if mapped:
+        return mapped
     status = str(signal.get("status") or "unknown").lower()
     if status == "executed":
         return "executed_no_exit"
@@ -979,6 +1031,8 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
     now_iso = _now_kst_iso()
     _sync_realized_pnl_from_trade_pairs(trade_date)
     signals = _load_review_signals(trade_date)
+    exit_reason_map = build_exit_reason_map(trade_date)
+    filled_buy_symbols = _load_filled_buy_symbols(trade_date)
     orders = _order_summary(trade_date)
     integrity = summarize_order_integrity(trade_date)
     missed_entries = _load_missed_entries(trade_date)
@@ -1052,18 +1106,25 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
         if status not in _EXECUTED_STATUSES:
             continue
 
+        # EOD 미체결 취소(buy 주문 전부 cancelled/failed)는 거래가 아님 — 승패 왜곡 방지
+        # (2026-06-10: 취소 2건이 loss로 집계돼 MID_VOL 승률이 0.29로 과소 평가)
+        symbol = str(signal.get("symbol") or "")
+        if filled_buy_symbols and symbol not in filled_buy_symbols:
+            exit_bucket["cancelled_no_fill"]["count"] += 1
+            continue
+
         executed_trades += 1
         pnl = _safe_float(signal.get("realized_pnl"))
         total_pnl += pnl
         if pnl > 0:
             win_count += 1
             profile_bucket[profile]["win"] += 1
-        else:
+        elif pnl < 0:
             loss_count += 1
         profile_bucket[profile]["count"] += 1
         profile_bucket[profile]["pnl"] += pnl
 
-        exit_reason = _fallback_exit_reason(signal)
+        exit_reason = _fallback_exit_reason(signal, exit_reason_map)
         exit_bucket[exit_reason]["count"] += 1
         exit_bucket[exit_reason]["pnl"] += pnl
 

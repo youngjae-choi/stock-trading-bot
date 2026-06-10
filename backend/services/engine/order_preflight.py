@@ -445,13 +445,18 @@ def run_preflight(
         checks["data_quality"] = PREFLIGHT_OK
 
     # 9. 일일 투입예산 상한 (baseline×budget_rate 도달 시 신규매수 차단)
-    _budget_date = _today_kst()  # _today_kst() already returns str "%Y-%m-%d"
-    budget_blocked, budget_reason = _budget_cap_check(_budget_date)
-    if budget_blocked:
-        checks["budget_cap"] = PREFLIGHT_BLOCK
-        block_reasons.append(budget_reason)
+    #    누적매수 기준이라 매도해도 룸이 회복되지 않음 — 배포 게이트(현재 배포액 기준)가
+    #    활성인 탐색모드에선 풀배포·교체매매와 충돌하므로 생략한다 (PM 결정 2026-06-10).
+    if deploy_target_rate > 0:
+        checks["budget_cap"] = "skipped_deploy_gate"
     else:
-        checks["budget_cap"] = PREFLIGHT_OK
+        _budget_date = _today_kst()  # _today_kst() already returns str "%Y-%m-%d"
+        budget_blocked, budget_reason = _budget_cap_check(_budget_date)
+        if budget_blocked:
+            checks["budget_cap"] = PREFLIGHT_BLOCK
+            block_reasons.append(budget_reason)
+        else:
+            checks["budget_cap"] = PREFLIGHT_OK
 
     passed = len(block_reasons) == 0
     preflight_id = str(uuid.uuid4())

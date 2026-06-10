@@ -227,6 +227,61 @@ def set_outcome(*, order_id: str, outcome: dict) -> int:
     return updated
 
 
+def backfill_outcomes_for_date(
+    trade_date: str,
+    *,
+    pairs: "list[dict] | None" = None,
+    exit_map: "dict[str, str] | None" = None,
+) -> int:
+    """EOD 정산: 매도완료 trade pair 실현손익을 symbol+trade_date로 태그 outcome에 백필.
+
+    태그는 신호 평가 시점에 order_id 없이 기록되므로(set_outcome의 order_id 매칭은
+    실전에서 불가) 심볼 단위로 정산한다. outcome이 이미 채워진 태그와 매수가 실행되지
+    않은 심볼(차단/관찰 태그)은 건드리지 않는다. EV 가지치기 표본의 유일한 공급원.
+
+    Args:
+        trade_date: YYYY-MM-DD.
+        pairs: 주입용(테스트). None이면 trade_pairs.get_trade_pairs로 조회.
+        exit_map: 주입용(테스트). None이면 review_audit.build_exit_reason_map으로 조회.
+    """
+    _ensure_table()
+    if pairs is None:
+        from .trade_pairs import get_trade_pairs
+        pairs = get_trade_pairs(trade_date, trade_date)
+    if exit_map is None:
+        from .review_audit import build_exit_reason_map
+        exit_map = build_exit_reason_map(trade_date)
+
+    updated = 0
+    with get_connection() as conn:
+        for pair in pairs:
+            if (
+                pair.get("status") != "매도완료"
+                or pair.get("trade_date") != trade_date
+                or pair.get("pnl_amount") is None
+            ):
+                continue
+            symbol = str(pair.get("symbol") or "")
+            pnl = float(pair["pnl_amount"])
+            outcome = {
+                "realized_pnl": pnl,
+                "pnl_pct": pair.get("pnl_pct"),
+                "win": pnl > 0,
+                "exit_reason": exit_map.get(symbol, ""),
+            }
+            cursor = conn.execute(
+                """
+                UPDATE trade_entry_tags SET outcome_json = ?
+                WHERE trade_date = ? AND symbol = ?
+                  AND (outcome_json = '{}' OR outcome_json = '')
+                """,
+                (_dumps(outcome), trade_date, symbol),
+            )
+            updated += cursor.rowcount
+    logger.info("SUCCESS: [TagBackfill] outcome 백필 trade_date=%s rows=%d", trade_date, updated)
+    return updated
+
+
 def _delete_for_test(trade_date: str) -> None:
     """테스트 정리용: 해당 거래일 태그를 모두 삭제한다."""
     _ensure_table()

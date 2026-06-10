@@ -1226,6 +1226,13 @@ async def job_review_audit() -> None:
     # 추천 → condition_groups.weight 자동 반영 → "사지/고르지 말아야 할" negative-knowledge
     # 메모리 기록. 표본 부족 시 추천 없이 관측만(탐색 중 고손실일 자동 방어전환 방지).
     try:
+        # 태그 outcome 백필 — 이것 없이는 EV 표본이 항상 0 (2026-06-10 발견: set_outcome 미배선)
+        from .engine.trade_tagging import backfill_outcomes_for_date
+        backfilled = backfill_outcomes_for_date(today)
+        logger.info("SUCCESS: [ReviewAudit] 태그 outcome 백필 rows=%d", backfilled)
+    except Exception as exc:
+        logger.error("FAIL: [ReviewAudit] 태그 outcome 백필 실패 — %s", exc)
+    try:
         from .engine.ev_pruning import run_ev_pruning
 
         ev_result = run_ev_pruning(today, lookback_days=10, min_sample=30, apply=True)
