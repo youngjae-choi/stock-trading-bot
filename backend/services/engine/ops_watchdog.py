@@ -33,6 +33,20 @@ _M1530 = 15 * 60 + 30
 _M1525 = 15 * 60 + 25
 
 
+def _gate_min_from_schedule(setting_key: str, *, default_min: int, grace_min: int) -> int:
+    """스케줄 설정("HH:MM") + grace 로 게이트 시작 분을 동적 산출.
+
+    S1~S5 실행시간이 설정으로 이동 가능해지면서(6/10: 09:01/09:05) 하드코딩 게이트가
+    실행 전 시간대에 허위 anomaly를 내던 문제를 막는다. 설정 누락/형식 오류는 default.
+    """
+    try:
+        raw = str(get_setting(setting_key, "") or "")
+        hh, mm = raw.split(":")
+        return int(hh) * 60 + int(mm) + grace_min
+    except Exception:
+        return default_min
+
+
 def _now_kst() -> datetime:
     return datetime.now(KST)
 
@@ -200,17 +214,26 @@ def _chk_auto_halt(conn, td):
 class Check(NamedTuple):
     id: str
     severity: str
-    start_min: int
+    start_min: int | Callable[[], int]  # callable이면 실행 시점에 스케줄 설정으로 동적 산출
     end_min: int  # 24*60 이면 종일
     fn: Callable
 
 
+# 스케줄 이동 가능 단계는 설정 연동 게이트 사용 (6/11: 08:35 하드코딩이 09:01 S2에 허위 anomaly)
+def _gate_s2() -> int:
+    return _gate_min_from_schedule("schedule_s2_time", default_min=_M0835, grace_min=10)
+
+
+def _gate_trade_prep() -> int:
+    return _gate_min_from_schedule("schedule_trade_prep_time", default_min=_M0906, grace_min=15)
+
+
 _REGISTRY: list[Check] = [
-    Check("s2_premarket", "WARNING", _M0835, 24 * 60, _chk_s2_premarket),
-    Check("trade_prep", "CRITICAL", _M0906, 24 * 60, _chk_trade_prep),
-    Check("quality_universe", "WARNING", _M0906, 24 * 60, _chk_quality_universe),
-    Check("quality_screening", "WARNING", _M0906, 24 * 60, _chk_quality_screening),
-    Check("baseline_capture", "WARNING", _M0905, 24 * 60, _chk_baseline),
+    Check("s2_premarket", "WARNING", _gate_s2, 24 * 60, _chk_s2_premarket),
+    Check("trade_prep", "CRITICAL", _gate_trade_prep, 24 * 60, _chk_trade_prep),
+    Check("quality_universe", "WARNING", _gate_trade_prep, 24 * 60, _chk_quality_universe),
+    Check("quality_screening", "WARNING", _gate_trade_prep, 24 * 60, _chk_quality_screening),
+    Check("baseline_capture", "WARNING", _gate_trade_prep, 24 * 60, _chk_baseline),
     Check("buy_not_executed", "CRITICAL", _M0910, _M1530, _chk_buy_not_executed),
     Check("postprocess", "CRITICAL", _M1525, 24 * 60, _chk_postprocess),
     # 일중손실 자동 긴급정지 — 장중(09:05~15:20)만 적용
@@ -246,7 +269,8 @@ def run_ops_watchdog(now: datetime | None = None) -> dict:
     checks_run = 0
     with get_connection() as conn:
         for chk in _REGISTRY:
-            if not (chk.start_min <= mins <= chk.end_min):
+            start_min = chk.start_min() if callable(chk.start_min) else chk.start_min
+            if not (start_min <= mins <= chk.end_min):
                 continue
             checks_run += 1
             try:
