@@ -13,6 +13,12 @@ KST = timezone(timedelta(hours=9))
 KIS_NEW_CUSTOMER_POLICY_EFFECTIVE_AT = datetime(2026, 4, 3, 17, 0, 0, tzinfo=KST)
 
 
+# EGW00201(트래픽 초과) 감지 시 일시 감속 모드 파라미터
+_THROTTLE_WINDOW_SECONDS = 60.0  # 감속 유지 시간(초)
+_THROTTLE_FACTOR = 0.5           # 적용 RPS 배율(절반)
+_THROTTLE_MIN_RPS = 1.0          # 감속 시에도 보장하는 최소 RPS
+
+
 class RateLimiter:
     """Simple rate limiter for KIS API (e.g., 20 requests per second)."""
 
@@ -22,12 +28,28 @@ class RateLimiter:
         self.last_call = 0.0
         self.lock = asyncio.Lock()
         self.last_rate_limit_at = 0.0
+        self.throttled_until = 0.0  # monotonic 기준 감속 만료시각 (0.0 = 감속 없음)
+
+    def _is_throttled(self) -> bool:
+        """감속 모드 활성 여부 — 만료시각 경과 시 자동 원복."""
+        return time.monotonic() < self.throttled_until
+
+    def _effective_rps(self) -> float:
+        """감속 모드를 반영한 현재 적용 RPS."""
+        if self._is_throttled():
+            return max(_THROTTLE_MIN_RPS, self._requests_per_second * _THROTTLE_FACTOR)
+        return self._requests_per_second
+
+    def current_delay(self) -> float:
+        """감속 모드 반영 현재 호출 간격(초)."""
+        return 1.0 / self._effective_rps()
 
     async def wait(self):
         async with self.lock:
+            delay = self.current_delay()
             elapsed = time.perf_counter() - self.last_call
-            if elapsed < self.delay:
-                await asyncio.sleep(self.delay - elapsed)
+            if elapsed < delay:
+                await asyncio.sleep(delay - elapsed)
             self.last_call = time.perf_counter()
 
     def update_requests_per_second(self, requests_per_second: float):
@@ -36,13 +58,25 @@ class RateLimiter:
 
     def mark_rate_limited(self):
         self.last_rate_limit_at = time.time()
+        # 일시 감속 모드 진입: 이후 60초 동안 적용 RPS를 절반(최소 1.0)으로 낮춘다
+        self.throttled_until = time.monotonic() + _THROTTLE_WINDOW_SECONDS
+        logger.warning(
+            "WARN: KIS rate limiter throttled — rps %.2f -> %.2f for %.0fs",
+            self._requests_per_second,
+            self._effective_rps(),
+            _THROTTLE_WINDOW_SECONDS,
+        )
 
     def snapshot(self) -> Dict[str, float]:
         """Expose the active limiter settings for diagnostics and health responses."""
+        throttled = self._is_throttled()
         return {
             "configured_requests_per_second": self._requests_per_second,
             "delay_seconds": self.delay,
             "last_rate_limited_at": self.last_rate_limit_at,
+            # 감속 모드 진단 — 활성 시 throttle_factor=0.5, 비활성 시 1.0
+            "throttled_until": self.throttled_until if throttled else 0.0,
+            "throttle_factor": _THROTTLE_FACTOR if throttled else 1.0,
         }
 
 

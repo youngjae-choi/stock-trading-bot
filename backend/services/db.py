@@ -30,6 +30,13 @@ def get_connection() -> sqlite3.Connection:
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
+    try:
+        # WAL 모드 + busy_timeout — 동시 읽기/쓰기 안정화 (이미 WAL이면 no-op, 영속 속성)
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA busy_timeout=5000")
+    except sqlite3.Error as exc:
+        # PRAGMA 실패 시에도 연결은 정상 반환 (기존 동작 보존)
+        logger.warning("WARN: db.get_connection WAL/busy_timeout 설정 실패 — %s", exc)
     return connection
 
 

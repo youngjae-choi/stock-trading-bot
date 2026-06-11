@@ -15,7 +15,9 @@ from typing import Callable, NamedTuple
 from zoneinfo import ZoneInfo
 
 from ..db import get_connection
+from ..settings_store import get_setting, upsert_setting
 from .alert_center import create_alert
+from .order_preflight import _observed_daily_loss_percent
 from .trading_calendar import is_trading_day
 
 logger = logging.getLogger("OpsWatchdog")
@@ -26,6 +28,7 @@ _M0835 = 8 * 60 + 35
 _M0905 = 9 * 60 + 5
 _M0906 = 9 * 60 + 6
 _M0910 = 9 * 60 + 10
+_M1520 = 15 * 60 + 20
 _M1530 = 15 * 60 + 30
 _M1525 = 15 * 60 + 25
 
@@ -154,6 +157,46 @@ def _chk_postprocess(conn, td):
             + _audit_fail_suffix(conn, td, ["S9", "POSTPROCESS"]))
 
 
+def _chk_auto_halt(conn, td):
+    """일중손실 자동 긴급정지 — 관측 손실%가 임계 이하이면 신규 매수 차단(emergency halt).
+
+    자동 청산은 하지 않는다(PM 정책 — 신규 매수 차단만).
+    관측 불가(None)면 아무것도 안 함(fail-open — preflight 쪽 fail-closed가 별도 담당).
+    """
+    try:
+        threshold = float(get_setting("risk.auto_halt_loss_percent", -5.0))
+    except (TypeError, ValueError):
+        logger.warning("WARN: [OpsWatchdog] risk.auto_halt_loss_percent 값 비정상 — auto_halt 비활성")
+        return None
+    if threshold >= 0:
+        return None  # 0 또는 양수면 비활성
+    if bool(get_setting("risk.emergency_halt_enabled", False)):
+        return None  # 이미 긴급정지 상태 — 중복 발동 방지
+
+    percent, source = _observed_daily_loss_percent(td)
+    if percent is None:
+        return None  # 관측 불가 — fail-open
+    if percent > threshold:
+        return None  # 임계 미달 — 정상
+
+    # 발동: 신규 매수 차단 설정 ON (기존 preflight가 이 설정을 읽어 매수 차단)
+    upsert_setting(
+        "risk.emergency_halt_enabled",
+        True,
+        "boolean",
+        f"자동 긴급정지 — 일중손실 {percent:.2f}% ≤ {threshold:.2f}% (source={source})",
+        "ops_watchdog_auto_halt",
+    )
+    logger.warning(
+        "OPS-AUTO-HALT: 일중손실 %.2f%% ≤ %.2f%% — emergency_halt_enabled=True (source=%s)",
+        percent, threshold, source,
+    )
+    return ("자동 긴급정지 발동 — 일중손실 한도 도달",
+            f"일중손실 {percent:.2f}% ≤ 임계 {threshold:.2f}% (source={source}) — "
+            "신규 매수 차단(risk.emergency_halt_enabled=True). 자동 청산은 하지 않음. "
+            "해제하려면 설정에서 emergency_halt_enabled를 끄세요.")
+
+
 class Check(NamedTuple):
     id: str
     severity: str
@@ -170,6 +213,8 @@ _REGISTRY: list[Check] = [
     Check("baseline_capture", "WARNING", _M0905, 24 * 60, _chk_baseline),
     Check("buy_not_executed", "CRITICAL", _M0910, _M1530, _chk_buy_not_executed),
     Check("postprocess", "CRITICAL", _M1525, 24 * 60, _chk_postprocess),
+    # 일중손실 자동 긴급정지 — 장중(09:05~15:20)만 적용
+    Check("auto_halt", "CRITICAL", _M0905, _M1520, _chk_auto_halt),
 ]
 
 

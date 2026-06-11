@@ -18,6 +18,13 @@ logger = logging.getLogger("FillPoller")
 _POLL_INTERVAL = 60
 _MAX_AGE_HOURS = 8
 
+# 매도 부분체결 정체 추적 — order_id → {"ccld_qty": 직전 폴링 체결수량, "stall_count": 연속 정체 횟수}
+_PARTIAL_PROGRESS: dict[str, dict[str, int]] = {}
+# 잔량 재주문을 이미 낸 원주문 id 집합 — 같은 주문에 대한 재주문은 1회만
+_REMAINDER_REORDERED: set[str] = set()
+# 연속 정체 임계 — 폴링 60초 주기 기준 2회 연속 정체 ≈ 2분
+_PARTIAL_STALL_THRESHOLD = 2
+
 
 def _now_kst() -> datetime:
     """현재 Asia/Seoul 기준 시간을 반환한다."""
@@ -453,6 +460,96 @@ def _mark_order_partial(order: dict[str, Any], ccld_qty: int, price: float) -> N
     )
 
 
+async def _reorder_sell_remainder(order: dict[str, Any], rmn_qty: int) -> None:
+    """부분체결 정체 매도 주문의 잔량만 시장가로 새로 제출한다.
+
+    원주문은 KIS 정정/취소 없이 그대로 둔다(모의투자 API 정정/취소 제약 회피).
+    중복매도 가드(find_active_sell_order)는 잔량 재주문 자체를 막으므로
+    order_executor.execute_sell 대신 저수준 order_cash를 직접 사용한다.
+
+    Args:
+        order: partial 상태의 로컬 trading_orders 행(원주문).
+        rmn_qty: KIS 미체결 잔량(rmn_qty).
+    """
+    from ..kis.domestic.service import order_cash
+    from .order_executor import order_executor
+
+    symbol = str(order.get("symbol") or "")
+    origin_order_id = str(order.get("id") or "")
+    response = await order_cash(side="sell", symbol=symbol, qty=int(rmn_qty), price="0", ord_dvsn="01")
+    kis_order_no = order_executor._extract_order_no(response)
+    order_executor._save_order(
+        trade_date=str(order.get("trade_date") or _now_kst().strftime("%Y-%m-%d")),
+        signal_id=origin_order_id,  # 원주문 id 참조 — 잔량 재주문 추적용
+        symbol=symbol,
+        name=str(order.get("name") or ""),
+        side="sell",
+        order_type="market",
+        qty=int(rmn_qty),
+        price=0.0,
+        kis_order_no=kis_order_no,
+        status="submitted" if kis_order_no else "submitted_without_order_no",
+        reason="PARTIAL_FILL_REMAINDER",
+    )
+    logger.info(
+        "SUCCESS: [FillPoller] 매도 잔량 시장가 재주문 제출 symbol=%s rmn_qty=%d origin_order_id=%s kis_order_no=%s",
+        symbol,
+        rmn_qty,
+        origin_order_id,
+        kis_order_no or "(missing)",
+    )
+
+
+async def _maybe_reorder_sell_remainder(order: dict[str, Any], ccld_qty: int, rmn_qty: int) -> None:
+    """매도 partial 주문의 정체를 추적하고, 2회 연속 정체면 잔량을 시장가로 재주문한다.
+
+    매수 partial은 대상이 아니다(잔량 미체결이 위험하지 않음 — EOD 취소 경로 존재).
+    내부 오류는 모두 삼켜서 폴링 루프를 절대 죽이지 않는다.
+
+    Args:
+        order: 로컬 trading_orders 행.
+        ccld_qty: 이번 폴링에서 확인된 누적 체결수량.
+        rmn_qty: KIS 미체결 잔량.
+    """
+    try:
+        if str(order.get("side") or "") != "sell" or rmn_qty <= 0:
+            return
+        order_id = str(order.get("id") or "")
+        if not order_id or order_id in _REMAINDER_REORDERED:
+            return
+
+        # 직전 폴링 대비 체결수량 진행 여부 — 진행 중이면 정체 카운터 리셋
+        prev = _PARTIAL_PROGRESS.get(order_id)
+        if prev is None or ccld_qty > int(prev.get("ccld_qty") or 0):
+            _PARTIAL_PROGRESS[order_id] = {"ccld_qty": ccld_qty, "stall_count": 0}
+            return
+        state = _PARTIAL_PROGRESS[order_id]
+        state["stall_count"] = int(state.get("stall_count") or 0) + 1
+        if state["stall_count"] < _PARTIAL_STALL_THRESHOLD:
+            return
+
+        from ..settings_store import get_setting
+
+        if not get_setting("risk.partial_fill_reorder_enabled", True):
+            logger.info(
+                "INFO: [FillPoller] 매도 잔량 재주문 비활성(설정) — 감지만 symbol=%s ccld=%d rmn=%d stall=%d",
+                order.get("symbol"),
+                ccld_qty,
+                rmn_qty,
+                state["stall_count"],
+            )
+            return
+
+        await _reorder_sell_remainder(order, rmn_qty)
+        _REMAINDER_REORDERED.add(order_id)
+    except Exception as exc:
+        logger.warning(
+            "WARN: [FillPoller] 매도 잔량 재주문 처리 실패 symbol=%s error=%s",
+            order.get("symbol"),
+            exc,
+        )
+
+
 async def poll_once(trade_date: str) -> dict[str, Any]:
     """KIS 체결 내역을 1회 조회해 submitted 주문 상태를 갱신한다.
 
@@ -518,6 +615,9 @@ async def poll_once(trade_date: str) -> dict[str, Any]:
             _mark_order_filled(order, kis_data)
             _notify_buy_fill(order, kis_data, ccld_qty)
             _notify_sell_fill(order, kis_data, ccld_qty)
+            # 전량 체결 — 부분체결 정체 추적 상태 정리
+            _PARTIAL_PROGRESS.pop(order_id, None)
+            _REMAINDER_REORDERED.discard(order_id)
             filled_count += 1
             logger.info(
                 "SUCCESS: [FillPoller] output1 filled order_id=%s symbol=%s qty=%d price=%.2f",
@@ -535,6 +635,8 @@ async def poll_once(trade_date: str) -> dict[str, Any]:
                 ccld_qty,
                 rmn_qty,
             )
+            # 매도 부분체결 정체 시 잔량 시장가 재주문 (내부 try/except — 루프 보호)
+            await _maybe_reorder_sell_remainder(order, ccld_qty, rmn_qty)
 
     # ── 2단계: output2 폴백 (모의투자 — output1 항상 비어있음) ────────────
     if unmatched:

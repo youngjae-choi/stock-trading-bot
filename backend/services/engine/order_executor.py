@@ -22,6 +22,10 @@ logger = logging.getLogger("OrderExecutor")
 
 POSITION_SIZE_PCT_DEFAULT = 10.0
 
+# 매도 제출실패 쿨다운 — 실패 심볼의 즉시 재청산 폭주 방지 (symbol → 실패 시각 monotonic)
+_SELL_FAIL_COOLDOWN: dict[str, float] = {}
+_SELL_FAIL_COOLDOWN_SEC = 60.0
+
 
 def _now_kst() -> datetime:
     """Return the current Asia/Seoul datetime."""
@@ -429,6 +433,27 @@ class OrderExecutor:
             logger.warning("WARN: [S8/S9] invalid sell request order_id=%s symbol=%s qty=%d", order_id, safe_symbol, safe_qty)
             return {"ok": False, "order_id": order_id, "symbol": safe_symbol, "reason": fail_reason}
 
+        # 매도 제출실패 쿨다운 — 직전 제출실패 후 60초 이내 재호출이면 KIS 호출 없이 즉시 skip.
+        # 포지션은 보존된 상태이므로 쿨다운 만료 후 손절/EOD 경로가 자연 재시도한다.
+        failed_at = _SELL_FAIL_COOLDOWN.get(safe_symbol)
+        if failed_at is not None:
+            cooldown_left = _SELL_FAIL_COOLDOWN_SEC - (time.monotonic() - failed_at)
+            if cooldown_left > 0:
+                logger.warning(
+                    "WARN: [S8/S9] 매도 쿨다운 중 — skip symbol=%s 남은시간=%.0fs",
+                    safe_symbol,
+                    cooldown_left,
+                )
+                self._discard_closing_mark(safe_symbol)
+                return {
+                    "ok": False,
+                    "status": "skipped_sell_cooldown",
+                    "symbol": safe_symbol,
+                    "qty": safe_qty,
+                    "reason": "sell_fail_cooldown",
+                }
+            _SELL_FAIL_COOLDOWN.pop(safe_symbol, None)
+
         duplicate_sell = find_active_sell_order(today, safe_symbol)
         if duplicate_sell:
             logger.warning(
@@ -514,6 +539,8 @@ class OrderExecutor:
                         )
                 if not _sell_success:
                     raise first_exc
+            # 제출 성공 — 직전 실패 쿨다운 해제
+            _SELL_FAIL_COOLDOWN.pop(safe_symbol, None)
             await asyncio.sleep(0.2)
             kis_order_no = self._extract_order_no(response)
 
@@ -618,8 +645,30 @@ class OrderExecutor:
                 status="failed",
                 reason=str(exc),
             )
+            # 주문이 KIS에 접수되지 않았음이 확실한 실패(예외 종료) — 포지션을 보존해
+            # 손절 감시에서 빠지는 '유령 보유'를 막는다. remove_position 호출 금지.
+            # 대신 쿨다운을 등록해 같은 심볼의 재청산 폭주를 방지한다.
+            _SELL_FAIL_COOLDOWN[safe_symbol] = time.monotonic()
+            self._discard_closing_mark(safe_symbol)
             logger.error("FAIL: [S8/S9] sell order failed order_id=%s symbol=%s reason=%s", order_id, safe_symbol, exc)
+            logger.warning(
+                "WARN: 매도 제출실패 — 포지션 보존, %.0fs 후 재시도 가능 symbol=%s",
+                _SELL_FAIL_COOLDOWN_SEC,
+                safe_symbol,
+            )
             return {"ok": False, "order_id": order_id, "symbol": safe_symbol, "reason": str(exc)}
+
+    def _discard_closing_mark(self, symbol: str) -> None:
+        """position_manager.on_tick의 _closing 마크를 해제한다 (best-effort).
+
+        on_tick은 execute_sell 호출 전에 심볼을 _closing에 넣는데, 제출실패/쿨다운 skip처럼
+        매도가 성립하지 않은 경로에서 마크가 남으면 손절 감시가 영구 중단된다.
+        파일 소유권 제약(position_manager.py 수정 금지)으로 여기서 직접 해제한다.
+        """
+        try:
+            position_manager._closing.discard(symbol)
+        except Exception:
+            pass
 
     def _calc_budget_qty(
         self,
