@@ -1453,6 +1453,25 @@ async def job_bar_store_flush() -> None:
         logger.error("FAIL: [BarStore] 10초봉 flush 실패 — reason=%s", exc)
 
 
+async def job_stop_loss_backup() -> None:
+    """손절 REST 폴링 백업 — WS 정체 시 보유 포지션 손절선을 REST 현재가로 감시(09~15시 매 1분).
+
+    WS 정상이면 PositionManager 내부 가드(ws_alive)로 REST 호출 없이 skip 된다. 비거래일 스킵.
+    """
+    if _non_trading_day_today():
+        return
+    try:
+        from .engine.position_manager import position_manager
+        result = await position_manager.check_exits_via_rest()
+        if result.get("checked"):
+            logger.info(
+                "SUCCESS: [StopLossBackup] checked=%s triggered=%s errors=%s",
+                result.get("checked"), result.get("triggered"), result.get("errors"),
+            )
+    except Exception as exc:
+        logger.error("FAIL: [StopLossBackup] 실패 — reason=%s", exc)
+
+
 async def job_momentum_scan() -> None:
     """상시 모멘텀 스캐너 — 3분마다 현재 movers 발굴(09~15시). 비거래일·exploration 가드는 내부에서도 처리."""
     if _non_trading_day_today():
@@ -1575,6 +1594,17 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour="9-15", minute="*/3", timezone="Asia/Seoul"),
         id="job_momentum_scan",
         name="상시 모멘텀 스캐너 (3분)",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # 손절 REST 폴링 백업 — 장중(09~15시) 매 1분. WS 단절 시에도 보유 포지션 손절이
+    # 멈추지 않도록 REST 현재가로 백업 감시한다. WS 정상이면 내부 가드로 즉시 skip.
+    scheduler.add_job(
+        job_stop_loss_backup,
+        CronTrigger(hour="9-15", minute="*", timezone="Asia/Seoul"),
+        id="job_stop_loss_backup",
+        name="손절 REST 폴링 백업 (1분)",
         replace_existing=True,
         max_instances=1,
         coalesce=True,

@@ -13,12 +13,14 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from ..db import get_connection
 from ..kis.realtime_ws import realtime_ws_manager
+from ..settings_store import get_setting
 
 logger = logging.getLogger("PositionManager")
 
@@ -80,6 +82,8 @@ class PositionManager:
         self._positions: dict[str, dict[str, Any]] = {}
         self._closing: set[str] = set()
         self._active = False
+        # WS 마지막 틱 수신 시각(monotonic). None이면 틱을 한 번도 못 받은 상태(stale 간주).
+        self._last_tick_monotonic: float | None = None
 
     def add_position(
         self,
@@ -288,6 +292,9 @@ class PositionManager:
         }
 
     async def on_tick(self, tick: dict[str, Any]) -> None:
+        # WS 생존 판정용 — 어떤 틱이든 수신했다면 WS 경로가 살아있는 것이다 (REST 백업 가드)
+        self._last_tick_monotonic = time.monotonic()
+
         symbol = str(tick.get("symbol") or "").strip()
         position = self._positions.get(symbol)
         if not position or symbol in self._closing:
@@ -308,6 +315,23 @@ class PositionManager:
                 pass
             return
 
+        await self._process_price(position, price)
+
+    async def _process_price(self, position: dict[str, Any], price: float) -> str:
+        """가격 1건에 대한 공통 갱신·청산 판정 — WS 틱(on_tick)과 REST 백업이 같은 코드를 탄다.
+
+        trough/peak(MFE·MAE) 갱신 → 트레일링 갱신 → 청산 판정 → 매도 실행 순서로
+        on_tick 기존 흐름과 동일하게 처리한다.
+
+        Args:
+            position: 관리 중인 포지션 dict.
+            price: 검증된 양수 현재가.
+
+        Returns:
+            청산이 트리거되어 매도 주문을 제출했으면 exit reason, 아니면 "".
+        """
+        symbol = str(position.get("symbol") or "")
+
         # 청산 컨텍스트(MAE)용 보유 중 최저가 추적 — 트레일링 갱신과 동일 지점
         prev_trough = _to_float(position.get("trough_price"))
         position["trough_price"] = min(prev_trough, price) if prev_trough > 0 else price
@@ -317,7 +341,7 @@ class PositionManager:
 
         reason = self._exit_reason(position, price)
         if not reason:
-            return
+            return ""
 
         self._closing.add(symbol)
         logger.info("START: [S8] exit symbol=%s reason=%s price=%.2f", symbol, reason, price)
@@ -330,6 +354,73 @@ class PositionManager:
         except Exception as exc:
             self._closing.discard(symbol)
             logger.error("FAIL: [S8] exit order failed symbol=%s error=%s", symbol, exc)
+            return ""
+        return reason
+
+    async def check_exits_via_rest(self) -> dict[str, Any]:
+        """손절 REST 폴링 백업 — WS 정체 시 보유 포지션을 REST 현재가로 감시한다.
+
+        WS가 정상(최근 stale_threshold 이내 틱 수신)이면 REST를 호출하지 않는다
+        (KIS rate-limit 보호). WS 정체 또는 틱 미수신 상태에서만 보유 심볼별
+        현재가를 조회해 on_tick과 동일한 _process_price 경로로 청산을 판정한다.
+
+        Returns:
+            {"ok", "checked", "triggered", "errors"} 또는 skip 사유 dict.
+        """
+        symbols = [s for s, p in self._positions.items() if s not in self._closing]
+        if not symbols:
+            return {"ok": True, "checked": 0}
+
+        try:
+            enabled = get_setting("risk.stop_loss_backup_enabled", True)
+        except Exception:
+            enabled = True
+        if not enabled:
+            return {"ok": True, "skipped": "disabled"}
+
+        try:
+            stale_threshold = float(get_setting("risk.stop_loss_backup_stale_sec", 90) or 90)
+        except Exception:
+            stale_threshold = 90.0
+
+        # 최근 틱이 있으면 WS 경로가 살아있다 — REST 백업 불필요. None이면 stale 간주.
+        last_tick = self._last_tick_monotonic
+        if last_tick is not None and (time.monotonic() - last_tick) < stale_threshold:
+            return {"ok": True, "skipped": "ws_alive"}
+
+        logger.warning(
+            "WARN: [S8] WS stale(>%ss) — REST 손절 백업 폴링 시작 symbols=%d",
+            int(stale_threshold), len(symbols),
+        )
+
+        from ..kis.domestic import service as domestic_service
+
+        checked = 0
+        triggered: list[str] = []
+        errors: list[str] = []
+        for symbol in symbols:
+            position = self._positions.get(symbol)
+            if not position or symbol in self._closing:
+                continue
+            try:
+                payload = await domestic_service.get_current_price(symbol)
+            except Exception as exc:
+                errors.append(symbol)
+                logger.warning("WARN: [S8] REST 백업 현재가 조회 실패 symbol=%s reason=%s", symbol, exc)
+                continue
+            output = payload.get("output") if isinstance(payload, dict) else {}
+            price = _to_float((output or {}).get("stck_prpr"))
+            if price <= 0:
+                errors.append(symbol)
+                logger.warning("WARN: [S8] REST 백업 현재가 무효 symbol=%s price=%s", symbol, price)
+                continue
+            checked += 1
+            reason = await self._process_price(position, price)
+            if reason:
+                triggered.append(symbol)
+                logger.info("SUCCESS: [S8] REST 백업 청산 트리거 symbol=%s reason=%s price=%.2f", symbol, reason, price)
+
+        return {"ok": True, "checked": checked, "triggered": triggered, "errors": errors}
 
     async def _notify_trailing_slot_opened(self, symbol: str, reason: str) -> None:
         """Re-arm S6 candidate evaluation after a trailing stop opens capacity.
