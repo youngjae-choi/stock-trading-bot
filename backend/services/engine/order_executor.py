@@ -150,6 +150,10 @@ class OrderExecutor:
         self._balance_cache: dict[str, Any] = {}
         self._balance_cache_at: float = 0.0
         self._BALANCE_TTL = 30.0
+        # 제출중(in-flight) 매수금액 추적 — 잔고 캐시/KIS 반영 지연 동안 배포 게이트 정확성 보장
+        # (2026-06-11: 개장 버스트 15건이 같은 잔고 스냅샷을 보고 95% 목표를 100%까지 초과한 버그)
+        self._inflight_buys: list[tuple[float, float]] = []  # (monotonic_ts, amount)
+        self._INFLIGHT_TTL = 60.0
 
     _BUY_MAX_RETRY = 3
     _BUY_RETRY_DELAYS = (2.0, 4.0, 8.0)  # 초 단위 — 지수 백오프
@@ -264,7 +268,8 @@ class OrderExecutor:
                 profile_rate = self._position_size_pct(final_rule) / 100.0
                 deploy_target = float(_get_setting("exploration.deploy_target_rate", 0.95) or 0.95)
                 buffer = total_eval * (1.0 - deploy_target)
-                deployable = max(0.0, deposit - buffer)  # deposit=ord_psbl_cash(실시간)
+                # 제출중(in-flight) 금액 차감 — 잔고 캐시/KIS 반영 지연 동안의 초과배포 방지
+                deployable = self._effective_deployable(deposit, buffer)
                 qty = self._calc_profile_qty(total_eval, profile_rate, deployable, price)
                 logger.info(
                     "INFO: [S7] Profile비중 사이징 symbol=%s rate=%.2f total_eval=%.0f deployable=%.0f qty=%d",
@@ -287,7 +292,7 @@ class OrderExecutor:
             from ..settings_store import get_setting as _get_setting
             if is_exploration_allowed():
                 _total_eval = self._extract_total_eval(balance)
-                _deployed = max(0.0, _total_eval - deposit)  # 총자산 - 가용현금 = 배포액
+                _deployed = self._effective_deployed(_total_eval, deposit)  # 배포액 + 제출중 금액
                 _target = float(_get_setting("exploration.deploy_target_rate", 0.95) or 0.95)
                 preflight = run_preflight(signal, final_rule, current_positions_count=current_pos_count,
                                           deployed_value=_deployed, total_eval=_total_eval, deploy_target_rate=_target)
@@ -352,6 +357,7 @@ class OrderExecutor:
                 reason="" if kis_order_no else "submit_uncertain",
             )
             self._update_signal_status(signal_id, "executed")
+            self._note_inflight_buy(qty * price)  # 다음 매수의 게이트·사이징에 즉시 반영
 
             position_manager.add_position(symbol=symbol, name=name, qty=qty, entry_price=price, final_rule=final_rule)
             logger.info(
@@ -376,6 +382,28 @@ class OrderExecutor:
             self._update_signal_status(signal_id, "failed")
             logger.error("FAIL: [S7] buy order failed order_id=%s symbol=%s reason=%s", order_id, symbol, exc)
             return {"ok": False, "order_id": order_id, "symbol": symbol, "reason": str(exc)}
+
+    def _note_inflight_buy(self, amount: float) -> None:
+        """매수 제출 성공 직후 호출 — in-flight 금액 기록 + 잔고 캐시 무효화."""
+        try:
+            if amount > 0:
+                self._inflight_buys.append((time.monotonic(), float(amount)))
+        finally:
+            self._balance_cache_at = 0.0  # 다음 매수는 신선한 잔고를 조회
+
+    def _inflight_amount(self) -> float:
+        """TTL(60s) 내 제출중 매수금액 합 — 만료 항목은 정리한다."""
+        now = time.monotonic()
+        self._inflight_buys = [(ts, amt) for ts, amt in self._inflight_buys if now - ts < self._INFLIGHT_TTL]
+        return sum(amt for _, amt in self._inflight_buys)
+
+    def _effective_deployed(self, total_eval: float, deposit: float) -> float:
+        """게이트용 배포액 = (총자산-가용현금) + 제출중 금액."""
+        return max(0.0, total_eval - deposit) + self._inflight_amount()
+
+    def _effective_deployable(self, deposit: float, buffer: float) -> float:
+        """사이징용 가용액 = 가용현금 - 버퍼 - 제출중 금액."""
+        return max(0.0, deposit - buffer - self._inflight_amount())
 
     async def _get_cached_balance(self) -> dict[str, Any]:
         """Return KIS balance data using a 30-second cache to reduce API pressure."""
