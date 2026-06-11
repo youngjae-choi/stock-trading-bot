@@ -139,9 +139,11 @@ def _build_balance_payload(data: dict[str, Any]) -> dict[str, Any]:
         cumulative_pnl = 0
         cumulative_return_pct = 0.0
 
-    # 당일 손익(통합) = 당일 실현손익(청산 완료) + 미실현 평가손익(보유종목).
-    # 단타 청산 시 미실현이 0이 되며 실현분이 화면에서 누락되던 문제를 해결한다.
-    # 분모는 당일 시작자본(daily_capital_baseline) — 없으면 총평가금액으로 폴백.
+    # 당일 손익 = 자본변화 기준(A안, PM 결정 2026-06-11): 현재 총평가 - 장시작 자본(baseline).
+    # 수수료·제세금·짝맞춤 누락까지 자동 반영되어 항상 계좌 잔고와 일치한다.
+    # (이전 부품 조립식(실현+평가)은 고회전일에 실제 자본변화와 큰 오차 — 6/11 +0.11% vs 실제 -2.23%)
+    # 실현/평가 분해(today_realized_pnl, pnl_total)는 보조 표기로 유지.
+    # baseline 미캡처(장전/비거래일)면 0 표기 — "당일"의 시작점이 없으므로.
     pnl_total_unrealized = _to_int(summary.get("evlu_pfls_smtl_amt"))
     try:
         from datetime import datetime as _dt
@@ -151,13 +153,17 @@ def _build_balance_payload(data: dict[str, Any]) -> dict[str, Any]:
 
         _today = _dt.now(_ZI("Asia/Seoul")).strftime("%Y-%m-%d")
         today_realized_pnl = int(get_today_realized_pnl(_today))
-        _base = get_baseline(_today) or (total_eval or principal)
-        daily_pnl_total = today_realized_pnl + pnl_total_unrealized
-        daily_pnl_pct = round(daily_pnl_total / _base * 100, 2) if _base else 0.0
+        _base = get_baseline(_today)
+        if _base and _base > 0 and total_eval > 0:
+            daily_pnl_total = int(total_eval - _base)
+            daily_pnl_pct = round(daily_pnl_total / _base * 100, 2)
+        else:
+            daily_pnl_total = 0
+            daily_pnl_pct = 0.0
     except Exception as exc:
-        logger.warning("WARN: account daily realized pnl 계산 실패 — %s", exc)
+        logger.warning("WARN: account daily pnl 계산 실패 — %s", exc)
         today_realized_pnl = 0
-        daily_pnl_total = pnl_total_unrealized
+        daily_pnl_total = 0
         daily_pnl_pct = 0.0
 
     account_no = f"{settings.KIS_CANO}{settings.KIS_ACNT_PRDT_CD}"

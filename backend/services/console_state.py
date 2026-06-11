@@ -573,6 +573,12 @@ def get_console_overview() -> dict[str, Any]:
         except Exception as exc:
             logger.debug("DEBUG: console_state KIS balance unavailable, falling back to DB - %s", exc)
 
+    # KIS 조회 실패 시: 0%로 떨어뜨리지 말고 마지막 실측값을 유지한다(2026-06-11:
+    # Today Control이 0.00%로 표시되던 원인 — 낡았어도 실측이 0보다 정확).
+    if pnl_source == "db" and _pnl_cache["pct"] is not None:
+        pnl_pct = _pnl_cache["pct"]
+        pnl_source = "kis_stale"
+
     if pnl_source == "db":
         try:
             with get_connection() as conn:
@@ -745,9 +751,15 @@ def get_console_overview() -> dict[str, Any]:
 
     logs = sorted(logs, key=lambda x: x["time"], reverse=True)[:10]
 
-    # 11. Risk limits from active RulePack
+    # 11. Risk limits — max_positions는 Settings(risk.max_positions) 단일출처 (2026-06-11:
+    # RulePack 기본 5가 표시돼 PM 설정 20과 어긋나던 문제). 손실한도는 RulePack 우선 유지.
     max_positions = 5
     daily_loss_limit_pct = -2.0
+    try:
+        from .settings_store import get_setting as _gs_risk
+        max_positions = int(float(_gs_risk("risk.max_positions", 5) or 5))
+    except Exception as exc:
+        logger.warning("WARN: console_state max_positions setting read failed - %s", exc)
     try:
         if rulepack:
             machine_rules = rulepack.get("machine_rules") or {}
@@ -756,7 +768,6 @@ def get_console_overview() -> dict[str, Any]:
 
                 machine_rules = _json2.loads(machine_rules)
             risk_limits = machine_rules.get("risk_limits", {})
-            max_positions = int(risk_limits.get("max_positions", 5))
             daily_loss_limit_pct = float(risk_limits.get("daily_loss_limit_rate", -0.02)) * 100
     except Exception as exc:
         logger.warning("WARN: console_state.get_console_overview risk limits failed - %s", exc)
