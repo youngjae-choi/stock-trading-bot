@@ -999,11 +999,9 @@ class DecisionEngine:
             added += 1
         if added == 0:
             return {"ok": True, "added": 0, "subscribed": len(self._candidates)}
-        # 보유 + 후보 합집합, 상한 40 cap
+        # 보유종목 우선(절대 미구독 금지) + 후보(상한 내)
         managed = [str(p.get("symbol") or "") for p in position_manager.get_positions()]
-        all_symbols = list(dict.fromkeys([*managed, *self._candidates.keys()]))
-        if len(all_symbols) > max_sub:
-            all_symbols = all_symbols[:max_sub]
+        all_symbols = _subscription_symbols(managed, list(self._candidates.keys()), cap=max_sub)
         load_daily_rules(today, list(self._candidates.keys()))
         try:
             await realtime_ws_manager.start(all_symbols)
@@ -1044,10 +1042,12 @@ class DecisionEngine:
             self._candidates = old_candidates
             return {"ok": False, "reason": "no_new_candidates", "old_count": len(old_candidates)}
 
-        # WS 구독 갱신: 기존 포지션 종목 + 새 후보 합집합
+        # WS 구독 갱신: 보유종목 우선(절대 미구독 금지) + 새 후보(상한 내)
         from .position_manager import position_manager
+        from ..settings_store import get_setting as _gs
         managed_symbols = [str(pos.get("symbol") or "") for pos in position_manager.get_positions()]
-        all_symbols = list(dict.fromkeys([*list(new_candidates.keys()), *managed_symbols]))
+        _cap = int(_gs("realtime.ws_max", 41) or 41)
+        all_symbols = _subscription_symbols(managed_symbols, list(new_candidates.keys()), cap=_cap)
 
         try:
             await realtime_ws_manager.stop()
@@ -1570,6 +1570,22 @@ class DecisionEngine:
                 )
 
         asyncio.create_task(_execute_and_track())
+
+
+def _subscription_symbols(held: list[str], candidates: list[str], *, cap: int) -> list[str]:
+    """WS 구독 목록 = 보유(전부, 맨 앞) + 후보(상한 내). 보유는 절대 잘리지 않는다.
+
+    2026-06-11: refresh_candidates가 [후보..., 보유...] 순서로 만들어 매니저 상한(41)
+    절단에서 보유가 떨어져 손절 틱 공백이 생기던 버그의 단일 출처 수정.
+    """
+    out = list(dict.fromkeys(s for s in held if s))
+    for sym in candidates:
+        if not sym or sym in out:
+            continue
+        if len(out) >= cap:
+            continue
+        out.append(sym)
+    return out
 
 
 def _derive_tag_decision(matched: dict[str, Any]) -> dict[str, Any]:
