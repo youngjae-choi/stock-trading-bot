@@ -6,7 +6,7 @@
   <title>Kairos Control Console</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/console.css?v=12">
+  <link rel="stylesheet" href="/static/css/console.css?v=13">
 </head>
 
 <body class="auth-required">
@@ -148,26 +148,27 @@
               </div>
             </div>
             <div class="morning-brief-body">
-              <div id="mbIndexBoardBrief" style="display:none; margin-bottom:12px; padding:10px 12px; background:var(--bg2); border-left:3px solid #3fb950; border-radius:6px;">
-                <div style="font-size:11px; color:var(--muted); margin-bottom:4px;">
-                  🌐 index-board 시황 <span id="mbIbSource"></span>
+              <!-- 좌: index-board 시황 텍스트 + 분석 -->
+              <div class="mb-col-brief">
+                <div id="mbIndexBoardBrief" class="mb-ib-box" style="display:none;">
+                  <div class="mb-ib-head">🌐 index-board 시황 <span id="mbIbSource"></span></div>
+                  <div id="mbIbText" class="mb-ib-text"></div>
                 </div>
-                <div id="mbIbText" style="font-size:13px; line-height:1.7; color:var(--fg);"></div>
+                <div class="mb-analysis">
+                  <div class="mb-analysis-row">
+                    <span class="mb-label">주도 성격</span>
+                    <span class="mb-value" id="mbStockChar">-</span>
+                  </div>
+                  <div class="mb-analysis-row">
+                    <span class="mb-label">RulePack 힌트</span>
+                    <span class="mb-value" id="mbRulepackHint">-</span>
+                  </div>
+                </div>
               </div>
-              <div class="mb-market-grid" id="mbMarketGrid"></div>
-              <div class="mb-analysis">
-                <div class="mb-analysis-row">
-                  <span class="mb-label">주도 성격</span>
-                  <span class="mb-value" id="mbStockChar">-</span>
-                </div>
-                <div class="mb-analysis-row">
-                  <span class="mb-label">RulePack 힌트</span>
-                  <span class="mb-value" id="mbRulepackHint">-</span>
-                </div>
-                <div class="mb-analysis-row">
-                  <span class="mb-label">핵심 요인</span>
-                  <span class="mb-value muted" id="mbKeyFactors">-</span>
-                </div>
+              <!-- 우: KIS 실시간 지표 -->
+              <div class="mb-col-indicators">
+                <div class="mb-col-title">실시간 지표 <span>KIS</span></div>
+                <div class="mb-market-grid" id="mbMarketGrid"></div>
               </div>
             </div>
           </div>

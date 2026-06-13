@@ -1637,9 +1637,30 @@
 
 .morning-brief-body {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 20px;
+  align-items: start;
 }
+/* 좌: index-board 시황 + 분석 */
+.mb-col-brief { display: flex; flex-direction: column; gap: 12px; }
+.mb-ib-box {
+  padding: 12px 14px;
+  background: var(--bg2);
+  border-left: 3px solid #3fb950;
+  border-radius: 6px;
+}
+.mb-ib-head { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.mb-ib-text { font-size: 13px; line-height: 1.75; color: var(--fg); }
+/* 우: KIS 지표 패널 */
+.mb-col-indicators { }
+.mb-col-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.mb-col-title span { font-size: 9px; opacity: 0.7; }
 @media (max-width: 860px) {
   .morning-brief-body { grid-template-columns: 1fr; }
   
