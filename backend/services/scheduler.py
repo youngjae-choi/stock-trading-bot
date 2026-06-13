@@ -1719,13 +1719,13 @@ def _build_scheduler() -> AsyncIOScheduler:
         misfire_grace_time=3600,
         coalesce=True,
     )
-    # 장후 시황 브리핑 수집 — 00:00 KST (미국장 마감 후). 신뢰도 보정·복기 baseline용.
+    # 장후 시황 브리핑 수집 — 거래일 23:00 KST (장후 브리핑 생성 후). 신뢰도 보정·복기 baseline용.
     hour, minute = _parse_time("evening_briefing")
     scheduler.add_job(
         job_evening_briefing,
         CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
         id="job_evening_briefing",
-        name="장후 시황 브리핑 수집 (00:00)",
+        name="장후 시황 브리핑 수집 (%02d:%02d)" % (hour, minute),
         replace_existing=True,
         misfire_grace_time=3600,
         coalesce=True,
