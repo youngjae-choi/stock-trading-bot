@@ -18,6 +18,23 @@
       if (e && !e.value) e.value = _fmtDate(today);
     }
 
+    /* P4 기간검색 공통화 — Trade History와 동일한 오늘/이번주/이번달/직접입력 버튼.
+     * 빠른 버튼은 date input 값을 채운 뒤 조회까지 실행한다. */
+    function setFpDateRange(filter) {
+      ['today', 'week', 'month', 'range'].forEach(function (f) {
+        var btn = document.getElementById('fp-range-' + f);
+        if (btn) btn.className = 'btn' + (f === filter ? ' primary' : '');
+      });
+      if (filter !== 'range') {
+        var range = computeDateRangeFilter(filter, null, null);
+        var s = document.getElementById('fp-start-date');
+        var e = document.getElementById('fp-end-date');
+        if (s) s.value = range.start;
+        if (e) e.value = range.end;
+      }
+      return searchFalsePositive();
+    }
+
     function _fpTypeKr(t) {
       if (t === 'entry_fail')    return '진입실패';
       if (t === 'early_exit')    return '조기청산';
@@ -153,6 +170,11 @@
 
     async function loadFalsePositive() {
       _initFpDates();
+      // 기본 조회 범위(월초~오늘)에 맞춰 '이번달' 버튼을 활성 표시
+      ['today', 'week', 'month', 'range'].forEach(function (f) {
+        var btn = document.getElementById('fp-range-' + f);
+        if (btn) btn.className = 'btn' + (f === 'month' ? ' primary' : (f === 'range' ? ' secondary' : ''));
+      });
       await searchFalsePositive();
     }
 
@@ -170,9 +192,11 @@
     window._fpGenerate = generateFalsePositive;
     window._fpLoad     = loadFalsePositive;
     window._fpReview   = reviewFpCase;
+    window._fpSetRange = setFpDateRange;
   }());
 
   function searchFalsePositive()  { return window._fpSearch();   }
   function generateFalsePositive() { return window._fpGenerate(); }
   function loadFalsePositive()    { return window._fpLoad();     }
   function reviewFalsePositive(id) { return window._fpReview(id); }
+  function setFpRange(filter)     { return window._fpSetRange(filter); }

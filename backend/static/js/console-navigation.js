@@ -118,6 +118,10 @@
       loadDailyPlanScreen();
     }
 
+    if (name === "plan-funnel") {
+      loadPlanFunnel();
+    }
+
     if (name === "funnel") {
       loadFunnelData();
       var td = window._tcTradeDate || null;

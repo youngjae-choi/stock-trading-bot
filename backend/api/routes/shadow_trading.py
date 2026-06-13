@@ -6,12 +6,13 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from ...services.engine.shadow_trading import (
     create_shadow_trade,
     get_shadow_summary,
+    get_shadow_trades_range,
     get_today_shadow_trades,
 )
 
@@ -41,12 +42,20 @@ def _now_kst_iso() -> str:
 
 
 @router.get("/today")
-def get_today() -> dict:
-    """Return today's Shadow Trading rows."""
-    trade_date = _today_kst()
-    logger.info("START: GET /api/v1/shadow-trading/today trade_date=%s", trade_date)
-    rows = get_today_shadow_trades(trade_date)
-    logger.info("SUCCESS: GET /api/v1/shadow-trading/today trade_date=%s count=%d", trade_date, len(rows))
+def get_today(
+    start: str = Query(None, description="YYYY-MM-DD (기본값: 오늘) — 기간검색 시작일"),
+    end: str = Query(None, description="YYYY-MM-DD (기본값: 오늘) — 기간검색 종료일"),
+) -> dict:
+    """Return Shadow Trading rows — 기본은 오늘, start/end 지정 시 기간 조회 (하위 호환)."""
+    today = _today_kst()
+    start = start or today
+    end = end or today
+    logger.info("START: GET /api/v1/shadow-trading/today start=%s end=%s", start, end)
+    if start == today and end == today:
+        rows = get_today_shadow_trades(today)
+    else:
+        rows = get_shadow_trades_range(start, end)
+    logger.info("SUCCESS: GET /api/v1/shadow-trading/today start=%s end=%s count=%d", start, end, len(rows))
     return {"ok": True, "payload": rows}
 
 

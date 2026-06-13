@@ -96,6 +96,36 @@
     return String(value || "") === getKstDateString();
   }
 
+  /* P4 기간검색 공통 헬퍼 — Trade History와 동일한 오늘/이번주/이번달/직접입력 범위 계산.
+   * filter: 'today' | 'week' | 'month' | 'range'
+   * startInputId/endInputId: 직접입력(range)일 때 읽을 date input id.
+   * Returns {start: 'YYYY-MM-DD', end: 'YYYY-MM-DD'} (KST 기준). */
+  function computeDateRangeFilter(filter, startInputId, endInputId) {
+    var pad = function(n) { return String(n).padStart(2, "0"); };
+    var fmt = function(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); };
+    var now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
+    var today = fmt(now);
+
+    if (filter === "week") {
+      var day = now.getDay();
+      var mon = new Date(now);
+      mon.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
+      return { start: fmt(mon), end: today };
+    }
+    if (filter === "month") {
+      return { start: now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-01", end: today };
+    }
+    if (filter === "range") {
+      var sEl = startInputId ? document.getElementById(startInputId) : null;
+      var eEl = endInputId ? document.getElementById(endInputId) : null;
+      return {
+        start: (sEl && sEl.value) ? sEl.value : today,
+        end: (eEl && eEl.value) ? eEl.value : today,
+      };
+    }
+    return { start: today, end: today }; // today (기본)
+  }
+
   /* Read the scheduler skip flag from the Scheduler status envelope. */
   function isScheduleSkipActive(response) {
     var skipValue = response && response.payload ? response.payload.schedule_skip_today : null;

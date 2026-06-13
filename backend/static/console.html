@@ -84,6 +84,7 @@
           <option value="dividend-stats">Statistics</option>
           <option value="statistics">Trade History</option>
           <option value="funnel">Funnel Monitor</option>
+          <option value="plan-funnel">Plan &amp; Funnel</option>
           <option value="settings">Settings</option>
         </select>
         <span class="mobile-date-label">기준일<strong id="mobileDateLabel">--</strong></span>
@@ -98,6 +99,7 @@
           <button type="button" data-screen="trading">Trading Monitor <small>live</small></button>
           <button type="button" data-screen="statistics">Trade History <small>trades</small></button>
           <button type="button" data-screen="rulepack">Daily Plan <small>plan & regime</small></button>
+          <button type="button" data-screen="plan-funnel">Plan & Funnel <small>plan+funnel</small></button>
           <button type="button" data-screen="funnel">Funnel Monitor <small>screening</small></button>
           <button type="button" data-screen="expert-knowledge">Knowledge <small>knowledge</small></button>
           <button type="button" data-screen="alerts">Alert Center <small>alerts</small></button>
@@ -432,6 +434,7 @@
               <p class="page-desc">오늘 적용된 Regime Set, Daily Plan, Risk Profile, 레짐별 성과 분석을 통합해서 확인합니다.</p>
             </div>
             <div style="display:flex; gap:8px; align-items:center;">
+              <button type="button" class="btn" data-action="showScreen" data-screen="plan-funnel">통합 뷰: Plan & Funnel →</button>
               <button type="button" class="btn" data-action="loadDailyPlanScreen">새로고침</button>
               <button type="button" class="btn" data-action="showDpContext">Context 보기</button>
               <div style="position:relative; display:inline-block;">
@@ -589,7 +592,10 @@
               <h1 class="page-title">Funnel Monitor</h1>
               <p class="page-desc">전체 종목이 어떤 조건으로 유니버스와 후보 종목으로 압축됐는지 확인합니다. 숫자는 매일 달라집니다.</p>
             </div>
-            <button type="button" class="btn" data-action="loadFunnelData">새로고침</button>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <button type="button" class="btn" data-action="showScreen" data-screen="plan-funnel">통합 뷰: Plan & Funnel →</button>
+              <button type="button" class="btn" data-action="loadFunnelData">새로고침</button>
+            </div>
           </div>
 
           <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:12px;">
@@ -729,6 +735,68 @@
           </div>
         </section>
 
+        <!-- ── P4: Plan & Funnel 통합 화면 ── -->
+        <section class="screen" id="screen-plan-funnel">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Plan & Funnel</h1>
+              <p class="page-desc">오늘 Daily Plan 요약, 장중 선별 타임라인, Funnel 진행 숫자를 한 화면에서 확인합니다. 기준일 <strong id="pf-trade-date">-</strong></p>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <button type="button" class="btn" data-action="showScreen" data-screen="rulepack">Daily Plan →</button>
+              <button type="button" class="btn" data-action="showScreen" data-screen="funnel">Funnel Monitor →</button>
+              <button type="button" class="btn" data-action="loadPlanFunnel">새로고침</button>
+            </div>
+          </div>
+
+          <!-- 상단: 오늘 Daily Plan 요약 -->
+          <div class="grid cols-4" style="margin-bottom:16px;">
+            <div class="card compact">
+              <div class="card-title">레짐 <span>regime</span></div>
+              <div class="metric" id="pf-regime">-</div>
+              <div class="muted" id="pf-regime-set">Regime Set 확인 전</div>
+            </div>
+            <div class="card compact">
+              <div class="card-title">시장 톤 <span>market tone</span></div>
+              <div class="metric" id="pf-market-tone">-</div>
+              <div class="muted" id="pf-intensity">매매 강도: -</div>
+            </div>
+            <div class="card compact">
+              <div class="card-title">신규매수 <span>new entry</span></div>
+              <div class="metric" id="pf-new-entry">-</div>
+              <div class="muted" id="pf-plan-status">Plan 상태: -</div>
+            </div>
+            <div class="card compact">
+              <div class="card-title">배정 프로파일 분포 <span>profiles</span></div>
+              <div class="metric" id="pf-assignments-count">-</div>
+              <div id="pf-profile-dist" style="font-size:12px; margin-top:4px; line-height:1.8;">-</div>
+            </div>
+          </div>
+
+          <!-- 중단: 장중 선별 타임라인 -->
+          <div class="card" style="margin-bottom:16px;">
+            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+              <span>장중 선별 타임라인 <span>모멘텀 스캔 · 장중 재선별 유입 이력</span></span>
+              <span class="badge" id="pf-intraday-count">-</span>
+            </div>
+            <div id="pf-intraday-timeline" style="display:flex; flex-direction:column; gap:8px;">
+              <div class="muted" style="padding:8px;">로딩중...</div>
+            </div>
+          </div>
+
+          <!-- 하단: Funnel Progress -->
+          <div class="card">
+            <div class="card-title">Funnel Progress <span>오늘 단계별 압축 현황</span></div>
+            <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px;">
+              <div class="card compact"><div class="card-title">기준 universe</div><div class="metric" id="pf-funnel-total">-</div></div>
+              <div class="card compact"><div class="card-title">Layer 1 통과</div><div class="metric" id="pf-funnel-layer1">-</div></div>
+              <div class="card compact"><div class="card-title">Layer 2 통과</div><div class="metric" id="pf-funnel-layer2">-</div></div>
+              <div class="card compact"><div class="card-title">오늘 BUY 신호 (원본)</div><div class="metric" id="pf-funnel-signals">-</div></div>
+            </div>
+            <div class="muted" id="pf-funnel-note" style="font-size:12px; margin-top:8px;"></div>
+          </div>
+        </section>
+
         <section class="screen" id="screen-expert-knowledge">
           <div class="page-head">
             <div>
@@ -844,9 +912,24 @@
           <div class="page-head">
             <div>
               <h1 class="page-title">Missed Entries</h1>
-              <p class="page-desc">오늘 매수하지 않은 종목이 이후 어떻게 움직였는지 추적합니다.</p>
+              <p class="page-desc">매수하지 않은 종목이 이후 어떻게 움직였는지 추적합니다.</p>
             </div>
             <button type="button" class="btn" data-action="loadMissedTracking">새로고침</button>
+          </div>
+
+          <!-- P4 기간검색 (Trade History와 동일 패턴) -->
+          <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center; flex-wrap:wrap;">
+            <span style="color:var(--muted); font-size:13px;">기간:</span>
+            <button type="button" class="btn primary" id="ms-range-today" data-action="setMissedRange" data-filter="today">오늘</button>
+            <button type="button" class="btn" id="ms-range-week" data-action="setMissedRange" data-filter="week">이번주</button>
+            <button type="button" class="btn" id="ms-range-month" data-action="setMissedRange" data-filter="month">이번달</button>
+          </div>
+          <div style="display:flex; gap:8px; margin-bottom:16px; align-items:center; flex-wrap:wrap;">
+            <span style="color:var(--muted); font-size:13px;">직접입력:</span>
+            <input type="date" id="ms-range-start" style="padding:5px; border-radius:5px; background:var(--panel-2); color:var(--text); border:1px solid var(--line);">
+            <span style="color:var(--muted); font-size:13px;">~</span>
+            <input type="date" id="ms-range-end" style="padding:5px; border-radius:5px; background:var(--panel-2); color:var(--text); border:1px solid var(--line);">
+            <button type="button" class="btn" id="ms-range-range" data-action="setMissedRange" data-filter="range">기간검색</button>
           </div>
 
           <!-- 요약 카드 -->
@@ -873,6 +956,7 @@
               <table>
                 <thead>
                   <tr>
+                    <th>날짜</th>
                     <th>종목코드</th>
                     <th>종목명</th>
                     <th>탈락 단계</th>
@@ -880,11 +964,12 @@
                     <th>제외가</th>
                     <th>장중 최고</th>
                     <th>장중 최저</th>
+                    <th>종가</th>
                     <th>개선후보</th>
                   </tr>
                 </thead>
                 <tbody id="missed-tracking-tbody">
-                  <tr><td colspan="8" class="muted" style="text-align:center;">로딩중...</td></tr>
+                  <tr><td colspan="10" class="muted" style="text-align:center;">로딩중...</td></tr>
                 </tbody>
               </table>
             </div>
@@ -900,10 +985,16 @@
               <p class="page-desc">매도 후 손실이 난 종목의 원인을 분석합니다.</p>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <!-- P4 기간검색 (Trade History와 동일 패턴) -->
+              <span style="color:var(--muted); font-size:13px;">기간:</span>
+              <button type="button" class="btn" id="fp-range-today" data-action="setFpRange" data-filter="today">오늘</button>
+              <button type="button" class="btn" id="fp-range-week" data-action="setFpRange" data-filter="week">이번주</button>
+              <button type="button" class="btn" id="fp-range-month" data-action="setFpRange" data-filter="month">이번달</button>
+              <span style="color:var(--muted); font-size:13px;">직접입력:</span>
               <input type="date" id="fp-start-date" class="input" style="width:140px;">
               <span style="color:var(--muted)">~</span>
               <input type="date" id="fp-end-date" class="input" style="width:140px;">
-              <button type="button" class="btn secondary" data-action="searchFalsePositive">조회</button>
+              <button type="button" class="btn secondary" id="fp-range-range" data-action="setFpRange" data-filter="range">조회</button>
               <button type="button" class="btn" data-action="generateFalsePositive">손실 분석 실행</button>
             </div>
           </div>
@@ -2437,12 +2528,13 @@
       <button class="more-drawer-item" data-screen="dividend-stats">Statistics</button>
       <button class="more-drawer-item" data-screen="statistics">Trade History</button>
       <button class="more-drawer-item" data-screen="funnel">Funnel Monitor</button>
+      <button class="more-drawer-item" data-screen="plan-funnel">Plan & Funnel</button>
       <button class="more-drawer-item" data-screen="settings">Settings</button>
     </div>
   </div>
 
   <script src="/static/js/console-state.js"></script>
-  <script src="/static/js/console-utils.js?v=3"></script>
+  <script src="/static/js/console-utils.js?v=4"></script>
   <script src="/static/js/console-api.js"></script>
   <script src="/static/js/console-auth.js"></script>
   <script src="/static/js/screens/console-today-orders.js?v=4"></script>
@@ -2454,8 +2546,8 @@
   <script src="/static/js/screens/console-execution-risk.js"></script>
   <script src="/static/js/screens/console-alerts.js"></script>
   <script src="/static/js/screens/console-approval.js"></script>
-  <script src="/static/js/screens/console-missed-tracking.js?v=2"></script>
-  <script src="/static/js/screens/console-false-positive.js"></script>
+  <script src="/static/js/screens/console-missed-tracking.js?v=3"></script>
+  <script src="/static/js/screens/console-false-positive.js?v=2"></script>
   <script src="/static/js/screens/console-confidence-calibration.js"></script>
   <script src="/static/js/screens/console-settings.js?v=10"></script>
   <script src="/static/js/screens/console-funnel-data-health.js?v=3"></script>
@@ -2463,12 +2555,13 @@
   <script src="/static/js/screens/console-statistics.js?v=2"></script>
   <script src="/static/js/screens/console-regime-analytics.js?v=7"></script>
   <script src="/static/js/screens/console-daily-plan.js?v=8"></script>
+  <script src="/static/js/screens/console-plan-funnel.js?v=1"></script>
   <script src="/static/js/screens/console-expert-knowledge.js"></script>
   <script src="/static/js/screens/console-dividends.js"></script>
   <script src="/static/js/screens/console-dividend-stats.js"></script>
   <script src="/static/js/screens/console-daily-results.js?v=10"></script>
-  <script src="/static/js/console-navigation.js?v=11"></script>
-  <script src="/static/js/console-actions.js?v=12"></script>
+  <script src="/static/js/console-navigation.js?v=12"></script>
+  <script src="/static/js/console-actions.js?v=13"></script>
   <script src="/static/js/console-events.js?v=7"></script>
   <script src="/static/js/console-main.js?v=7"></script>
 </body>

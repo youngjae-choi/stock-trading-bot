@@ -97,6 +97,13 @@ def initialize_database() -> None:
             if col_name not in missed_cols:
                 connection.execute(alter_sql)
                 logger.info("DB migration: added column %s to missed_opportunities", col_name)
+        shadow_cols = {
+            row[1] for row in connection.execute("PRAGMA table_info(shadow_trades)").fetchall()
+        }
+        for col_name, alter_sql in _shadow_trades_migration_statements():
+            if col_name not in shadow_cols:
+                connection.execute(alter_sql)
+                logger.info("DB migration: added column %s to shadow_trades", col_name)
         _migrate_regime_set_applications(connection)
         _migrate_positions_entry_set(connection)
     logger.info("SUCCESS: db.initialize_database path=%s", _db_path())
@@ -1478,6 +1485,9 @@ CREATE TABLE IF NOT EXISTS shadow_trades (
     max_return_10m  REAL,
     max_return_30m  REAL,
     max_return_eod  REAL,
+    intraday_low    REAL,
+    intraday_high   REAL,
+    close_price     REAL,
     status          TEXT NOT NULL DEFAULT 'active',
     created_at      TEXT NOT NULL
 )
@@ -1659,4 +1669,17 @@ def _missed_opportunity_migration_statements() -> list[tuple[str, str]]:
     """
     return [
         ("intraday_low_return", "ALTER TABLE missed_opportunities ADD COLUMN intraday_low_return REAL"),
+    ]
+
+
+def _shadow_trades_migration_statements() -> list[tuple[str, str]]:
+    """Return migrations for shadow_trades columns added after launch (P4).
+
+    intraday_low/intraday_high/close_price: EOD 일봉의 장중 저가·고가·종가(원).
+    기존 행은 NULL 보존 (구 행 호환).
+    """
+    return [
+        ("intraday_low",  "ALTER TABLE shadow_trades ADD COLUMN intraday_low REAL"),
+        ("intraday_high", "ALTER TABLE shadow_trades ADD COLUMN intraday_high REAL"),
+        ("close_price",   "ALTER TABLE shadow_trades ADD COLUMN close_price REAL"),
     ]

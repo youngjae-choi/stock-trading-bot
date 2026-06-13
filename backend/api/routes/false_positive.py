@@ -38,11 +38,17 @@ def get_today(trade_date: str = Query(None, description="YYYY-MM-DD (기본값: 
 
 @router.get("/list")
 def get_list(
-    start: str = Query(..., description="YYYY-MM-DD"),
-    end: str = Query(..., description="YYYY-MM-DD"),
+    start: str = Query(None, description="YYYY-MM-DD (기본값: 오늘)"),
+    end: str = Query(None, description="YYYY-MM-DD (기본값: 오늘)"),
     include_reviewed: bool = Query(False, description="확인 완료 케이스 포함 여부"),
 ) -> dict:
-    """날짜 범위 내 false positive 케이스 목록을 반환한다. 기본: 미확인만."""
+    """날짜 범위 내 false positive 케이스 목록을 반환한다. 기본: 미확인만.
+
+    start/end 를 생략하면 오늘(KST) 하루만 조회한다 (하위 호환 기본값).
+    """
+    today = _today_kst()
+    start = start or today
+    end = end or today
     logger.info("START: GET /api/v1/false-positive/list start=%s end=%s include_reviewed=%s", start, end, include_reviewed)
     rows = get_false_positives(start, end, include_reviewed=include_reviewed)
     logger.info("SUCCESS: GET /api/v1/false-positive/list count=%d", len(rows))

@@ -111,6 +111,27 @@ def get_today_missed(trade_date: str) -> list[dict]:
     return [_row_to_dict(row) for row in rows]
 
 
+def get_missed_range(start_date: str, end_date: str) -> list[dict]:
+    """Return missed opportunities within an inclusive trade_date range (P4 기간검색).
+
+    Args:
+        start_date: YYYY-MM-DD 시작일.
+        end_date: YYYY-MM-DD 종료일.
+    """
+    logger.info("START: MissedOpportunity range start=%s end=%s", start_date, end_date)
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM missed_opportunities
+            WHERE trade_date >= ? AND trade_date <= ?
+            ORDER BY trade_date DESC, created_at DESC
+            """,
+            (start_date, end_date),
+        ).fetchall()
+    logger.info("SUCCESS: MissedOpportunity range count=%d", len(rows))
+    return [_row_to_dict(row) for row in rows]
+
+
 def get_improvement_candidates(trade_date: str) -> list[dict]:
     """Return same-day missed opportunities marked as improvement candidates.
 
@@ -360,6 +381,7 @@ async def update_missed_returns(trade_date: str, improvement_threshold: float = 
         await asyncio.sleep(0.15)
 
     # ── shadow_trades 사후 수익률 갱신: 장중 최고가 기준 max_return_eod
+    #    + P4: 같은 일봉 응답에서 장중 저가/고가/종가(원)를 신규 컬럼에 함께 저장.
     shadow_updated = shadow_errors = 0
     for row in shadow_rows:
         row_id = row["id"]
@@ -369,6 +391,8 @@ async def update_missed_returns(trade_date: str, improvement_threshold: float = 
             daily_resp = await get_daily_chart(symbol=symbol, period_code="D", adjusted_price="1")
             daily_rows = daily_resp.get("output") or []
             high_price = _to_float(daily_rows[0].get("stck_hgpr")) if daily_rows else None
+            low_price = _to_float(daily_rows[0].get("stck_lwpr")) if daily_rows else None
+            close_price = _to_float(daily_rows[0].get("stck_clpr")) if daily_rows else None
             max_return_eod = (
                 round((high_price - entry_price) / entry_price * 100, 4)
                 if high_price is not None
@@ -380,11 +404,19 @@ async def update_missed_returns(trade_date: str, improvement_threshold: float = 
             else:
                 with get_connection() as conn:
                     conn.execute(
-                        "UPDATE shadow_trades SET max_return_eod = ? WHERE id = ?",
-                        (max_return_eod, row_id),
+                        """
+                        UPDATE shadow_trades
+                        SET max_return_eod = ?,
+                            intraday_high = ?,
+                            intraday_low = ?,
+                            close_price = ?
+                        WHERE id = ?
+                        """,
+                        (max_return_eod, high_price, low_price, close_price, row_id),
                     )
                 logger.info(
-                    "UPDATED: ShadowTrade id=%s symbol=%s max_return_eod=%s", row_id, symbol, max_return_eod
+                    "UPDATED: ShadowTrade id=%s symbol=%s max_return_eod=%s high=%s low=%s close=%s",
+                    row_id, symbol, max_return_eod, high_price, low_price, close_price,
                 )
                 shadow_updated += 1
         except Exception as exc:

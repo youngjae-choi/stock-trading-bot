@@ -137,6 +137,27 @@ def get_today_shadow_trades(trade_date: str) -> list[dict]:
     return [_row_to_dict(row) for row in rows]
 
 
+def get_shadow_trades_range(start_date: str, end_date: str) -> list[dict]:
+    """Return shadow trades within an inclusive trade_date range (P4 기간검색).
+
+    Args:
+        start_date: YYYY-MM-DD 시작일.
+        end_date: YYYY-MM-DD 종료일.
+    """
+    logger.info("START: ShadowTrading range start=%s end=%s", start_date, end_date)
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM shadow_trades
+            WHERE trade_date >= ? AND trade_date <= ?
+            ORDER BY trade_date DESC, created_at DESC
+            """,
+            (start_date, end_date),
+        ).fetchall()
+    logger.info("SUCCESS: ShadowTrading range count=%d", len(rows))
+    return [_row_to_dict(row) for row in rows]
+
+
 def get_shadow_summary(trade_date: str) -> dict:
     """Aggregate same-day shadow trade performance.
 
