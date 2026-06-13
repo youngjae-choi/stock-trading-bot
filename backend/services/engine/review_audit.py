@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from ..db import get_connection
 from .order_executor import get_today_orders
 from .position_integrity import create_integrity_alert_once, json_compact, summarize_order_integrity
+from .symbol_norm import norm_symbol, symbol_variants
 
 logger = logging.getLogger("ReviewAudit")
 _DOCS_DIR = Path(__file__).resolve().parents[3] / "docs"
@@ -624,7 +625,14 @@ def build_exit_reason_map(trade_date: str) -> dict[str, str]:
         ).fetchall()
     result: dict[str, str] = {}
     for row in rows:
-        result[str(row["symbol"])] = _normalize_exit_reason(row["reason"])
+        bucket = _normalize_exit_reason(row["reason"])
+        symbol = str(row["symbol"])
+        # ETN 매도는 무Q('520100'), 시그널은 Q-형('Q520100')으로 기록될 수 있어
+        # 원본·정규화형 양쪽 키로 등록한다 (조인 누락 → 학습표본 0 방지).
+        result[symbol] = bucket
+        normalized = norm_symbol(symbol)
+        if normalized != symbol:
+            result[normalized] = bucket
     return result
 
 
@@ -641,7 +649,13 @@ def _load_filled_buy_symbols(trade_date: str) -> set[str]:
             """,
             (trade_date,),
         ).fetchall()
-    return {str(row["symbol"]) for row in rows}
+    # Q-형/무Q 어느 쪽으로 조회해도 membership이 성립하도록 양형을 모두 담는다
+    symbols: set[str] = set()
+    for row in rows:
+        symbol = str(row["symbol"])
+        symbols.add(symbol)
+        symbols.add(norm_symbol(symbol))
+    return symbols
 
 
 def _fallback_exit_reason(signal: dict[str, Any], exit_map: dict[str, str] | None = None) -> str:
@@ -649,7 +663,8 @@ def _fallback_exit_reason(signal: dict[str, Any], exit_map: dict[str, str] | Non
     explicit = str(_signal_value(signal, "exit_reason", "")).strip().lower()
     if explicit:
         return explicit
-    mapped = (exit_map or {}).get(str(signal.get("symbol") or ""))
+    raw_symbol = str(signal.get("symbol") or "")
+    mapped = (exit_map or {}).get(raw_symbol) or (exit_map or {}).get(norm_symbol(raw_symbol))
     if mapped:
         return mapped
     status = str(signal.get("status") or "unknown").lower()
@@ -708,31 +723,34 @@ def _sync_realized_pnl_from_trade_pairs(trade_date: str) -> None:
                 ):
                     continue
                 buy_date = _pair_buy_date(pair) or trade_date
+                # ETN은 시그널 Q-형 / 페어 무Q 형이 섞일 수 있어 변형 IN으로 조인
+                variants = symbol_variants(pair["symbol"]) or [str(pair["symbol"] or "")]
+                placeholders = ",".join("?" for _ in variants)
                 cursor = conn.execute(
-                    """
+                    f"""
                     UPDATE trading_signals
                     SET realized_pnl = ?
-                    WHERE symbol = ?
+                    WHERE symbol IN ({placeholders})
                       AND trade_date = ?
                       AND signal_type = 'BUY'
                     """,
-                    (pair["pnl_amount"], pair["symbol"], buy_date),
+                    (pair["pnl_amount"], *variants, buy_date),
                 )
                 updated_count += cursor.rowcount
                 if pair.get("pnl_pct") is None:
                     continue
 
                 sig = conn.execute(
-                    """
+                    f"""
                     SELECT id
                     FROM trading_signals
-                    WHERE symbol = ?
+                    WHERE symbol IN ({placeholders})
                       AND trade_date = ?
                       AND signal_type = 'BUY'
                     ORDER BY created_at DESC
                     LIMIT 1
                     """,
-                    (pair["symbol"], buy_date),
+                    (*variants, buy_date),
                 ).fetchone()
                 if sig:
                     outcome_updates.append((sig["id"], float(pair["pnl_pct"]), _pair_hold_minutes(pair)))
@@ -1109,7 +1127,7 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
         # EOD 미체결 취소(buy 주문 전부 cancelled/failed)는 거래가 아님 — 승패 왜곡 방지
         # (2026-06-10: 취소 2건이 loss로 집계돼 MID_VOL 승률이 0.29로 과소 평가)
         symbol = str(signal.get("symbol") or "")
-        if filled_buy_symbols and symbol not in filled_buy_symbols:
+        if filled_buy_symbols and symbol not in filled_buy_symbols and norm_symbol(symbol) not in filled_buy_symbols:
             exit_bucket["cancelled_no_fill"]["count"] += 1
             continue
 

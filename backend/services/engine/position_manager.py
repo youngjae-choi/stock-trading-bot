@@ -6,7 +6,7 @@
 청산 우선순위:
   1. INITIAL_STOP_LOSS  — 진입 후 초기 손절선 이탈
   2. TRAILING_STOP      — 트레일링 스탑 이탈
-  3. DAILY_FORCE_EXIT   — 장마감 강제청산 (15:20 이후)
+  3. DAILY_FORCE_EXIT   — 장마감 강제청산 (동시호가 전, 실링 15:12 이하)
   (TIME_EXIT 최대 보유 시간 청산은 2026-06-02 제거됨)
 """
 
@@ -36,6 +36,30 @@ _DEFAULT_RULE = {
 }
 
 EXIT_REASONS = ("INITIAL_STOP_LOSS", "TRAILING_STOP", "TIME_EXIT", "DAILY_FORCE_EXIT", "EMERGENCY_HALT", "MANUAL_EXIT")
+
+# 강제청산 시각 하드 실링 (P1-T1, 2026-06-12 사고 대응).
+# 15:20은 장마감 동시호가 시작 시각이고 KIS 모의투자는 동시호가 체결을 시뮬레이션하지
+# 않는다 — 6/12 15:20:05 S9 시장가 매도 11건 중 5건이 미체결(eod_reconcile_no_kis_fill)로
+# 죽어 포지션이 다음날로 이월됐다. 톤별 시각·설정(risk.force_exit_time)이 무엇이든
+# 유효 강제청산 시각은 이 실링을 절대 넘지 못한다.
+# 오버라이드: get_setting("risk.force_exit_ceiling") — "HH:MM:SS" 또는 "HH:MM".
+_FORCE_EXIT_CEILING = "15:12:00"
+
+
+def _normalize_hms(value: Any) -> str | None:
+    """시각 문자열을 'HH:MM:SS'로 정규화. 파싱 불가하면 None."""
+    try:
+        parts = str(value or "").strip().split(":")
+        if len(parts) == 2:
+            parts.append("0")
+        if len(parts) != 3:
+            return None
+        h, m, s = (int(p) for p in parts)
+        if not (0 <= h <= 23 and 0 <= m <= 59 and 0 <= s <= 59):
+            return None
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    except (TypeError, ValueError):
+        return None
 
 
 def _now_kst() -> datetime:
@@ -487,13 +511,15 @@ class PositionManager:
                 "profile_assigned": position.get("profile_assigned", "MID_VOL"),
             })
 
-    # 시장 톤별 강제청산 시간 (부정적 시황일수록 일찍 청산)
+    # 시장 톤별 강제청산 시간 (부정적 시황일수록 일찍 청산).
+    # 전체가 실링(15:12) 이하로 재조정됨 — 톤이 좋아도 동시호가(15:20~) 전 8분 여유 확보.
+    # (KIS 모의는 동시호가 체결 미시뮬레이션 → 15:20 이후 시장가는 미체결로 죽는다)
     _TONE_FORCE_EXIT: dict[str, str] = {
-        "positive": "15:25:00",
-        "neutral":  "15:20:00",
-        "negative": "15:10:00",
-        "mixed":    "15:15:00",
-        "fallback": "15:20:00",
+        "positive": "15:12:00",
+        "neutral":  "15:10:00",
+        "negative": "15:05:00",
+        "mixed":    "15:10:00",
+        "fallback": "15:10:00",
     }
     def _get_today_tone(self) -> str:
         """오늘 시장 톤을 DB에서 조회. 실패 시 fallback 반환."""
@@ -511,14 +537,37 @@ class PositionManager:
             pass
         return "fallback"
 
+    def _effective_force_exit_time(self, position: dict[str, Any]) -> str:
+        """유효 강제청산 시각 = min(톤별 시각, 설정 시각, 실링).
+
+        설정(risk.force_exit_time, 라이브 DB 15:20)이나 톤별 시각이 무엇이든
+        동시호가 시작(15:20) 전 실링(_FORCE_EXIT_CEILING, 기본 15:12)을 넘지 못한다.
+        동일 'HH:MM:SS' 포맷으로 정규화하므로 문자열 비교로 충분하다.
+        """
+        tone = self._get_today_tone()
+        tone_time = self._TONE_FORCE_EXIT.get(tone, self._TONE_FORCE_EXIT["fallback"])
+        try:
+            ceiling_raw = get_setting("risk.force_exit_ceiling", _FORCE_EXIT_CEILING)
+        except Exception:
+            ceiling_raw = _FORCE_EXIT_CEILING
+        ceiling = _normalize_hms(ceiling_raw) or _FORCE_EXIT_CEILING
+
+        candidates = [
+            t for t in (
+                _normalize_hms(tone_time),
+                _normalize_hms(position.get("force_exit_time")),
+                ceiling,
+            )
+            if t is not None
+        ]
+        return min(candidates) if candidates else _FORCE_EXIT_CEILING
+
     def _exit_reason(self, position: dict[str, Any], price: float) -> str:
         now = _now_kst()
         active_stop = _to_float(position["active_stop_price"])
 
-        # 1. 강제청산 시간 (최우선) — 시장 톤에 따라 조정
-        tone = self._get_today_tone()
-        default_force_time = self._TONE_FORCE_EXIT.get(tone, "15:20:00")
-        force_time_str = str(position.get("force_exit_time") or default_force_time)
+        # 1. 강제청산 시간 (최우선) — 시장 톤·설정·실링 중 가장 이른 시각
+        force_time_str = self._effective_force_exit_time(position)
         try:
             h, m, s = map(int, force_time_str.split(":"))
             force_dt = now.replace(hour=h, minute=m, second=s, microsecond=0)
@@ -534,7 +583,7 @@ class PositionManager:
             return "INITIAL_STOP_LOSS"
 
         # 3. 시간 손절(TIME_EXIT, 최대 보유 시간 초과)은 2026-06-02 제거됨 (PM 결정).
-        #    15:20 강제청산(DAILY_FORCE_EXIT)이 당일 보유를 마감하므로 보유 시간 기반
+        #    강제청산(DAILY_FORCE_EXIT, 동시호가 전 실링 15:12)이 당일 보유를 마감하므로 보유 시간 기반
         #    청산은 중복·노이즈로 판단해 손절/트레일링/EOD만 사용한다.
 
         return ""

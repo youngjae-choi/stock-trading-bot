@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any
@@ -20,6 +21,11 @@ from .position_integrity import (
 from .position_manager import position_manager
 
 logger = logging.getLogger("EODLiquidation")
+
+# 매도 제출 후 시장가 체결 확인까지 대기 시간(초) — 모의/실거래 공통, 코드 상수
+_EOD_FILL_CHECK_DELAY_SEC = 50
+# 잔여 포지션 시장가 재매도 사유 — trading_orders.reason으로 기록
+_EOD_RETRY_REASON = "EOD_RETRY"
 
 
 def _today_kst() -> str:
@@ -135,6 +141,83 @@ def _classify_sell_result(result: dict[str, Any], summary: dict[str, int]) -> No
         summary["failed"] += 1
 
 
+async def _query_residual_holdings() -> tuple[list[dict[str, Any]], bool]:
+    """KIS 잔고를 재조회해 아직 보유 중인 종목 목록과 조회 성공 여부를 반환한다."""
+    try:
+        positions = await _get_open_positions_from_account()
+        residuals = [
+            position for position in positions
+            if str(position.get("symbol") or "").strip() and int(position.get("qty") or 0) > 0
+        ]
+        return residuals, True
+    except Exception as exc:
+        logger.warning("WARN: [S9] EOD 체결확인 잔고 재조회 실패 error=%s", exc)
+        return [], False
+
+
+async def _verify_and_retry_eod_fills(trade_date: str) -> dict[str, Any]:
+    """S9 매도 제출 후 체결을 1회 확인하고, 잔여 종목은 시장가 매도 1회 재시도한다.
+
+    재시도는 폭주 방지를 위해 정확히 1회로 제한한다. 재시도 후에도 잔여가 남으면
+    CRITICAL 로그와 함께 Alert Center에 dedup 알림을 남긴다(수동 확인 유도).
+
+    Args:
+        trade_date: YYYY-MM-DD 형식의 거래일.
+    """
+    await asyncio.sleep(_EOD_FILL_CHECK_DELAY_SEC)
+    residuals, check_ok = await _query_residual_holdings()
+    if not check_ok:
+        return {"retried": 0, "retry_results": [], "residual_after_retry": [], "residual_check_failed": True}
+    if not residuals:
+        logger.info("SUCCESS: [S9] EOD 체결확인 — 잔여 보유 없음")
+        return {"retried": 0, "retry_results": [], "residual_after_retry": []}
+
+    logger.warning(
+        "WARN: [S9] EOD 체결확인 — 잔여 %d종목 시장가 재매도 1회 시도 symbols=%s",
+        len(residuals),
+        [position.get("symbol") for position in residuals],
+    )
+    retried = 0
+    retry_results: list[dict[str, Any]] = []
+    for position in residuals:
+        symbol = str(position.get("symbol") or "")
+        qty = int(position.get("qty") or 0)
+        result = await order_executor.execute_sell(
+            symbol=symbol,
+            qty=qty,
+            price=0,
+            reason=_EOD_RETRY_REASON,
+            name=str(position.get("name") or ""),
+        )
+        retry_results.append(result if isinstance(result, dict) else {"ok": False, "symbol": symbol})
+        retried += 1
+
+    await asyncio.sleep(_EOD_FILL_CHECK_DELAY_SEC)
+    residual_after_retry, recheck_ok = await _query_residual_holdings()
+    if not recheck_ok:
+        # 확인 불가 — 보수적으로 직전 잔여를 미체결로 간주하고 수동 확인을 유도한다
+        residual_after_retry = residuals
+    if residual_after_retry:
+        logger.critical(
+            "CRITICAL: [S9] EOD 재시도 후에도 미체결 잔여 count=%d symbols=%s — 수동 확인 필요",
+            len(residual_after_retry),
+            [position.get("symbol") for position in residual_after_retry],
+        )
+        create_integrity_alert_once(
+            trade_date,
+            alert_type="fill_missing",
+            severity="CRITICAL",
+            title="EOD 미체결 잔여 — 수동 확인 필요",
+            detail=json_compact(residual_after_retry),
+        )
+    return {
+        "retried": retried,
+        "retry_results": retry_results,
+        "residual_after_retry": residual_after_retry,
+        "residual_check_failed": not recheck_ok,
+    }
+
+
 async def run_eod_liquidation() -> dict[str, Any]:
     """Administrator timed liquidation: sell all current KIS holdings at market.
 
@@ -179,6 +262,8 @@ async def run_eod_liquidation() -> dict[str, Any]:
             "legacy_residual_positions": legacy_residual_positions,
             "orphan_positions": legacy_residual_positions,
             "account_lookup_failed": account_lookup_failed,
+            "retried": 0,
+            "residual_after_retry": [],
         }
 
     results = []
@@ -233,6 +318,14 @@ async def run_eod_liquidation() -> dict[str, Any]:
         summary["skipped_duplicate"],
         summary["failed"],
     )
+
+    # 체결확인 1회 + 잔량 시장가 재매도 1회 — 내부 오류는 본청산 결과 보고를 막지 않는다
+    try:
+        retry_summary = await _verify_and_retry_eod_fills(today)
+    except Exception as exc:
+        logger.error("FAIL: [S9] EOD 체결확인/재시도 단계 오류 error=%s", exc)
+        retry_summary = {"retried": 0, "retry_results": [], "residual_after_retry": [], "residual_check_failed": True}
+
     return {
         "liquidated": summary["submitted"],
         "results": results,
@@ -241,4 +334,5 @@ async def run_eod_liquidation() -> dict[str, Any]:
         "legacy_residual_positions": legacy_residual_positions,
         "orphan_positions": legacy_residual_positions,
         "account_lookup_failed": account_lookup_failed,
+        **retry_summary,
     }

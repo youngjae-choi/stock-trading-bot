@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from ..db import get_connection
+from .symbol_norm import norm_symbol
 
 logger = logging.getLogger("TradePairs")
 
@@ -91,25 +92,36 @@ def get_trade_pairs(start_date: str, end_date: str) -> list[dict[str, Any]]:
             for fr in fill_rows:
                 fill_map[fr["order_id"]] = (float(fr["price"] or 0), float(fr["quantity"] or 0))
 
-    # symbol 기준으로 매수/매도 분리 (시간순)
-    by_symbol: dict[str, dict[str, list]] = {}
+    # 정규화 심볼(norm_symbol) 기준으로 매수/매도 분리 — ETN Q-형 매수와 무Q 매도를 한 쌍으로 묶는다.
+    # 표시/시그널 조인용 symbol은 원본 유지(매수 원본 우선 — 시그널·태그가 매수 시점 심볼로 기록됨).
+    by_symbol: dict[str, dict[str, Any]] = {}
     for row in rows:
-        sym = row["symbol"]
-        if sym not in by_symbol:
-            by_symbol[sym] = {"buys": [], "sells": [], "name": row["name"] or sym}
+        key = norm_symbol(row["symbol"])
+        if key not in by_symbol:
+            by_symbol[key] = {
+                "buys": [],
+                "sells": [],
+                "name": row["name"] or row["symbol"],
+                "symbol": row["symbol"],
+            }
+        g = by_symbol[key]
         if row["name"]:
-            by_symbol[sym]["name"] = row["name"]
+            g["name"] = row["name"]
         order = dict(row)
         if row["side"] == "buy":
-            by_symbol[sym]["buys"].append(order)
+            if not g["buys"]:
+                g["symbol"] = row["symbol"]
+            g["buys"].append(order)
         else:
-            by_symbol[sym]["sells"].append(order)
+            g["sells"].append(order)
 
     pairs = []
-    for sym, g in by_symbol.items():
-        buys = g["buys"]
-        sells = g["sells"]
+    for g in by_symbol.values():
+        # 그룹이 두 형(Q/무Q)에서 합쳐질 수 있어 시간순 재정렬
+        buys = sorted(g["buys"], key=lambda x: x.get("created_at") or "")
+        sells = sorted(g["sells"], key=lambda x: x.get("created_at") or "")
         name = g["name"]
+        sym = g["symbol"]
 
         buy_avg, buy_qty = _wavg(buys, fill_map)
         sell_avg, sell_qty = _wavg(sells, fill_map)

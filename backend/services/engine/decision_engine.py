@@ -19,6 +19,7 @@ from .hybrid_screening import get_today_screening
 from .position_manager import position_manager
 from .rule_cache import load_daily_rules, get_rule, clear_cache, get_meta
 from .shadow_trading import create_shadow_trade
+from .symbol_norm import norm_symbol, symbol_variants
 
 logger = logging.getLogger("DecisionEngine")
 
@@ -162,15 +163,20 @@ def _has_recent_submitted_buy(symbol: str, within_minutes: int = 5) -> bool:
         within_minutes: Grace period in minutes after order submission.
     """
     cutoff = (datetime.now(ZoneInfo("Asia/Seoul")) - timedelta(minutes=within_minutes)).isoformat()
+    # ETN은 매수가 Q-형('Q520100'), KIS 잔고가 무Q('520100')로 와서 형이 갈릴 수 있어 변형 IN 매칭
+    variants = symbol_variants(symbol)
+    if not variants:
+        return False
+    placeholders = ",".join("?" for _ in variants)
     with get_connection() as conn:
         row = conn.execute(
-            """
+            f"""
             SELECT id FROM trading_orders
-            WHERE symbol = ? AND side = 'buy' AND status IN ('submitted', 'filled')
+            WHERE symbol IN ({placeholders}) AND side = 'buy' AND status IN ('submitted', 'filled')
               AND created_at >= ?
             LIMIT 1
             """,
-            (symbol, cutoff),
+            (*variants, cutoff),
         ).fetchone()
     return row is not None
 
@@ -229,11 +235,13 @@ def _sync_managed_positions_with_account(
     """
     from .position_manager import position_manager
 
-    holdings = {
-        str(item.get("symbol") or "").strip(): item
-        for item in account_positions
-        if str(item.get("symbol") or "").strip()
-    }
+    # KIS 잔고는 무Q('520100'), 메모리 포지션은 진입 시 Q-형('Q520100')일 수 있어
+    # 매칭 키는 norm_symbol로 통일한다. position_manager 호출·신규 등록은 원본 심볼 유지.
+    holdings: dict[str, dict[str, Any]] = {}
+    for item in account_positions:
+        raw_symbol = str(item.get("symbol") or "").strip()
+        if raw_symbol:
+            holdings[norm_symbol(raw_symbol)] = item
     synced: list[str] = []
     managed_symbols: set[str] = set()
     before_positions = position_manager.get_positions()
@@ -249,8 +257,8 @@ def _sync_managed_positions_with_account(
         symbol = str(position.get("symbol") or "").strip()
         if not symbol:
             continue
-        managed_symbols.add(symbol)
-        holding = holdings.get(symbol)
+        managed_symbols.add(norm_symbol(symbol))
+        holding = holdings.get(norm_symbol(symbol))
         if not holding:
             if _has_recent_submitted_buy(symbol):
                 logger.info(
@@ -281,9 +289,11 @@ def _sync_managed_positions_with_account(
                 qty_changed.append((symbol, previous_qty, qty))
 
     imported = 0
-    for symbol, holding in holdings.items():
-        if symbol in managed_symbols:
+    for holding_key, holding in holdings.items():
+        if holding_key in managed_symbols:
             continue
+        # 신규 등록은 KIS 원본 심볼 그대로 (정규화 키는 매칭 전용)
+        symbol = str(holding.get("symbol") or "").strip()
         qty = _account_holding_qty(holding)
         entry_price = _account_holding_entry_price(holding)
         if qty <= 0 or entry_price <= 0:

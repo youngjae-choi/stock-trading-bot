@@ -185,6 +185,35 @@ def _is_already_filled(order_id: str) -> bool:
     return row is not None
 
 
+def _should_skip_fill_processing(order: dict[str, Any]) -> bool:
+    """이미 체결 기록이 있는 주문의 재처리 여부를 판단한다.
+
+    partial 상태 주문은 fills 행이 있어도 후속 체결 확인·잔량 재주문 추적을
+    계속해야 하므로 건너뛰지 않는다.
+
+    Args:
+        order: 로컬 trading_orders 행.
+    """
+    order_id = str(order.get("id") or "")
+    if str(order.get("status") or "") == "partial":
+        return False
+    return _is_already_filled(order_id)
+
+
+def _recorded_fill_qty(order_id: str) -> int:
+    """fills 테이블에 이미 기록된 누적 체결수량 합계를 반환한다.
+
+    Args:
+        order_id: trading_orders.id 값.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(quantity), 0) FROM fills WHERE order_id = ?",
+            (order_id,),
+        ).fetchone()
+    return _to_int(row[0] if row else 0)
+
+
 def _mark_order_filled(order: dict[str, Any], kis_fill_data: dict[str, Any]) -> None:
     """trading_orders 상태를 filled로 바꾸고 fills 레코드를 추가한다.
 
@@ -211,6 +240,8 @@ def _mark_order_filled(order: dict[str, Any], kis_fill_data: dict[str, Any]) -> 
     side_code = str(_kis_value(kis_fill_data, "sll_buy_dvsn_cd") or "")
     side = "buy" if side_code == "02" else "sell" if side_code == "01" else str(order.get("side") or "")
     broker_fill_id = str(_kis_value(kis_fill_data, "odno") or order.get("kis_order_no") or "")
+    # 직전 partial 폴링에서 이미 기록한 수량을 제외한 잔여분만 추가 기록 — fills 합계 == 총 체결수량 유지
+    fill_delta_qty = qty - _recorded_fill_qty(order_id)
 
     with get_connection() as conn:
         conn.execute(
@@ -237,25 +268,26 @@ def _mark_order_filled(order: dict[str, Any], kis_fill_data: dict[str, Any]) -> 
             "UPDATE trading_orders SET status = 'filled', price = ? WHERE id = ?",
             (price, order_id),
         )
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO fills
-                (id, order_id, broker_fill_id, symbol, side, quantity, price,
-                 fee, tax, filled_at, raw_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
-            """,
-            (
-                str(uuid.uuid4()),
-                order_id,
-                broker_fill_id,
-                symbol,
-                side,
-                qty,
-                price,
-                now,
-                json.dumps(kis_fill_data, ensure_ascii=False),
-            ),
-        )
+        if fill_delta_qty > 0:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO fills
+                    (id, order_id, broker_fill_id, symbol, side, quantity, price,
+                     fee, tax, filled_at, raw_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    order_id,
+                    broker_fill_id,
+                    symbol,
+                    side,
+                    fill_delta_qty,
+                    price,
+                    now,
+                    json.dumps(kis_fill_data, ensure_ascii=False),
+                ),
+            )
 
 
 async def _fetch_symbol_output2(symbol: str, date_str: str, order_no: str) -> dict[str, Any]:
@@ -419,43 +451,49 @@ def _notify_sell_fill(order: dict[str, Any], kis_data: dict[str, Any], ccld_qty:
 def _mark_order_partial(order: dict[str, Any], ccld_qty: int, price: float) -> None:
     """부분 체결 주문 상태를 partial로 갱신하고 fills 레코드를 추가한다.
 
+    같은 주문이 여러 폴링에 걸쳐 partial로 관측되므로, 이미 기록된 수량을 뺀
+    증가분(delta)만 fills에 추가해 합계가 누적 체결수량과 일치하게 유지한다.
+
     Args:
         order: 로컬 trading_orders 행.
-        ccld_qty: 부분 체결 수량.
+        ccld_qty: KIS 누적 체결수량.
         price: 체결 단가.
     """
     now = _now_kst().isoformat()
     order_id = str(order.get("id") or "")
     symbol = str(order.get("symbol") or "")
     side = str(order.get("side") or "buy")
+    fill_delta_qty = ccld_qty - _recorded_fill_qty(order_id)
     with get_connection() as conn:
         conn.execute(
             "UPDATE trading_orders SET status = 'partial', price = ? WHERE id = ?",
             (price, order_id),
         )
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO fills
-                (id, order_id, broker_fill_id, symbol, side, quantity, price,
-                 fee, tax, filled_at, raw_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, '{}')
-            """,
-            (
-                str(uuid.uuid4()),
-                order_id,
-                str(order.get("kis_order_no") or ""),
-                symbol,
-                side,
-                ccld_qty,
-                price,
-                now,
-            ),
-        )
+        if fill_delta_qty > 0:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO fills
+                    (id, order_id, broker_fill_id, symbol, side, quantity, price,
+                     fee, tax, filled_at, raw_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, '{}')
+                """,
+                (
+                    str(uuid.uuid4()),
+                    order_id,
+                    str(order.get("kis_order_no") or ""),
+                    symbol,
+                    side,
+                    fill_delta_qty,
+                    price,
+                    now,
+                ),
+            )
     logger.info(
-        "INFO: [FillPoller] partial fill recorded order_id=%s symbol=%s qty=%d price=%.2f",
+        "INFO: [FillPoller] partial fill recorded order_id=%s symbol=%s ccld_qty=%d delta=%d price=%.2f",
         order_id,
         symbol,
         ccld_qty,
+        max(fill_delta_qty, 0),
         price,
     )
 
@@ -608,7 +646,7 @@ async def poll_once(trade_date: str) -> dict[str, Any]:
         is_fully_filled = ccld_qty > 0 and (ccld_qty >= ord_qty or rmn_qty == 0)
         is_partially_filled = ccld_qty > 0 and not is_fully_filled and rmn_qty > 0
 
-        if _is_already_filled(order_id):
+        if _should_skip_fill_processing(order):
             continue
 
         if is_fully_filled:
@@ -648,7 +686,7 @@ async def poll_once(trade_date: str) -> dict[str, Any]:
             order_id = str(order.get("id") or "")
             symbol = str(order.get("symbol") or "")
             kis_order_no = str(order.get("kis_order_no") or "").strip()
-            if not order_id or not symbol or _is_already_filled(order_id):
+            if not order_id or not symbol or _should_skip_fill_processing(order):
                 continue
             if not kis_order_no:
                 logger.warning(
@@ -660,7 +698,17 @@ async def poll_once(trade_date: str) -> dict[str, Any]:
             try:
                 await asyncio.sleep(0.12)  # KIS rate limit 여유
                 out2 = await _fetch_symbol_output2(symbol, date_str, kis_order_no)
-                ccld_qty = _to_int(out2.get("tot_ccld_qty") or "0")
+                raw_ccld_qty = _kis_value(out2, "tot_ccld_qty") if out2 else ""
+                if out2 and str(raw_ccld_qty).strip() == "":
+                    # 체결수량 필드 부재 — 부분체결 판정 불가, 섣부른 partial/filled 처리 금지
+                    logger.info(
+                        "INFO: [FillPoller] output2 ccld_field_missing symbol=%s order_no=%s keys=%s — 기존 동작 유지(판정 보류)",
+                        symbol,
+                        kis_order_no,
+                        sorted(out2.keys()),
+                    )
+                    continue
+                ccld_qty = _to_int(raw_ccld_qty or "0")
                 if ccld_qty == 0:
                     logger.info(
                         "INFO: [FillPoller] output2 미체결 symbol=%s order_no=%s tot_ccld_qty=0",
@@ -669,10 +717,29 @@ async def poll_once(trade_date: str) -> dict[str, Any]:
                     )
                     continue
 
+                # 부분체결 인식 — 주문수량은 output2 tot_ord_qty 우선, 없으면 로컬 주문수량
+                ord_qty = _to_int(_kis_value(out2, "tot_ord_qty") or order.get("qty"))
+                rmn_qty = max(ord_qty - ccld_qty, 0)
                 kis_data = _make_output2_fill_data(order, out2)
+                if ord_qty > 0 and ccld_qty < ord_qty:
+                    fill_price = _to_float(kis_data.get("avg_prvs") or order.get("price"))
+                    _mark_order_partial(order, ccld_qty, fill_price)
+                    logger.info(
+                        "INFO: [FillPoller] output2 partial symbol=%s ccld=%d rmn=%d",
+                        symbol,
+                        ccld_qty,
+                        rmn_qty,
+                    )
+                    # 매도 부분체결 정체 시 잔량 시장가 재주문 (output1 경로와 동일 추적)
+                    await _maybe_reorder_sell_remainder(order, ccld_qty, rmn_qty)
+                    continue
+
                 _mark_order_filled(order, kis_data)
                 _notify_buy_fill(order, kis_data, _to_int(kis_data.get("tot_ccld_qty") or "0"))
                 _notify_sell_fill(order, kis_data, _to_int(kis_data.get("tot_ccld_qty") or "0"))
+                # 전량 체결 — 부분체결 정체 추적 상태 정리
+                _PARTIAL_PROGRESS.pop(order_id, None)
+                _REMAINDER_REORDERED.discard(order_id)
                 filled_count += 1
                 logger.info(
                     "SUCCESS: [FillPoller] output2 filled order_id=%s symbol=%s qty=%d price=%.2f",

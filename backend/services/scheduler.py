@@ -1500,6 +1500,7 @@ def _build_scheduler() -> AsyncIOScheduler:
         "premarket_tone": "08:30",
         "trade_prep": "07:45",
         "s6": "09:45",
+        "s9_sweep": "15:12",
         "postprocess": "15:20",
         "backup": "18:00",
     }
@@ -1515,6 +1516,7 @@ def _build_scheduler() -> AsyncIOScheduler:
             "premarket_tone": "schedule_s2_time",
             "trade_prep": "schedule_trade_prep_time",
             "s6": "schedule_s6_time",
+            "s9_sweep": "schedule_s9_sweep_time",
             "postprocess": "schedule_postprocess_time",
         }
         for key, db_key in key_map.items():
@@ -1545,6 +1547,7 @@ def _build_scheduler() -> AsyncIOScheduler:
                 "premarket_tone": (8, 30),
                 "trade_prep": (7, 45),
                 "s6": (9, 45),
+                "s9_sweep": (15, 12),
                 "postprocess": (15, 20),
                 "backup": (18, 0),
             }
@@ -1617,6 +1620,22 @@ def _build_scheduler() -> AsyncIOScheduler:
         id="job_bar_store_flush",
         name="10초봉 DB 저장 flush (1분)",
         replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # S9 전용 강제청산 스윕 — 동시호가(15:20~) 이전 15:12 독립 실행 (P1-T1).
+    # KIS 모의는 동시호가 체결을 시뮬레이션하지 않아 15:20 시장가 매도가 미체결로
+    # 죽는다(2026-06-12 사고: 11건 중 5건 이월). postprocess 체인(15:20)의 S9 호출은
+    # 백스톱으로 유지 — run_eod_liquidation의 중복 가드(skipped_duplicate)가 이중
+    # 청산을 막고, 미체결 잔여가 있으면 한 번 더 시도하는 효과.
+    hour, minute = _parse_time("s9_sweep")
+    scheduler.add_job(
+        job_eod_liquidation,
+        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
+        id="job_s9_eod_sweep",
+        name="S9 강제청산 스윕 (동시호가 전)",
+        replace_existing=True,
+        misfire_grace_time=300,
         max_instances=1,
         coalesce=True,
     )

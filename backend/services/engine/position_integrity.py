@@ -11,6 +11,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from ..db import get_connection
+from .symbol_norm import norm_symbol, symbol_variants
 
 logger = logging.getLogger("PositionIntegrity")
 
@@ -91,6 +92,23 @@ def _fill_quantity_column(conn: Any) -> str:
     return "quantity"
 
 
+def _expand_symbol_filter(candidate_symbols: list[str] | None) -> list[str]:
+    """SQL IN 필터용 후보 심볼을 Q/무Q 변형까지 확장(원본 순서 유지, 중복 제거).
+
+    매수는 'Q520100', 매도/잔고는 '520100' 형으로 기록될 수 있어
+    후보 심볼이 어느 형이든 양쪽 주문을 모두 잡아야 한다.
+
+    Args:
+        candidate_symbols: 호출자가 준 심볼 allow-list.
+    """
+    expanded: list[str] = []
+    for symbol in candidate_symbols or []:
+        for variant in symbol_variants(symbol):
+            if variant not in expanded:
+                expanded.append(variant)
+    return expanded
+
+
 def _load_fill_quantities_for_orders(conn: Any, order_ids: list[str]) -> dict[str, dict[str, Any]]:
     """Load fill counts and quantities, restricted to the supplied trading order ids.
 
@@ -148,7 +166,7 @@ def _load_verified_position_summaries(
     if not _table_exists("trading_orders"):
         return []
 
-    safe_symbols = [str(symbol).strip() for symbol in candidate_symbols or [] if str(symbol).strip()]
+    safe_symbols = _expand_symbol_filter(candidate_symbols)
     params: list[Any] = [trade_date]
     symbol_filter = ""
     if safe_symbols:
@@ -199,8 +217,9 @@ def _load_verified_position_summaries(
         if order_qty <= 0:
             continue
 
-        item = grouped[symbol]
-        item["symbol"] = symbol
+        # ETN Q-형 매수 ↔ 무Q 매도 수량 대조: 정규화 키로 그룹, 표시 심볼은 최초 원본 유지
+        item = grouped[norm_symbol(symbol)]
+        item["symbol"] = item["symbol"] or symbol
         item["name"] = item["name"] or str(order.get("name") or "")
         if side == "buy" and status in _UNVERIFIED_ORDER_STATUSES:
             item["pending_buy_qty"] += order_qty
@@ -243,7 +262,7 @@ def load_order_net_positions(trade_date: str, candidate_symbols: list[str] | Non
     if not _table_exists("trading_orders"):
         return []
 
-    safe_symbols = [str(symbol).strip() for symbol in candidate_symbols or [] if str(symbol).strip()]
+    safe_symbols = _expand_symbol_filter(candidate_symbols)
     params: list[Any] = [trade_date]
     symbol_filter = ""
     if safe_symbols:
@@ -288,8 +307,9 @@ def load_order_net_positions(trade_date: str, candidate_symbols: list[str] | Non
         if qty <= 0:
             continue
 
-        item = grouped[symbol]
-        item["symbol"] = symbol
+        # ETN Q-형 매수 ↔ 무Q 매도 수량 대조: 정규화 키로 그룹, 표시 심볼은 최초 원본 유지
+        item = grouped[norm_symbol(symbol)]
+        item["symbol"] = item["symbol"] or symbol
         item["name"] = item["name"] or str(order.get("name") or "")
         if side == "buy" and status in _ACTIVE_BUY_STATUSES:
             item["buy_qty"] += qty
@@ -314,6 +334,10 @@ def load_order_net_positions(trade_date: str, candidate_symbols: list[str] | Non
 def find_active_sell_order(trade_date: str, symbol: str) -> dict[str, Any] | None:
     """Return the latest unverified sell order for a symbol, if any.
 
+    심볼 비교는 Python 레벨에서 norm_symbol 기준으로 수행한다 — ETN은
+    매수 'Q520100' / 매도 '520100' 형이 혼재해 SQL 등호 매칭이 중복매도
+    가드를 무력화했다(2026-06-11).
+
     Args:
         trade_date: YYYY-MM-DD trade date to inspect.
         symbol: Stock symbol to guard against duplicate sells.
@@ -321,23 +345,26 @@ def find_active_sell_order(trade_date: str, symbol: str) -> dict[str, Any] | Non
     safe_symbol = str(symbol or "").strip()
     if not safe_symbol or not _table_exists("trading_orders"):
         return None
+    target = norm_symbol(safe_symbol)
     statuses = sorted(_UNVERIFIED_SELL_STATUSES)
     placeholders = ",".join("?" for _ in statuses)
     with get_connection() as conn:
-        row = conn.execute(
+        rows = conn.execute(
             f"""
             SELECT *
             FROM trading_orders
             WHERE trade_date = ?
-              AND symbol = ?
               AND side = 'sell'
               AND status IN ({placeholders})
             ORDER BY created_at DESC
-            LIMIT 1
             """,
-            [trade_date, safe_symbol, *statuses],
-        ).fetchone()
-    return dict(row) if row else None
+            [trade_date, *statuses],
+        ).fetchall()
+    for row in rows:
+        candidate = dict(row)
+        if norm_symbol(candidate.get("symbol")) == target:
+            return candidate
+    return None
 
 
 def build_restore_position_plan(trade_date: str, candidate_symbols: list[str] | None = None) -> list[dict[str, Any]]:
@@ -354,7 +381,9 @@ def build_restore_position_plan(trade_date: str, candidate_symbols: list[str] | 
             for summary in summaries
         ]
 
-    safe_symbols = [str(item.get("symbol") or "").strip() for item in summaries if item.get("symbol")]
+    safe_symbols = _expand_symbol_filter(
+        [str(item.get("symbol") or "").strip() for item in summaries if item.get("symbol")]
+    )
     params: list[Any] = [trade_date]
     symbol_filter = ""
     if safe_symbols:
@@ -378,12 +407,13 @@ def build_restore_position_plan(trade_date: str, candidate_symbols: list[str] | 
             """,
             params,
         ).fetchall()
-    stop_states = {str(row["symbol_code"]): dict(row) for row in rows}
+    # stop state 매칭도 정규화 키 기준 (Q-형 진입 기록 ↔ 무Q 요약 심볼 혼재 대비)
+    stop_states = {norm_symbol(row["symbol_code"]): dict(row) for row in rows}
 
     plan: list[dict[str, Any]] = []
     for summary in summaries:
         symbol = str(summary.get("symbol") or "")
-        stop_state = stop_states.get(symbol, {})
+        stop_state = stop_states.get(norm_symbol(symbol), {})
         skipped_reason = ""
         if _safe_int(summary.get("buy_qty")) <= 0:
             skipped_reason = "no_active_buy"
@@ -474,10 +504,11 @@ def _reconciled_qty_by_symbol(trade_date: str) -> dict[str, int]:
         symbol = str(item.get("symbol") or "").strip()
         if not symbol:
             continue
+        key = norm_symbol(symbol)
         try:
-            out[symbol] = int(item.get("total") or 0)
+            out[key] = out.get(key, 0) + int(item.get("total") or 0)
         except (TypeError, ValueError):
-            out[symbol] = 0
+            out.setdefault(key, 0)
     return out
 
 
@@ -517,8 +548,9 @@ def _raw_residual_rows(trade_date: str) -> list[dict[str, Any]]:
         qty = _verified_position_qty(order, fills_by_order.get(str(order.get("id") or "")))
         if qty <= 0:
             continue
-        item = grouped[symbol]
-        item["symbol"] = symbol
+        # ETN Q-형 매수 ↔ 무Q 매도 수량 대조: 정규화 키로 그룹, 표시 심볼은 최초 원본 유지
+        item = grouped[norm_symbol(symbol)]
+        item["symbol"] = item["symbol"] or symbol
         item["name"] = item["name"] or str(order.get("name") or "")
         item["first_trade_date"] = item["first_trade_date"] or str(order.get("trade_date") or "")
         if side == "buy" and status in _POSITION_FILLED_STATUSES:
@@ -552,7 +584,7 @@ def detect_legacy_residual_positions(trade_date: str) -> list[dict[str, Any]]:
     for row in raw_rows:
         item = dict(row)
         symbol = str(item.get("symbol") or "").strip()
-        reduced = int(item.get("net_qty") or 0) - int(reconciled.get(symbol, 0))
+        reduced = int(item.get("net_qty") or 0) - int(reconciled.get(norm_symbol(symbol), 0))
         if reduced > 0:
             item["net_qty"] = reduced
             out.append(item)
