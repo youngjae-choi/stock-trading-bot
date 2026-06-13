@@ -4,7 +4,8 @@
 스키마를 초기화해 격리된 SQLite 파일에서만 검증한다.
 
 검증 항목:
-  (a) intraday_high_return >= threshold 이면 improvement_candidate=1, 미만이면 0
+  (a) 고점 >= improvement_high_threshold(7%) AND 저점 > -improvement_stop_threshold(8%)
+      이면 improvement_candidate=1, 조건 미달이면 0
   (b) intraday_low_return 음수가 저장된다
   (c) review_audit._load_missed_entries 가 improvement_candidate=1 행만 반환
   (d) get_daily_chart mock 으로 stck_hgpr/stck_lwpr/price_at_missed 계산 검증
@@ -85,20 +86,20 @@ def _mock_daily_chart(monkeypatch, *, hgpr: float, lwpr: float, clpr: float = 0.
 
 
 def test_high_return_at_or_above_threshold_marks_candidate(isolated_db, monkeypatch):
-    """장중 최고가 상승률 >= threshold 이면 candidate=1."""
+    """고점 >= improvement_high_threshold(7%) AND 저점 > -improvement_stop_threshold(8%) 이면 candidate=1."""
     trade_date = "2026-06-07"
-    # price 10000, 고가 10300 -> +3% >= 2% threshold -> candidate
+    # price 10000, 고가 10750 -> +7.5% >= 7% threshold, 저가 9300 -> -7% > -8% threshold -> candidate
     row_id = _insert_missed(trade_date=trade_date, symbol="000001", price_at_missed=10000.0)
-    _mock_daily_chart(monkeypatch, hgpr=10300.0, lwpr=9800.0)
+    _mock_daily_chart(monkeypatch, hgpr=10750.0, lwpr=9300.0)
 
     result = asyncio.run(mo.update_missed_returns(trade_date))
     assert result["updated"] == 1
 
     row = _fetch(row_id)
     assert row["improvement_candidate"] == 1
-    assert row["max_return_until_eod"] == pytest.approx(3.0)
+    assert row["max_return_until_eod"] == pytest.approx(7.5)
     # (d) 계산 검증: 고가 상승률
-    assert row["max_return_until_eod"] == pytest.approx((10300 - 10000) / 10000 * 100)
+    assert row["max_return_until_eod"] == pytest.approx((10750 - 10000) / 10000 * 100)
 
 
 def test_high_return_below_threshold_not_candidate(isolated_db, monkeypatch):

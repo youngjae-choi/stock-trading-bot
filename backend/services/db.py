@@ -400,10 +400,17 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
         ("intraday_refresh.replacement_execute_enabled", True, "boolean", "교체 신호 자동 실행 여부"),
         ("exploration.deploy_target_rate", 0.95, "number", "탐색 배포 목표율(예수금 대비)"),
         ("missed.improvement_threshold", 2.0, "number", "Missed 개선후보 판정 임계치(장중 최고가 상승률 %, 기본 2.0)"),
+        ("missed.improvement_high_threshold", 7.0, "number", "Missed 개선후보 고점 임계치(%, 기본 7.0 — 장중 최고가가 기준가 대비 이 이상 올랐을 때)"),
+        ("missed.improvement_stop_threshold", 8.0, "number", "Missed 개선후보 저점 손절선(%, 기본 8.0 — 장중 최저가가 이 이하로 내려가지 않아야 후보 인정)"),
         ("account.principal", 100000000, "number", "계좌 원금(시드). 누적 수익률 계산 기준. 모의계좌 기본 1억, 실계좌 전환/증액 시 조정"),
         ("momentum_scan.enabled", True, "boolean", "상시 모멘텀 스캐너 활성(모의 전용)"),
         ("momentum_scan.interval_min", 3, "number", "모멘텀 스캔 주기(분)"),
         ("momentum_scan.max_subscriptions", 40, "number", "WS 동시 구독 상한 가드"),
+        ("schedule_evening_briefing_time", "00:00", "string", "장후 브리핑 수집 시각 (HH:MM)"),
+        ("briefing.scrape_enabled", True, "boolean", "index-board 스크래핑 1차 소스 사용 (false면 기존 KIS+LLM만)"),
+        ("briefing.scrape_url", "https://index-board.space/briefing", "string", "시황 브리핑 스크래핑 URL"),
+        ("briefing.scrape_timeout_sec", 20, "number", "브리핑 스크래핑 HTTP 타임아웃(초)"),
+        ("regime.evening_confidence_enabled", True, "boolean", "장후 브리핑 기반 regime 신뢰도 보정 on/off"),
     ]
     for key, value, value_type, description in defaults:
         connection.execute(
@@ -584,6 +591,15 @@ def _migrate_regime_set_applications(connection: sqlite3.Connection) -> None:
         if "current_flag" not in existing:
             connection.execute("ALTER TABLE regime_set_applications ADD COLUMN current_flag INTEGER NOT NULL DEFAULT 0")
             logger.info("DB migration: added column current_flag to regime_set_applications")
+
+    # 장후 브리핑 신뢰도 보정 컬럼 (Phase 2). 컬럼 존재 체크 후 ADD COLUMN — 기존 ALTER 패턴.
+    cols_now = {str(row["name"]) for row in connection.execute("PRAGMA table_info(regime_set_applications)")}
+    if "evening_alignment" not in cols_now:
+        connection.execute("ALTER TABLE regime_set_applications ADD COLUMN evening_alignment TEXT")
+        logger.info("DB migration: added column evening_alignment to regime_set_applications")
+    if "confidence_adjustment" not in cols_now:
+        connection.execute("ALTER TABLE regime_set_applications ADD COLUMN confidence_adjustment REAL DEFAULT 0.0")
+        logger.info("DB migration: added column confidence_adjustment to regime_set_applications")
 
     connection.execute(
         """
@@ -992,6 +1008,8 @@ def _schema_statements() -> list[str]:
             win_count INTEGER,
             total_pnl REAL,
             result_updated_at TEXT,
+            evening_alignment TEXT,
+            confidence_adjustment REAL DEFAULT 0.0,
             created_at TEXT NOT NULL,
             FOREIGN KEY(set_id) REFERENCES regime_sets(id)
         )
@@ -1608,6 +1626,19 @@ CREATE TABLE IF NOT EXISTS dividend_stocks (
 """,
         "CREATE INDEX IF NOT EXISTS idx_dividend_stocks_code ON dividend_stocks(code)",
         "CREATE INDEX IF NOT EXISTS idx_dividend_stocks_ex_date ON dividend_stocks(next_ex_date)",
+        """
+        CREATE TABLE IF NOT EXISTS evening_briefing (
+            id              TEXT PRIMARY KEY,
+            trade_date      TEXT NOT NULL UNIQUE,
+            market_data     TEXT NOT NULL DEFAULT '{}',
+            briefing_text   TEXT NOT NULL DEFAULT '',
+            sentiment       TEXT NOT NULL DEFAULT 'neutral',
+            source_ts       TEXT,
+            provider        TEXT NOT NULL DEFAULT 'index-board',
+            created_at      TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_evening_briefing_trade_date ON evening_briefing(trade_date DESC)",
     ]
 
 

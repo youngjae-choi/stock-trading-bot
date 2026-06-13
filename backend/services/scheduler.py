@@ -1397,6 +1397,39 @@ async def job_postprocess_pipeline() -> None:
         logger.error("FAIL: [PostProcess] 후처리 프로세스 중단 reason=%s", exc)
 
 
+async def job_evening_briefing() -> None:
+    """장후(미국장 마감) 시황 브리핑 수집·저장 — 00:00 KST 신규 잡.
+
+    당일이 거래일이었으면 자정에 장후 브리핑을 수집한다. 다른 EOD 잡들과 동일하게
+    _non_trading_day_today() 가드를 적용한다(주말·휴장 자정엔 스킵). 복기·신뢰도
+    보정용이라 실패해도 비치명 — scrape 실패 시 저장 스킵 + WARN.
+    """
+    today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+    _ntr = _non_trading_day_today()
+    if _ntr:
+        logger.info("SKIP: [Job EveningBriefing] 비거래일(%s) — 장후 브리핑 수집 스킵", _ntr)
+        return
+    logger.info("START: [Job EveningBriefing] 장후 브리핑 수집 (%s KST)", today)
+    try:
+        from .engine.evening_briefing import collect_and_store_evening_briefing
+
+        result = await collect_and_store_evening_briefing(today)
+        if result.get("stored"):
+            logger.info(
+                "SUCCESS: [Job EveningBriefing] 저장 완료 trade_date=%s sentiment=%s",
+                today,
+                result.get("sentiment"),
+            )
+        else:
+            logger.warning(
+                "WARN: [Job EveningBriefing] 저장 스킵 trade_date=%s reason=%s",
+                today,
+                result.get("reason"),
+            )
+    except Exception as exc:
+        logger.error("FAIL: [Job EveningBriefing] 장후 브리핑 수집 실패 — reason=%s", exc)
+
+
 async def job_intraday_refresh(slot: str) -> None:
     """장중 시장 재평가 & 후보 재선별 (09:30 / 10:30 / 11:30 KST).
 
@@ -1503,6 +1536,7 @@ def _build_scheduler() -> AsyncIOScheduler:
         "s9_sweep": "15:12",
         "postprocess": "15:20",
         "backup": "18:00",
+        "evening_briefing": "00:00",
     }
     try:
         from .settings_store import list_settings
@@ -1518,6 +1552,7 @@ def _build_scheduler() -> AsyncIOScheduler:
             "s6": "schedule_s6_time",
             "s9_sweep": "schedule_s9_sweep_time",
             "postprocess": "schedule_postprocess_time",
+            "evening_briefing": "schedule_evening_briefing_time",
         }
         for key, db_key in key_map.items():
             if isinstance(saved.get(db_key), str):
@@ -1550,6 +1585,7 @@ def _build_scheduler() -> AsyncIOScheduler:
                 "s9_sweep": (15, 12),
                 "postprocess": (15, 20),
                 "backup": (18, 0),
+                "evening_briefing": (0, 0),
             }
             return fallback[setting_key]
 
@@ -1654,6 +1690,17 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour=15, minute=35, timezone="Asia/Seoul"),
         id="job_missed_returns_update",
         name="미진입 수익률 독립 업데이트",
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
+    # 장후 시황 브리핑 수집 — 00:00 KST (미국장 마감 후). 신뢰도 보정·복기 baseline용.
+    hour, minute = _parse_time("evening_briefing")
+    scheduler.add_job(
+        job_evening_briefing,
+        CronTrigger(hour=hour, minute=minute, timezone="Asia/Seoul"),
+        id="job_evening_briefing",
+        name="장후 시황 브리핑 수집 (00:00)",
         replace_existing=True,
         misfire_grace_time=3600,
         coalesce=True,

@@ -216,6 +216,7 @@ async def run_market_tone_analysis(
 
     is_intraday = safe_source == "intraday_refresh"
     market_data: dict[str, Any] = {}
+    briefing_scraped = False
 
     if is_intraday:
         # 장중 분기: 사전 수집된 스냅샷 재사용 or 신규 호출
@@ -287,6 +288,38 @@ async def run_market_tone_analysis(
             except Exception as snap_exc:
                 logger.warning("WARN: MarketToneService S11 스냅샷 폴백도 실패 — %s", snap_exc)
                 market_data_text = "[전날 밤 해외 시장 현황]\n  데이터 수집 실패 — 가용한 정보만 기준으로 판단"
+
+    # 아침 경로: index-board 장전 브리핑 스크래핑으로 LLM 입력 보강 (실패 시 폴백).
+    # 스크래핑은 입력 보강일 뿐 regime 판단·저장 흐름은 그대로 유지한다.
+    if not is_intraday:
+        try:
+            from ..settings_store import get_setting
+
+            scrape_enabled = bool(get_setting("briefing.scrape_enabled", True))
+        except Exception:
+            scrape_enabled = False
+        if scrape_enabled:
+            try:
+                from . import index_board_scraper
+
+                briefing = await index_board_scraper.scrape_morning()
+                if briefing and briefing.get("text"):
+                    market_data_text += (
+                        "\n\n[외부 AI 시황 브리핑 (index-board, 장전 정제)]\n"
+                        + str(briefing["text"])
+                    )
+                    briefing_scraped = True
+                    logger.info(
+                        "INFO: MarketToneService 장전 브리핑 스크랩 보강 적용 generated_at=%s",
+                        briefing.get("generated_at"),
+                    )
+                else:
+                    logger.info("INFO: MarketToneService 장전 브리핑 없음 — 기존 경로 폴백")
+            except Exception as scrape_exc:
+                logger.warning(
+                    "WARN: MarketToneService 장전 브리핑 스크랩 실패 (기존 경로 폴백) — %s",
+                    scrape_exc,
+                )
 
     prompt_file = "intraday_market_tone.md" if is_intraday else "0805_opus_market_tone.md"
     prompt_vars = {"date": today, "market_data": market_data_text}
@@ -438,8 +471,8 @@ async def run_market_tone_analysis(
         "rulepack_hint": parsed.get("rulepack_hint", ""),
     }
     logger.info(
-        "SUCCESS: MarketToneService trade_date=%s tone=%s provider=%s",
-        today, parsed["tone"], llm_result.get("provider", "none"),
+        "SUCCESS: MarketToneService trade_date=%s tone=%s provider=%s briefing_scraped=%s",
+        today, parsed["tone"], llm_result.get("provider", "none"), briefing_scraped,
     )
     finish_pipeline_run(
         run_id=run_audit_id,

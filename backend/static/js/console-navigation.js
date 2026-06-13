@@ -47,6 +47,12 @@
     if (name === "data") {
       name = "engine-test";
     }
+    if (name === "rulepack") {
+      name = "plan-funnel";
+    }
+    if (name === "funnel") {
+      name = "plan-funnel";
+    }
     sessionStorage.setItem('currentScreen', name);
 
     if (!opts.skipHistory) {
@@ -114,15 +120,9 @@
       loadConfidenceCalibration();
     }
 
-    if (name === "rulepack") {
-      loadDailyPlanScreen();
-    }
-
     if (name === "plan-funnel") {
       loadPlanFunnel();
-    }
-
-    if (name === "funnel") {
+      loadDailyPlanScreen();
       loadFunnelData();
       var td = window._tcTradeDate || null;
       if (typeof loadIntradayReselectionTimeline === "function") loadIntradayReselectionTimeline(td);
@@ -146,6 +146,7 @@
         loadTodayOrders(5, td);
         loadTodayPlanStatus(td);
         loadMorningBrief(td);
+        loadEveningBrief(td);
         loadTodayRegimeTimeline(td);
         loadKrIndexLive();
         loadCumulativeReturn();
@@ -212,7 +213,7 @@
   }
 
   /* ── Bottom Tab Bar ── */
-  var _bottomTabDirectScreens = ['today', 'trading', 'rulepack', 'shadow-trading'];
+  var _bottomTabDirectScreens = ['today', 'trading', 'plan-funnel', 'shadow-trading'];
 
   function setActiveTab(screenName) {
     var tabBar = document.getElementById('bottomTabBar');

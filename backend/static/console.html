@@ -6,7 +6,7 @@
   <title>Kairos Control Console</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/console.css?v=11">
+  <link rel="stylesheet" href="/static/css/console.css?v=12">
 </head>
 
 <body class="auth-required">
@@ -77,13 +77,11 @@
         <select id="mobileMenu" class="mobile-menu" aria-label="화면 선택" style="display:none">
           <option value="today">Today Control</option>
           <option value="trading">Trading Monitor</option>
-          <option value="rulepack">Daily Plan</option>
           <option value="shadow-trading">Missed Entries</option>
           <option value="daily-results">Daily Results</option>
           <option value="dividends">Dividend Entry</option>
           <option value="dividend-stats">Statistics</option>
           <option value="statistics">Trade History</option>
-          <option value="funnel">Funnel Monitor</option>
           <option value="plan-funnel">Plan &amp; Funnel</option>
           <option value="settings">Settings</option>
         </select>
@@ -98,9 +96,7 @@
             <button type="button" class="active" data-screen="today">Today Control <small>main</small></button>
           <button type="button" data-screen="trading">Trading Monitor <small>live</small></button>
           <button type="button" data-screen="statistics">Trade History <small>trades</small></button>
-          <button type="button" data-screen="rulepack">Daily Plan <small>plan & regime</small></button>
           <button type="button" data-screen="plan-funnel">Plan & Funnel <small>plan+funnel</small></button>
-          <button type="button" data-screen="funnel">Funnel Monitor <small>screening</small></button>
           <button type="button" data-screen="expert-knowledge">Knowledge <small>knowledge</small></button>
           <button type="button" data-screen="alerts">Alert Center <small>alerts</small></button>
           <button type="button" data-screen="approval" style="display:none">Approval Queue <small>approval</small></button>
@@ -168,6 +164,16 @@
                 </div>
               </div>
             </div>
+          </div>
+
+          <div class="card" id="eveningBriefCard" style="display:none; border-left:3px solid #6cb6ff; margin-top:12px;">
+            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+              <span>전날 장후 시황 <span style="font-size:11px; color:var(--muted);">index-board · 미국장 기준</span></span>
+              <span id="eb-sentiment-badge" style="font-size:11px; padding:2px 8px; border-radius:10px;"></span>
+            </div>
+            <div id="eb-date" style="font-size:11px; color:var(--muted); margin-bottom:6px;"></div>
+            <div id="eb-text" style="font-size:13px; line-height:1.7; color:var(--fg);"></div>
+            <div id="eb-alignment" style="margin-top:10px; padding:8px 12px; background:var(--bg2); border-radius:6px; font-size:12px; display:none;"></div>
           </div>
 
           <!-- 레짐 전환 타임라인 -->
@@ -265,8 +271,8 @@
               <div class="funnel-step"><strong id="fp-positions">-</strong><span>보유중</span></div>
             </div>
             <div style="text-align:right; margin-top:8px;">
-              <button type="button" class="btn" style="font-size:11px;" data-action="showScreen" data-screen="funnel">
-                자세히보기 (Funnel Monitor) →
+              <button type="button" class="btn" style="font-size:11px;" data-action="showScreen" data-screen="plan-funnel">
+                자세히보기 (Plan &amp; Funnel) →
               </button>
             </div>
           </div>
@@ -427,314 +433,6 @@
           </div>
         </section>
 
-        <section class="screen" id="screen-rulepack">
-          <div class="page-head">
-            <div>
-              <h1 class="page-title">Daily Plan</h1>
-              <p class="page-desc">오늘 적용된 Regime Set, Daily Plan, Risk Profile, 레짐별 성과 분석을 통합해서 확인합니다.</p>
-            </div>
-            <div style="display:flex; gap:8px; align-items:center;">
-              <button type="button" class="btn" data-action="showScreen" data-screen="plan-funnel">통합 뷰: Plan & Funnel →</button>
-              <button type="button" class="btn" data-action="loadDailyPlanScreen">새로고침</button>
-              <button type="button" class="btn" data-action="showDpContext">Context 보기</button>
-              <div style="position:relative; display:inline-block;">
-                <button type="button" class="btn" data-action="toggleDpAdvanced">고급 작업 ▾</button>
-                <div id="dp-advanced-menu" style="display:none; position:absolute; right:0; top:100%; background:var(--bg2); border:1px solid var(--border); border-radius:6px; min-width:180px; z-index:100; padding:4px 0;">
-                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:var(--fg); font-size:12px; cursor:pointer;" data-action="runDailyPlanDryRun">Daily Plan Dry Run</button>
-                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:var(--fg); font-size:12px; cursor:pointer;" data-action="manualRerunS5">S5 수동 재실행</button>
-                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:var(--fg); font-size:12px; cursor:pointer;" data-action="revalidateDailyPlan">Daily Plan 재검증</button>
-                  <hr style="margin:4px 0; border-color:var(--border);">
-                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:#f85149; font-size:12px; cursor:pointer;" data-action="deactivateDailyPlan">Daily Plan 비활성화</button>
-                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:#f85149; font-size:12px; cursor:pointer;" data-action="rollbackDailyPlan">이전 Plan으로 롤백</button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- ── 오늘의 Regime Set ── -->
-          <div id="dp-regime-set-card" class="card" style="margin-bottom:16px; border-left:3px solid var(--accent);">
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
-              <div>
-                <span class="card-title" style="font-size:13px;">오늘의 Regime Set</span>
-                <span id="dp-set-prebuilt-badge" style="display:none; margin-left:8px; font-size:10px; background:#d29922; color:#000; border-radius:3px; padding:2px 6px;">예측 Set</span>
-              </div>
-              <span id="dp-set-score" style="font-size:11px; color:var(--muted);"></span>
-            </div>
-            <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start;">
-              <div>
-                <div id="dp-set-name" style="font-size:18px; font-weight:700; color:var(--fg);">-</div>
-                <div id="dp-set-regime" style="font-size:12px; color:var(--muted); margin-top:2px;"></div>
-              </div>
-              <div style="flex:1; min-width:200px;">
-                <div id="dp-set-reason" style="font-size:12px; color:var(--muted); line-height:1.6;"></div>
-              </div>
-              <div id="dp-set-settings" style="font-size:11px; color:var(--fg); background:var(--bg2); border-radius:6px; padding:8px 12px; white-space:pre;"></div>
-            </div>
-
-            <!-- 추론 체인 -->
-            <div id="dp-set-chain" style="display:flex; gap:0; align-items:stretch; margin-top:12px; flex-wrap:wrap;">
-              <!-- JS가 채움: 아침 브리핑 → 레짐 판단 → SET 선택 → 적용 설정 -->
-            </div>
-          </div>
-
-          <!-- 오늘 요약 카드 4개 -->
-          <div class="grid cols-4">
-            <div class="card compact">
-              <div class="card-title">시장 톤 <span>market tone</span></div>
-              <div class="metric" id="dp-market-tone">-</div>
-              <div class="muted" id="dp-trading-intensity">매매 강도: -</div>
-            </div>
-            <div class="card compact">
-              <div class="card-title">신규매수 <span>new entry</span></div>
-              <div class="metric" id="dp-new-entry">-</div>
-              <div class="muted" id="dp-plan-status">Plan 상태: -</div>
-            </div>
-            <div class="card compact">
-              <div class="card-title">종목 배정 <span>assignments</span></div>
-              <div class="metric" id="dp-assignments-count">-</div>
-              <div class="muted" id="dp-excluded-count">제외: -종목</div>
-            </div>
-            <div class="card compact">
-              <div class="card-title">LLM Provider <span>source</span></div>
-              <div class="metric" id="dp-provider" style="font-size:14px;">-</div>
-              <div class="muted" id="dp-created-at">-</div>
-            </div>
-          </div>
-
-          <div class="section-gap"></div>
-
-          <!-- 청산 정책 안내 -->
-          <div class="card" style="border-left:3px solid #3fb950;">
-            <div class="card-title">청산 조건</div>
-            <ul style="margin:0; padding-left:16px; font-size:12px; color:var(--muted); line-height:1.8;">
-              <li>고정 익절은 사용하지 않습니다.</li>
-              <li>각 종목은 배정된 Risk Profile에 따라 초기 손절선을 설정합니다.</li>
-              <li>수익이 기준 이상 발생하면 트레일링 스탑이 활성화됩니다.</li>
-              <li>고점 갱신 시 손절선은 상향되며, 손절선은 절대 하향되지 않습니다.</li>
-              <li>모든 포지션은 장마감(15:20) 전 강제 청산됩니다.</li>
-            </ul>
-          </div>
-
-          <div class="section-gap"></div>
-
-          <!-- Risk Profile 4종 요약 -->
-          <div class="card">
-            <div class="card-title">Risk Profile Pack <span id="dp-profile-pack-id">-</span></div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Profile</th><th>초기손절</th><th>트레일링 활성</th><th>트레일링 손절</th>
-                    <th>최대비중</th><th>재진입</th>
-                  </tr>
-                </thead>
-                <tbody id="dp-profiles-tbody">
-                  <tr><td colspan="7" class="muted" style="text-align:center;">로딩중</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="section-gap"></div>
-
-          <!-- 종목별 Profile 배정 -->
-          <div class="card">
-            <div class="card-title">종목별 Profile 배정 <span id="dp-plan-id-badge">-</span></div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr><th>종목코드</th><th>종목명</th><th>배정 Profile</th><th>배정 사유</th></tr>
-                </thead>
-                <tbody id="dp-assignments-tbody">
-                  <tr><td colspan="4" class="muted" style="text-align:center;">데이터 없음</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="section-gap"></div>
-
-          <!-- 검증 결과 -->
-          <div class="card">
-            <div class="card-title">검증 결과</div>
-            <div id="dp-validation-list" style="display:flex; flex-direction:column; gap:4px;"></div>
-          </div>
-
-          <div class="section-gap"></div>
-
-          <!-- 제외 종목 + LLM 요약 -->
-          <div style="display:flex; gap:16px; flex-wrap:wrap;">
-            <div class="card" style="flex:1; min-width:200px;">
-              <div class="card-title">제외 종목</div>
-              <div id="dp-excluded-list" style="font-size:12px; color:var(--muted);">없음</div>
-            </div>
-            <div class="card" style="flex:2; min-width:280px;">
-              <div class="card-title">LLM 분석 요약</div>
-              <div id="dp-llm-summary" style="font-size:12px; color:var(--muted); line-height:1.6;">-</div>
-            </div>
-          </div>
-
-          <div class="section-gap"></div>
-
-          <!-- JSON 원본 보기 -->
-          <div class="card">
-            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-              <span>원본 Daily Trading Plan JSON</span>
-              <button type="button" class="btn" style="font-size:11px;" data-action="toggleDpJson">펼치기/접기</button>
-            </div>
-            <pre id="dp-raw-json" style="display:none; font-size:11px; overflow:auto; max-height:300px; background:var(--bg2); padding:10px; border-radius:6px;"></pre>
-          </div>
-        </section>
-
-        <section class="screen" id="screen-funnel">
-          <div class="page-head">
-            <div>
-              <h1 class="page-title">Funnel Monitor</h1>
-              <p class="page-desc">전체 종목이 어떤 조건으로 유니버스와 후보 종목으로 압축됐는지 확인합니다. 숫자는 매일 달라집니다.</p>
-            </div>
-            <div style="display:flex; gap:8px; align-items:center;">
-              <button type="button" class="btn" data-action="showScreen" data-screen="plan-funnel">통합 뷰: Plan & Funnel →</button>
-              <button type="button" class="btn" data-action="loadFunnelData">새로고침</button>
-            </div>
-          </div>
-
-          <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:12px;">
-            <div class="card compact"><div class="card-title">기준 universe</div><div class="metric" id="funnel-total">-</div><div class="muted" id="funnel-total-source">출처 확인 전</div></div>
-            <div class="card compact"><div class="card-title">Layer 1 통과</div><div class="metric" id="funnel-layer1">-</div><div class="muted" id="funnel-layer1-detail">S3 결과 확인 전</div></div>
-            <div class="card compact"><div class="card-title">Layer 2 통과</div><div class="metric" id="funnel-layer2">-</div><div class="muted" id="funnel-layer2-detail">S4 결과 확인 전</div></div>
-            <div class="card compact">
-              <div class="card-title" title="이 값은 S4 하이브리드 스크리닝이 생성한 모든 BUY 신호 수입니다. Daily Plan이 일부 종목을 제외하면 Trading Monitor에서는 더 적게 표시됩니다.">오늘 BUY 신호 (원본) <span style="cursor:help;">ⓘ</span></div>
-              <div class="metric" id="funnel-candidates">-</div>
-              <div class="muted" id="funnel-candidates-detail">Daily Plan 배정 전 S4 원본 신호. Trading Monitor의 매수대기와 다를 수 있음.</div>
-            </div>
-            <div class="card compact">
-              <div class="card-title">Profile 배정</div>
-              <div style="display:flex; gap:10px; flex-wrap:wrap; font-size:12px; margin-top:6px; line-height:1.6;">
-                <span><span style="color:#6cb6ff; font-weight:600;">L</span> <strong id="fn-low-count">-</strong></span>
-                <span><span style="color:#3fb950; font-weight:600;">M</span> <strong id="fn-mid-count">-</strong></span>
-                <span><span style="color:#d29922; font-weight:600;">H</span> <strong id="fn-high-count">-</strong></span>
-                <span><span style="color:#f85149; font-weight:600;">T</span> <strong id="fn-spike-count">-</strong></span>
-              </div>
-            </div>
-          </div>
-
-          <!-- 선정 퍼널: 단계별 통과/탈락 종목 (PM 핵심 요청) -->
-          <div class="card" style="margin-top:16px;">
-            <div class="card-title">선정 퍼널 <span>오늘 종목이 어떻게 압축됐나</span></div>
-            <div id="funnel-selection"><div class="muted" style="padding:14px 4px;">로딩중…</div></div>
-          </div>
-
-          <div class="card-title" style="margin-top:20px; font-size:13px; color:var(--muted);">진단 · 장중 운영</div>
-          <div class="grid cols-3" style="margin-top:8px">
-            <div class="card compact">
-              <div class="card-title">S3 적용 메모리</div>
-              <div class="metric" id="funnel-mem-s3">-</div>
-              <div class="muted">S3_UNIVERSE_FILTER</div>
-            </div>
-            <div class="card compact">
-              <div class="card-title">S4 적용 메모리</div>
-              <div class="metric" id="funnel-mem-s4">-</div>
-              <div class="muted">S4_HYBRID_SCREENING</div>
-            </div>
-            <div class="card compact">
-              <div class="card-title">S5 적용 메모리</div>
-              <div class="metric" id="funnel-mem-s5">-</div>
-              <div class="muted">S5_DAILY_PLAN</div>
-            </div>
-          </div>
-
-          <div class="section-gap"></div>
-          <div class="card compact" id="funnel-empty-reason" style="display:none;"></div>
-          <div class="muted" id="funnel-last-updated" style="font-size:12px; margin-top:8px;"></div>
-
-          <div class="section-gap"></div>
-
-          <!-- Task 1 & 2: 장중 재선별 타임라인 (5개 슬롯 + 섹터 회전) -->
-          <div id="tc-intraday-reselection-card" class="card" style="margin-bottom:16px; display:none;">
-            <div class="card-title">장중 재선별 타임라인 <span id="tc-reselection-date">오늘</span> <small>09:30 / 10:30 / 11:30 / 13:00 / 14:00 슬롯</small></div>
-            <div id="tc-reselection-timeline" style="display:flex; flex-direction:column; gap:8px;">
-              <!-- JS에서 채움 -->
-            </div>
-          </div>
-
-          <!-- Task 3: 포지션 교체 신호 -->
-          <div id="tc-replacement-signal-card" class="card" style="margin-bottom:16px; display:none;">
-            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-              <span>포지션 교체 신호</span>
-              <span id="tc-replacement-count" class="badge">0건</span>
-            </div>
-            <div id="tc-replacement-list" style="display:flex; flex-direction:column; gap:10px;">
-              <!-- JS에서 채움 -->
-            </div>
-            <div style="margin-top:12px; font-size:11px; color:var(--info, #3fb950); border-top:1px solid var(--line); padding-top:8px;">
-              ⚠️ 강제 교체 없음. 트레일링 스탑 발동 시 자연 교체.
-            </div>
-          </div>
-
-          <!-- Task 4: Kill Switch (긴급 비활성화) -->
-          <div id="tc-kill-switch-card" class="card" style="margin-bottom:16px;">
-            <div class="card-title">⚙️ 장중 재선별 기능 활성화 <small>긴급 비활성화 - 즉시 반영</small></div>
-            <div id="tc-kill-switch-list" style="display:flex; flex-direction:column; gap:8px; padding-top:6px;">
-              <!-- JS에서 채움 -->
-              <div class="muted" style="font-size:12px; text-align:center; padding:8px;">설정을 불러오는 중...</div>
-            </div>
-            <div style="margin-top:10px; font-size:11px; color:var(--muted); border-top:1px solid var(--line); padding-top:8px;">
-              마스터 OFF 시 모든 신규 기능 비활성. 재시작 불필요 — 매 호출 시 설정 재확인.
-            </div>
-          </div>
-
-          <div class="section-gap"></div>
-
-          <div class="split">
-            <div class="card">
-              <div class="card-title">Layer 1 탈락 사유</div>
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr><th>조건</th><th>탈락 수</th><th>비중</th><th>판단</th></tr>
-                  </thead>
-                  <tbody id="funnel-layer1-reasons-tbody">
-                    <tr><td colspan="4" class="muted" style="text-align:center;">미수집·대기: 새로고침을 눌러 탈락 사유 불러오기</td></tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div class="card">
-              <div class="card-title">Funnel Quality</div>
-              <div class="card compact">
-                <div class="card-title">필터 강도</div>
-                <div><span class="status info" id="funnel-quality-strength-status">확인 전</span></div>
-                <div class="muted" id="funnel-quality-strength-detail">실제 S3/S4 결과를 불러온 뒤 표시합니다.</div>
-              </div>
-              <div class="card compact">
-                <div class="card-title">이상 징후</div>
-                <div><span class="status info" id="funnel-quality-anomaly-status">확인 전</span></div>
-                  <div class="muted" id="funnel-quality-anomaly-detail">품질 집계 미수집: 저장된 단계 결과만 표시합니다.</div>
-              </div>
-            </div>
-          </div>
-
-          <div class="section-gap"></div>
-
-          <div class="card">
-            <div class="card-title">후보 선정 결과 <span>상위 일부 샘플</span></div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>종목코드</th><th>종목명</th><th>기술</th><th>기초</th><th>테마</th><th>총점</th><th>선별 시각</th><th>상태</th><th>선정 사유</th><th>배정 Profile</th><th>배정 사유</th><th>Memory refs</th>
-                  </tr>
-                </thead>
-                <tbody id="funnel-candidates-tbody">
-                  <tr><td colspan="12" class="muted" style="text-align:center;">미수집·대기: 새로고침을 눌러 후보 선정 결과 불러오기</td></tr>
-                </tbody>
-                <!-- 2026-06-01: AI 신뢰도 컬럼 제거 (정성 점수를 게이트에서 분리) -->
-              </table>
-            </div>
-          </div>
-        </section>
-
         <!-- ── P4: Plan & Funnel 통합 화면 ── -->
         <section class="screen" id="screen-plan-funnel">
           <div class="page-head">
@@ -743,8 +441,6 @@
               <p class="page-desc">오늘 Daily Plan 요약, 장중 선별 타임라인, Funnel 진행 숫자를 한 화면에서 확인합니다. 기준일 <strong id="pf-trade-date">-</strong></p>
             </div>
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-              <button type="button" class="btn" data-action="showScreen" data-screen="rulepack">Daily Plan →</button>
-              <button type="button" class="btn" data-action="showScreen" data-screen="funnel">Funnel Monitor →</button>
               <button type="button" class="btn" data-action="loadPlanFunnel">새로고침</button>
             </div>
           </div>
@@ -779,7 +475,7 @@
               <span>장중 선별 타임라인 <span>모멘텀 스캔 · 장중 재선별 유입 이력</span></span>
               <span class="badge" id="pf-intraday-count">-</span>
             </div>
-            <div id="pf-intraday-timeline" style="display:flex; flex-direction:column; gap:8px;">
+            <div id="pf-intraday-timeline" style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px;">
               <div class="muted" style="padding:8px;">로딩중...</div>
             </div>
           </div>
@@ -795,6 +491,312 @@
             </div>
             <div class="muted" id="pf-funnel-note" style="font-size:12px; margin-top:8px;"></div>
           </div>
+
+          <!-- ── 접을 수 있는 상세: Daily Plan ── -->
+          <details class="card pf-details-section" style="margin-top:16px;">
+            <summary class="card-title pf-details-summary">
+              <span>Daily Plan 상세</span>
+              <span style="font-size:11px; color:var(--muted);">클릭해서 펼치기/접기</span>
+            </summary>
+
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px; margin-top:10px;">
+              <button type="button" class="btn" data-action="loadDailyPlanScreen">새로고침</button>
+              <button type="button" class="btn" data-action="showDpContext">Context 보기</button>
+              <div style="position:relative; display:inline-block;">
+                <button type="button" class="btn" data-action="toggleDpAdvanced">고급 작업 ▾</button>
+                <div id="dp-advanced-menu" style="display:none; position:absolute; right:0; top:100%; background:var(--bg2); border:1px solid var(--border); border-radius:6px; min-width:180px; z-index:100; padding:4px 0;">
+                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:var(--fg); font-size:12px; cursor:pointer;" data-action="runDailyPlanDryRun">Daily Plan Dry Run</button>
+                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:var(--fg); font-size:12px; cursor:pointer;" data-action="manualRerunS5">S5 수동 재실행</button>
+                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:var(--fg); font-size:12px; cursor:pointer;" data-action="revalidateDailyPlan">Daily Plan 재검증</button>
+                  <hr style="margin:4px 0; border-color:var(--border);">
+                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:#f85149; font-size:12px; cursor:pointer;" data-action="deactivateDailyPlan">Daily Plan 비활성화</button>
+                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:#f85149; font-size:12px; cursor:pointer;" data-action="rollbackDailyPlan">이전 Plan으로 롤백</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- ── 오늘의 Regime Set ── -->
+            <div id="dp-regime-set-card" class="card" style="margin-bottom:16px; border-left:3px solid var(--accent);">
+              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                <div>
+                  <span class="card-title" style="font-size:13px;">오늘의 Regime Set</span>
+                  <span id="dp-set-prebuilt-badge" style="display:none; margin-left:8px; font-size:10px; background:#d29922; color:#000; border-radius:3px; padding:2px 6px;">예측 Set</span>
+                </div>
+                <span id="dp-set-score" style="font-size:11px; color:var(--muted);"></span>
+              </div>
+              <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start;">
+                <div>
+                  <div id="dp-set-name" style="font-size:18px; font-weight:700; color:var(--fg);">-</div>
+                  <div id="dp-set-regime" style="font-size:12px; color:var(--muted); margin-top:2px;"></div>
+                </div>
+                <div style="flex:1; min-width:200px;">
+                  <div id="dp-set-reason" style="font-size:12px; color:var(--muted); line-height:1.6;"></div>
+                </div>
+                <div id="dp-set-settings" style="font-size:11px; color:var(--fg); background:var(--bg2); border-radius:6px; padding:8px 12px; white-space:pre;"></div>
+              </div>
+
+              <!-- 추론 체인 -->
+              <div id="dp-set-chain" style="display:flex; gap:0; align-items:stretch; margin-top:12px; flex-wrap:wrap;">
+                <!-- JS가 채움: 아침 브리핑 → 레짐 판단 → SET 선택 → 적용 설정 -->
+              </div>
+            </div>
+
+            <!-- 오늘 요약 카드 4개 -->
+            <div class="grid cols-4">
+              <div class="card compact">
+                <div class="card-title">시장 톤 <span>market tone</span></div>
+                <div class="metric" id="dp-market-tone">-</div>
+                <div class="muted" id="dp-trading-intensity">매매 강도: -</div>
+              </div>
+              <div class="card compact">
+                <div class="card-title">신규매수 <span>new entry</span></div>
+                <div class="metric" id="dp-new-entry">-</div>
+                <div class="muted" id="dp-plan-status">Plan 상태: -</div>
+              </div>
+              <div class="card compact">
+                <div class="card-title">종목 배정 <span>assignments</span></div>
+                <div class="metric" id="dp-assignments-count">-</div>
+                <div class="muted" id="dp-excluded-count">제외: -종목</div>
+              </div>
+              <div class="card compact">
+                <div class="card-title">LLM Provider <span>source</span></div>
+                <div class="metric" id="dp-provider" style="font-size:14px;">-</div>
+                <div class="muted" id="dp-created-at">-</div>
+              </div>
+            </div>
+
+            <div class="section-gap"></div>
+
+            <!-- 청산 정책 안내 -->
+            <div class="card" style="border-left:3px solid #3fb950;">
+              <div class="card-title">청산 조건</div>
+              <ul style="margin:0; padding-left:16px; font-size:12px; color:var(--muted); line-height:1.8;">
+                <li>고정 익절은 사용하지 않습니다.</li>
+                <li>각 종목은 배정된 Risk Profile에 따라 초기 손절선을 설정합니다.</li>
+                <li>수익이 기준 이상 발생하면 트레일링 스탑이 활성화됩니다.</li>
+                <li>고점 갱신 시 손절선은 상향되며, 손절선은 절대 하향되지 않습니다.</li>
+                <li>모든 포지션은 장마감(15:20) 전 강제 청산됩니다.</li>
+              </ul>
+            </div>
+
+            <div class="section-gap"></div>
+
+            <!-- Risk Profile 4종 요약 -->
+            <div class="card">
+              <div class="card-title">Risk Profile Pack <span id="dp-profile-pack-id">-</span></div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Profile</th><th>초기손절</th><th>트레일링 활성</th><th>트레일링 손절</th>
+                      <th>최대비중</th><th>재진입</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dp-profiles-tbody">
+                    <tr><td colspan="7" class="muted" style="text-align:center;">로딩중</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="section-gap"></div>
+
+            <!-- 종목별 Profile 배정 -->
+            <div class="card">
+              <div class="card-title">종목별 Profile 배정 <span id="dp-plan-id-badge">-</span></div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>종목코드</th><th>종목명</th><th>배정 Profile</th><th>배정 사유</th></tr>
+                  </thead>
+                  <tbody id="dp-assignments-tbody">
+                    <tr><td colspan="4" class="muted" style="text-align:center;">데이터 없음</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="section-gap"></div>
+
+            <!-- 검증 결과 -->
+            <div class="card">
+              <div class="card-title">검증 결과</div>
+              <div id="dp-validation-list" style="display:flex; flex-direction:column; gap:4px;"></div>
+            </div>
+
+            <div class="section-gap"></div>
+
+            <!-- 제외 종목 + LLM 요약 -->
+            <div style="display:flex; gap:16px; flex-wrap:wrap;">
+              <div class="card" style="flex:1; min-width:200px;">
+                <div class="card-title">제외 종목</div>
+                <div id="dp-excluded-list" style="font-size:12px; color:var(--muted);">없음</div>
+              </div>
+              <div class="card" style="flex:2; min-width:280px;">
+                <div class="card-title">LLM 분석 요약</div>
+                <div id="dp-llm-summary" style="font-size:12px; color:var(--muted); line-height:1.6;">-</div>
+              </div>
+            </div>
+
+            <div class="section-gap"></div>
+
+            <!-- JSON 원본 보기 -->
+            <div class="card">
+              <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>원본 Daily Trading Plan JSON</span>
+                <button type="button" class="btn" style="font-size:11px;" data-action="toggleDpJson">펼치기/접기</button>
+              </div>
+              <pre id="dp-raw-json" style="display:none; font-size:11px; overflow:auto; max-height:300px; background:var(--bg2); padding:10px; border-radius:6px;"></pre>
+            </div>
+          </details>
+
+          <!-- ── 접을 수 있는 상세: Funnel Monitor ── -->
+          <details class="card pf-details-section" style="margin-top:16px;">
+            <summary class="card-title pf-details-summary">
+              <span>Funnel Monitor 상세</span>
+              <span style="font-size:11px; color:var(--muted);">클릭해서 펼치기/접기</span>
+            </summary>
+
+            <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px; margin-top:10px;">
+              <button type="button" class="btn" data-action="loadFunnelData">새로고침</button>
+            </div>
+
+            <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:12px;">
+              <div class="card compact"><div class="card-title">기준 universe</div><div class="metric" id="funnel-total">-</div><div class="muted" id="funnel-total-source">출처 확인 전</div></div>
+              <div class="card compact"><div class="card-title">Layer 1 통과</div><div class="metric" id="funnel-layer1">-</div><div class="muted" id="funnel-layer1-detail">S3 결과 확인 전</div></div>
+              <div class="card compact"><div class="card-title">Layer 2 통과</div><div class="metric" id="funnel-layer2">-</div><div class="muted" id="funnel-layer2-detail">S4 결과 확인 전</div></div>
+              <div class="card compact">
+                <div class="card-title" title="이 값은 S4 하이브리드 스크리닝이 생성한 모든 BUY 신호 수입니다. Daily Plan이 일부 종목을 제외하면 Trading Monitor에서는 더 적게 표시됩니다.">오늘 BUY 신호 (원본) <span style="cursor:help;">ⓘ</span></div>
+                <div class="metric" id="funnel-candidates">-</div>
+                <div class="muted" id="funnel-candidates-detail">Daily Plan 배정 전 S4 원본 신호. Trading Monitor의 매수대기와 다를 수 있음.</div>
+              </div>
+              <div class="card compact">
+                <div class="card-title">Profile 배정</div>
+                <div style="display:flex; gap:10px; flex-wrap:wrap; font-size:12px; margin-top:6px; line-height:1.6;">
+                  <span><span style="color:#6cb6ff; font-weight:600;">L</span> <strong id="fn-low-count">-</strong></span>
+                  <span><span style="color:#3fb950; font-weight:600;">M</span> <strong id="fn-mid-count">-</strong></span>
+                  <span><span style="color:#d29922; font-weight:600;">H</span> <strong id="fn-high-count">-</strong></span>
+                  <span><span style="color:#f85149; font-weight:600;">T</span> <strong id="fn-spike-count">-</strong></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 선정 퍼널: 단계별 통과/탈락 종목 (PM 핵심 요청) -->
+            <div class="card" style="margin-top:16px;">
+              <div class="card-title">선정 퍼널 <span>오늘 종목이 어떻게 압축됐나</span></div>
+              <div id="funnel-selection"><div class="muted" style="padding:14px 4px;">로딩중…</div></div>
+            </div>
+
+            <div class="card-title" style="margin-top:20px; font-size:13px; color:var(--muted);">진단 · 장중 운영</div>
+            <div class="grid cols-3" style="margin-top:8px">
+              <div class="card compact">
+                <div class="card-title">S3 적용 메모리</div>
+                <div class="metric" id="funnel-mem-s3">-</div>
+                <div class="muted">S3_UNIVERSE_FILTER</div>
+              </div>
+              <div class="card compact">
+                <div class="card-title">S4 적용 메모리</div>
+                <div class="metric" id="funnel-mem-s4">-</div>
+                <div class="muted">S4_HYBRID_SCREENING</div>
+              </div>
+              <div class="card compact">
+                <div class="card-title">S5 적용 메모리</div>
+                <div class="metric" id="funnel-mem-s5">-</div>
+                <div class="muted">S5_DAILY_PLAN</div>
+              </div>
+            </div>
+
+            <div class="section-gap"></div>
+            <div class="card compact" id="funnel-empty-reason" style="display:none;"></div>
+            <div class="muted" id="funnel-last-updated" style="font-size:12px; margin-top:8px;"></div>
+
+            <div class="section-gap"></div>
+
+            <!-- Task 1 & 2: 장중 재선별 타임라인 (5개 슬롯 + 섹터 회전) -->
+            <div id="tc-intraday-reselection-card" class="card" style="margin-bottom:16px; display:none;">
+              <div class="card-title">장중 재선별 타임라인 <span id="tc-reselection-date">오늘</span> <small>09:30 / 10:30 / 11:30 / 13:00 / 14:00 슬롯</small></div>
+              <div id="tc-reselection-timeline" style="display:flex; flex-direction:column; gap:8px;">
+                <!-- JS에서 채움 -->
+              </div>
+            </div>
+
+            <!-- Task 3: 포지션 교체 신호 -->
+            <div id="tc-replacement-signal-card" class="card" style="margin-bottom:16px; display:none;">
+              <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>포지션 교체 신호</span>
+                <span id="tc-replacement-count" class="badge">0건</span>
+              </div>
+              <div id="tc-replacement-list" style="display:flex; flex-direction:column; gap:10px;">
+                <!-- JS에서 채움 -->
+              </div>
+              <div style="margin-top:12px; font-size:11px; color:var(--info, #3fb950); border-top:1px solid var(--line); padding-top:8px;">
+                ⚠️ 강제 교체 없음. 트레일링 스탑 발동 시 자연 교체.
+              </div>
+            </div>
+
+            <!-- Task 4: Kill Switch (긴급 비활성화) -->
+            <div id="tc-kill-switch-card" class="card" style="margin-bottom:16px;">
+              <div class="card-title">⚙️ 장중 재선별 기능 활성화 <small>긴급 비활성화 - 즉시 반영</small></div>
+              <div id="tc-kill-switch-list" style="display:flex; flex-direction:column; gap:8px; padding-top:6px;">
+                <!-- JS에서 채움 -->
+                <div class="muted" style="font-size:12px; text-align:center; padding:8px;">설정을 불러오는 중...</div>
+              </div>
+              <div style="margin-top:10px; font-size:11px; color:var(--muted); border-top:1px solid var(--line); padding-top:8px;">
+                마스터 OFF 시 모든 신규 기능 비활성. 재시작 불필요 — 매 호출 시 설정 재확인.
+              </div>
+            </div>
+
+            <div class="section-gap"></div>
+
+            <div class="split">
+              <div class="card">
+                <div class="card-title">Layer 1 탈락 사유</div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>조건</th><th>탈락 수</th><th>비중</th><th>판단</th></tr>
+                    </thead>
+                    <tbody id="funnel-layer1-reasons-tbody">
+                      <tr><td colspan="4" class="muted" style="text-align:center;">미수집·대기: 새로고침을 눌러 탈락 사유 불러오기</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-title">Funnel Quality</div>
+                <div class="card compact">
+                  <div class="card-title">필터 강도</div>
+                  <div><span class="status info" id="funnel-quality-strength-status">확인 전</span></div>
+                  <div class="muted" id="funnel-quality-strength-detail">실제 S3/S4 결과를 불러온 뒤 표시합니다.</div>
+                </div>
+                <div class="card compact">
+                  <div class="card-title">이상 징후</div>
+                  <div><span class="status info" id="funnel-quality-anomaly-status">확인 전</span></div>
+                    <div class="muted" id="funnel-quality-anomaly-detail">품질 집계 미수집: 저장된 단계 결과만 표시합니다.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="section-gap"></div>
+
+            <div class="card">
+              <div class="card-title">후보 선정 결과 <span>상위 일부 샘플</span></div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>종목코드</th><th>종목명</th><th>기술</th><th>기초</th><th>테마</th><th>총점</th><th>선별 시각</th><th>상태</th><th>선정 사유</th><th>배정 Profile</th><th>배정 사유</th><th>Memory refs</th>
+                    </tr>
+                  </thead>
+                  <tbody id="funnel-candidates-tbody">
+                    <tr><td colspan="12" class="muted" style="text-align:center;">미수집·대기: 새로고침을 눌러 후보 선정 결과 불러오기</td></tr>
+                  </tbody>
+                  <!-- 2026-06-01: AI 신뢰도 컬럼 제거 (정성 점수를 게이트에서 분리) -->
+                </table>
+              </div>
+            </div>
+          </details>
         </section>
 
         <section class="screen" id="screen-expert-knowledge">
@@ -937,8 +939,11 @@
             <div class="card compact"><div class="card-title">필터 탈락</div><div class="metric" id="ms-filter-count">-</div><div class="muted">S3/S4 제외</div></div>
             <div class="card compact"><div class="card-title">미배정</div><div class="metric" id="ms-plan-count">-</div><div class="muted">S5 Daily Plan</div></div>
             <div class="card compact"><div class="card-title">신호 미발생</div><div class="metric" id="ms-signal-count">-</div><div class="muted">S6 조건 미달</div></div>
-            <div class="card compact"><div class="card-title">개선 후보</div><div class="metric" id="ms-candidate-count" style="color:var(--warn);">-</div><div class="muted">장중 최고가 임계치 이상</div></div>
+            <div class="card compact"><div class="card-title">개선 후보</div><div class="metric" id="ms-candidate-count" style="color:var(--warn);">-</div><div class="muted">고점 +7% 이상 · 저점 -8% 이상</div></div>
           </div>
+          <div id="ms-candidate-criteria" style="display:none; margin-top:8px; padding:8px 12px;
+            background:var(--bg2); border-left:3px solid var(--warn); border-radius:4px;
+            font-size:12px; color:var(--muted); white-space:pre-line; grid-column:1/-1;"></div>
 
           <!-- 종목 목록 -->
           <div class="card">
@@ -1932,7 +1937,7 @@
               <div class="settings-card-meta">
                 <span class="settings-tag">missed</span>
                 <div class="settings-card-title-txt">Missed 개선후보 판정</div>
-                <div class="settings-card-desc">필터에서 제외된 종목의 장중 최고가 상승률이 이 임계치 이상이면 "개선후보"로 분류되어 Review(학습 메모리)에 "다음엔 거르지 말 것" 의견으로 전달됩니다. 서버 재시작 후 다음 EOD부터 적용됩니다.</div>
+                <div class="settings-card-desc">필터에서 제외된 종목이 "개선후보"가 되려면 두 조건을 모두 충족해야 합니다: ① 장중 최고가가 기준가 대비 고점 임계치 이상 상승, ② 장중 최저가가 손절 기준선 이상(손절 안 당했을 조건). Review(학습 메모리)에 "다음엔 거르지 말 것" 의견으로 전달됩니다.</div>
               </div>
             </div>
             <div class="form-grid">
@@ -1940,6 +1945,16 @@
                 <label>Missed 개선후보 임계치 (장중 최고가 상승률 %)</label>
                 <input id="missed-improvement-threshold" type="number" step="0.1" min="0" value="2.0">
                 <small class="muted">기본 2.0 = 장중 최고가가 제외가 대비 +2% 이상 상승한 종목을 개선후보로 분류</small>
+              </div>
+              <div class="field">
+                <label>개선후보 고점 임계치 (%)</label>
+                <input id="missed-improvement-high-threshold" type="number" step="0.1" min="0" value="7.0">
+                <small class="muted">기본 7.0 — 장중 최고가가 기준가 대비 이 이상 올라야 후보 인정</small>
+              </div>
+              <div class="field">
+                <label>개선후보 손절선 기준 (%)</label>
+                <input id="missed-improvement-stop-threshold" type="number" step="0.1" min="0" value="8.0">
+                <small class="muted">기본 8.0 — 장중 최저가가 이 이하로 내려갔으면 손절 당했을 것으로 판단, 후보 제외</small>
               </div>
             </div>
             <div class="settings-card-ft">
@@ -2495,12 +2510,12 @@
       </svg>
       <span class="tab-label">모니터</span>
     </button>
-    <button class="tab-item" data-screen="rulepack" aria-label="Daily Plan">
+    <button class="tab-item" data-screen="plan-funnel" aria-label="Plan &amp; Funnel">
       <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/>
         <line x1="9" y1="4" x2="9" y2="9"/>
       </svg>
-      <span class="tab-label">Daily Plan</span>
+      <span class="tab-label">Plan & Funnel</span>
     </button>
     <button class="tab-item" data-screen="shadow-trading" aria-label="Missed Entries">
       <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2527,7 +2542,6 @@
       <button class="more-drawer-item" data-screen="dividends">Dividend Entry</button>
       <button class="more-drawer-item" data-screen="dividend-stats">Statistics</button>
       <button class="more-drawer-item" data-screen="statistics">Trade History</button>
-      <button class="more-drawer-item" data-screen="funnel">Funnel Monitor</button>
       <button class="more-drawer-item" data-screen="plan-funnel">Plan & Funnel</button>
       <button class="more-drawer-item" data-screen="settings">Settings</button>
     </div>
@@ -2554,7 +2568,7 @@
   <script src="/static/js/screens/console-review.js?v=8"></script>
   <script src="/static/js/screens/console-statistics.js?v=2"></script>
   <script src="/static/js/screens/console-regime-analytics.js?v=7"></script>
-  <script src="/static/js/screens/console-daily-plan.js?v=8"></script>
+  <script src="/static/js/screens/console-daily-plan.js?v=9"></script>
   <script src="/static/js/screens/console-plan-funnel.js?v=1"></script>
   <script src="/static/js/screens/console-expert-knowledge.js"></script>
   <script src="/static/js/screens/console-dividends.js"></script>

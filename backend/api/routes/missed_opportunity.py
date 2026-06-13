@@ -13,6 +13,7 @@ from ...services.engine.missed_opportunity import (
     get_missed_range,
     get_today_missed,
 )
+from ...services.settings_store import get_setting
 
 router = APIRouter(prefix="/api/v1/missed-opportunity", tags=["missed-opportunity"])
 logger = logging.getLogger("MissedOpportunityAPI")
@@ -38,7 +39,17 @@ def get_today(
     else:
         rows = get_missed_range(start, end)
     logger.info("SUCCESS: GET /api/v1/missed-opportunity/today start=%s end=%s count=%d", start, end, len(rows))
-    return {"ok": True, "payload": rows}
+    # 현재 적용 중인 개선후보 기준 텍스트
+    try:
+        high_thr = float(get_setting("missed.improvement_high_threshold", 7.0))
+        stop_thr = float(get_setting("missed.improvement_stop_threshold", 8.0))
+    except Exception:
+        high_thr, stop_thr = 7.0, 8.0
+    criteria_text = (
+        f"개선후보 기준: 장중 최고가 +{high_thr:.1f}% 이상  ·  장중 최저가 -{stop_thr:.1f}% 이상"
+        f"\n→ 저점이 손절선({stop_thr:.1f}%) 안에 머물렀고, 최고가가 충분히({high_thr:.1f}%) 올랐을 때만 진짜 기회로 인정"
+    )
+    return {"ok": True, "payload": rows, "criteria": criteria_text}
 
 
 @router.get("/candidates")

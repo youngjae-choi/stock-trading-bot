@@ -398,6 +398,44 @@
       });
   }
 
+  function loadEveningBrief(tradeDate) {
+    var card = document.getElementById('eveningBriefCard');
+    if (!card) return;
+    Promise.all([
+      fetch('/api/v1/evening-briefing/today').then(function(r){ return r.json(); }).catch(function(){ return null; }),
+      fetch('/api/v1/regime/today').then(function(r){ return r.json(); }).catch(function(){ return null; })
+    ]).then(function(res){
+      var json = res[0], regimeJson = res[1];
+      var d = json && json.payload;
+      if (Array.isArray(d)) d = d[0];
+      if (!d) { card.style.display = 'none'; return; }
+      card.style.display = 'block';
+      var sentColors = { risk_on:'#3fb950', risk_off:'#f85149', volatile:'#d29922', neutral:'#8b9bb4' };
+      var sentLabels = { risk_on:'위험선호', risk_off:'위험회피', volatile:'변동성', neutral:'중립' };
+      var s = d.sentiment || 'neutral';
+      var badge = document.getElementById('eb-sentiment-badge');
+      if (badge) { badge.textContent = sentLabels[s] || s; badge.style.color = '#fff'; badge.style.background = sentColors[s] || '#8b9bb4'; }
+      var dateEl = document.getElementById('eb-date');
+      if (dateEl) dateEl.textContent = (d.trade_date || '') + (d.source_ts ? ' · ' + d.source_ts : '') + ' 기준';
+      var textEl = document.getElementById('eb-text');
+      if (textEl) textEl.textContent = d.briefing_text || '-';
+      // 정렬 비교
+      var app = regimeJson && regimeJson.application;
+      var alignEl = document.getElementById('eb-alignment');
+      if (alignEl && app && app.evening_alignment) {
+        var alignLabels = { aligned:'정렬 ✓ 확신↑', conflict:'충돌 ✗ 불확실↑', volatile:'변동성 경계', neutral:'영향 없음', none:'비교 불가' };
+        var adj = (app.confidence_adjustment != null) ? app.confidence_adjustment : 0;
+        var morningSent = sentLabels[app.regime_label] || app.regime_label || '-';
+        alignEl.style.display = 'block';
+        alignEl.textContent = '전날 장후(' + (sentLabels[s] || s) + ') vs 오늘 아침(' + morningSent + ') → '
+          + (alignLabels[app.evening_alignment] || app.evening_alignment)
+          + ' (신뢰도 ' + (adj >= 0 ? '+' : '') + adj.toFixed(2) + ')';
+      } else if (alignEl) {
+        alignEl.style.display = 'none';
+      }
+    });
+  }
+
   async function loadTodayRegimeTimeline(tradeDate) {
     var card = document.getElementById('tc-regime-timeline-card');
     var timelineEl = document.getElementById('tc-regime-timeline');

@@ -103,6 +103,13 @@
       setEl('ms-signal-count', signalCount);
       setEl('ms-candidate-count', candidateCount);
 
+      // 개선후보 기준 텍스트 표시
+      var criteriaEl = document.getElementById('ms-candidate-criteria');
+      if (criteriaEl && missedRes.criteria) {
+        criteriaEl.textContent = missedRes.criteria;
+        criteriaEl.style.display = 'block';
+      }
+
       renderMissedTracking();
     } catch (e) {
       console.error('[ERROR] loadMissedTracking - render failed', e.message);

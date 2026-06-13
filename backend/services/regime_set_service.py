@@ -354,6 +354,42 @@ def auto_create_set(regime_label: str, vix: float | None, kospi_change_pct: floa
     }
 
 
+_SENTIMENT_AXIS = {"risk_on", "neutral", "risk_off", "volatile"}
+
+
+def compute_confidence_adjustment(
+    morning_regime: str, evening_sentiment: str | None
+) -> tuple[str, float]:
+    """전날 장후 sentiment vs 당일 아침 regime 정렬을 비교해 신뢰도 보정을 산출한다.
+
+    Args:
+        morning_regime: 당일 아침 regime 라벨(risk_on/neutral/risk_off/volatile).
+        evening_sentiment: 전날 장후 브리핑 sentiment. None이면 보정 없음.
+
+    Returns:
+        (alignment_label, adjustment) — adjustment는 [-0.15, +0.10] 범위.
+          - evening_sentiment None → ("none", 0.0)
+          - 동일 → ("aligned", +0.10)
+          - risk_on↔risk_off 정반대 → ("conflict", -0.15)
+          - volatile 관여(어느 쪽이든) → ("volatile", -0.05)
+          - 그 외(한쪽 neutral 등) → ("neutral", 0.0)
+    """
+    if evening_sentiment is None:
+        return ("none", 0.0)
+
+    morning = morning_regime if morning_regime in _SENTIMENT_AXIS else "neutral"
+    evening = evening_sentiment if evening_sentiment in _SENTIMENT_AXIS else "neutral"
+
+    if morning == evening:
+        return ("aligned", 0.10)
+    opposite = {("risk_on", "risk_off"), ("risk_off", "risk_on")}
+    if (morning, evening) in opposite:
+        return ("conflict", -0.15)
+    if morning == "volatile" or evening == "volatile":
+        return ("volatile", -0.05)
+    return ("neutral", 0.0)
+
+
 def record_application(
     trade_date: str,
     matched_set: dict[str, Any],
@@ -361,6 +397,8 @@ def record_application(
     vix: float | None,
     kospi_change_pct: float | None,
     trigger: str = "morning",
+    evening_alignment: str | None = None,
+    confidence_adjustment: float = 0.0,
 ) -> None:
     """Record the selected regime set for a trade date as a new transition row.
 
@@ -390,8 +428,9 @@ def record_application(
             INSERT INTO regime_set_applications
                 (id, trade_date, applied_at, set_id, set_name, match_reason,
                  match_score, applied_settings, regime_label, vix_value,
-                 kospi_change_pct, trigger, current_flag, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                 kospi_change_pct, trigger, evening_alignment,
+                 confidence_adjustment, current_flag, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
             """,
             (
                 str(uuid.uuid4()),
@@ -406,6 +445,8 @@ def record_application(
                 vix,
                 kospi_change_pct,
                 clean_trigger,
+                evening_alignment,
+                float(confidence_adjustment or 0.0),
                 now,
             ),
         )
@@ -426,6 +467,8 @@ def match_set(
     vix: float | None,
     kospi_change_pct: float | None,
     trade_date: str,
+    evening_alignment: str | None = None,
+    confidence_adjustment: float = 0.0,
 ) -> dict[str, Any]:
     """Find, record, and return the best matching regime set.
 
@@ -434,6 +477,8 @@ def match_set(
         vix: VIX value when available.
         kospi_change_pct: KOSPI percentage change when available.
         trade_date: Trading day in YYYY-MM-DD format.
+        evening_alignment: Phase2 정렬 라벨(전날 장후 sentiment vs 아침 regime). 기록용.
+        confidence_adjustment: Phase2 신뢰도 보정값([-0.15, +0.10]). match_score에 가산 후 저장.
     """
     logger.info(
         "START: RegimeSetService.match_set trade_date=%s regime=%s vix=%s kospi=%s",
@@ -446,7 +491,31 @@ def match_set(
     matched = _find_best_set(safe_regime, _to_float(vix), _to_float(kospi_change_pct), trade_date)
     if matched is None:
         matched = auto_create_set(safe_regime, _to_float(vix), _to_float(kospi_change_pct))
-    record_application(trade_date, matched, safe_regime, _to_float(vix), _to_float(kospi_change_pct))
+
+    adj = float(confidence_adjustment or 0.0)
+    if adj != 0.0:
+        original_score = float(matched.get("match_score") or 0.0)
+        adjusted_score = max(0.0, min(1.0, original_score + adj))
+        matched["match_score"] = adjusted_score
+        logger.info(
+            "INFO: RegimeSetService.match_set 신뢰도 보정 trade_date=%s alignment=%s "
+            "adjustment=%+.2f score %.3f→%.3f",
+            trade_date,
+            evening_alignment,
+            adj,
+            original_score,
+            adjusted_score,
+        )
+
+    record_application(
+        trade_date,
+        matched,
+        safe_regime,
+        _to_float(vix),
+        _to_float(kospi_change_pct),
+        evening_alignment=evening_alignment,
+        confidence_adjustment=adj,
+    )
     logger.info(
         "SUCCESS: RegimeSetService.match_set trade_date=%s set_id=%s score=%s",
         trade_date,

@@ -64,6 +64,44 @@ def _ensure_signals_table() -> None:
             conn.execute("ALTER TABLE trading_signals ADD COLUMN realized_pnl REAL")
 
 
+def _prev_trading_day(today: str, max_lookback: int = 7) -> str | None:
+    """today 직전 거래일(YYYY-MM-DD)을 trading_calendar 기준으로 찾는다.
+
+    별도 헬퍼가 없어 is_trading_day로 하루씩 거슬러 올라간다(주말·휴장 스킵).
+    """
+    try:
+        from .trading_calendar import is_trading_day
+
+        base = datetime.strptime(today, "%Y-%m-%d").date()
+    except Exception:
+        return None
+    for back in range(1, max_lookback + 1):
+        cand = base - timedelta(days=back)
+        try:
+            if is_trading_day(cand):
+                return cand.strftime("%Y-%m-%d")
+        except Exception:
+            continue
+    return None
+
+
+def _load_prev_evening_sentiment(today: str) -> str | None:
+    """직전 거래일 장후 브리핑 sentiment를 로드한다. 없으면 None."""
+    prev = _prev_trading_day(today)
+    if not prev:
+        return None
+    try:
+        from .evening_briefing import get_evening_briefing
+
+        row = get_evening_briefing(prev)
+    except Exception:
+        return None
+    if not row:
+        return None
+    sentiment = row.get("sentiment")
+    return str(sentiment) if sentiment else None
+
+
 def _save_daily_context_snapshot(today: str) -> None:
     """오늘의 레짐과 RulePack 파라미터를 daily_context_snapshot에 저장한다.
 
@@ -110,6 +148,7 @@ def _save_daily_context_snapshot(today: str) -> None:
             )
         try:
             from ..regime_set_service import match_set as match_regime_set
+            from ..regime_set_service import compute_confidence_adjustment
 
             market_data = ctx.get("market_data") if isinstance(ctx.get("market_data"), dict) else {}
             vix_data = market_data.get("vix") if isinstance(market_data.get("vix"), dict) else {}
@@ -117,7 +156,37 @@ def _save_daily_context_snapshot(today: str) -> None:
             regime_label = str(ctx.get("regime") or "neutral")
             vix_value = _to_float_or_none(vix_data.get("price") if isinstance(vix_data, dict) else None)
             kospi_change = _to_float_or_none(kospi_data.get("change_pct") if isinstance(kospi_data, dict) else None)
-            match_regime_set(regime_label, vix_value, kospi_change, today)
+
+            # Phase2: 전날 장후 브리핑 sentiment vs 당일 아침 regime 정렬 → 신뢰도 보정.
+            evening_alignment: str | None = None
+            confidence_adjustment = 0.0
+            try:
+                if bool(get_setting("regime.evening_confidence_enabled", True)):
+                    evening_sentiment = _load_prev_evening_sentiment(today)
+                    evening_alignment, confidence_adjustment = compute_confidence_adjustment(
+                        regime_label, evening_sentiment
+                    )
+                    logger.info(
+                        "INFO: [S6] evening confidence trade_date=%s morning_regime=%s "
+                        "prev_evening=%s alignment=%s adjustment=%+.2f",
+                        today,
+                        regime_label,
+                        evening_sentiment,
+                        evening_alignment,
+                        confidence_adjustment,
+                    )
+            except Exception as conf_exc:
+                logger.warning("WARN: [S6] evening confidence 계산 실패 (보정 0) - %s", conf_exc)
+                evening_alignment, confidence_adjustment = None, 0.0
+
+            match_regime_set(
+                regime_label,
+                vix_value,
+                kospi_change,
+                today,
+                evening_alignment=evening_alignment,
+                confidence_adjustment=confidence_adjustment,
+            )
             logger.info(
                 "SUCCESS: [S6] regime_set matched trade_date=%s regime=%s vix=%s kospi_change_pct=%s",
                 today,

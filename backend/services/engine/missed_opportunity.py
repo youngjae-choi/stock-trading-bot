@@ -263,7 +263,10 @@ def _to_float(value: Any) -> float | None:
     return out if out > 0 else None
 
 
-async def update_missed_returns(trade_date: str, improvement_threshold: float = 2.0) -> dict[str, Any]:
+async def update_missed_returns(
+    trade_date: str,
+    improvement_threshold: float = 2.0,  # 하위 호환 유지 (사용 안 함)
+) -> dict[str, Any]:
     """EOD에 미진입 종목들의 장중 최고/최저 상승률을 계산하여 DB를 업데이트한다.
 
     측정값은 [제외시점가 · 장중 최고가 · 장중 최저가] 3개만 사용한다(분봉 10m/30m 폐기).
@@ -271,15 +274,15 @@ async def update_missed_returns(trade_date: str, improvement_threshold: float = 
 
     - intraday_high_return = (stck_hgpr - price_at_missed) / price_at_missed * 100
     - intraday_low_return  = (stck_lwpr - price_at_missed) / price_at_missed * 100  (음수 가능)
-    - improvement_candidate = 1 if intraday_high_return >= improvement_threshold(설정값)
+    - improvement_candidate = 1 if 장중최고가 >= improvement_high_threshold(기본 7.0%)
+                                  AND 장중최저가 > -improvement_stop_threshold(기본 8.0%)
     - 저장: max_return_until_eod = intraday_high_return(장중 최고가 상승률로 의미 재정의),
             intraday_low_return = intraday_low_return.
       (max_return_after_10m/30m 은 더 이상 채우지 않음 = NULL 유지)
 
     Args:
         trade_date: YYYY-MM-DD 형식 거래일.
-        improvement_threshold: 개선 후보 판정 최소 상승률(%). 호출부에서 명시하지 않으면(기본 2.0)
-            settings 의 missed.improvement_threshold 값으로 보정한다.
+        improvement_threshold: 하위 호환용 파라미터 (사용 안 함 — 설정값으로 대체됨).
     """
     logger.info("START: MissedOpportunity update_returns trade_date=%s", trade_date)
 
@@ -292,6 +295,16 @@ async def update_missed_returns(trade_date: str, improvement_threshold: float = 
             improvement_threshold = float(setting_val)
         except (TypeError, ValueError, Exception) as exc:  # noqa: BLE001 - 설정 조회 실패 시 기본값 유지
             logger.warning("WARN: missed.improvement_threshold read failed, using default=%s error=%s", improvement_threshold, exc)
+
+    # 새 설정: 개선후보 고점 임계치 + 저점 손절선
+    improvement_high_threshold: float = 7.0
+    improvement_stop_threshold: float = 8.0
+    try:
+        from ..settings_store import get_setting
+        improvement_high_threshold = float(get_setting("missed.improvement_high_threshold", 7.0))
+        improvement_stop_threshold = float(get_setting("missed.improvement_stop_threshold", 8.0))
+    except Exception as exc:
+        logger.warning("WARN: missed.improvement thresholds read failed, using defaults error=%s", exc)
 
     # 아직 업데이트되지 않은 레코드만 조회 (max_return_until_eod IS NULL)
     with get_connection() as conn:
@@ -353,7 +366,14 @@ async def update_missed_returns(trade_date: str, improvement_threshold: float = 
                 else None
             )
 
-            is_candidate = 1 if (intraday_high_return is not None and intraday_high_return >= improvement_threshold) else 0
+            # 개선후보 = 장중 최고가 +7% 이상 AND 장중 최저가 > -(손절기준)%
+            # → 저점이 손절선 안에 머물렀고, 충분히 올랐을 때만 진짜 기회
+            is_candidate = 1 if (
+                intraday_high_return is not None
+                and intraday_high_return >= improvement_high_threshold
+                and intraday_low_return is not None
+                and intraday_low_return > -improvement_stop_threshold
+            ) else 0
 
             with get_connection() as conn:
                 conn.execute(

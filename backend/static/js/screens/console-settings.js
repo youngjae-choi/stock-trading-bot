@@ -137,6 +137,10 @@
       var settingsMap = await loadSettingsMap();
       var el = document.getElementById('missed-improvement-threshold');
       if (el) el.value = settingsMap['missed.improvement_threshold'] ?? '2.0';
+      var elHigh = document.getElementById('missed-improvement-high-threshold');
+      if (elHigh) elHigh.value = settingsMap['missed.improvement_high_threshold'] ?? '7.0';
+      var elStop = document.getElementById('missed-improvement-stop-threshold');
+      if (elStop) elStop.value = settingsMap['missed.improvement_stop_threshold'] ?? '8.0';
       var fm = await loadSettingsMapFull();
       _insertSettingTs('missed-improvement-threshold', 'missed.improvement_threshold', fm);
     } catch (e) {
@@ -158,6 +162,24 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key: 'missed.improvement_threshold', value: value, value_type: 'number' })
       });
+      // missed.improvement_high_threshold
+      var highVal = parseFloat(document.getElementById('missed-improvement-high-threshold')?.value);
+      if (!isNaN(highVal) && highVal > 0) {
+        await fetchJson('/api/v1/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'missed.improvement_high_threshold', value: highVal, value_type: 'number' })
+        });
+      }
+      // missed.improvement_stop_threshold
+      var stopVal = parseFloat(document.getElementById('missed-improvement-stop-threshold')?.value);
+      if (!isNaN(stopVal) && stopVal > 0) {
+        await fetchJson('/api/v1/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'missed.improvement_stop_threshold', value: stopVal, value_type: 'number' })
+        });
+      }
       showToast('Missed 개선후보 임계치가 저장되었습니다.', 'ok');
       loadMissedThresholdSettings();
     } catch (e) {
