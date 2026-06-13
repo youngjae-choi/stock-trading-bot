@@ -17,7 +17,8 @@ from ..kis.realtime_ws import realtime_ws_manager
 from ..settings_store import get_setting
 from .hybrid_screening import get_today_screening
 from .position_manager import position_manager
-from .rule_cache import load_daily_rules, get_rule, clear_cache, get_meta
+from .rule_cache import load_daily_rules, get_rule, clear_cache, get_meta, set_intraday_profile
+from .intraday_profile import classify_profile, record_intraday_event
 from .shadow_trading import create_shadow_trade
 from .symbol_norm import norm_symbol, symbol_variants
 
@@ -1001,18 +1002,23 @@ class DecisionEngine:
         today = _today_kst()
         max_sub = int(get_setting("momentum_scan.max_subscriptions", 40) or 40)
         added = 0
+        added_candidates: list[dict[str, Any]] = []
         for c in candidates:
             sym = _candidate_symbol(c)
             if not sym or sym in self._candidates:
                 continue
             self._candidates[sym] = c
+            added_candidates.append(c)
             added += 1
         if added == 0:
             return {"ok": True, "added": 0, "subscribed": len(self._candidates)}
+        # 장중 유입 종목 레짐 연동 Risk Profile 휴리스틱 배정 (plan 미배정만, LLM 없음)
+        profiled = self._assign_intraday_profiles(added_candidates)
         # 보유종목 우선(절대 미구독 금지) + 후보(상한 내)
         managed = [str(p.get("symbol") or "") for p in position_manager.get_positions()]
         all_symbols = _subscription_symbols(managed, list(self._candidates.keys()), cap=max_sub)
         load_daily_rules(today, list(self._candidates.keys()))
+        self._record_intraday_plan_event("momentum_scan", profiled, today)
         try:
             await realtime_ws_manager.start(all_symbols)
         except Exception as exc:
@@ -1020,6 +1026,64 @@ class DecisionEngine:
         logger.info("INFO: [S6] 모멘텀 신규편입 added=%d total_candidates=%d subscribed=%d",
                     added, len(self._candidates), len(all_symbols))
         return {"ok": True, "added": added, "subscribed": len(all_symbols)}
+
+    def _assign_intraday_profiles(self, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """장중 유입 후보들에 레짐 연동 휴리스틱 Risk Profile을 배정한다 (best-effort).
+
+        plan 배정 종목은 rule_cache가 거부하므로 절대 덮어쓰지 않는다.
+        load_daily_rules 호출 **전**에 등록해야 그 로드에서 오버레이가 적용된다.
+
+        Args:
+            candidates: 신규 편입 후보 dict 목록 (name/change_rate/volume_surge 사용).
+
+        Returns:
+            실제 등록된 [{symbol, name, profile, reason}] 목록 (이력 기록용).
+        """
+        records: list[dict[str, Any]] = []
+        if not candidates:
+            return records
+        try:
+            regime = self._current_regime()
+        except Exception:
+            regime = None
+        for cand in candidates:
+            try:
+                sym = _candidate_symbol(cand)
+                if not sym:
+                    continue
+                profile, reason = classify_profile(cand, regime)
+                if set_intraday_profile(sym, profile, reason):
+                    records.append({
+                        "symbol": sym,
+                        "name": str(cand.get("name") or ""),
+                        "profile": profile,
+                        "reason": reason,
+                    })
+            except Exception as exc:
+                logger.warning("WARN: [S6] intraday profile 배정 실패 symbol=%s — %s",
+                               cand.get("symbol"), exc)
+        if records:
+            logger.info("INFO: [S6] intraday profile 배정 regime=%s assigned=%s",
+                        regime, [(r["symbol"], r["profile"]) for r in records])
+        return records
+
+    def _record_intraday_plan_event(
+        self, trigger: str, profiled: list[dict[str, Any]], today: str
+    ) -> None:
+        """장중 신규 편입 이력을 intraday_plan_events에 기록한다 (best-effort)."""
+        if not profiled:
+            return
+        try:
+            ctx = self._build_market_context(today)
+            record_intraday_event(
+                trigger=trigger,
+                regime=ctx.get("regime"),
+                market_tone=ctx.get("market_tone"),
+                symbols_added=profiled,
+                trade_date=today,
+            )
+        except Exception as exc:
+            logger.warning("WARN: [S6] intraday plan event 기록 실패 trigger=%s — %s", trigger, exc)
 
     async def refresh_candidates(self) -> dict[str, Any]:
         """장중 재선별 후 호출 — 후보 목록을 교체하고 WS 구독을 갱신한다.
@@ -1046,7 +1110,11 @@ class DecisionEngine:
 
         self._candidates = new_candidates
         if new_candidates:
+            # 신규 편입(기존 watchlist에 없던) 종목만 레짐 연동 프로파일 휴리스틱 배정
+            fresh = [c for s, c in new_candidates.items() if s not in old_candidates]
+            profiled = self._assign_intraday_profiles(fresh)
             load_daily_rules(today, list(new_candidates.keys()))
+            self._record_intraday_plan_event("intraday_refresh", profiled, today)
         else:
             logger.warning("WARN: [S6] refresh_candidates — 새 후보 없음 (기존 후보 유지)")
             self._candidates = old_candidates

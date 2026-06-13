@@ -215,6 +215,7 @@
       + '<th style="text-align:left;">Date</th>'
       + '<th style="text-align:center;">Market</th>'
       + '<th style="text-align:right;">P&L (₩)</th>'
+      + '<th style="text-align:right;" title="자본변화 = 장마감 총평가 - 장시작 자본 (실현+미실현+비용)">자본변화</th>'
       + '<th style="text-align:right;">Return</th>'
       + '<th style="text-align:right;">Trades</th>'
       + '<th style="text-align:right;">W / L</th>'
@@ -229,13 +230,24 @@
         return '<tr style="opacity:0.5;">'
           + '<td style="font-size:13px; color:var(--muted);">' + escapeHtml(row.trade_date)
           + ' <span class="status" style="font-size:10px; background:rgba(139,148,158,0.15); color:var(--muted);">휴장</span></td>'
-          + '<td colspan="8" style="color:var(--muted); font-size:12px;">' + escapeHtml(row.non_trading_reason || '비거래일') + '</td>'
+          + '<td colspan="9" style="color:var(--muted); font-size:12px;">' + escapeHtml(row.non_trading_reason || '비거래일') + '</td>'
           + '</tr>';
       }
       var pnl = row.total_pnl || 0;
       var pnlCls  = pnl > 0 ? 'good' : pnl < 0 ? 'bad' : '';
       var pnlSign = pnl >= 0 ? '+' : '';
       var pnlHtml = '<span class="' + pnlCls + '">' + pnlSign + Math.round(pnl).toLocaleString() + '원</span>';
+
+      /* 자본변화(equity) — 짝 실현손익과 달리 미실현·비용·이월 포함. 미산출 시 '-' */
+      var eq = row.equity_pnl;
+      var eqHtml;
+      if (eq == null) {
+        eqHtml = '<span style="color:var(--muted);">-</span>';
+      } else {
+        var eqCls  = eq > 0 ? 'good' : eq < 0 ? 'bad' : '';
+        var eqSign = eq >= 0 ? '+' : '';
+        eqHtml = '<span class="' + eqCls + '">' + eqSign + Math.round(eq).toLocaleString() + '원</span>';
+      }
 
       var totalTrades = (row.win_count || 0) + (row.loss_count || 0);
       var winRate = row.win_rate != null ? row.win_rate : (totalTrades > 0 ? Math.round((row.win_count || 0) / totalTrades * 100) : 0);
@@ -266,6 +278,7 @@
         + '<td style="font-size:13px; color:var(--accent);">' + escapeHtml(row.trade_date) + pnlStatusBadge + '</td>'
         + toneCell
         + '<td style="text-align:right;">' + pnlHtml + '</td>'
+        + '<td style="text-align:right;">' + eqHtml + '</td>'
         + '<td style="text-align:right; font-size:12px;">'
           + (row.pnl_rate != null
             ? '<span class="' + pnlCls + '">' + (row.pnl_rate >= 0 ? '+' : '') + (row.pnl_rate || 0).toFixed(2) + '%</span>'

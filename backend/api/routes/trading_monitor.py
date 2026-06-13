@@ -830,13 +830,20 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
     """
     from collections import defaultdict
     with get_connection() as conn:
+        # equity_pnl 컬럼은 S10 마이그레이션(_ensure_review_integrity_columns) 이후에만 존재 —
+        # 미적용 DB에서도 라우트가 깨지지 않도록 존재 확인 후 선택한다.
+        drr_columns = {
+            str(r["name"]) for r in conn.execute("PRAGMA table_info(daily_review_reports)").fetchall()
+        }
+        equity_select = "drr.equity_pnl" if "equity_pnl" in drr_columns else "NULL"
         # P&L은 daily_trade_summary(주문 가격 기반 계산)가 더 정확함
-        base_select = """
+        base_select = f"""
                 SELECT
                     drr.trade_date,
                     drr.missed_entries_count,
                     drr.integrity_warnings,
                     drr.false_positive_count,
+                    {equity_select} AS equity_pnl,
                     COALESCE(dts.buy_orders, drr.total_trades, 0) AS trade_count,
                     COALESCE(dts.realized_pnl, 0.0) AS total_pnl,
                     COALESCE(dts.realized_pnl_pct, 0.0) AS pnl_rate,
@@ -949,7 +956,7 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
                         "trade_date": ds, "non_trading": True,
                         "non_trading_reason": non_trading_reason(ds) or "휴장",
                         "trade_count": 0, "win_count": 0, "loss_count": 0, "win_rate": 0,
-                        "total_pnl": 0.0, "pnl_rate": 0.0, "pnl_status": "non_trading",
+                        "total_pnl": 0.0, "pnl_rate": 0.0, "equity_pnl": None, "pnl_status": "non_trading",
                         "missed_entries_count": 0, "integrity_warnings": 0, "market_tone": None,
                     })
                 cur += _td(days=1)

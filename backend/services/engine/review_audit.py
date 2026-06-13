@@ -155,6 +155,20 @@ def _build_review_markdown(result: dict[str, Any]) -> str:
     pnl_sign = "+" if realized_pnl >= 0 else ""
     pnl_pct_sign = "+" if realized_pnl_pct >= 0 else ""
 
+    # 자본변화(equity) — 콘솔 당일손익과 같은 기준(A안: total_eval - baseline).
+    # 짝 실현손익과 달리 미실현 평가손익·거래비용·이월 포지션 영향을 모두 반영한다.
+    equity_pnl = result.get("equity_pnl")
+    equity_pnl_pct = result.get("equity_pnl_pct")
+    if equity_pnl is None:
+        equity_row = "| 자본변화(실현+미실현+비용) | 산출 불가 (KIS 잔고/baseline 미확보) |"
+    else:
+        eq_sign = "+" if equity_pnl >= 0 else ""
+        if equity_pnl_pct is not None:
+            eq_pct_sign = "+" if equity_pnl_pct >= 0 else ""
+            equity_row = f"| 자본변화(실현+미실현+비용) | {eq_sign}{equity_pnl:,.0f}원 ({eq_pct_sign}{equity_pnl_pct:.2f}%) |"
+        else:
+            equity_row = f"| 자본변화(실현+미실현+비용) | {eq_sign}{equity_pnl:,.0f}원 |"
+
     lines: list[str] = [
         f"# 트레이딩 복기 — {trade_date}",
         "",
@@ -170,18 +184,22 @@ def _build_review_markdown(result: dict[str, Any]) -> str:
         f"| 총 주문 | {result.get('total_orders', 0)}건 |",
         f"| 매수 / 매도 / 실패 | {result.get('buy_orders', 0)} / {result.get('sell_orders', 0)} / {result.get('failed_orders', 0)}건 |",
         f"| 실현 손익 | {pnl_sign}{realized_pnl:,.0f}원 ({pnl_pct_sign}{realized_pnl_pct:.2f}%) |",
+        equity_row,
         f"| 손익 검증 | {result.get('pnl_status', '-')} ({result.get('pnl_source', '-')}) |",
         f"| 놓친 기회 | {result.get('missed_entries_count', 0)}건 |",
         f"| 손실 거래 | {result.get('false_positive_count', 0)}건 |",
+        "",
+        "> 자본변화와 짝 실현손익의 차이 = 미실현 평가손익 · 거래비용 · 이월 포지션 손익",
         "",
     ]
 
     # ── 거래 상세 ────────────────────────────────────────────────────────────
     trade_pairs = result.get("trade_pairs") or []
+    day_pairs, carried_pairs = _split_carried_pairs(trade_pairs, trade_date)
     lines.extend(["## 📈 거래 상세", ""])
     if trade_pairs:
-        completed = [p for p in trade_pairs if p.get("status") == "매도완료"]
-        in_progress = [p for p in trade_pairs if p.get("status") != "매도완료"]
+        completed = [p for p in day_pairs if p.get("status") == "매도완료"]
+        in_progress = [p for p in day_pairs if p.get("status") != "매도완료"]
 
         if completed:
             lines.extend(["### 완료된 거래", ""])
@@ -209,6 +227,34 @@ def _build_review_markdown(result: dict[str, Any]) -> str:
                 lines.append(
                     f"- **{p.get('name', '')}** ({p.get('symbol', '')}) "
                     f"— 상태: {p.get('status', '-')}, 매수가: {buy_p:,.0f}원"
+                )
+            lines.append("")
+
+        if carried_pairs:
+            carried_pnl_total = sum(_safe_float(p.get("pnl_amount")) for p in carried_pairs)
+            carried_sign = "+" if carried_pnl_total >= 0 else ""
+            lines.extend([
+                "### 이월 포지션 청산 (전일 매수)",
+                "",
+                f"전일 매수해 오늘 청산한 거래 {len(carried_pairs)}건 "
+                f"(손익 {carried_sign}{carried_pnl_total:,.0f}원) — 당일 승률/거래수 집계에서 제외.",
+                "",
+                "| 종목 | 매수일 | 매수가 | 매도가 | 수익률 | 금액 | 청산사유 |",
+                "|------|--------|--------|--------|--------|------|---------|",
+            ])
+            for p in carried_pairs:
+                pnl_pct = p.get("pnl_pct")
+                pnl_amt = p.get("pnl_amount")
+                pnl_pct_str = f"{pnl_pct:+.2f}%" if pnl_pct is not None else "-"
+                pnl_amt_str = f"{pnl_amt:+,.0f}원" if pnl_amt is not None else "-"
+                buy_p = p.get("buy_price") or 0
+                sell_p = p.get("sell_price") or 0
+                lines.append(
+                    f"| **{p.get('name', '')}** ({p.get('symbol', '')}) "
+                    f"| {_pair_buy_date(p) or '-'} "
+                    f"| {buy_p:,.0f}원 | {sell_p:,.0f}원 "
+                    f"| {pnl_pct_str} | {pnl_amt_str} "
+                    f"| {p.get('exit_reason', '-')} |"
                 )
             lines.append("")
     else:
@@ -474,6 +520,9 @@ def _ensure_review_integrity_columns() -> None:
             "legacy_residual_positions",
             "ALTER TABLE daily_review_reports ADD COLUMN legacy_residual_positions TEXT NOT NULL DEFAULT '[]'",
         ),
+        # 자본변화(equity) 라인 — 짝 실현손익과 별도로 계좌 실제 자본변화를 병기 (2026-06-13 P2)
+        ("equity_pnl", "ALTER TABLE daily_review_reports ADD COLUMN equity_pnl REAL"),
+        ("equity_eod_total_eval", "ALTER TABLE daily_review_reports ADD COLUMN equity_eod_total_eval REAL"),
     ]
     with get_connection() as conn:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(daily_review_reports)").fetchall()}
@@ -809,6 +858,86 @@ def _pair_hold_minutes(pair: dict[str, Any]) -> float:
     return round(max(hold_seconds, 0.0) / 60, 2)
 
 
+async def _fetch_eod_total_eval() -> float | None:
+    """KIS 잔고에서 EOD 총평가금액(total_eval)을 조회한다.
+
+    S10은 15:20+ 장마감 후 실행되며 run_review_audit이 async라 서버 내부
+    이벤트 루프에서 직접 await 한다 (별도 프로세스 KIS 호출 금지 — 토큰 1분 1회 제약).
+    """
+    from ...api.routes.account import _build_balance_payload
+    from ..kis.domestic.service import get_balance
+
+    data = await get_balance()
+    if not data:
+        return None
+    payload = _build_balance_payload(data)
+    total_eval = _safe_float(payload.get("total_eval"))
+    return total_eval if total_eval > 0 else None
+
+
+async def _compute_equity_snapshot(trade_date: str) -> dict[str, Any]:
+    """자본변화(equity) 스냅샷 — 콘솔 당일손익과 같은 기준(A안: total_eval - baseline).
+
+    짝 실현손익(FIFO)이 놓치는 미실현 평가손익·거래비용·이월 포지션 영향을 반영한다.
+    best-effort: KIS 잔고/baseline 미확보 시 None을 반환하며 리뷰를 차단하지 않는다.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date whose baseline is compared.
+    """
+    snapshot: dict[str, Any] = {
+        "equity_eod_total_eval": None,
+        "equity_pnl": None,
+        "equity_pnl_pct": None,
+    }
+    try:
+        total_eval = await _fetch_eod_total_eval()
+        if total_eval is None:
+            logger.warning("WARN: [S10] equity 산출 불가 — KIS total_eval 미확보 trade_date=%s", trade_date)
+            return snapshot
+        snapshot["equity_eod_total_eval"] = total_eval
+
+        from .daily_capital import get_baseline
+
+        baseline = get_baseline(trade_date)
+        if baseline is None or baseline <= 0:
+            logger.warning("WARN: [S10] equity 산출 불가 — baseline 미캡처 trade_date=%s", trade_date)
+            return snapshot
+        snapshot["equity_pnl"] = total_eval - baseline
+        snapshot["equity_pnl_pct"] = (total_eval - baseline) / baseline * 100.0
+        logger.info(
+            "INFO: [S10] equity 스냅샷 trade_date=%s total_eval=%.0f baseline=%.0f equity_pnl=%.0f",
+            trade_date, total_eval, baseline, snapshot["equity_pnl"],
+        )
+    except Exception as exc:
+        logger.warning("WARN: [S10] equity 스냅샷 실패(비차단) trade_date=%s reason=%s", trade_date, exc)
+    return snapshot
+
+
+def _split_carried_pairs(
+    trade_pairs: list[dict[str, Any]], trade_date: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """당일 청산 짝을 (당일 신규, 이월[전일 매수]) 두 버킷으로 나눈다.
+
+    이월 짝(매수일 != trade_date, 당일 매도완료)은 당일 승률/거래수를 왜곡하므로
+    별도 버킷으로 분리해 보고서에 따로 표기한다. 시그널 기반 승패 집계는
+    BUY 시그널이 매수일 날짜로 기록되어 구조적으로 이월 청산을 포함하지 않는다.
+
+    Args:
+        trade_pairs: get_trade_pairs() 결과 중 trade_date 관련 짝 목록.
+        trade_date: YYYY-MM-DD 기준 거래일.
+    """
+    day_pairs: list[dict[str, Any]] = []
+    carried: list[dict[str, Any]] = []
+    for pair in trade_pairs:
+        if pair.get("status") == "매도완료" and pair.get("trade_date") == trade_date:
+            buy_date = _pair_buy_date(pair)
+            if buy_date and buy_date != trade_date:
+                carried.append(pair)
+                continue
+        day_pairs.append(pair)
+    return day_pairs, carried
+
+
 async def _send_action_plan_for_approval(result: dict[str, Any]) -> None:
     """LLM으로 복기 분석 후 Settings 자동 반영 + 텔레그램 통보."""
     from ..settings_store import upsert_setting
@@ -1047,6 +1176,8 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
 
     _ensure_review_integrity_columns()
     now_iso = _now_kst_iso()
+    # 자본변화(equity) — KIS 잔고 best-effort 조회. 실패 시 None(비치명).
+    equity = await _compute_equity_snapshot(trade_date)
     _sync_realized_pnl_from_trade_pairs(trade_date)
     signals = _load_review_signals(trade_date)
     exit_reason_map = build_exit_reason_map(trade_date)
@@ -1255,8 +1386,8 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
                  profile_summary, exit_summary, trailing_quality, missed_entries,
                  false_positives, missed_entries_count, false_positive_count,
                  no_trade_count, memory_count, pnl_status, pnl_source, integrity_warnings,
-                 legacy_residual_positions, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+                 legacy_residual_positions, equity_pnl, equity_eod_total_eval, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(uuid.uuid4()),
@@ -1277,6 +1408,8 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
                 integrity.get("pnl_source", "orders_without_fills"),
                 json_compact(integrity.get("warnings", [])),
                 json_compact(integrity.get("legacy_residual_positions", [])),
+                equity.get("equity_pnl"),
+                equity.get("equity_eod_total_eval"),
                 now_iso,
             ),
         )
@@ -1300,6 +1433,10 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
         ]
     except Exception as _tp_exc:
         logger.warning("WARN: [S10] trade_pairs load failed reason=%s", _tp_exc)
+
+    # 이월 짝(전일 매수 → 당일 청산) 분리 — 당일 신규 거래와 별도 버킷으로 집계
+    _day_pairs, _carried_pairs = _split_carried_pairs(trade_pairs, trade_date)
+    carried_pnl = sum(_safe_float(p.get("pnl_amount")) for p in _carried_pairs)
 
     result = {
         "ok": True,
@@ -1338,6 +1475,12 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
         "market_tone": daily_summary.get("market_tone", ""),
         "rulepack_id": daily_summary.get("rulepack_id", ""),
         "trade_pairs": trade_pairs,
+        "equity_pnl": equity.get("equity_pnl"),
+        "equity_pnl_pct": equity.get("equity_pnl_pct"),
+        "equity_eod_total_eval": equity.get("equity_eod_total_eval"),
+        "carried_count": len(_carried_pairs),
+        "carried_pnl": carried_pnl,
+        "carried_pairs": _carried_pairs,
         "llm_review": {},
         **_load_daily_plan_context(trade_date),
     }
@@ -1497,6 +1640,20 @@ def get_review_report(trade_date: str) -> dict[str, Any] | None:
     except Exception as _tp_exc:
         logger.warning("WARN: [S10] get_review_report trade_pairs load failed reason=%s", _tp_exc)
         payload["trade_pairs"] = []
+
+    # 자본변화(equity) — 구 스키마(컬럼 부재) 행 호환을 위해 None 기본값 보장.
+    payload.setdefault("equity_pnl", None)
+    payload.setdefault("equity_eod_total_eval", None)
+    _eq = payload.get("equity_pnl")
+    _te = payload.get("equity_eod_total_eval")
+    _eq_base = (_te - _eq) if (_eq is not None and _te is not None) else None
+    payload["equity_pnl_pct"] = (_eq / _eq_base * 100.0) if (_eq_base and _eq_base > 0) else None
+
+    # 이월 짝(전일 매수 → 당일 청산) 분리 집계 — 화면 표시용
+    _day_pairs, _carried_pairs = _split_carried_pairs(payload.get("trade_pairs") or [], trade_date)
+    payload["carried_count"] = len(_carried_pairs)
+    payload["carried_pnl"] = sum(_safe_float(p.get("pnl_amount")) for p in _carried_pairs)
+    payload["carried_pairs"] = _carried_pairs
 
     logger.info("SUCCESS: [S10] get_review_report trade_date=%s", trade_date)
     return payload

@@ -14,6 +14,7 @@ from ...services.engine.daily_plan import (
     _validate_plan,
 )
 from ...services.db import get_connection
+from ...services.engine.intraday_profile import fetch_intraday_events
 from ...services.engine.pipeline_audit import finish_pipeline_run, normalize_trigger_source, start_pipeline_run
 from .status_envelope import build_pipeline_read_envelope
 
@@ -32,6 +33,27 @@ def get_today(trade_date: str | None = Query(default=None)):
     target = trade_date or _today_kst()
     plan = get_today_daily_plan(target)
     return build_pipeline_read_envelope(payload=plan, result=plan, trade_date=target)
+
+
+# NOTE: 정적 경로는 /{date} 캐치올보다 먼저 선언해야 매칭된다 (FastAPI 선언 순서).
+@router.get("/intraday-events")
+def get_intraday_events(date: str = Query(..., description="조회 거래일 YYYY-MM-DD (필수)")):
+    """장중 선별 이력 — 모멘텀 스캔/장중 재선별의 유입 시점·레짐·프로파일 배정 기록.
+
+    P4 화면이 사용하는 계약(형태 유지):
+      {"date", "count", "events": [{id, trade_date, event_time, trigger, regime,
+        market_tone, symbols_added: [{symbol, name, profile, reason}], created_at}]}
+    """
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+    try:
+        events = fetch_intraday_events(date)
+    except Exception as exc:
+        logger.warning("WARN: [DailyPlanAPI] intraday-events 조회 실패 date=%s — %s", date, exc)
+        raise HTTPException(status_code=500, detail="intraday events query failed")
+    return {"date": date, "count": len(events), "events": events}
 
 
 @router.get("/{date}")

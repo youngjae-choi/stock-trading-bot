@@ -23,6 +23,14 @@ logger = logging.getLogger("RuleCache")
 _cache: dict[str, dict[str, Any]] = {}   # {symbol_code: final_rule}
 _meta: dict[str, Any] = {}               # 오늘 로드된 메타 정보
 
+# 장중 유입 종목(모멘텀 스캔·장중 재선별)의 휴리스틱 프로파일 오버레이.
+# load_daily_rules가 재호출될 때마다 캐시가 통째로 재구성되므로,
+# 여기 등록된 배정을 로드 시 재적용한다. S5 plan 배정 종목은 절대 덮어쓰지 않는다.
+_intraday_profiles: dict[str, dict[str, str]] = {}  # {symbol: {profile, reason}}
+_plan_assigned: set[str] = set()                    # 오늘 plan symbol_assignments 코드
+
+_PROFILES = ("LOW_VOL", "MID_VOL", "HIGH_VOL", "THEME_SPIKE")
+
 
 def _global_risk() -> dict[str, Any]:
     """system_settings에서 Global Risk Guard 값 조회."""
@@ -58,18 +66,41 @@ def load_daily_rules(trade_date: str, symbol_codes: list[str]) -> int:
     global _cache, _meta
     _cache = {}
 
+    # 거래일이 바뀌면 전일 장중 프로파일 오버레이는 무효
+    if _meta.get("trade_date") and _meta.get("trade_date") != trade_date:
+        _intraday_profiles.clear()
+
     base = get_active_base_rulepack()
     pack = get_active_profile_pack()
     plan = get_active_daily_plan(trade_date)
     overrides = get_symbol_overrides()
     risk = _global_risk()
 
+    _plan_assigned.clear()
+    if plan:
+        for a in plan.get("symbol_assignments", []) or []:
+            code = str(a.get("code") or "").strip()
+            if code:
+                _plan_assigned.add(code)
+
     for code in symbol_codes:
+        plan_for_symbol = plan
+        intraday = _intraday_profiles.get(code)
+        if intraday and code not in _plan_assigned:
+            # plan 미배정 장중 유입 종목 → 휴리스틱 배정을 synthetic assignment로 주입.
+            # resolve_symbol_rule의 레이어 병합(프로파일 사이징·청산 파라미터 포함)을 그대로 재사용한다.
+            synthetic = dict(plan) if plan else {}
+            assignments = list((plan or {}).get("symbol_assignments") or [])
+            assignments.append(
+                {"code": code, "profile": intraday["profile"], "reason": intraday["reason"]}
+            )
+            synthetic["symbol_assignments"] = assignments
+            plan_for_symbol = synthetic
         _cache[code] = resolve_symbol_rule(
             symbol_code=code,
             base_rulepack=base,
             profile_pack=pack,
-            daily_plan=plan,
+            daily_plan=plan_for_symbol,
             symbol_overrides=overrides,
             global_risk=risk,
             trade_date=trade_date,
@@ -85,6 +116,37 @@ def load_daily_rules(trade_date: str, symbol_codes: list[str]) -> int:
     logger.info("SUCCESS: [RuleCache] loaded symbols=%d date=%s base=%s pack=%s",
                 len(_cache), trade_date, _meta["base_rulepack_id"], _meta["risk_profile_pack_id"])
     return len(_cache)
+
+
+def set_intraday_profile(symbol_code: str, profile: str, reason: str) -> bool:
+    """장중 유입 종목의 휴리스틱 Risk Profile 배정을 등록한다.
+
+    다음 load_daily_rules 재로드에서도 유지된다(오버레이).
+    S5 plan symbol_assignments에 이미 배정된 종목은 거부한다(절대 미덮어쓰기).
+
+    Args:
+        symbol_code: 종목코드.
+        profile: LOW_VOL/MID_VOL/HIGH_VOL/THEME_SPIKE.
+        reason: 배정 사유 (assignment_reason으로 전파).
+
+    Returns:
+        등록 여부. plan 배정 종목이거나 profile이 유효하지 않으면 False.
+    """
+    code = str(symbol_code or "").strip()
+    if not code or profile not in _PROFILES:
+        return False
+    if code in _plan_assigned:
+        logger.info("INFO: [RuleCache] intraday profile 거부 — plan 배정 종목 symbol=%s", code)
+        return False
+    _intraday_profiles[code] = {"profile": profile, "reason": str(reason or "")}
+    # 이미 캐시에 룰이 있으면 즉시 반영 대신 다음 load에서 일괄 적용해도 되지만,
+    # add_momentum_candidates는 등록 직후 load_daily_rules를 호출하므로 별도 처리 불필요.
+    return True
+
+
+def get_intraday_profiles() -> dict[str, dict[str, str]]:
+    """현재 등록된 장중 프로파일 오버레이 반환 (조회용 사본)."""
+    return {k: dict(v) for k, v in _intraday_profiles.items()}
 
 
 def get_rule(symbol_code: str) -> dict[str, Any] | None:
@@ -103,6 +165,8 @@ def clear_cache() -> None:
     count = len(_cache)
     _cache = {}
     _meta = {}
+    _intraday_profiles.clear()
+    _plan_assigned.clear()
     logger.info("SUCCESS: [RuleCache] cleared count=%d", count)
 
 
