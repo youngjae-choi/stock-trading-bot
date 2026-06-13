@@ -69,6 +69,56 @@ def _ensure_table() -> None:
         )
 
 
+def classify_regime_heuristic(text: str, market_data: dict | None = None) -> dict:
+    """index-board 브리핑 텍스트를 regime으로 휴리스틱 분류. 애매하면 neutral(보수적).
+
+    반환 dict 키(기존 parsed 구조와 호환):
+      tone, confidence, summary, key_factors, risk_factors,
+      regime, risk_level, stock_character, rulepack_hint, data_note
+    """
+    t = text or ""
+    RISK_ON = ["위험선호", "강세", "회복", "반등", "상승 출발", "강세 출발", "급등", "우호적", "갭상승", "갭 상승"]
+    RISK_OFF = ["위험회피", "약세", "하락", "급락", "부진", "경계", "위축", "불안", "하락 출발"]
+    VOLATILE = ["변동성", "혼조", "불확실", "출렁", "급변", "엇갈"]
+    on = sum(t.count(k) for k in RISK_ON)
+    off = sum(t.count(k) for k in RISK_OFF)
+    vol = sum(t.count(k) for k in VOLATILE)
+    net = on - off
+    THRESHOLD = 2  # |net|이 이 미만이면 neutral (보수적)
+    if vol >= 2 and abs(net) < THRESHOLD:
+        regime = "volatile"
+    elif net >= THRESHOLD:
+        regime = "risk_on"
+    elif net <= -THRESHOLD:
+        regime = "risk_off"
+    else:
+        regime = "neutral"
+    tone = {"risk_on": "positive", "risk_off": "negative"}.get(regime, "neutral")
+    # risk_level: KIS VIX 기반
+    risk_level = "normal"
+    try:
+        vix = (market_data or {}).get("vix")
+        vix_val = vix.get("price") if isinstance(vix, dict) else None
+        if vix_val is not None:
+            vix_val = float(vix_val)
+            risk_level = "low" if vix_val < 20 else ("high" if vix_val > 30 else "normal")
+    except Exception:
+        pass
+    confidence = min(abs(net) / (THRESHOLD * 2), 1.0)
+    return {
+        "tone": tone,
+        "confidence": round(confidence, 2),
+        "summary": t,  # 브리핑 원문을 요약으로 사용
+        "key_factors": [],
+        "risk_factors": [],
+        "data_note": "index-board 휴리스틱 분류 (on=%d off=%d vol=%d net=%d)" % (on, off, vol, net),
+        "regime": regime,
+        "risk_level": risk_level,
+        "stock_character": "",
+        "rulepack_hint": "",
+    }
+
+
 def _format_intraday_for_prompt(snapshot: dict[str, Any]) -> str:
     """fetch_intraday_kr_market_snapshot() 결과를 LLM 프롬프트용 텍스트로 변환."""
     lines: list[str] = []
@@ -217,6 +267,7 @@ async def run_market_tone_analysis(
     is_intraday = safe_source == "intraday_refresh"
     market_data: dict[str, Any] = {}
     briefing_scraped = False
+    briefing: dict[str, Any] | None = None
 
     if is_intraday:
         # 장중 분기: 사전 수집된 스냅샷 재사용 or 신규 호출
@@ -321,69 +372,82 @@ async def run_market_tone_analysis(
                     scrape_exc,
                 )
 
-    prompt_file = "intraday_market_tone.md" if is_intraday else "0805_opus_market_tone.md"
-    prompt_vars = {"date": today, "market_data": market_data_text}
-    if is_intraday:
-        prompt_vars["slot"] = slot
+    # index-board 브리핑 성공 시: 휴리스틱으로 regime 판정, 비싼 Opus 분석 SKIP (하이브리드 주력).
+    # 스크랩 실패/비활성 또는 장중(is_intraday)이면 기존 LLM 풀분석 경로로 폴백.
+    use_index_board_primary = (
+        (not is_intraday) and briefing_scraped and bool(briefing and briefing.get("text"))
+    )
+    if use_index_board_primary:
+        parsed = classify_regime_heuristic(str(briefing["text"]), market_data)
+        llm_result = {"ok": True, "raw": str(briefing["text"]), "provider": "index-board"}
+        logger.info(
+            "INFO: MarketToneService index-board 주력 regime=%s risk_level=%s (Opus SKIP) note=%s",
+            parsed["regime"], parsed["risk_level"], parsed["data_note"],
+        )
+    else:
+        prompt_file = "intraday_market_tone.md" if is_intraday else "0805_opus_market_tone.md"
+        prompt_vars = {"date": today, "market_data": market_data_text}
+        if is_intraday:
+            prompt_vars["slot"] = slot
 
-    # LLM 호출
-    try:
-        prompt = render_prompt(
-            prompt_file,
-            prompt_vars,
-        )
-    except Exception as exc:
-        finish_pipeline_run(
-            run_id=run_audit_id,
-            status="failed",
-            message=f"prompt_render_failed: {exc}",
-            metadata={"trigger_source": safe_source},
-        )
-        logger.error("FAIL: MarketToneService prompt render failed trade_date=%s reason=%s", today, exc)
-        raise
-    try:
-        llm_result = await llm_router.call_llm(prompt, task_name="시장 톤 분석")
-    except Exception as exc:
-        finish_pipeline_run(
-            run_id=run_audit_id,
-            status="failed",
-            message=str(exc),
-            metadata={"trigger_source": safe_source},
-        )
-        logger.error("FAIL: MarketToneService LLM call exception trade_date=%s reason=%s", today, exc)
-        raise
-
-    # 파싱
-    if llm_result["ok"]:
+        # LLM 호출
         try:
-            parsed = _parse_tone_response(llm_result["raw"])
-        except Exception as parse_exc:
-            logger.warning("WARN: MarketToneService JSON 파싱 실패 — %s", parse_exc)
+            prompt = render_prompt(
+                prompt_file,
+                prompt_vars,
+            )
+        except Exception as exc:
+            finish_pipeline_run(
+                run_id=run_audit_id,
+                status="failed",
+                message=f"prompt_render_failed: {exc}",
+                metadata={"trigger_source": safe_source},
+            )
+            logger.error("FAIL: MarketToneService prompt render failed trade_date=%s reason=%s", today, exc)
+            raise
+        try:
+            llm_result = await llm_router.call_llm(prompt, task_name="시장 톤 분석")
+        except Exception as exc:
+            finish_pipeline_run(
+                run_id=run_audit_id,
+                status="failed",
+                message=str(exc),
+                metadata={"trigger_source": safe_source},
+            )
+            logger.error("FAIL: MarketToneService LLM call exception trade_date=%s reason=%s", today, exc)
+            raise
+
+        # 파싱
+        if llm_result["ok"]:
+            try:
+                parsed = _parse_tone_response(llm_result["raw"])
+            except Exception as parse_exc:
+                logger.warning("WARN: MarketToneService JSON 파싱 실패 — %s", parse_exc)
+                parsed = {
+                    "tone": "neutral",
+                    "confidence": 0.0,
+                    "summary": "LLM 응답 파싱 실패",
+                    "key_factors": [],
+                    "risk_factors": ["파싱 오류"],
+                    "data_note": str(parse_exc),
+                    "regime": "neutral",
+                    "risk_level": "normal",
+                    "stock_character": "",
+                    "rulepack_hint": "",
+                }
+        else:
             parsed = {
                 "tone": "neutral",
                 "confidence": 0.0,
-                "summary": "LLM 응답 파싱 실패",
+                "summary": "LLM 분석 실패 — 기본값(중립) 적용",
                 "key_factors": [],
-                "risk_factors": ["파싱 오류"],
-                "data_note": str(parse_exc),
+                "risk_factors": ["LLM 호출 실패"],
+                "data_note": llm_result.get("error", "unknown"),
                 "regime": "neutral",
                 "risk_level": "normal",
                 "stock_character": "",
                 "rulepack_hint": "",
             }
-    else:
-        parsed = {
-            "tone": "neutral",
-            "confidence": 0.0,
-            "summary": "LLM 분석 실패 — 기본값(중립) 적용",
-            "key_factors": [],
-            "risk_factors": ["LLM 호출 실패"],
-            "data_note": llm_result.get("error", "unknown"),
-            "regime": "neutral",
-            "risk_level": "normal",
-            "stock_character": "",
-            "rulepack_hint": "",
-        }
 
     # DB 저장
     record_id = str(uuid.uuid4())
