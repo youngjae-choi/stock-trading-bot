@@ -423,6 +423,31 @@ async def refresh_trading_day_skip_flag(actor: str = "scheduler_s1") -> dict[str
     Args:
         actor: system_settings updated_by value for the scheduler write.
     """
+    # ── 1차 게이트: 로컬 캘린더 ──
+    # 주말·한국 공휴일은 100% 확정적이며 KIS 호출이 필요 없다.
+    # KIS chk-holiday TR은 모의계좌에서 EGW02006으로 항상 실패 → "unknown" fail-open으로
+    # 주말에도 skip 플래그가 False로 남던 문제를 로컬 캘린더로 확정 차단한다.
+    try:
+        from .engine.trading_calendar import is_trading_day, non_trading_reason
+
+        today_iso = _today_kst()
+        if not is_trading_day(today_iso):
+            reason = non_trading_reason(today_iso) or "closed"
+            _set_schedule_skip_today(
+                skip=True,
+                description=TRADING_DAY_SETTING_DESCRIPTION,
+                actor=actor,
+            )
+            logger.info(
+                "INFO: [Job1] 오늘(%s)은 비거래일(로컬 캘린더) — S2~S6 스킵 플래그 세팅 reason=%s",
+                today_iso, reason,
+            )
+            return {"status": "closed", "reason": f"local_calendar: {reason}", "date": _today_kst_compact()}
+    except Exception as exc:
+        logger.warning("WARN: [Job1] 로컬 캘린더 거래일 판정 실패 — KIS 확인으로 폴백 reason=%s", exc)
+
+    # ── 2차 게이트: KIS chk-holiday ──
+    # 로컬이 거래일로 판정한 날의 임시휴장·반차 등 예외만 KIS로 보조 확인한다.
     try:
         from .kis.domestic.service import get_trading_day_status
 
@@ -1536,7 +1561,7 @@ def _build_scheduler() -> AsyncIOScheduler:
         "s9_sweep": "15:12",
         "postprocess": "15:20",
         "backup": "18:00",
-        "evening_briefing": "00:00",
+        "evening_briefing": "23:00",
     }
     try:
         from .settings_store import list_settings
@@ -1585,7 +1610,7 @@ def _build_scheduler() -> AsyncIOScheduler:
                 "s9_sweep": (15, 12),
                 "postprocess": (15, 20),
                 "backup": (18, 0),
-                "evening_briefing": (0, 0),
+                "evening_briefing": (23, 0),
             }
             return fallback[setting_key]
 

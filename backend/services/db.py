@@ -406,7 +406,7 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
         ("momentum_scan.enabled", True, "boolean", "상시 모멘텀 스캐너 활성(모의 전용)"),
         ("momentum_scan.interval_min", 3, "number", "모멘텀 스캔 주기(분)"),
         ("momentum_scan.max_subscriptions", 40, "number", "WS 동시 구독 상한 가드"),
-        ("schedule_evening_briefing_time", "00:00", "string", "장후 브리핑 수집 시각 (HH:MM)"),
+        ("schedule_evening_briefing_time", "23:00", "string", "장후 브리핑 수집 시각 (HH:MM)"),
         ("briefing.scrape_enabled", True, "boolean", "index-board 스크래핑 1차 소스 사용 (false면 기존 KIS+LLM만)"),
         ("briefing.scrape_url", "https://index-board.space/briefing", "string", "시황 브리핑 스크래핑 URL"),
         ("briefing.scrape_timeout_sec", 20, "number", "브리핑 스크래핑 HTTP 타임아웃(초)"),

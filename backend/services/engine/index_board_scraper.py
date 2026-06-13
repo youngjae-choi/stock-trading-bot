@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any
 
 logger = logging.getLogger("IndexBoardScraper")
@@ -146,3 +147,42 @@ async def scrape_morning() -> dict | None:
 async def scrape_evening() -> dict | None:
     """장후(post/nasdaq) 최신 브리핑 1건. None 가능."""
     return await _scrape("post", "nasdaq")
+
+
+_LIVE_CACHE: dict[str, Any] = {"data": None, "ts": 0.0}
+_LIVE_TTL_SEC = 600.0  # 10분
+
+
+async def scrape_both_live(ttl: float = _LIVE_TTL_SEC) -> dict:
+    """장전+장후 브리핑을 1회 fetch로 파싱해 반환. 10분 메모리 캐시.
+
+    반환: {
+      "ok": bool,
+      "morning": {text, generated_at, market, type} | None,
+      "evening": {text, generated_at, market, type} | None,
+      "cached": bool,                  # 캐시 히트 여부
+    }
+    실패(fetch None) 시 직전 캐시(stale)라도 있으면 반환, 없으면 빈 결과.
+    """
+    now = time.monotonic()
+    cached = _LIVE_CACHE.get("data")
+    if cached is not None and (now - _LIVE_CACHE.get("ts", 0.0)) < ttl:
+        result = dict(cached)
+        result["cached"] = True
+        return result
+    html = await fetch_html()
+    if not html:
+        # 실패 시 직전 캐시라도 있으면 그걸 반환(stale 허용), 없으면 빈 결과
+        if cached is not None:
+            stale = dict(cached)
+            stale["cached"] = True
+            stale["stale"] = True
+            return stale
+        return {"ok": False, "morning": None, "evening": None, "cached": False}
+    items = parse_briefings(html)
+    morning = select_latest(items, "pre", "kospi")
+    evening = select_latest(items, "post", "nasdaq")
+    data = {"ok": True, "morning": morning, "evening": evening, "cached": False}
+    _LIVE_CACHE["data"] = data
+    _LIVE_CACHE["ts"] = now
+    return dict(data)

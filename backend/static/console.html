@@ -135,7 +135,7 @@
             오늘은 비거래일입니다 — <strong id="tc-non-trading-date">-</strong> 기준 데이터를 표시합니다.
           </div>
 
-          <!-- 아침 브리핑 카드 -->          <div class="card morning-brief-card" id="morningBriefCard" style="display:none;">
+          <!-- 아침 브리핑 카드 -->          <div class="card morning-brief-card" id="morningBriefCard">
             <div class="morning-brief-header">
               <div class="morning-brief-title">
                 <span class="morning-brief-icon">🌏</span>
@@ -148,6 +148,12 @@
               </div>
             </div>
             <div class="morning-brief-body">
+              <div id="mbIndexBoardBrief" style="display:none; margin-bottom:12px; padding:10px 12px; background:var(--bg2); border-left:3px solid #3fb950; border-radius:6px;">
+                <div style="font-size:11px; color:var(--muted); margin-bottom:4px;">
+                  🌐 index-board 시황 <span id="mbIbSource"></span>
+                </div>
+                <div id="mbIbText" style="font-size:13px; line-height:1.7; color:var(--fg);"></div>
+              </div>
               <div class="mb-market-grid" id="mbMarketGrid"></div>
               <div class="mb-analysis">
                 <div class="mb-analysis-row">
@@ -2568,7 +2574,7 @@
   <script src="/static/js/screens/console-review.js?v=8"></script>
   <script src="/static/js/screens/console-statistics.js?v=2"></script>
   <script src="/static/js/screens/console-regime-analytics.js?v=7"></script>
-  <script src="/static/js/screens/console-daily-plan.js?v=9"></script>
+  <script src="/static/js/screens/console-daily-plan.js?v=11"></script>
   <script src="/static/js/screens/console-plan-funnel.js?v=1"></script>
   <script src="/static/js/screens/console-expert-knowledge.js"></script>
   <script src="/static/js/screens/console-dividends.js"></script>

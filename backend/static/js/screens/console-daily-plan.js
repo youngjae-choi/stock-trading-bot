@@ -298,18 +298,39 @@
   function loadMorningBrief(tradeDate) {
     var card = document.getElementById('morningBriefCard');
     if (!card) return;
+
+    // index-board 라이브 시황 — 거래일 무관 항상 표시 (LLM·KIS 불필요)
+    fetch('/api/v1/market-briefing/live')
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        var m = j && j.payload && j.payload.morning;
+        var box = document.getElementById('mbIndexBoardBrief');
+        if (!box) return;
+        if (m && m.text) {
+          box.style.display = 'block';
+          var txt = document.getElementById('mbIbText');
+          if (txt) txt.textContent = m.text;
+          var src = document.getElementById('mbIbSource');
+          if (src && m.generated_at) src.textContent = '· ' + String(m.generated_at).slice(0,16).replace('T',' ');
+        } else {
+          box.style.display = 'none';
+        }
+      })
+      .catch(function(e){ console.warn('live briefing load failed', e); });
+
     var url = tradeDate ? '/api/v1/morning-context/today?trade_date=' + tradeDate : '/api/v1/morning-context/today';
 
     fetch(url)
       .then(function(res) { return res.json(); })
       .then(function(json) {
         if (!json.ok || !json.data) {
-          card.style.display = 'none';
+          // 데이터 미수집: 카드는 유지하고 안내 문구만 표시 (다른 카드와 동일하게 스켈레톤 유지)
+          var gridEmpty = document.getElementById('mbMarketGrid');
+          if (gridEmpty) gridEmpty.innerHTML = '<div class="muted" style="font-size:12px; padding:4px 0;">시황 데이터 수집 대기 중…</div>';
           return;
         }
         var d = json.data;
         var isToday = json.is_today !== false;
-        card.style.display = 'block';
 
         // 날짜 + 전일 기준 표시
         var dateEl = document.getElementById('mbDate');
@@ -394,7 +415,9 @@
       })
       .catch(function(err) {
         console.warn('morning context load failed', err);
-        if (card) card.style.display = 'none';
+        // 로드 실패 시에도 카드는 유지 (다른 카드와 동일). 시장 그리드에만 안내.
+        var gridErr = document.getElementById('mbMarketGrid');
+        if (gridErr) gridErr.innerHTML = '<div class="muted" style="font-size:12px; padding:4px 0;">시황 데이터 로드 실패 — 새로고침</div>';
       });
   }
 
