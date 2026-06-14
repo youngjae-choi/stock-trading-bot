@@ -768,6 +768,10 @@ async def job_premarket_market_tone() -> None:
     """
     trade_date = _today_kst()
     logger.info("START: [PremarketTone] S2 프리마켓 시장 톤 trade_date=%s", trade_date)
+    _ntr = _non_trading_day_today()
+    if _ntr:
+        logger.info("SKIP: [PremarketTone] 비거래일(%s) — S2 시장 톤 스킵 trade_date=%s", _ntr, trade_date)
+        return
     run_id = _audit_step_start("S2", {"pipeline": "premarket_tone"})
     try:
         await job_refresh_kis_token()  # 야간선물 KIS 호출용 토큰 보장
@@ -1462,6 +1466,10 @@ async def job_intraday_refresh(slot: str) -> None:
     아침 플랜 대비 시장 변화가 감지되면 S3→S4→S5→S6 순서로 재실행한다.
     """
     logger.info("START: [IntradayRefresh] slot=%s", slot)
+    _ntr = _non_trading_day_today()
+    if _ntr:
+        logger.info("SKIP: [IntradayRefresh] 비거래일(%s) — 장중 재선별 스킵 slot=%s", _ntr, slot)
+        return
     try:
         from .engine.intraday_refresh import check_and_refresh
         result = await check_and_refresh(slot)
@@ -1485,6 +1493,10 @@ async def job_intraday_refresh(slot: str) -> None:
 async def job_intraday_regime_monitor(slot: str) -> None:
     """장중 레짐 SET 모니터링 Job: 30분 간격으로 활성 SET 전환 여부를 확인한다."""
     logger.info("START: [IntradayRegimeMonitor] slot=%s", slot)
+    _ntr = _non_trading_day_today()
+    if _ntr:
+        logger.info("SKIP: [IntradayRegimeMonitor] 비거래일(%s) — 레짐 모니터링 스킵 slot=%s", _ntr, slot)
+        return
     try:
         from .engine.intraday_regime_monitor import check_intraday_regime
 
