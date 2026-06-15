@@ -38,20 +38,38 @@ def _effective_price(order: dict, fill_map: dict) -> float:
     return float(order.get("price") or 0)
 
 
+_FILLED_STATUS = {"filled", "completed", "executed"}
+
+
 def _effective_qty(order: dict, fill_map: dict) -> float:
-    """체결수량 우선, 없으면 주문수량 반환."""
+    """완전체결(filled) 주문은 주문수량이 권위 — fills가 부분수량만 기록하는 경우 보정.
+
+    KIS 모의/실거래에서 fills가 분할 기록되거나 일부만 동기화돼 fill 수량이 실제보다
+    작게 남는 사례가 있다(예: 주문 1056, fill 1). status가 완전체결이면 주문수량을 쓴다.
+    그 외(부분체결 등)는 기존대로 체결수량 우선, 없으면 주문수량.
+    """
+    status = (order.get("status") or "").lower()
+    order_qty = float(order.get("qty") or 0)
+    if status in _FILLED_STATUS and order_qty > 0:
+        return order_qty
     _, fq = fill_map.get(order["id"], (0.0, 0.0))
     if fq > 0:
         return fq
-    return float(order.get("qty") or 0)
+    return order_qty
 
 
 def _wavg(orders: list[dict], fill_map: dict) -> tuple[float, float]:
-    """가중평균가와 총수량 반환."""
+    """가중평균가와 총수량 반환. 단가 0(미체결·취소대기) 주문은 평균 오염 방지로 제외한다.
+
+    price=0인 미체결 주문이 가중평균에 합산되면 단가가 붕괴(절반 등)해 손익율이
+    비현실적으로 박제되는 사례가 있었다(6/15). effective price ≤ 0은 제외한다.
+    """
     total_qty = 0.0
     total_amount = 0.0
     for o in orders:
         p = _effective_price(o, fill_map)
+        if p <= 0:
+            continue
         q = _effective_qty(o, fill_map)
         total_qty += q
         total_amount += p * q

@@ -1538,8 +1538,19 @@ def get_review_report(trade_date: str) -> dict[str, Any] | None:
     payload["profile_summary"] = _json_loads(payload.get("profile_summary"), {})
     payload["exit_summary"] = _json_loads(payload.get("exit_summary"), {})
     payload["trailing_quality"] = _json_loads(payload.get("trailing_quality"), {})
-    payload["missed_entries"] = _json_loads(payload.get("missed_entries"), [])
-    payload["false_positives"] = _json_loads(payload.get("false_positives"), [])
+    # 걸러낸 종목·손실 패턴은 S10 스냅샷 이후 EOD 보강(shadow max_return_eod, missed
+    # improvement_candidate)과 false_positive 재생성으로 값이 확정된다. 표시 시점에는
+    # 라이브로 재조회해 화면이 항상 최신 정합값을 보이게 한다. (2026-06-15 수정)
+    try:
+        payload["missed_entries"] = _load_missed_entries(trade_date)
+    except Exception:
+        payload["missed_entries"] = _json_loads(payload.get("missed_entries"), [])
+    try:
+        payload["false_positives"] = _load_false_positives(trade_date)
+    except Exception:
+        payload["false_positives"] = _json_loads(payload.get("false_positives"), [])
+    payload["missed_entries_count"] = len(payload["missed_entries"])
+    payload["false_positive_count"] = len(payload["false_positives"])
     payload["integrity_warnings"] = _json_loads(payload.get("integrity_warnings"), [])
     payload["legacy_residual_positions"] = _json_loads(payload.get("legacy_residual_positions"), [])
     payload["total_orders"] = _safe_int(daily_summary.get("total_orders") or orders.get("total_orders"))

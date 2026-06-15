@@ -873,49 +873,31 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
             ).fetchall()
 
         dates = [r["trade_date"] for r in rows]
-        order_rows: list[Any] = []
-        if dates:
-            placeholders = ",".join("?" * len(dates))
-            order_rows = conn.execute(
-                f"""
-                SELECT trade_date, symbol, side, price, qty, status
-                FROM trading_orders
-                WHERE trade_date IN ({placeholders})
-                  AND status IN ('filled', 'submitted', 'submitted_without_order_no')
-                ORDER BY trade_date, symbol, side
-                """,
-                dates,
-            ).fetchall()
 
-    # 심볼별 매수/매도 쌍으로 승/패 계산
+    # 승/패는 trade_pairs(SSOT)의 완료쌍 기준으로 산출 — review-audit과 동일 기준으로 통일.
+    # 날짜초월 FIFO 페어링이라 이월(전일 매수→당일 매도)도 청산일(rep_date)에 정확히 귀속된다.
+    # (기존: 동일날짜·비가중·심볼당 1승패 → 99건이 6심볼로 붕괴, 이월 누락. 2026-06-15 수정)
     date_wins: dict[str, int] = defaultdict(int)
     date_losses: dict[str, int] = defaultdict(int)
-    by_date_symbol: dict[str, dict[str, dict]] = defaultdict(
-        lambda: defaultdict(lambda: {"buys": [], "sells": []})
-    )
-    for o in order_rows:
-        od = dict(o)
-        by_date_symbol[od["trade_date"]][od["symbol"]][od["side"] + "s"].append(od)
+    if dates:
+        from datetime import datetime as _dt0, timedelta as _td0
 
-    for trade_date, symbols in by_date_symbol.items():
-        for symbol, sides in symbols.items():
-            buys = sides.get("buys", [])
-            sells = sides.get("sells", [])
-            if not buys or not sells:
+        from ...services.engine.trade_pairs import get_trade_pairs
+
+        _min_d, _max_d = min(dates), max(dates)
+        _start = (_dt0.fromisoformat(_min_d) - _td0(days=7)).strftime("%Y-%m-%d")
+        _date_set = set(dates)
+        for p in get_trade_pairs(_start, _max_d):
+            if p.get("status") != "매도완료":
                 continue
-            avg_buy = sum(float(b.get("price") or 0) for b in buys) / len(buys)
-            valid_sell_prices = [
-                float(s.get("price") or 0)
-                for s in sells
-                if float(s.get("price") or 0) > 0
-            ]
-            if not valid_sell_prices or avg_buy == 0:
+            pct = p.get("pnl_pct")
+            rd = p.get("trade_date")
+            if pct is None or rd not in _date_set:
                 continue
-            avg_sell = sum(valid_sell_prices) / len(valid_sell_prices)
-            if avg_sell > avg_buy:
-                date_wins[trade_date] += 1
-            else:
-                date_losses[trade_date] += 1
+            if pct > 0:
+                date_wins[rd] += 1
+            elif pct < 0:
+                date_losses[rd] += 1
 
     from datetime import datetime as _dt, timedelta as _td
 
