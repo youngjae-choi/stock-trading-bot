@@ -1285,10 +1285,26 @@ class DecisionEngine:
         position_manager.deactivate()
 
         # 감시했으나 매수 신호를 보내지 않은 종목 → shadow_trades 기록
+        # deactivate가 마감 부근에 두 번 이상 호출(스윕/EOD/재시작)돼도 같은 (날짜,종목)을
+        # 중복 적재하지 않도록 기존 기록을 조회해 건너뛴다. (record_s4_unentered_shadows와 동일 가드)
         today = _today_kst()
         now_iso = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
+        existing_shadow_symbols: set[str] = set()
+        try:
+            from ..db import get_connection
+
+            with get_connection() as _conn:
+                existing_shadow_symbols = {
+                    str(r[0])
+                    for r in _conn.execute(
+                        "SELECT DISTINCT symbol FROM shadow_trades WHERE trade_date = ?",
+                        (today,),
+                    ).fetchall()
+                }
+        except Exception as _ex_exc:
+            logger.warning("WARN: [S6] 기존 shadow 조회 실패(중복가드 생략) reason=%s", _ex_exc)
         for symbol, cand in self._candidates.items():
-            if symbol in self._signal_sent:
+            if symbol in self._signal_sent or symbol in existing_shadow_symbols:
                 continue
             try:
                 create_shadow_trade(
