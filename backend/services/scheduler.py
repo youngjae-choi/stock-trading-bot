@@ -217,7 +217,11 @@ def _audit_step_finish(
                     token_kr = {"ok": "정상", "renewed": "갱신됨", "error": "오류"}.get(
                         str(s1.get("token_status", "")), s1.get("token_status", "-")
                     )
-                    market_kr = {"trading_day": "거래일", "holiday": "휴장일", "unknown": "확인불가"}.get(
+                    market_kr = {
+                        "trading": "거래일", "trading_day": "거래일",
+                        "closed": "휴장일", "holiday": "휴장일",
+                        "unknown": "확인불가",
+                    }.get(
                         str(s1.get("trading_day_status", "")), s1.get("trading_day_status", "-")
                     )
                     body += f"\n토큰: {token_kr}\n시장: {market_kr}"
@@ -443,6 +447,15 @@ async def refresh_trading_day_skip_flag(actor: str = "scheduler_s1") -> dict[str
                 today_iso, reason,
             )
             return {"status": "closed", "reason": f"local_calendar: {reason}", "date": _today_kst_compact()}
+        # 거래일도 로컬 캘린더로 확정한다 — KIS chk-holiday는 모의계좌서 EGW02006으로 항상 실패해
+        # "unknown(확인불가)"만 반환하므로 신뢰하지 않는다(텔레그램 '시장: 확인불가' 원인).
+        _set_schedule_skip_today(
+            skip=False,
+            description=TRADING_DAY_SETTING_DESCRIPTION,
+            actor=actor,
+        )
+        logger.info("INFO: [Job1] 오늘(%s)은 거래일(로컬 캘린더) — 정상 진행", today_iso)
+        return {"status": "trading", "reason": "local_calendar: trading_day", "date": _today_kst_compact()}
     except Exception as exc:
         logger.warning("WARN: [Job1] 로컬 캘린더 거래일 판정 실패 — KIS 확인으로 폴백 reason=%s", exc)
 
