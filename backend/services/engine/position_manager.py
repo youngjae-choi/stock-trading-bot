@@ -461,18 +461,12 @@ class PositionManager:
             logger.warning("WARN: [S8] trailing slot-open notification failed symbol=%s reason=%s", symbol, exc)
 
     def _update_trailing(self, position: dict[str, Any], price: float) -> None:
-        """트레일링 스탑 상태 업데이트. 손절선은 절대 하향하지 않는다."""
-        if bool(position.get("auto_imported")):
-            if not position.get("trailing_skip_logged"):
-                logger.info(
-                    "INFO: [S8] trailing disabled for auto_imported position symbol=%s price=%.2f active_stop=%.2f",
-                    position.get("symbol"),
-                    price,
-                    _to_float(position.get("active_stop_price")),
-                )
-                position["trailing_skip_logged"] = True
-            return
+        """트레일링 스탑 상태 업데이트. 손절선은 절대 하향하지 않는다.
 
+        auto_imported(이월·재시작 후 재import) 포지션도 트레일링을 적용한다 —
+        진입가는 KIS 평단으로 알고 high-water는 현재가부터 추적하므로 forward 보호는 건전.
+        (재시작 시 메모리 초기화로 트레일링이 꺼지던 문제 해소 — 2026-06-15 PM 지시)
+        """
         entry_price = _to_float(position["entry_price"])
         prev_high = _to_float(position["highest_price_since_entry"])
         new_high = max(prev_high, price)

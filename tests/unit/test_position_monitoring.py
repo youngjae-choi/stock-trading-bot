@@ -74,8 +74,12 @@ class PositionManagerTrailingPersistenceTest(unittest.TestCase):
         self.assertTrue(saved["trailing_active"])
         self.assertEqual(saved["highest_price_since_entry"], 105.0)
 
-    def test_auto_imported_position_disables_trailing_but_keeps_initial_stop(self) -> None:
-        """KIS auto-imported holdings must keep LOW_VOL initial stop without trailing updates."""
+    def test_auto_imported_position_enables_trailing(self) -> None:
+        """KIS auto-imported holdings도 트레일링을 적용한다 (2026-06-15 PM 지시).
+
+        재시작 후 재import·이월 포지션의 이익을 보호하기 위해, 진입가(KIS 평단) 기준으로
+        high-water를 현재가부터 추적해 손절선을 상향한다. 초기 손절선도 그대로 유지.
+        """
         manager = PositionManager()
         with patch("backend.services.engine.position_manager._upsert_stop_state"):
             manager.sync_account_position(
@@ -94,20 +98,22 @@ class PositionManagerTrailingPersistenceTest(unittest.TestCase):
 
         position = manager._positions["005930"]
         self.assertTrue(position["auto_imported"])
-        self.assertEqual(position["active_stop_price"], 98.0)
+        self.assertEqual(position["active_stop_price"], 98.0)  # 초기 손절선
 
+        # 현재가 110 틱 → 트레일링 활성화, 손절선 상향(110*0.97=106.7)
         with patch("backend.services.engine.position_manager._upsert_stop_state") as upsert:
             manager._update_trailing(position, 110.0)
 
-        self.assertFalse(position["trailing_active"])
-        self.assertEqual(position["trailing_stop_price"], 98.0)
-        self.assertEqual(position["active_stop_price"], 98.0)
-        upsert.assert_not_called()
+        self.assertTrue(position["trailing_active"])
+        self.assertAlmostEqual(position["highest_price_since_entry"], 110.0)
+        self.assertAlmostEqual(position["trailing_stop_price"], 106.7)
+        self.assertAlmostEqual(position["active_stop_price"], 106.7)  # 98→106.7 상향
+        upsert.assert_called()
 
-        manager._get_today_tone = Mock(return_value="fallback")
-        with patch("backend.services.engine.position_manager._now_kst") as now:
-            now.return_value = __import__("datetime").datetime.fromisoformat("2026-05-26T10:00:00+09:00")
-            self.assertEqual(manager._exit_reason(position, 97.5), "INITIAL_STOP_LOSS")
+        # 손절선은 절대 하향하지 않는다 — 가격이 다시 내려가도 active_stop 유지
+        with patch("backend.services.engine.position_manager._upsert_stop_state"):
+            manager._update_trailing(position, 105.0)
+        self.assertAlmostEqual(position["active_stop_price"], 106.7)
 
 
 class DecisionEngineAccountSyncTest(unittest.TestCase):
