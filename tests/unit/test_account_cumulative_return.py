@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import backend.main as main_mod
 import backend.api.routes.account as account_mod
+import backend.services.engine.account_pnl as account_pnl_mod
 
 client = TestClient(main_mod.app)
 
@@ -46,7 +47,7 @@ def test_cumulative_return_with_principal_setting(monkeypatch):
     """principal=1억, 총평가 102,203,076 → +2.20%, pnl=2,203,076."""
     _patch_common(monkeypatch)
     monkeypatch.setattr(
-        account_mod, "get_setting", lambda key, default=None: 100000000
+        account_pnl_mod, "get_setting", lambda key, default=None: 100000000
     )
 
     r = client.get("/api/v1/account/balance")
@@ -62,7 +63,7 @@ def test_cumulative_return_uses_default_when_setting_missing(monkeypatch):
     _patch_common(monkeypatch)
     # 설정 없음 → default 반환을 그대로 흉내
     monkeypatch.setattr(
-        account_mod, "get_setting", lambda key, default=None: default
+        account_pnl_mod, "get_setting", lambda key, default=None: default
     )
 
     r = client.get("/api/v1/account/balance")
@@ -76,7 +77,7 @@ def test_cumulative_return_uses_default_when_setting_missing(monkeypatch):
 def test_cumulative_return_guard_when_principal_zero(monkeypatch):
     """principal<=0이면 cumulative_return_pct=0.0, cumulative_pnl=0."""
     _patch_common(monkeypatch)
-    monkeypatch.setattr(account_mod, "get_setting", lambda key, default=None: 0)
+    monkeypatch.setattr(account_pnl_mod, "get_setting", lambda key, default=None: 0)
 
     r = client.get("/api/v1/account/balance")
     assert r.status_code == 200

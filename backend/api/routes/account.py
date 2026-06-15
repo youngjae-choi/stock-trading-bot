@@ -10,7 +10,6 @@ from fastapi.responses import JSONResponse
 
 from ...config import settings, validate_config
 from ...services.kis.domestic.service import get_balance
-from ...services.settings_store import get_setting
 from ..dependencies import kis_config_error_response
 
 logger = logging.getLogger("BackendAccountAPI")
@@ -127,44 +126,24 @@ def _build_balance_payload(data: dict[str, Any]) -> dict[str, Any]:
                 buyable_cash = candidate
                 break
 
-    # 원금(시드) 대비 누적 수익률: KIS 자산증감수익률(0%)과 별개로 시드 대비 누적을 표기.
-    try:
-        principal = int(_to_float(get_setting("account.principal", 100000000), 100000000))
-    except Exception:
-        principal = 100000000
-    if principal > 0:
-        cumulative_pnl = total_eval - principal
-        cumulative_return_pct = round((total_eval - principal) / principal * 100, 2)
-    else:
-        cumulative_pnl = 0
-        cumulative_return_pct = 0.0
+    # 수익·평가 지표는 단일 계산 소스(SSOT)에서 가져온다 — account_pnl.compute_account_pnl.
+    # 모든 % 는 원금 기준으로 나눈다(현금으로 나누는 버그 금지). 응답 키는 프론트 호환 위해 유지.
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    from ...services.engine.account_pnl import compute_account_pnl
 
-    # 당일 손익 = 자본변화 기준(A안, PM 결정 2026-06-11): 현재 총평가 - 장시작 자본(baseline).
-    # 수수료·제세금·짝맞춤 누락까지 자동 반영되어 항상 계좌 잔고와 일치한다.
-    # (이전 부품 조립식(실현+평가)은 고회전일에 실제 자본변화와 큰 오차 — 6/11 +0.11% vs 실제 -2.23%)
-    # 실현/평가 분해(today_realized_pnl, pnl_total)는 보조 표기로 유지.
-    # baseline 미캡처(장전/비거래일)면 0 표기 — "당일"의 시작점이 없으므로.
-    pnl_total_unrealized = _to_int(summary.get("evlu_pfls_smtl_amt"))
-    try:
-        from datetime import datetime as _dt
-        from zoneinfo import ZoneInfo as _ZI
-        from ...services.engine.trade_pairs import get_today_realized_pnl
-        from ...services.engine.daily_capital import get_baseline
+    _today = _dt.now(_ZI("Asia/Seoul")).strftime("%Y-%m-%d")
+    pnl = compute_account_pnl(data, trade_date=_today)
 
-        _today = _dt.now(_ZI("Asia/Seoul")).strftime("%Y-%m-%d")
-        today_realized_pnl = int(get_today_realized_pnl(_today))
-        _base = get_baseline(_today)
-        if _base and _base > 0 and total_eval > 0:
-            daily_pnl_total = int(total_eval - _base)
-            daily_pnl_pct = round(daily_pnl_total / _base * 100, 2)
-        else:
-            daily_pnl_total = 0
-            daily_pnl_pct = 0.0
-    except Exception as exc:
-        logger.warning("WARN: account daily pnl 계산 실패 — %s", exc)
-        today_realized_pnl = 0
-        daily_pnl_total = 0
-        daily_pnl_pct = 0.0
+    principal = pnl["principal"]
+    cumulative_pnl = pnl["cumulative_pnl"]
+    cumulative_return_pct = pnl["cumulative_return_pct"]
+    today_realized_pnl = pnl["today_realized_pnl"]
+
+    # 당일손익 baseline 미캡처(장전/비거래일)면 0 대신 None(null) — 틀린 숫자 표시 금지.
+    daily_available = pnl["daily_baseline_available"]
+    daily_pnl_total = pnl["daily_pnl"]            # None 가능
+    daily_pnl_pct = pnl["daily_return_pct"]       # None 가능
 
     account_no = f"{settings.KIS_CANO}{settings.KIS_ACNT_PRDT_CD}"
     return {
@@ -173,9 +152,10 @@ def _build_balance_payload(data: dict[str, Any]) -> dict[str, Any]:
         "cumulative_pnl": cumulative_pnl,             # 시드 대비 누적 손익 (원)
         "cumulative_return_pct": cumulative_return_pct,  # 시드 대비 누적 수익률 (%)
         "today_realized_pnl": today_realized_pnl,     # 당일 청산 실현손익 (원)
-        "daily_pnl_total": daily_pnl_total,           # 당일 손익 = 실현 + 미실현 (원)
-        "daily_pnl_pct": daily_pnl_pct,               # 당일 손익률 = 당일손익 / 시작자본 (%)
-        "deployed_rate_pct": round((total_eval - buyable_cash) / total_eval * 100, 1) if total_eval else 0.0,
+        "daily_pnl_total": daily_pnl_total,           # 당일 손익 (원) — baseline 없으면 None
+        "daily_pnl_pct": daily_pnl_pct,               # 당일 손익률 (%) — baseline 없으면 None
+        "daily_pnl_available": daily_available,       # 당일손익 집계 가능 여부(false=집계 대기)
+        "deployed_rate_pct": pnl["deployed_rate_pct"],
         "deposit": deposit,                           # 예탁금 총액 (계좌 한도)
         "buyable_cash": buyable_cash,                 # 주문 가능 예수금 (현금 잔액)
         "available_cash": buyable_cash,

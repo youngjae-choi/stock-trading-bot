@@ -29,15 +29,23 @@ def _ensure_table() -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS daily_capital_baseline (
-                trade_date   TEXT PRIMARY KEY,
-                deposit_krw  REAL NOT NULL,
-                captured_at  TEXT NOT NULL
+                trade_date     TEXT PRIMARY KEY,
+                deposit_krw    REAL NOT NULL,
+                total_eval_krw REAL,
+                captured_at    TEXT NOT NULL
             )
             """
         )
+        # 기존 DB 마이그레이션: total_eval_krw 누락 시 추가 (PRAGMA table_info 체크 후 ADD COLUMN).
+        cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(daily_capital_baseline)")}
+        if "total_eval_krw" not in cols:
+            conn.execute("ALTER TABLE daily_capital_baseline ADD COLUMN total_eval_krw REAL")
+            logger.info("DB migration: added column total_eval_krw to daily_capital_baseline")
 
 
-def capture_baseline(deposit: float, trade_date: str | None = None) -> float | None:
+def capture_baseline(
+    deposit: float, total_eval: float | None = None, trade_date: str | None = None
+) -> float | None:
     d = trade_date or _today_kst()
     try:
         value = float(deposit)
@@ -46,6 +54,11 @@ def capture_baseline(deposit: float, trade_date: str | None = None) -> float | N
     if value <= 0:
         logger.warning("WARN: baseline 캡처 거부 — deposit<=0 trade_date=%s value=%s", d, deposit)
         return None
+    eval_value: float | None
+    try:
+        eval_value = float(total_eval) if total_eval is not None else None
+    except (TypeError, ValueError):
+        eval_value = None
     _ensure_table()
     existing = get_baseline(d)
     if existing is not None:
@@ -54,10 +67,14 @@ def capture_baseline(deposit: float, trade_date: str | None = None) -> float | N
     now = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
     with get_connection() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO daily_capital_baseline (trade_date, deposit_krw, captured_at) VALUES (?, ?, ?)",
-            (d, value, now),
+            "INSERT OR IGNORE INTO daily_capital_baseline "
+            "(trade_date, deposit_krw, total_eval_krw, captured_at) VALUES (?, ?, ?, ?)",
+            (d, value, eval_value, now),
         )
-    logger.info("SUCCESS: baseline 캡처 trade_date=%s deposit=%.0f", d, value)
+    logger.info(
+        "SUCCESS: baseline 캡처 trade_date=%s deposit=%.0f total_eval=%s",
+        d, value, f"{eval_value:.0f}" if eval_value is not None else "None",
+    )
     return value
 
 
@@ -73,6 +90,28 @@ def get_baseline(trade_date: str | None = None) -> float | None:
     try:
         return float(row["deposit_krw"])
     except (TypeError, ValueError, KeyError):
+        return None
+
+
+def get_total_eval_baseline(trade_date: str | None = None) -> float | None:
+    """해당일 장시작 total_eval(SOD 총평가) baseline. 없거나 NULL이면 None."""
+    d = trade_date or _today_kst()
+    _ensure_table()
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT total_eval_krw FROM daily_capital_baseline WHERE trade_date = ?", (d,)
+        ).fetchone()
+    if row is None:
+        return None
+    try:
+        value = row["total_eval_krw"]
+    except (KeyError, IndexError):
+        return None
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
         return None
 
 

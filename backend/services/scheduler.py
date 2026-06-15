@@ -71,8 +71,17 @@ async def job_capture_capital_baseline() -> None:
                 deposit = 0.0
             if deposit > 0:
                 break
-        result = capture_baseline(deposit, trade_date=trade_date)
-        logger.info("SUCCESS: [JobCapital] baseline=%s trade_date=%s", result, trade_date)
+        try:
+            total_eval = float(str(summary.get("tot_evlu_amt") or "0").replace(",", ""))
+        except (TypeError, ValueError):
+            total_eval = 0.0
+        result = capture_baseline(
+            deposit, total_eval=total_eval if total_eval > 0 else None, trade_date=trade_date
+        )
+        logger.info(
+            "SUCCESS: [JobCapital] baseline=%s total_eval=%.0f trade_date=%s",
+            result, total_eval, trade_date,
+        )
     except Exception as exc:
         logger.warning(
             "WARN: [JobCapital] baseline 캡처 실패 trade_date=%s reason=%s", trade_date, exc

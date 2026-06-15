@@ -429,18 +429,29 @@
         var dr = acct.deployed_rate_pct;
         setEl('tm-deployed-rate', (dr != null ? dr.toFixed(1) : '-') + '%');
 
-        // 당일 손익(통합) = 당일 실현손익(청산) + 미실현 평가손익 / 당일 손익률
+        // 당일 손익 = 장시작 총평가 대비 자본변화(A안). baseline 미캡처 시 null → "집계 대기" 표시.
         var pnlEl = document.getElementById('tm-pnl-today');
         var pnlRateEl = document.getElementById('tm-pnl-rate');
-        var pnlVal = acct.daily_pnl_total != null ? acct.daily_pnl_total : acct.pnl_total;
+        var dailyPending = acct.daily_pnl_total == null;
         if (pnlEl) {
-          pnlEl.textContent = fmtWon(pnlVal);
-          pnlEl.style.color = pnlVal > 0 ? 'var(--green)' : pnlVal < 0 ? 'var(--red, #f85149)' : '';
+          if (dailyPending) {
+            pnlEl.textContent = '집계 대기';
+            pnlEl.style.color = 'var(--muted)';
+          } else {
+            var pnlVal = acct.daily_pnl_total;
+            pnlEl.textContent = fmtWon(pnlVal);
+            pnlEl.style.color = pnlVal > 0 ? 'var(--green)' : pnlVal < 0 ? 'var(--red, #f85149)' : '';
+          }
         }
-        var rate = acct.daily_pnl_pct != null ? Number(acct.daily_pnl_pct) : (acct.pnl_rate != null ? Number(acct.pnl_rate) : null);
-        if (pnlRateEl && rate != null) {
-          pnlRateEl.textContent = (rate >= 0 ? '+' : '') + rate.toFixed(2) + '%';
-          pnlRateEl.style.color = rate > 0 ? 'var(--green)' : rate < 0 ? 'var(--red, #f85149)' : 'var(--muted)';
+        if (pnlRateEl) {
+          if (dailyPending || acct.daily_pnl_pct == null) {
+            pnlRateEl.textContent = '—';
+            pnlRateEl.style.color = 'var(--muted)';
+          } else {
+            var rate = Number(acct.daily_pnl_pct);
+            pnlRateEl.textContent = (rate >= 0 ? '+' : '') + rate.toFixed(2) + '%';
+            pnlRateEl.style.color = rate > 0 ? 'var(--green)' : rate < 0 ? 'var(--red, #f85149)' : 'var(--muted)';
+          }
         }
 
         // 당일 매수/매도
