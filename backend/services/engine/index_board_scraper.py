@@ -186,3 +186,103 @@ async def scrape_both_live(ttl: float = _LIVE_TTL_SEC) -> dict:
     _LIVE_CACHE["data"] = data
     _LIVE_CACHE["ts"] = now
     return dict(data)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# DB 영속 캐시 — 아침/장후 브리핑은 하루 1회 산출되는 안정 데이터.
+# 한 번 스크랩해 DB에 저장하면, 그 이후엔 DB에서 조회해 표시한다. (PM 지시 2026-06-15)
+# 누락된 조각(morning/evening)만 채우기 위해 스크랩하고, 이미 저장된 조각은 DB값을 유지한다.
+# ──────────────────────────────────────────────────────────────────────────
+
+def _ensure_briefing_table() -> None:
+    from ..db import get_connection
+
+    with get_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS index_board_briefing_cache (
+                trade_date   TEXT PRIMARY KEY,
+                morning_json TEXT,
+                evening_json TEXT,
+                updated_at   TEXT NOT NULL
+            )
+            """
+        )
+
+
+def _load_briefing_db(trade_date: str) -> dict:
+    """DB에 저장된 trade_date 브리핑 조각 반환. {morning, evening} (없으면 None)."""
+    import json
+
+    _ensure_briefing_table()
+    from ..db import get_connection
+
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT morning_json, evening_json FROM index_board_briefing_cache WHERE trade_date = ?",
+            (trade_date,),
+        ).fetchone()
+    if not row:
+        return {"morning": None, "evening": None}
+    def _parse(s):
+        try:
+            return json.loads(s) if s else None
+        except Exception:
+            return None
+    return {"morning": _parse(row[0]), "evening": _parse(row[1])}
+
+
+def _save_briefing_db(trade_date: str, morning: dict | None, evening: dict | None) -> None:
+    import json
+    from datetime import datetime, timezone
+
+    _ensure_briefing_table()
+    from ..db import get_connection
+
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO index_board_briefing_cache (trade_date, morning_json, evening_json, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(trade_date) DO UPDATE SET
+                morning_json = excluded.morning_json,
+                evening_json = excluded.evening_json,
+                updated_at   = excluded.updated_at
+            """,
+            (
+                trade_date,
+                json.dumps(morning, ensure_ascii=False) if morning else None,
+                json.dumps(evening, ensure_ascii=False) if evening else None,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+
+async def scrape_both_with_db(trade_date: str) -> dict:
+    """DB 우선 조회. 누락 조각만 스크랩해 DB에 저장 후 병합 반환.
+
+    - morning/evening 둘 다 DB에 있으면 → 스크랩 없이 DB 반환 (source="db").
+    - 하나라도 없으면 → 1회 스크랩으로 누락분만 채우고 upsert.
+      (이미 저장된 조각은 DB값 유지 — 한 번 확정되면 바뀌지 않음)
+    반환: {ok, morning, evening, source}
+    """
+    db = _load_briefing_db(trade_date)
+    db_morning, db_evening = db.get("morning"), db.get("evening")
+
+    if db_morning and db_evening:
+        return {"ok": True, "morning": db_morning, "evening": db_evening, "source": "db"}
+
+    # 누락 조각이 있으니 1회 스크랩 시도
+    live = await scrape_both_live()
+    morning = db_morning or (live.get("morning") if live.get("ok") else None)
+    evening = db_evening or (live.get("evening") if live.get("ok") else None)
+
+    # 새로 확보한 조각이 있으면 저장
+    if (morning and not db_morning) or (evening and not db_evening):
+        try:
+            _save_briefing_db(trade_date, morning, evening)
+        except Exception as exc:  # 저장 실패는 비치명 — 화면 표시는 유지
+            logger.warning("WARN: index-board 브리핑 DB 저장 실패 date=%s — %s", trade_date, exc)
+
+    source = "db" if (db_morning or db_evening) else "scrape"
+    return {"ok": bool(morning or evening), "morning": morning, "evening": evening, "source": source}

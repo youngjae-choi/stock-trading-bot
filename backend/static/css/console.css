@@ -1591,7 +1591,6 @@
 /* ── Morning Brief Card ── */
 .morning-brief-card {
   margin-bottom: 12px;
-  border-left: 3px solid var(--accent, #E8520A);
 }
 .morning-brief-header {
   display: flex;

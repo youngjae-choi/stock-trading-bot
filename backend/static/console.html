@@ -184,7 +184,7 @@
           </div>
 
           <!-- 레짐 전환 타임라인 -->
-          <div id="tc-regime-timeline-card" class="card" style="margin-bottom:16px; display:none;">
+          <div id="tc-regime-timeline-card" class="card" style="margin-bottom:16px;">
             <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
               <div class="card-title" style="margin-bottom:0;">레짐 SET 타임라인 <span>오늘</span></div>
               <span id="tc-regime-current-badge" style="font-size:11px; background:var(--accent); color:#fff; border-radius:4px; padding:2px 8px;"></span>
@@ -476,13 +476,24 @@
             </div>
           </div>
 
-          <!-- 중단: 장중 선별 타임라인 -->
+          <!-- 중단: 장중 선별 타임라인 (모멘텀 스캔) -->
           <div class="card" style="margin-bottom:16px;">
             <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-              <span>장중 선별 타임라인 <span>모멘텀 스캔 · 장중 재선별 유입 이력</span></span>
+              <span>장중 선별 타임라인 <span>모멘텀 스캔 유입 이력</span></span>
               <span class="badge" id="pf-intraday-count">-</span>
             </div>
             <div id="pf-intraday-timeline" style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px;">
+              <div class="muted" style="padding:8px;">로딩중...</div>
+            </div>
+          </div>
+
+          <!-- 중단2: 장중 재선별 종목 리스트 -->
+          <div class="card" style="margin-bottom:16px;">
+            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+              <span>장중 재선별 종목 <span>intraday_refresh 유입 종목</span></span>
+              <span class="badge" id="pf-reselect-count">-</span>
+            </div>
+            <div id="pf-reselect-list" style="display:flex; flex-direction:column; gap:6px;">
               <div class="muted" style="padding:8px;">로딩중...</div>
             </div>
           </div>
@@ -2575,8 +2586,8 @@
   <script src="/static/js/screens/console-review.js?v=8"></script>
   <script src="/static/js/screens/console-statistics.js?v=2"></script>
   <script src="/static/js/screens/console-regime-analytics.js?v=7"></script>
-  <script src="/static/js/screens/console-daily-plan.js?v=11"></script>
-  <script src="/static/js/screens/console-plan-funnel.js?v=1"></script>
+  <script src="/static/js/screens/console-daily-plan.js?v=12"></script>
+  <script src="/static/js/screens/console-plan-funnel.js?v=2"></script>
   <script src="/static/js/screens/console-expert-knowledge.js"></script>
   <script src="/static/js/screens/console-dividends.js"></script>
   <script src="/static/js/screens/console-dividend-stats.js"></script>

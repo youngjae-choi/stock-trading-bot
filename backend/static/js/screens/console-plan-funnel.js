@@ -92,45 +92,87 @@
     }
   }
 
-  /* ── 중단: 장중 선별 타임라인 ── */
+  /* "재선별" 뱃지 (장중 재선별 종목 표식) */
+  function _pfReselectBadge() {
+    return '<span style="display:inline-block; font-size:9px; font-weight:700; color:#fff;'
+      + ' background:var(--accent); border-radius:3px; padding:1px 5px; flex-shrink:0;">재선별</span>';
+  }
+
+  /* ── 중단: 장중 선별 타임라인 — 모멘텀 스캔만(momentum_scan), 재선별은 하단 리스트로 분리 ── */
   async function _pfLoadIntradayEvents(tradeDate) {
     var box = document.getElementById('pf-intraday-timeline');
+    var listBox = document.getElementById('pf-reselect-list');
     if (!box) return;
     box.innerHTML = '<div class="muted" style="padding:8px; grid-column:1/-1;">로딩중...</div>';
+    if (listBox) listBox.innerHTML = '<div class="muted" style="padding:8px;">로딩중...</div>';
     try {
       var r = await fetchJson('/api/v1/daily-plan/intraday-events?date=' + encodeURIComponent(tradeDate));
       var events = r.events || [];
-      _pfSet('pf-intraday-count', r.count != null ? r.count + '건' : '-');
-      if (!events.length) {
-        box.innerHTML = '<div class="muted" style="padding:8px; grid-column:1/-1;">해당 날짜의 장중 선별 이벤트 없음 — 모멘텀 스캔/재선별이 종목을 추가하면 여기에 시각순으로 표시됩니다.</div>';
-        return;
+      var scanEvents = events.filter(function(ev) { return ev.trigger === 'momentum_scan'; });
+      var reselectEvents = events.filter(function(ev) { return ev.trigger === 'intraday_refresh'; });
+
+      // ── 상단: 모멘텀 스캔 타임라인 ──
+      _pfSet('pf-intraday-count', scanEvents.length + '건');
+      if (!scanEvents.length) {
+        box.innerHTML = '<div class="muted" style="padding:8px; grid-column:1/-1;">해당 날짜의 모멘텀 스캔 이벤트 없음 — 스캔이 종목을 추가하면 여기에 시각순으로 표시됩니다.</div>';
+      } else {
+        box.innerHTML = scanEvents.map(function(ev) {
+          var symbols = ev.symbols_added || [];
+          var rc = PF_REGIME_COLORS[ev.regime] || '#8b9bb4';
+          var regimeTxt = ev.regime ? (PF_REGIME_LABELS[ev.regime] || ev.regime) : '-';
+          var head = '<div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:6px;">'
+            + '<span style="font-weight:700; font-size:13px;">' + escapeHtml(_pfHHMM(ev.event_time)) + '</span>'
+            + '<span style="font-size:10px; color:' + rc + ';">' + escapeHtml(regimeTxt) + '</span>'
+            + (ev.market_tone ? '<span style="font-size:10px; color:var(--muted);">' + escapeHtml(ev.market_tone) + '</span>' : '')
+            + '<span style="font-size:10px; color:var(--muted); margin-left:auto;">' + symbols.length + '종목</span>'
+            + '</div>';
+          var body = symbols.length
+            ? '<div style="display:flex; flex-direction:column; gap:3px;">'
+              + symbols.map(function(s) {
+                  return '<div style="display:flex; gap:6px; align-items:baseline; font-size:12px;">'
+                    + _pfProfileBadge(s.profile)
+                    + '<span style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + escapeHtml(s.name || '') + '">'
+                      + escapeHtml(s.name || s.symbol || '-') + '</span>'
+                    + '</div>';
+                }).join('')
+              + '</div>'
+            : '<div class="muted" style="font-size:11px;">추가 종목 없음</div>';
+          return '<div class="card compact" style="border-left:3px solid var(--accent);">' + head + body + '</div>';
+        }).join('');
       }
-      box.innerHTML = events.map(function(ev) {
-        var symbols = ev.symbols_added || [];
-        var rc = PF_REGIME_COLORS[ev.regime] || '#8b9bb4';
-        var regimeTxt = ev.regime ? (PF_REGIME_LABELS[ev.regime] || ev.regime) : '-';
-        var head = '<div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:6px;">'
-          + '<span style="font-weight:700; font-size:13px;">' + escapeHtml(_pfHHMM(ev.event_time)) + '</span>'
-          + '<span style="font-size:10px; color:var(--accent);">' + escapeHtml(ev.trigger || '-') + '</span>'
-          + '<span style="font-size:10px; color:' + rc + ';">' + escapeHtml(regimeTxt) + '</span>'
-          + (ev.market_tone ? '<span style="font-size:10px; color:var(--muted);">' + escapeHtml(ev.market_tone) + '</span>' : '')
-          + '<span style="font-size:10px; color:var(--muted); margin-left:auto;">' + symbols.length + '종목</span>'
-          + '</div>';
-        var body = symbols.length
-          ? '<div style="display:flex; flex-direction:column; gap:3px;">'
-            + symbols.map(function(s) {
-                return '<div style="display:flex; gap:6px; align-items:baseline; font-size:12px;">'
-                  + _pfProfileBadge(s.profile)
-                  + '<span style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + escapeHtml(s.name || '') + '">'
-                    + escapeHtml(s.name || s.symbol || '-') + '</span>'
-                  + '</div>';
-              }).join('')
-            + '</div>'
-          : '<div class="muted" style="font-size:11px;">추가 종목 없음</div>';
-        return '<div class="card compact" style="border-left:3px solid var(--accent);">' + head + body + '</div>';
-      }).join('');
+
+      // ── 하단: 장중 재선별 종목 리스트 (각 종목에 재선별 뱃지) ──
+      if (listBox) {
+        // 이벤트별 종목을 평탄화 — 시각·레짐 컨텍스트를 종목 행에 부착
+        var reselectRows = [];
+        reselectEvents.forEach(function(ev) {
+          (ev.symbols_added || []).forEach(function(s) {
+            reselectRows.push({ ev: ev, s: s });
+          });
+        });
+        _pfSet('pf-reselect-count', reselectRows.length + '종목');
+        if (!reselectRows.length) {
+          listBox.innerHTML = '<div class="muted" style="padding:8px;">오늘 장중 재선별로 유입된 종목이 없습니다.</div>';
+        } else {
+          listBox.innerHTML = reselectRows.map(function(row) {
+            var ev = row.ev, s = row.s;
+            var rc = PF_REGIME_COLORS[ev.regime] || '#8b9bb4';
+            var regimeTxt = ev.regime ? (PF_REGIME_LABELS[ev.regime] || ev.regime) : '-';
+            return '<div style="display:flex; gap:8px; align-items:center; font-size:12px; padding:5px 8px;'
+              + ' border-left:3px solid var(--accent); background:var(--bg2,transparent); border-radius:4px;">'
+              + _pfReselectBadge()
+              + _pfProfileBadge(s.profile)
+              + '<span style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + escapeHtml(s.name || '') + '">'
+                + escapeHtml(s.name || s.symbol || '-') + '</span>'
+              + '<span style="font-size:10px; color:var(--muted); margin-left:auto;">' + escapeHtml(_pfHHMM(ev.event_time)) + '</span>'
+              + '<span style="font-size:10px; color:' + rc + ';">' + escapeHtml(regimeTxt) + '</span>'
+              + '</div>';
+          }).join('');
+        }
+      }
     } catch (e) {
       box.innerHTML = '<div class="muted" style="padding:8px; grid-column:1/-1;">장중 선별 이력 조회 실패: ' + escapeHtml(e.message) + '</div>';
+      if (listBox) listBox.innerHTML = '<div class="muted" style="padding:8px;">재선별 이력 조회 실패</div>';
     }
   }
 

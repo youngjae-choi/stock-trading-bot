@@ -465,17 +465,24 @@
     var badgeEl = document.getElementById('tc-regime-current-badge');
     if (!card || !timelineEl) return;
 
+    // 카드 프레임은 항상 노출 — 데이터가 채워지면 표시(PM 지시 2026-06-15)
+    var _regimeSkeleton = function(msg) {
+      card.style.display = 'block';
+      if (badgeEl) badgeEl.textContent = '';
+      timelineEl.innerHTML = '<div style="color:var(--muted); padding:4px 0; font-size:12px;">' + msg + '</div>';
+    };
+
     try {
       var regimeUrl = tradeDate ? '/api/v1/regime/today?trade_date=' + tradeDate : '/api/v1/regime/today';
       var r = await fetch(regimeUrl);
       var d = await r.json();
-      if (!d.ok) { card.style.display = 'none'; return; }
+      if (!d.ok) { _regimeSkeleton('레짐 데이터 수집 대기 중…'); return; }
 
       var transitions = d.transitions || [];
       var current = d.application;
 
       if (!current && transitions.length === 0) {
-        card.style.display = 'none';
+        _regimeSkeleton('레짐 데이터 수집 대기 중…');
         return;
       }
 
@@ -520,7 +527,7 @@
         }).join('');
       }
     } catch(e) {
-      card.style.display = 'none';
+      _regimeSkeleton('레짐 데이터 로드 실패 — 새로고침');
       console.warn('regime timeline load failed:', e);
     }
   }
