@@ -43,3 +43,6 @@ tests/e2e/img/
 
 # Runtime DB backups
 backups/
+
+# 콘솔 어시스턴트 대화(계좌 데이터 평문) — 커밋 제외
+docs/agent-comm/console_chat/

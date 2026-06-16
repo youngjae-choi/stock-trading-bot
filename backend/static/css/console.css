@@ -1901,3 +1901,24 @@ details.pf-details-section > *:not(summary) {
   padding: 0 16px 16px;
 }
 
+
+/* ── 콘솔 어시스턴트 패널 ── */
+#assistant-launcher{position:fixed;right:20px;bottom:20px;z-index:1000;width:48px;height:48px;border-radius:50%;
+  border:none;background:var(--accent,#E8520A);color:#fff;font-size:22px;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.3);}
+#assistant-panel{position:fixed;right:20px;bottom:80px;z-index:1000;width:380px;max-width:92vw;height:520px;max-height:78vh;
+  display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line,#2a3140);border-radius:10px;
+  box-shadow:0 8px 28px rgba(0,0,0,.45);overflow:hidden;}
+#assistant-panel .assistant-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;
+  border-bottom:1px solid var(--line,#2a3140);font-size:13px;font-weight:600;}
+#assistant-panel .assistant-head small{color:var(--muted,#8b9bb4);font-weight:400;font-size:11px;margin-left:6px;}
+#assistant-panel .assistant-x{background:none;border:none;color:var(--muted,#8b9bb4);cursor:pointer;font-size:14px;}
+#assistant-panel .assistant-log{flex:1;overflow:auto;padding:10px 12px;font-size:12px;line-height:1.5;white-space:pre-wrap;
+  color:var(--fg,#e6edf3);background:var(--bg2,#0b0f16);}
+#assistant-panel .assistant-status{padding:3px 12px;font-size:11px;color:var(--muted,#8b9bb4);min-height:16px;}
+#assistant-panel .assistant-controls{padding:8px 12px 12px;border-top:1px solid var(--line,#2a3140);}
+#assistant-panel textarea{width:100%;box-sizing:border-box;resize:vertical;background:var(--bg2,#0b0f16);
+  color:var(--fg,#e6edf3);border:1px solid var(--line,#2a3140);border-radius:6px;padding:6px 8px;font-size:12px;}
+#assistant-panel .assistant-btns{display:flex;gap:6px;margin-top:6px;}
+#assistant-panel .assistant-btns button{flex:0 0 auto;padding:6px 10px;font-size:12px;border-radius:6px;
+  border:1px solid var(--line,#2a3140);background:var(--panel);color:var(--fg,#e6edf3);cursor:pointer;}
+#assistant-panel .assistant-btns button.primary{margin-left:auto;background:var(--accent,#E8520A);border-color:var(--accent,#E8520A);color:#fff;}

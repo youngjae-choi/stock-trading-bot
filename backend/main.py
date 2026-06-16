@@ -14,6 +14,7 @@ from .api.routes.alerts import router as alerts_router
 from .api.routes.account import router as account_router
 from .api.routes.auth import router as auth_router
 from .api.routes.backtest import router as backtest_router
+from .api.routes.assistant import router as assistant_router
 from .api.routes.scheduler import router as scheduler_router
 from .api.routes.market_tone import router as market_tone_router
 from .api.routes.market import router as market_router
@@ -157,6 +158,7 @@ app.include_router(console_router)
 app.include_router(auth_router)
 app.include_router(health_router)
 app.include_router(backtest_router)
+app.include_router(assistant_router)
 app.include_router(account_router)
 app.include_router(alerts_router)
 app.include_router(meta_router)
