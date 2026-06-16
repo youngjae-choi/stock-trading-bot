@@ -874,30 +874,22 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
 
         dates = [r["trade_date"] for r in rows]
 
-    # 승/패는 trade_pairs(SSOT)의 완료쌍 기준으로 산출 — review-audit과 동일 기준으로 통일.
-    # 날짜초월 FIFO 페어링이라 이월(전일 매수→당일 매도)도 청산일(rep_date)에 정확히 귀속된다.
-    # (기존: 동일날짜·비가중·심볼당 1승패 → 99건이 6심볼로 붕괴, 이월 누락. 2026-06-15 수정)
+    # 승/패는 당일 매매성적 SSOT(compute_daily_score)로 산출 — review·복기와 동일 단일 출처.
+    # 윈도우 전체 페어를 1회 조회 후 날짜별로 SSOT를 호출(rep_date 귀속·이월 포함).
     date_wins: dict[str, int] = defaultdict(int)
     date_losses: dict[str, int] = defaultdict(int)
     if dates:
         from datetime import datetime as _dt0, timedelta as _td0
 
-        from ...services.engine.trade_pairs import get_trade_pairs
+        from ...services.engine.trade_pairs import compute_daily_score, get_trade_pairs
 
         _min_d, _max_d = min(dates), max(dates)
         _start = (_dt0.fromisoformat(_min_d) - _td0(days=7)).strftime("%Y-%m-%d")
-        _date_set = set(dates)
-        for p in get_trade_pairs(_start, _max_d):
-            if p.get("status") != "매도완료":
-                continue
-            pct = p.get("pnl_pct")
-            rd = p.get("trade_date")
-            if pct is None or rd not in _date_set:
-                continue
-            if pct > 0:
-                date_wins[rd] += 1
-            elif pct < 0:
-                date_losses[rd] += 1
+        _window_pairs = get_trade_pairs(_start, _max_d)
+        for _d in dates:
+            _score = compute_daily_score(_d, pairs=_window_pairs)
+            date_wins[_d] = _score["wins"]
+            date_losses[_d] = _score["losses"]
 
     from datetime import datetime as _dt, timedelta as _td
 

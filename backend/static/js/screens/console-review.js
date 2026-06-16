@@ -500,32 +500,37 @@
     };
     var avgWin  = _avg(winners);
     var avgLoss = _avg(losers);
-    var winRate = completed.length > 0 ? Math.round(winners.length / completed.length * 100) : 0;
+    // 헤드라인 완료/승/패 수치는 당일 매매성적 SSOT(day_score)를 단일 출처로 사용 — 카드 간 불일치 방지.
+    var ds = r.day_score || null;
+    var nCompleted = ds ? ds.completed : completed.length;
+    var nWin = ds ? ds.wins : winners.length;
+    var nLoss = ds ? ds.losses : losers.length;
+    var winRate = nCompleted > 0 ? Math.round(nWin / nCompleted * 100) : 0;
     var sorted  = completed.slice().sort(function(a, b) { return (b.pnl_pct || 0) - (a.pnl_pct || 0); });
     var best    = sorted[0];
     var worst   = sorted[sorted.length - 1];
 
     var lines = [];
 
-    // 요약 한 줄
-    if (completed.length > 0) {
+    // 요약 한 줄 (완료/승/패 수치는 SSOT day_score 기준)
+    if (nCompleted > 0) {
       var summary;
-      if (winners.length > 0 && losers.length > 0) {
-        summary = '<span class="good"><strong>' + winners.length + '건 수익</strong>'
+      if (nWin > 0 && nLoss > 0) {
+        summary = '<span class="good"><strong>' + nWin + '건 수익</strong>'
           + (avgWin  != null ? ' (평균 +' + avgWin.toFixed(1) + '%)' : '') + '</span>'
-          + ', <span class="bad"><strong>' + losers.length + '건 손실</strong>'
+          + ', <span class="bad"><strong>' + nLoss + '건 손실</strong>'
           + (avgLoss != null ? ' (평균 ' + avgLoss.toFixed(1) + '%)' : '') + '</span>'
           + '로 마감했습니다.';
-      } else if (winners.length > 0) {
+      } else if (nWin > 0) {
         summary = '<span class="good"><strong>전 건 수익</strong>'
           + (avgWin != null ? ' (평균 +' + avgWin.toFixed(1) + '%)' : '') + '</span>으로 마감했습니다.';
-      } else if (losers.length > 0) {
+      } else if (nLoss > 0) {
         summary = '<span class="bad"><strong>전 건 손실</strong>'
           + (avgLoss != null ? ' (평균 ' + avgLoss.toFixed(1) + '%)' : '') + '</span>로 마감했습니다.';
       } else {
         summary = '손익 데이터가 아직 집계되지 않았습니다.';
       }
-      lines.push('<p>완료 <strong>' + completed.length + '건</strong> 중 ' + summary + '</p>');
+      lines.push('<p>완료 <strong>' + nCompleted + '건</strong> 중 ' + summary + '</p>');
     }
 
     if (best && worst && best !== worst) {
@@ -557,7 +562,7 @@
     }
 
     // 승률 평가
-    if (completed.length > 0) {
+    if (nCompleted > 0) {
       var evalLine;
       if (winRate >= 70)      evalLine = '<span class="good">✓ 승률 ' + winRate + '% — 진입 판단이 전반적으로 좋았습니다.</span>';
       else if (winRate >= 50) evalLine = '<span style="color:var(--yellow,#e3b341)">△ 승률 ' + winRate + '% — 개선 여지가 있습니다.</span>';

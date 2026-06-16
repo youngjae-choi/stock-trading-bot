@@ -204,6 +204,56 @@ def get_trade_pairs(start_date: str, end_date: str) -> list[dict[str, Any]]:
     return pairs
 
 
+def compute_daily_score(trade_date: str, pairs: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """당일 매매성적 단일 산출(SSOT) — 모든 화면/카드가 이 결과를 공유한다.
+
+    기준: rep_date(trade_date) == 대상일인 trade_pair만. (false_positive·daily-results와 동일)
+    완료=매도완료+pnl_pct 존재. 승=pnl_pct>0, 패=pnl_pct<0. 손실건=패 건수와 동일 정의.
+    체결 건수는 day 짝의 orders 중 fill_qty가 있는 것만(취소·미체결 재시도 제외).
+
+    Args:
+        trade_date: YYYY-MM-DD.
+        pairs: 사전 조회한 get_trade_pairs 결과(범위 포함). None이면 7일 lookback으로 조회.
+    """
+    if pairs is None:
+        from datetime import datetime, timedelta
+
+        start = (datetime.fromisoformat(trade_date) - timedelta(days=7)).strftime("%Y-%m-%d")
+        pairs = get_trade_pairs(start, trade_date)
+
+    day = [p for p in pairs if p.get("trade_date") == trade_date]
+    completed = [p for p in day if p.get("status") == "매도완료" and p.get("pnl_pct") is not None]
+    wins = [p for p in completed if (p.get("pnl_pct") or 0) > 0]
+    losses = [p for p in completed if (p.get("pnl_pct") or 0) < 0]
+    flat = [p for p in completed if (p.get("pnl_pct") or 0) == 0]
+    open_pairs = [p for p in day if p.get("status") != "매도완료"]
+    # 주의: 실현손익(돈)은 계좌 기준 SSOT(equity_pnl)가 단일 출처다. 여기서 페어 pnl_amount를
+    # 합산하면 수량 아티팩트로 계좌값과 어긋날 수 있어 의도적으로 노출하지 않는다(카운트 전용).
+
+    buy_fills = sell_fills = 0
+    for p in day:
+        for o in (p.get("orders") or []):
+            if o.get("fill_qty"):
+                if o.get("side") == "buy":
+                    buy_fills += 1
+                elif o.get("side") == "sell":
+                    sell_fills += 1
+
+    n = len(completed)
+    return {
+        "trade_date": trade_date,
+        "symbols": len(day),
+        "completed": n,
+        "wins": len(wins),
+        "losses": len(losses),
+        "flat": len(flat),
+        "win_rate": round(len(wins) / n * 100, 1) if n else 0.0,
+        "open_positions": len(open_pairs),
+        "buy_fills": buy_fills,
+        "sell_fills": sell_fills,
+    }
+
+
 def get_today_realized_pnl(trade_date: str) -> float:
     """당일 청산 완료된 매매의 실현손익 합계(원). Trade History와 동일 기준(trade_pairs).
 

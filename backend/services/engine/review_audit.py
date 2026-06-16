@@ -1431,6 +1431,13 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
         trade_pairs = [p for p in _all_pairs if p.get("trade_date") == trade_date]
     except Exception as _tp_exc:
         logger.warning("WARN: [S10] trade_pairs load failed reason=%s", _tp_exc)
+        _all_pairs = []
+    try:
+        from .trade_pairs import compute_daily_score as _cds
+        _day_score = _cds(trade_date, pairs=_all_pairs)
+    except Exception as _ds_exc:
+        logger.warning("WARN: [S10] day_score 산출 실패 reason=%s", _ds_exc)
+        _day_score = None
 
     # 이월 짝(전일 매수 → 당일 청산) 분리 — 당일 신규 거래와 별도 버킷으로 집계
     _day_pairs, _carried_pairs = _split_carried_pairs(trade_pairs, trade_date)
@@ -1473,6 +1480,7 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
         "market_tone": daily_summary.get("market_tone", ""),
         "rulepack_id": daily_summary.get("rulepack_id", ""),
         "trade_pairs": trade_pairs,
+        "day_score": _day_score,
         "equity_pnl": equity.get("equity_pnl"),
         "equity_pnl_pct": equity.get("equity_pnl_pct"),
         "equity_eod_total_eval": equity.get("equity_eod_total_eval"),
@@ -1643,9 +1651,13 @@ def get_review_report(trade_date: str) -> dict[str, Any] | None:
         _all_pairs = _get_pairs(_start, trade_date)
         # 당일 종료(rep_date == trade_date) 기준 — false_positive/daily-results와 동일 정의로 카드 간 정합.
         payload["trade_pairs"] = [p for p in _all_pairs if p.get("trade_date") == trade_date]
+        # 당일 매매성적 SSOT — 승/패·완료·손실·체결수를 단일 산출(화면 카드는 이 값을 표시)
+        from .trade_pairs import compute_daily_score as _cds
+        payload["day_score"] = _cds(trade_date, pairs=_all_pairs)
     except Exception as _tp_exc:
         logger.warning("WARN: [S10] get_review_report trade_pairs load failed reason=%s", _tp_exc)
         payload["trade_pairs"] = []
+        payload.setdefault("day_score", None)
 
     # 자본변화(equity) — 구 스키마(컬럼 부재) 행 호환을 위해 None 기본값 보장.
     payload.setdefault("equity_pnl", None)
