@@ -14,8 +14,8 @@ KIS_NEW_CUSTOMER_POLICY_EFFECTIVE_AT = datetime(2026, 4, 3, 17, 0, 0, tzinfo=KST
 
 
 # EGW00201(트래픽 초과) 감지 시 일시 감속 모드 파라미터
-_THROTTLE_WINDOW_SECONDS = 60.0  # 감속 유지 시간(초)
-_THROTTLE_FACTOR = 0.5           # 적용 RPS 배율(절반)
+_THROTTLE_WINDOW_SECONDS = 60.0  # 감속 유지 기준 시간(초) — 레벨당 가산
+_THROTTLE_WINDOW_MAX = 180.0     # 감속 유지 최대 시간(초)
 _THROTTLE_MIN_RPS = 1.0          # 감속 시에도 보장하는 최소 RPS
 
 
@@ -29,15 +29,20 @@ class RateLimiter:
         self.lock = asyncio.Lock()
         self.last_rate_limit_at = 0.0
         self.throttled_until = 0.0  # monotonic 기준 감속 만료시각 (0.0 = 감속 없음)
+        self._throttle_level = 0    # 누진 감속 단계 (연속 EGW00201 시 증가)
 
     def _is_throttled(self) -> bool:
         """감속 모드 활성 여부 — 만료시각 경과 시 자동 원복."""
         return time.monotonic() < self.throttled_until
 
+    def _throttle_factor(self) -> float:
+        """누진 감속 배율 — level1→1/2, level2→1/3, level3→1/4 ... (깊어질수록 더 느리게)."""
+        return 1.0 / (self._throttle_level + 1)
+
     def _effective_rps(self) -> float:
         """감속 모드를 반영한 현재 적용 RPS."""
         if self._is_throttled():
-            return max(_THROTTLE_MIN_RPS, self._requests_per_second * _THROTTLE_FACTOR)
+            return max(_THROTTLE_MIN_RPS, self._requests_per_second * self._throttle_factor())
         return self._requests_per_second
 
     def current_delay(self) -> float:
@@ -58,13 +63,20 @@ class RateLimiter:
 
     def mark_rate_limited(self):
         self.last_rate_limit_at = time.time()
-        # 일시 감속 모드 진입: 이후 60초 동안 적용 RPS를 절반(최소 1.0)으로 낮춘다
-        self.throttled_until = time.monotonic() + _THROTTLE_WINDOW_SECONDS
+        # 누진 감속: 감속 중에 또 EGW00201이 나면 단계를 더 깊게(더 느리게) + 유지시간 연장.
+        # 감속이 만료된 뒤 새로 발생하면 1단계부터 다시 시작. 이렇게 "서버가 받아주는 속도"로 자가 수렴.
+        if self._is_throttled():
+            self._throttle_level += 1
+        else:
+            self._throttle_level = 1
+        window = min(_THROTTLE_WINDOW_MAX, _THROTTLE_WINDOW_SECONDS * self._throttle_level)
+        self.throttled_until = time.monotonic() + window
         logger.warning(
-            "WARN: KIS rate limiter throttled — rps %.2f -> %.2f for %.0fs",
+            "WARN: KIS rate limiter throttled L%d — rps %.2f -> %.2f for %.0fs",
+            self._throttle_level,
             self._requests_per_second,
             self._effective_rps(),
-            _THROTTLE_WINDOW_SECONDS,
+            window,
         )
 
     def snapshot(self) -> Dict[str, float]:
@@ -76,7 +88,8 @@ class RateLimiter:
             "last_rate_limited_at": self.last_rate_limit_at,
             # 감속 모드 진단 — 활성 시 throttle_factor=0.5, 비활성 시 1.0
             "throttled_until": self.throttled_until if throttled else 0.0,
-            "throttle_factor": _THROTTLE_FACTOR if throttled else 1.0,
+            "throttle_factor": self._throttle_factor() if throttled else 1.0,
+            "throttle_level": self._throttle_level if throttled else 0,
         }
 
 
