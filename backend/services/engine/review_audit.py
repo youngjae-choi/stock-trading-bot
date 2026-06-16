@@ -1426,11 +1426,9 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
         _dt = datetime.fromisoformat(trade_date)
         _start = (_dt - timedelta(days=7)).strftime("%Y-%m-%d")
         _all_pairs = _get_pairs(_start, trade_date)
-        trade_pairs = [
-            p for p in _all_pairs
-            if p.get("trade_date") == trade_date
-            or any(o.get("trade_date") == trade_date for o in p.get("orders", []))
-        ]
+        # 당일 종료(rep_date == trade_date) 기준으로만 집계 — false_positive/daily-results와 동일 정의.
+        # 오늘 (실패·취소된) 매도주문만 있고 실제론 미종료인 잔여/유령 짝은 제외(무결성·잔여 섹션이 별도 표시).
+        trade_pairs = [p for p in _all_pairs if p.get("trade_date") == trade_date]
     except Exception as _tp_exc:
         logger.warning("WARN: [S10] trade_pairs load failed reason=%s", _tp_exc)
 
@@ -1643,11 +1641,8 @@ def get_review_report(trade_date: str) -> dict[str, Any] | None:
         _dt = datetime.fromisoformat(trade_date)
         _start = (_dt - timedelta(days=7)).strftime("%Y-%m-%d")
         _all_pairs = _get_pairs(_start, trade_date)
-        payload["trade_pairs"] = [
-            p for p in _all_pairs
-            if p.get("trade_date") == trade_date
-            or any(o.get("trade_date") == trade_date for o in p.get("orders", []))
-        ]
+        # 당일 종료(rep_date == trade_date) 기준 — false_positive/daily-results와 동일 정의로 카드 간 정합.
+        payload["trade_pairs"] = [p for p in _all_pairs if p.get("trade_date") == trade_date]
     except Exception as _tp_exc:
         logger.warning("WARN: [S10] get_review_report trade_pairs load failed reason=%s", _tp_exc)
         payload["trade_pairs"] = []
