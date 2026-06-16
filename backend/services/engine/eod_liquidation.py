@@ -26,6 +26,9 @@ logger = logging.getLogger("EODLiquidation")
 _EOD_FILL_CHECK_DELAY_SEC = 50
 # 잔여 포지션 시장가 재매도 사유 — trading_orders.reason으로 기록
 _EOD_RETRY_REASON = "EOD_RETRY"
+# T1: 청산 직전 KIS 실보유 조회 재시도 — 일시적 EGW00201 등에 즉시 폴백하지 않기 위함
+_EOD_BALANCE_ATTEMPTS = 3        # 최초 1 + 재시도 2
+_EOD_BALANCE_RETRY_SEC = 1.5
 
 
 def _today_kst() -> str:
@@ -121,6 +124,28 @@ def _record_legacy_residual_alert(trade_date: str) -> list[dict[str, Any]]:
             detail=json_compact(residuals),
         )
     return residuals
+
+
+def _partition_fallback_positions(
+    positions: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """KIS 잔고조회 실패 폴백 시 매도 대상을 안전하게 분리한다.
+
+    auto_imported(이월·재시작 자동등록 — 실존을 KIS로 확인하지 못한 상태)는 시장가 매도에서
+    제외(skipped)하고, 검증된 봇 포지션만 매도 대상(sellable)으로 남긴다. KIS 조회가 실패한
+    상황에서 유령 포지션을 맹목적으로 시장가 매도하면 거부 폭주·CRITICAL 노이즈만 남기 때문.
+
+    Returns:
+        (sellable, skipped) — sellable은 매도 시도 대상, skipped는 보류(수동확인) 대상.
+    """
+    sellable: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for position in positions:
+        if bool(position.get("auto_imported")):
+            skipped.append(position)
+        else:
+            sellable.append(position)
+    return sellable, skipped
 
 
 def _classify_sell_result(result: dict[str, Any], summary: dict[str, int]) -> None:
@@ -227,26 +252,63 @@ async def run_eod_liquidation() -> dict[str, Any]:
     today = _today_kst()
     legacy_residual_positions = _record_legacy_residual_alert(today)
     skipped_duplicates: list[dict[str, Any]] = []
+    skipped_phantoms: list[dict[str, Any]] = []
     account_lookup_failed = False
+    positions: list[dict[str, Any]] = []
 
-    try:
-        positions = await _get_open_positions_from_account()
-    except Exception as exc:
-        account_lookup_failed = True
-        # 빈 메시지 예외도 타입이 드러나도록 repr 사용 (진단 불가 방지)
-        logger.error("FAIL: [S9] KIS 실보유 청산 대상 조회 실패 error=%r", exc, exc_info=True)
-        positions = []
+    # T1: 청산 직전 KIS 실보유 조회 — 일시적 EGW00201 등으로 한 번 실패해도 즉시 폴백하지 않고
+    # 짧게 재시도(최초 1 + 재시도 2회 ×1.5s)해 실보유 기준 청산 확률을 높인다.
+    last_exc: Exception | None = None
+    for attempt in range(1, _EOD_BALANCE_ATTEMPTS + 1):
+        try:
+            positions = await _get_open_positions_from_account()
+            account_lookup_failed = False
+            last_exc = None
+            break
+        except Exception as exc:
+            last_exc = exc
+            account_lookup_failed = True
+            logger.warning(
+                "WARN: [S9] KIS 실보유 조회 실패 attempt=%d/%d error=%r",
+                attempt, _EOD_BALANCE_ATTEMPTS, exc,
+            )
+            if attempt < _EOD_BALANCE_ATTEMPTS:
+                await asyncio.sleep(_EOD_BALANCE_RETRY_SEC)
 
     if account_lookup_failed:
-        logger.warning("WARN: [S9] KIS 조회 실패로 기존 S8/DB 포지션 fallback 청산 시도 trade_date=%s", today)
-        positions = position_manager.get_positions()
-        if not positions:
+        logger.error(
+            "FAIL: [S9] KIS 실보유 청산 대상 조회 재시도 후에도 실패 error=%r", last_exc, exc_info=True
+        )
+        # T2: 폴백 안전 — KIS로 실존을 확인 못한 상태에서 auto_imported(유령 가능) 포지션을 맹목적으로
+        # 시장가 매도하면 거부 폭주·CRITICAL 노이즈만 남는다. 검증된 봇 포지션만 매도, 나머지는 보류+알림.
+        fallback_positions = position_manager.get_positions()
+        if not fallback_positions:
             db_positions = _get_open_positions_from_db(today)
-            positions = [
-                {"symbol": str(position.get("symbol") or ""), "qty": int(position.get("qty") or 0), "source": "db_fallback"}
+            fallback_positions = [
+                {
+                    "symbol": str(position.get("symbol") or ""),
+                    "qty": int(position.get("qty") or 0),
+                    "auto_imported": bool(position.get("auto_imported")),
+                    "source": "db_fallback",
+                }
                 for position in db_positions
                 if int(position.get("qty") or 0) > 0
             ]
+        positions, skipped_phantoms = _partition_fallback_positions(fallback_positions)
+        logger.warning(
+            "WARN: [S9] KIS 조회 실패 폴백 — 검증 매도대상=%d 보류(auto_imported)=%d trade_date=%s",
+            len(positions), len(skipped_phantoms), today,
+        )
+        if skipped_phantoms:
+            create_integrity_alert_once(
+                today,
+                alert_type="fill_missing",
+                severity="WARNING",
+                title="EOD 폴백: 잔고조회 실패로 미검증(auto_imported) 포지션 청산 보류 — 수동 확인 필요",
+                detail=json_compact(
+                    [{"symbol": p.get("symbol"), "qty": p.get("qty")} for p in skipped_phantoms]
+                ),
+            )
 
     logger.info(
         "START: [S9] EOD liquidation positions=%d trade_date=%s auto_imported_count=%d",
@@ -263,6 +325,7 @@ async def run_eod_liquidation() -> dict[str, Any]:
             "legacy_residual_positions": legacy_residual_positions,
             "orphan_positions": legacy_residual_positions,
             "account_lookup_failed": account_lookup_failed,
+            "skipped_phantom_positions": skipped_phantoms,
             "retried": 0,
             "residual_after_retry": [],
         }
@@ -335,5 +398,6 @@ async def run_eod_liquidation() -> dict[str, Any]:
         "legacy_residual_positions": legacy_residual_positions,
         "orphan_positions": legacy_residual_positions,
         "account_lookup_failed": account_lookup_failed,
+        "skipped_phantom_positions": skipped_phantoms,
         **retry_summary,
     }
