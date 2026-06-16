@@ -461,10 +461,17 @@
       lines.push('<p>오늘 적용된 파라미터 조정: ' + oDesc + '</p>');
     }
 
-    // 주문 현황
+    // 주문 현황 — 체결 기준(day_score)을 우선 표시. raw 주문수(취소·미체결 재시도 포함)는 괄호 참고.
+    var ds = r.day_score || null;
     if (total > 0) {
-      lines.push('<p>시스템은 <strong>' + pairs.length + '개 종목</strong>에 매매를 실행했습니다. '
-        + '매수 ' + buy + '건 / 매도 ' + sell + '건 처리됨.</p>');
+      if (ds) {
+        lines.push('<p>시스템은 <strong>' + ds.symbols + '개 종목</strong>에 매매를 실행했습니다. '
+          + '체결 매수 <strong>' + ds.buy_fills + '건</strong> / 매도 <strong>' + ds.sell_fills + '건</strong>'
+          + ' <span class="muted">(원시 주문 ' + buy + '/' + sell + '건 — 취소·미체결 재시도 포함)</span>.</p>');
+      } else {
+        lines.push('<p>시스템은 <strong>' + pairs.length + '개 종목</strong>에 매매를 실행했습니다. '
+          + '매수 ' + buy + '건 / 매도 ' + sell + '건 처리됨.</p>');
+      }
     } else {
       lines.push('<p>오늘은 <strong>주문이 없었습니다.</strong> 스크리닝 조건 충족 종목 없거나 Daily Plan 미활성화.</p>');
     }
