@@ -233,7 +233,8 @@ async def run_eod_liquidation() -> dict[str, Any]:
         positions = await _get_open_positions_from_account()
     except Exception as exc:
         account_lookup_failed = True
-        logger.error("FAIL: [S9] KIS 실보유 청산 대상 조회 실패 error=%s", exc)
+        # 빈 메시지 예외도 타입이 드러나도록 repr 사용 (진단 불가 방지)
+        logger.error("FAIL: [S9] KIS 실보유 청산 대상 조회 실패 error=%r", exc, exc_info=True)
         positions = []
 
     if account_lookup_failed:

@@ -533,7 +533,7 @@ class OrderExecutor:
             except Exception as first_exc:
                 # 매도 실패 — 최대 2회 시장가 재시도 (총 3회 시도)
                 logger.warning(
-                    "WARN: [S8/S9] sell 1차 실패, 시장가 재시도 symbol=%s reason=%s",
+                    "WARN: [S8/S9] sell 1차 실패, 시장가 재시도 symbol=%s reason=%r",
                     safe_symbol, first_exc,
                 )
                 _sell_retry_delays = (2.0, 4.0)
@@ -559,7 +559,7 @@ class OrderExecutor:
                         break
                     except Exception as retry_exc:
                         logger.warning(
-                            "WARN: [S8/S9] sell 재시도 %d/%d 실패 symbol=%s reason=%s",
+                            "WARN: [S8/S9] sell 재시도 %d/%d 실패 symbol=%s reason=%r",
                             _sell_attempt,
                             len(_sell_retry_delays),
                             safe_symbol,
@@ -575,9 +575,15 @@ class OrderExecutor:
             # KIS 모의투자 환경에서 rate-limit 부하 시 output에 ODNO가 빠지는 경우가 있다.
             # 주문 자체는 HTTP 200으로 접수됐으므로, 체결내역 재조회로 주문번호를 보정한다.
             if not kis_order_no:
+                # KIS가 HTTP 200 + rt_cd!=0(업무거부: 매도가능수량부족·장종료·시장가불가 등)으로
+                # 응답하면 예외 없이 ODNO만 빠진다. 실제 거부 사유(rt_cd/msg)를 반드시 드러낸다.
+                _resp = response if isinstance(response, dict) else {}
+                _rt_cd = str(_resp.get("rt_cd") or "").strip()
+                _msg_cd = str(_resp.get("msg_cd") or "").strip()
+                _msg1 = str(_resp.get("msg1") or "").strip()
                 logger.warning(
-                    "WARN: [S8/S9] sell response missing ODNO — fallback to inquire-daily-ccld symbol=%s",
-                    safe_symbol,
+                    "WARN: [S8/S9] sell response missing ODNO — KIS rt_cd=%s msg_cd=%s msg=%s symbol=%s qty=%d — fallback to inquire-daily-ccld",
+                    _rt_cd or "-", _msg_cd or "-", _msg1 or "-", safe_symbol, safe_qty,
                 )
                 try:
                     from ..kis.domestic.service import get_daily_order_inquiry
@@ -678,7 +684,7 @@ class OrderExecutor:
             # 대신 쿨다운을 등록해 같은 심볼의 재청산 폭주를 방지한다.
             _SELL_FAIL_COOLDOWN[safe_symbol] = time.monotonic()
             self._discard_closing_mark(safe_symbol)
-            logger.error("FAIL: [S8/S9] sell order failed order_id=%s symbol=%s reason=%s", order_id, safe_symbol, exc)
+            logger.error("FAIL: [S8/S9] sell order failed order_id=%s symbol=%s reason=%r", order_id, safe_symbol, exc)
             logger.warning(
                 "WARN: 매도 제출실패 — 포지션 보존, %.0fs 후 재시도 가능 symbol=%s",
                 _SELL_FAIL_COOLDOWN_SEC,
