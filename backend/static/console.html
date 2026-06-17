@@ -482,6 +482,13 @@
               <span>모멘텀 스캔 유입 종목 <span>최초 유입 시각순</span></span>
               <span class="badge" id="pf-intraday-count">-</span>
             </div>
+            <div style="display:flex; gap:6px; margin-bottom:8px; flex-wrap:wrap;">
+              <button type="button" id="pf-scanf-ALL" class="btn primary" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('ALL')">전체</button>
+              <button type="button" id="pf-scanf-L" class="btn" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('L')">저변동 L</button>
+              <button type="button" id="pf-scanf-M" class="btn" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('M')">중변동 M</button>
+              <button type="button" id="pf-scanf-H" class="btn" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('H')">고변동 H</button>
+              <button type="button" id="pf-scanf-T" class="btn" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('T')">테마급등 T</button>
+            </div>
             <div id="pf-intraday-timeline" style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px;">
               <div class="muted" style="padding:8px;">로딩중...</div>
             </div>
@@ -2606,7 +2613,7 @@
   <script src="/static/js/screens/console-statistics.js?v=2"></script>
   <script src="/static/js/screens/console-regime-analytics.js?v=7"></script>
   <script src="/static/js/screens/console-daily-plan.js?v=12"></script>
-  <script src="/static/js/screens/console-plan-funnel.js?v=3"></script>
+  <script src="/static/js/screens/console-plan-funnel.js?v=4"></script>
   <script src="/static/js/screens/console-expert-knowledge.js"></script>
   <script src="/static/js/screens/console-dividends.js"></script>
   <script src="/static/js/screens/console-dividend-stats.js"></script>

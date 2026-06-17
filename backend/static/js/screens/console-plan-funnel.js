@@ -7,6 +7,10 @@
   var PF_PROFILE_COLORS = { LOW_VOL: '#6cb6ff', MID_VOL: '#3fb950', HIGH_VOL: '#d29922', THEME_SPIKE: '#f85149' };
   var PF_REGIME_LABELS = { risk_on: 'Risk On', neutral: '중립', risk_off: 'Risk Off', volatile: '변동성' };
   var PF_REGIME_COLORS = { risk_on: '#3fb950', neutral: '#8b9bb4', risk_off: '#f85149', volatile: '#d29922' };
+  // 모멘텀 스캔 유입 종목 — 프로파일 필터(L/M/H/T) 상태·캐시
+  var PF_PROFILE_CODE = { L: 'LOW_VOL', M: 'MID_VOL', H: 'HIGH_VOL', T: 'THEME_SPIKE' };
+  var _pfScanUniq = [];
+  var _pfScanFilter = 'ALL';
 
   function _pfSet(id, text) {
     var el = document.getElementById(id);
@@ -98,6 +102,41 @@
       + ' background:var(--accent); border-radius:3px; padding:1px 5px; flex-shrink:0;">재선별</span>';
   }
 
+  /* 모멘텀 스캔 유입 종목 리스트 렌더 — 프로파일 필터(_pfScanFilter) 반영 */
+  function _pfRenderScanList() {
+    var box = document.getElementById('pf-intraday-timeline');
+    if (!box) return;
+    var prof = PF_PROFILE_CODE[_pfScanFilter] || null;
+    var rows = prof ? _pfScanUniq.filter(function(u) { return u.profile === prof; }) : _pfScanUniq;
+    _pfSet('pf-intraday-count', prof
+      ? (rows.length + ' / ' + _pfScanUniq.length + '종목')
+      : (_pfScanUniq.length + '종목'));
+    ['ALL', 'L', 'M', 'H', 'T'].forEach(function(code) {
+      var b = document.getElementById('pf-scanf-' + code);
+      if (b) b.className = 'btn' + (code === _pfScanFilter ? ' primary' : '');
+    });
+    if (!rows.length) {
+      box.innerHTML = '<div class="muted" style="padding:8px; grid-column:1/-1;">'
+        + (_pfScanUniq.length ? '해당 프로파일 유입 종목 없음.' : '해당 날짜의 모멘텀 스캔 유입 종목 없음.') + '</div>';
+      return;
+    }
+    box.innerHTML = rows.map(function(u) {
+      return '<div style="display:flex; gap:6px; align-items:center; font-size:12px; padding:4px 6px;">'
+        + '<span style="font-size:11px; color:var(--muted); width:40px; flex-shrink:0;">' + escapeHtml(_pfHHMM(u.time)) + '</span>'
+        + _pfProfileBadge(u.profile)
+        + '<span style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + escapeHtml(u.name || '') + '">'
+          + escapeHtml(u.name || u.symbol || '-') + '</span>'
+        + '</div>';
+    }).join('');
+  }
+
+  /* 프로파일 필터 칩 클릭 — ALL/L/M/H/T */
+  function pfFilterScan(code) {
+    _pfScanFilter = code || 'ALL';
+    _pfRenderScanList();
+  }
+  window.pfFilterScan = pfFilterScan;
+
   /* ── 중단: 장중 선별 타임라인 — 모멘텀 스캔만(momentum_scan), 재선별은 하단 리스트로 분리 ── */
   async function _pfLoadIntradayEvents(tradeDate) {
     var box = document.getElementById('pf-intraday-timeline');
@@ -127,21 +166,9 @@
           }
         });
       });
-      var uniq = Object.keys(firstSeen).map(function(k) { return firstSeen[k]; });
-      uniq.sort(function(a, b) { return String(a.time).localeCompare(String(b.time)); });
-      _pfSet('pf-intraday-count', uniq.length + '종목');
-      if (!uniq.length) {
-        box.innerHTML = '<div class="muted" style="padding:8px; grid-column:1/-1;">해당 날짜의 모멘텀 스캔 유입 종목 없음.</div>';
-      } else {
-        box.innerHTML = uniq.map(function(u) {
-          return '<div style="display:flex; gap:6px; align-items:center; font-size:12px; padding:4px 6px;">'
-            + '<span style="font-size:11px; color:var(--muted); width:40px; flex-shrink:0;">' + escapeHtml(_pfHHMM(u.time)) + '</span>'
-            + _pfProfileBadge(u.profile)
-            + '<span style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + escapeHtml(u.name || '') + '">'
-              + escapeHtml(u.name || u.symbol || '-') + '</span>'
-            + '</div>';
-        }).join('');
-      }
+      _pfScanUniq = Object.keys(firstSeen).map(function(k) { return firstSeen[k]; });
+      _pfScanUniq.sort(function(a, b) { return String(a.time).localeCompare(String(b.time)); });
+      _pfRenderScanList();
 
       // ── 하단: 장중 재선별 종목 리스트 (각 종목에 재선별 뱃지) ──
       if (listBox) {
