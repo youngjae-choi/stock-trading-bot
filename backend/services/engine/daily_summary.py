@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
+import sqlite3
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -268,19 +268,57 @@ async def run_daily_summary(trade_date: str | None = None) -> dict[str, Any]:
     }
 
 
-def _backup_db(trade_date: str) -> dict[str, Any]:
-    """SQLite DB 파일을 data/backups/ 디렉토리에 날짜별로 복사한다."""
+def _backup_db(trade_date: str, retention: int = 30) -> dict[str, Any]:
+    """SQLite 온라인 백업 API로 data/backups/에 날짜별 일관 스냅샷을 만든다.
+
+    shutil.copy2(생파일 복사)는 동시 쓰기/WAL 중에 불일치·손상 백업을 만들 수 있어
+    sqlite3 .backup(온라인 백업)으로 교체. 백업 후 integrity_check로 검증하고, 손상이면
+    실패로 처리(나쁜 백업을 남기지 않음). 오래된 백업은 retention일치만 보관.
+    """
     try:
         db_path = Path(settings.APP_DB_PATH)
         if not db_path.is_absolute():
-            from pathlib import Path as _P
             import os
-            db_path = _P(os.getcwd()) / db_path
+            db_path = Path(os.getcwd()) / db_path
         backup_dir = db_path.parent / "backups"
         backup_dir.mkdir(exist_ok=True)
         backup_path = backup_dir / f"stock_trading_bot_{trade_date}.sqlite3"
-        shutil.copy2(db_path, backup_path)
-        logger.info("SUCCESS: DB backup saved path=%s", backup_path)
+
+        # 온라인 백업 — 동시 쓰기/WAL 중에도 일관된 스냅샷
+        src = sqlite3.connect(str(db_path))
+        try:
+            dst = sqlite3.connect(str(backup_path))
+            try:
+                with dst:
+                    src.backup(dst)
+            finally:
+                dst.close()
+        finally:
+            src.close()
+
+        # 무결성 검증 — 손상 백업은 남기지 않음
+        verify = sqlite3.connect(str(backup_path))
+        try:
+            integrity = verify.execute("PRAGMA integrity_check").fetchone()[0]
+        finally:
+            verify.close()
+        if integrity != "ok":
+            logger.error("FAIL: DB backup integrity=%s path=%s — 백업 폐기", integrity, backup_path)
+            try:
+                backup_path.unlink()
+            except OSError:
+                pass
+            return {"ok": False, "error": f"integrity_check={integrity}"}
+
+        # 보관 정책 — 최근 retention개만 유지
+        try:
+            backups = sorted(backup_dir.glob("stock_trading_bot_*.sqlite3"))
+            for old in backups[:-retention]:
+                old.unlink()
+        except OSError as ret_exc:
+            logger.warning("WARN: DB backup 보관정책 정리 실패 — %s", ret_exc)
+
+        logger.info("SUCCESS: DB backup saved path=%s integrity=ok", backup_path)
         return {"ok": True, "path": str(backup_path)}
     except Exception as exc:
         logger.error("FAIL: DB backup failed reason=%s", exc)
