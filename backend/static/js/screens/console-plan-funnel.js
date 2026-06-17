@@ -111,33 +111,35 @@
       var scanEvents = events.filter(function(ev) { return ev.trigger === 'momentum_scan'; });
       var reselectEvents = events.filter(function(ev) { return ev.trigger === 'intraday_refresh'; });
 
-      // ── 상단: 모멘텀 스캔 타임라인 ──
-      _pfSet('pf-intraday-count', scanEvents.length + '건');
-      if (!scanEvents.length) {
-        box.innerHTML = '<div class="muted" style="padding:8px; grid-column:1/-1;">해당 날짜의 모멘텀 스캔 이벤트 없음 — 스캔이 종목을 추가하면 여기에 시각순으로 표시됩니다.</div>';
+      // ── 상단: 모멘텀 스캔 유입 종목 — 종목별 중복 제거 후 "최초 유입 시각"만 표시 ──
+      // (기존: 스캔 이벤트별로 수십 종목을 통째 나열 → 거대한 벽. PM 요청 2026-06-18로 간결화)
+      var firstSeen = {};
+      scanEvents.forEach(function(ev) {
+        (ev.symbols_added || []).forEach(function(s) {
+          var key = s.symbol || s.name;
+          if (!key) return;
+          var t = ev.event_time || '';
+          if (!firstSeen[key]) {
+            firstSeen[key] = { name: s.name, symbol: s.symbol, profile: s.profile, time: t };
+          } else if (t && (!firstSeen[key].time || t < firstSeen[key].time)) {
+            firstSeen[key].time = t;  // 더 이른 유입 시각으로 갱신
+            if (s.profile) firstSeen[key].profile = firstSeen[key].profile || s.profile;
+          }
+        });
+      });
+      var uniq = Object.keys(firstSeen).map(function(k) { return firstSeen[k]; });
+      uniq.sort(function(a, b) { return String(a.time).localeCompare(String(b.time)); });
+      _pfSet('pf-intraday-count', uniq.length + '종목');
+      if (!uniq.length) {
+        box.innerHTML = '<div class="muted" style="padding:8px; grid-column:1/-1;">해당 날짜의 모멘텀 스캔 유입 종목 없음.</div>';
       } else {
-        box.innerHTML = scanEvents.map(function(ev) {
-          var symbols = ev.symbols_added || [];
-          var rc = PF_REGIME_COLORS[ev.regime] || '#8b9bb4';
-          var regimeTxt = ev.regime ? (PF_REGIME_LABELS[ev.regime] || ev.regime) : '-';
-          var head = '<div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:6px;">'
-            + '<span style="font-weight:700; font-size:13px;">' + escapeHtml(_pfHHMM(ev.event_time)) + '</span>'
-            + '<span style="font-size:10px; color:' + rc + ';">' + escapeHtml(regimeTxt) + '</span>'
-            + (ev.market_tone ? '<span style="font-size:10px; color:var(--muted);">' + escapeHtml(ev.market_tone) + '</span>' : '')
-            + '<span style="font-size:10px; color:var(--muted); margin-left:auto;">' + symbols.length + '종목</span>'
+        box.innerHTML = uniq.map(function(u) {
+          return '<div style="display:flex; gap:6px; align-items:center; font-size:12px; padding:4px 6px;">'
+            + '<span style="font-size:11px; color:var(--muted); width:40px; flex-shrink:0;">' + escapeHtml(_pfHHMM(u.time)) + '</span>'
+            + _pfProfileBadge(u.profile)
+            + '<span style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + escapeHtml(u.name || '') + '">'
+              + escapeHtml(u.name || u.symbol || '-') + '</span>'
             + '</div>';
-          var body = symbols.length
-            ? '<div style="display:flex; flex-direction:column; gap:3px;">'
-              + symbols.map(function(s) {
-                  return '<div style="display:flex; gap:6px; align-items:baseline; font-size:12px;">'
-                    + _pfProfileBadge(s.profile)
-                    + '<span style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + escapeHtml(s.name || '') + '">'
-                      + escapeHtml(s.name || s.symbol || '-') + '</span>'
-                    + '</div>';
-                }).join('')
-              + '</div>'
-            : '<div class="muted" style="font-size:11px;">추가 종목 없음</div>';
-          return '<div class="card compact" style="border-left:3px solid var(--accent);">' + head + body + '</div>';
         }).join('');
       }
 
