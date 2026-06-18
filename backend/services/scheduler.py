@@ -214,9 +214,12 @@ def _audit_step_finish(
             # 알림 대상 단계 필터링
             NOTIFY_STEPS = {"S1", "S2", "S3", "S4", "S5", "S5-A", "S6", "S9", "S10", "POSTPROCESS"}
             if step in NOTIFY_STEPS or status == "failed":
-                emoji = "✅" if status == "success" else "⚠️" if status == "skipped" else "❌"
+                # 의도된 정상 스킵(프리마켓 사전계산 재사용 등)은 경고가 아니라 정상으로 표시 —
+                # 매 거래일 뜨는 'S2 스킵 ⚠️'이 에러처럼 보여 혼선을 주던 것 해소.
+                is_normal_reuse = status == "skipped" and "재사용" in (message or "")
+                emoji = "✅" if (status == "success" or is_normal_reuse) else "⚠️" if status == "skipped" else "❌"
                 step_label = _STEP_LABELS.get(step, step)
-                status_kr = _STATUS_KR.get(status, status)
+                status_kr = "재사용(정상)" if is_normal_reuse else _STATUS_KR.get(status, status)
                 title = f"[매매봇] {step_label} {status_kr} {emoji}"
                 body = f"내용: {message}\n날짜: {_today_kst()}"
 
@@ -868,7 +871,7 @@ async def job_trade_preparation_pipeline() -> None:
 
         if _s2_already_done(_today_kst()):
             logger.info("INFO: [TradePrep] S2 프리마켓 시장 톤 재사용 — 스킵")
-            _audit_skipped_step("S2", "프리마켓 시장 톤 재사용", {"pipeline": "trade_preparation"}, status="skipped")
+            _audit_skipped_step("S2", "08:30 프리마켓 시장톤 재사용 — 추가 분석 불필요(정상)", {"pipeline": "trade_preparation"}, status="skipped")
         else:
             await _run_trade_prep_callable(
                 "S2",
