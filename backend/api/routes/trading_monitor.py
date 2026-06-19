@@ -911,6 +911,11 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
                 _eod_by_date[str(_r["trade_date"])] = float(_r["equity_eod_total_eval"])
     except Exception as _eod_exc:
         logger.warning("WARN: daily-results 종가총평가 조회 실패 — %s", _eod_exc)
+    # 하드코딩 앵커 — 계좌 누적수익/총평가 정합용. 코드 상수라 S10 재실행·DB 복구에도 안 지워진다. (PM 2026-06-20)
+    #  - 6/12: 원금(예수금총액) 앵커 = 누적 P&L 시작점.
+    #  - 6/19: S10이 eod 미저장한 날 보정(당시 총평가). Total(합)=현재 총평가−원금=누적수익으로 정합.
+    _EOD_ANCHORS = {"2026-06-12": 100_000_000.0, "2026-06-19": 115_146_855.0}
+    _eod_by_date.update(_EOD_ANCHORS)
     _eod_dates = sorted(_eod_by_date.keys())
 
     def _prior_eod(td: str) -> float | None:
@@ -928,7 +933,8 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
         d["loss_count"] = losses
         d["win_rate"] = round(wins / total_closed * 100, 1) if total_closed > 0 else 0
         # 계좌 P&L = 종가총평가[오늘] − 종가총평가[전일종가]. (망가진 equity_pnl 대체, Total은 합산)
-        _eod = d.get("eod_total_eval")
+        # 당일 eod도 앵커 반영된 _eod_by_date에서 읽는다(DB 컬럼은 6/12·6/19 등 None일 수 있음).
+        _eod = _eod_by_date.get(td)
         _prev = _prior_eod(td)
         if _eod is not None and _prev is not None:
             d["account_pnl"] = round(float(_eod) - _prev)
