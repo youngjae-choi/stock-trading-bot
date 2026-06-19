@@ -81,6 +81,20 @@ def _build_review_context_md(result: dict[str, Any], trade_date: str) -> str:
         ).fetchone()
 
     lines.append(f"# {trade_date} 매매 복기")
+
+    # 확정 매매성적(SSOT) — LLM은 이 숫자만 사용하고 자체 재계산을 금지한다 (2026-06-18).
+    day_score = result.get("day_score") or {}
+    if isinstance(day_score, dict) and day_score:
+        ds_completed = _safe_int(day_score.get("completed"))
+        ds_wins = _safe_int(day_score.get("wins"))
+        ds_losses = _safe_int(day_score.get("losses"))
+        ds_win_rate = _safe_float(day_score.get("win_rate"))
+        ds_open = _safe_int(day_score.get("open_positions"))
+        lines.append("\n## 확정 매매성적(이 숫자만 사용)")
+        lines.append(f"- 완료 {ds_completed}건 / 승 {ds_wins} / 패 {ds_losses} / 승률 {ds_win_rate:.1f}%")
+        lines.append(f"- 미청산 {ds_open}건")
+        lines.append("- 복기 텍스트의 승/패/거래건수는 위 확정값을 그대로 사용하라(자체 재계산 금지).")
+
     lines.append("\n## 시장 상황")
     if mc:
         mc_dict = dict(mc)
@@ -523,6 +537,8 @@ def _ensure_review_integrity_columns() -> None:
         # 자본변화(equity) 라인 — 짝 실현손익과 별도로 계좌 실제 자본변화를 병기 (2026-06-13 P2)
         ("equity_pnl", "ALTER TABLE daily_review_reports ADD COLUMN equity_pnl REAL"),
         ("equity_eod_total_eval", "ALTER TABLE daily_review_reports ADD COLUMN equity_eod_total_eval REAL"),
+        # 당일 매매성적 SSOT(compute_daily_score) 영속 — 모든 복기 카드가 이 저장값을 읽는다 (2026-06-18)
+        ("day_score", "ALTER TABLE daily_review_reports ADD COLUMN day_score TEXT"),
     ]
     with get_connection() as conn:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(daily_review_reports)").fetchall()}
@@ -1368,6 +1384,27 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
     )
 
     no_trade_count = 1 if total_trades == 0 else 0
+
+    # 당일 매매성적 SSOT — INSERT 전에 1회 계산해 영속한다. 저장 카운트(win/loss)도 이 값을 쓴다.
+    # 모든 복기 카드/LLM 텍스트가 이 저장값을 단일 출처로 읽도록 한다 (2026-06-18).
+    try:
+        from .trade_pairs import compute_daily_score as _cds
+        from .trade_pairs import get_trade_pairs as _get_pairs
+
+        _dt0 = datetime.fromisoformat(trade_date)
+        _start0 = (_dt0 - timedelta(days=7)).strftime("%Y-%m-%d")
+        _all_pairs = _get_pairs(_start0, trade_date)
+        _day_score = _cds(trade_date, pairs=_all_pairs)
+    except Exception as _ds_exc:
+        logger.warning("WARN: [S10] day_score 산출 실패 reason=%s", _ds_exc)
+        _all_pairs = []
+        _day_score = None
+
+    # daily_review_reports.win_count/loss_count는 기존 의미(당일 신규, 이월 별도)를 유지한다.
+    # 카드 SSOT는 별도 day_score 컬럼이 담당(이월 포함 rep_date 기준) — 두 정의가 공존.
+    _store_win = win_count
+    _store_loss = loss_count
+
     with get_connection() as conn:
         conn.execute("DELETE FROM no_trade_daily_reasons WHERE trade_date = ?", (trade_date,))
         if no_trade_count:
@@ -1386,15 +1423,15 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
                  profile_summary, exit_summary, trailing_quality, missed_entries,
                  false_positives, missed_entries_count, false_positive_count,
                  no_trade_count, memory_count, pnl_status, pnl_source, integrity_warnings,
-                 legacy_residual_positions, equity_pnl, equity_eod_total_eval, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+                 legacy_residual_positions, equity_pnl, equity_eod_total_eval, day_score, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(uuid.uuid4()),
                 trade_date,
                 total_trades,
-                win_count,
-                loss_count,
+                _store_win,
+                _store_loss,
                 total_pnl,
                 _json_dumps(profile_summary),
                 _json_dumps(exit_summary),
@@ -1410,6 +1447,7 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
                 json_compact(integrity.get("legacy_residual_positions", [])),
                 equity.get("equity_pnl"),
                 equity.get("equity_eod_total_eval"),
+                _json_dumps(_day_score) if _day_score is not None else None,
                 now_iso,
             ),
         )
@@ -1418,26 +1456,10 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
     daily_summary = _load_daily_trade_summary(trade_date)
 
     # trade_pairs — 완료/진행 중 거래 상세 (마크다운 + 화면 표시용)
-    trade_pairs: list[dict[str, Any]] = []
-    try:
-        from .trade_pairs import get_trade_pairs as _get_pairs
-        from datetime import timedelta
-
-        _dt = datetime.fromisoformat(trade_date)
-        _start = (_dt - timedelta(days=7)).strftime("%Y-%m-%d")
-        _all_pairs = _get_pairs(_start, trade_date)
-        # 당일 종료(rep_date == trade_date) 기준으로만 집계 — false_positive/daily-results와 동일 정의.
-        # 오늘 (실패·취소된) 매도주문만 있고 실제론 미종료인 잔여/유령 짝은 제외(무결성·잔여 섹션이 별도 표시).
-        trade_pairs = [p for p in _all_pairs if p.get("trade_date") == trade_date]
-    except Exception as _tp_exc:
-        logger.warning("WARN: [S10] trade_pairs load failed reason=%s", _tp_exc)
-        _all_pairs = []
-    try:
-        from .trade_pairs import compute_daily_score as _cds
-        _day_score = _cds(trade_date, pairs=_all_pairs)
-    except Exception as _ds_exc:
-        logger.warning("WARN: [S10] day_score 산출 실패 reason=%s", _ds_exc)
-        _day_score = None
+    # _all_pairs·_day_score는 INSERT 전에 이미 계산됨(SSOT 영속). 여기선 당일 짝만 추린다.
+    # 당일 종료(rep_date == trade_date) 기준으로만 집계 — false_positive/daily-results와 동일 정의.
+    # 오늘 (실패·취소된) 매도주문만 있고 실제론 미종료인 잔여/유령 짝은 제외(무결성·잔여 섹션이 별도 표시).
+    trade_pairs: list[dict[str, Any]] = [p for p in _all_pairs if p.get("trade_date") == trade_date]
 
     # 이월 짝(전일 매수 → 당일 청산) 분리 — 당일 신규 거래와 별도 버킷으로 집계
     _day_pairs, _carried_pairs = _split_carried_pairs(trade_pairs, trade_date)
@@ -1516,6 +1538,7 @@ def get_review_report(trade_date: str) -> dict[str, Any] | None:
         trade_date: YYYY-MM-DD trade date to fetch.
     """
     logger.info("START: [S10] get_review_report trade_date=%s", trade_date)
+    _ensure_review_integrity_columns()  # day_score 등 컬럼 보장 — 읽기 시 lazy 백필 UPDATE 가능
     with get_connection() as conn:
         report = conn.execute(
             "SELECT * FROM daily_review_reports WHERE trade_date = ? ORDER BY created_at DESC LIMIT 1",
@@ -1651,13 +1674,73 @@ def get_review_report(trade_date: str) -> dict[str, Any] | None:
         _all_pairs = _get_pairs(_start, trade_date)
         # 당일 종료(rep_date == trade_date) 기준 — false_positive/daily-results와 동일 정의로 카드 간 정합.
         payload["trade_pairs"] = [p for p in _all_pairs if p.get("trade_date") == trade_date]
-        # 당일 매매성적 SSOT — 승/패·완료·손실·체결수를 단일 산출(화면 카드는 이 값을 표시)
-        from .trade_pairs import compute_daily_score as _cds
-        payload["day_score"] = _cds(trade_date, pairs=_all_pairs)
     except Exception as _tp_exc:
         logger.warning("WARN: [S10] get_review_report trade_pairs load failed reason=%s", _tp_exc)
         payload["trade_pairs"] = []
-        payload.setdefault("day_score", None)
+        _all_pairs = []
+
+    # 당일 매매성적 SSOT — 저장된 day_score를 단일 출처로 읽는다. 구 리포트(미저장)면
+    # 라이브 산출 후 그 행을 lazy 백필하고 사용한다. 모든 카드/LLM이 이 값을 따른다 (2026-06-18).
+    _stored_ds = _json_loads(payload.get("day_score"), None)
+    if isinstance(_stored_ds, dict) and _stored_ds:
+        _day_score = _stored_ds
+    else:
+        try:
+            from .trade_pairs import compute_daily_score as _cds
+            _day_score = _cds(trade_date, pairs=_all_pairs)
+            # lazy 백필 — 다음 조회부터 저장값을 그대로 읽도록 행을 갱신
+            try:
+                with get_connection() as _bf_conn:
+                    _bf_conn.execute(
+                        "UPDATE daily_review_reports SET day_score = ? WHERE trade_date = ?",
+                        (_json_dumps(_day_score), trade_date),
+                    )
+            except Exception as _bf_exc:
+                logger.warning("WARN: [S10] day_score lazy backfill 실패 reason=%s", _bf_exc)
+        except Exception as _ds_exc:
+            logger.warning("WARN: [S10] get_review_report day_score 산출 실패 reason=%s", _ds_exc)
+            _day_score = None
+    payload["day_score"] = _day_score
+
+    # 손실패턴 카드 = day_score.losers로 통일 (학습용 false_positive_cases 테이블은 손대지 않음).
+    # losers의 각 종목을 false_positive 상세(있으면)로 보강, 없으면 losers 기본정보로 최소 항목 구성.
+    if isinstance(_day_score, dict) and isinstance(_day_score.get("losers"), list):
+        _fp_detail = payload.get("false_positives") or []
+        _fp_index: dict[str, dict[str, Any]] = {}
+        for _fp in _fp_detail:
+            if not isinstance(_fp, dict):
+                continue
+            _sym = str(_fp.get("symbol") or "")
+            for _v in symbol_variants(_sym):
+                _fp_index.setdefault(_v, _fp)
+        _rebuilt: list[dict[str, Any]] = []
+        for _loser in _day_score["losers"]:
+            _lsym = str(_loser.get("symbol") or "")
+            _match = None
+            for _v in symbol_variants(_lsym):
+                if _v in _fp_index:
+                    _match = _fp_index[_v]
+                    break
+            if _match:
+                _item = dict(_match)
+                # 표시 정합을 위해 SSOT 손익/사유를 우선 반영
+                _item["symbol"] = _loser.get("symbol")
+                _item.setdefault("name", _loser.get("name"))
+                _item["pnl_pct"] = _loser.get("pnl_pct")
+                _item["pnl_amount"] = _loser.get("pnl_amount")
+                if _loser.get("exit_reason"):
+                    _item["exit_reason"] = _loser.get("exit_reason")
+            else:
+                _item = {
+                    "symbol": _loser.get("symbol"),
+                    "name": _loser.get("name"),
+                    "pnl_pct": _loser.get("pnl_pct"),
+                    "pnl_amount": _loser.get("pnl_amount"),
+                    "exit_reason": _loser.get("exit_reason"),
+                }
+            _rebuilt.append(_item)
+        payload["false_positives"] = _rebuilt
+        payload["false_positive_count"] = _day_score.get("losses", len(_rebuilt))
 
     # 자본변화(equity) — 구 스키마(컬럼 부재) 행 호환을 위해 None 기본값 보장.
     payload.setdefault("equity_pnl", None)

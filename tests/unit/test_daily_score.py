@@ -3,10 +3,11 @@
 from backend.services.engine.trade_pairs import compute_daily_score
 
 
-def _pair(symbol, trade_date, status, pnl_pct, pnl_amount=0, orders=None):
+def _pair(symbol, trade_date, status, pnl_pct, pnl_amount=0, orders=None, name=None, exit_reason=None):
     return {
         "symbol": symbol, "trade_date": trade_date, "status": status,
         "pnl_pct": pnl_pct, "pnl_amount": pnl_amount, "orders": orders or [],
+        "name": name or symbol, "exit_reason": exit_reason,
     }
 
 
@@ -32,6 +33,22 @@ def test_losses_match_false_positive_definition():
              [("A", -2.53), ("B", -0.62), ("C", -1.66), ("D", -0.58), ("W", 3.2)]]
     s = compute_daily_score("2026-06-16", pairs=pairs)
     assert s["losses"] == 4 and s["wins"] == 1 and s["completed"] == 5
+
+
+def test_losers_list_matches_losses():
+    # SSOT losers 리스트 = 완료·pnl<0 페어, 손실패턴 카드의 단일 출처
+    pairs = [
+        _pair("A", "2026-06-16", "매도완료", 1.0, 100),               # 승
+        _pair("B", "2026-06-16", "매도완료", -2.0, -200, name="베타", exit_reason="stop"),  # 패
+        _pair("C", "2026-06-16", "매도완료", -0.5, -50),              # 패
+        _pair("D", "2026-06-15", "매도완료", -9.0, -900),             # 전일 → 제외
+    ]
+    s = compute_daily_score("2026-06-16", pairs=pairs)
+    assert len(s["losers"]) == s["losses"] == 2
+    syms = {x["symbol"] for x in s["losers"]}
+    assert syms == {"B", "C"}
+    b = next(x for x in s["losers"] if x["symbol"] == "B")
+    assert b["name"] == "베타" and b["pnl_pct"] == -2.0 and b["exit_reason"] == "stop"
 
 
 def test_fill_counts_exclude_unfilled():

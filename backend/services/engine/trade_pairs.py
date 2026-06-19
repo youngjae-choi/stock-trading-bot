@@ -239,6 +239,17 @@ def compute_daily_score(trade_date: str, pairs: list[dict[str, Any]] | None = No
                 elif o.get("side") == "sell":
                     sell_fills += 1
 
+    losers = [
+        {
+            "symbol": p.get("symbol"),
+            "name": p.get("name"),
+            "pnl_pct": p.get("pnl_pct"),
+            "pnl_amount": p.get("pnl_amount"),
+            "exit_reason": p.get("exit_reason"),
+        }
+        for p in losses
+    ]
+
     n = len(completed)
     return {
         "trade_date": trade_date,
@@ -251,6 +262,7 @@ def compute_daily_score(trade_date: str, pairs: list[dict[str, Any]] | None = No
         "open_positions": len(open_pairs),
         "buy_fills": buy_fills,
         "sell_fills": sell_fills,
+        "losers": losers,
     }
 
 
