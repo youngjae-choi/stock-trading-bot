@@ -838,6 +838,8 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
         equity_select = "drr.equity_pnl" if "equity_pnl" in drr_columns else "NULL"
         # 종가 총평가(eod_total_eval) — 계좌 P&L(전일종가 대비 Δ) 산출용. 컬럼 없으면 NULL.
         eod_select = "drr.equity_eod_total_eval" if "equity_eod_total_eval" in drr_columns else "NULL"
+        # 저장된 당일성적 SSOT — 승/패는 이 저장값을 읽어 Review와 단일화(윈도우 의존 재계산 금지). 컬럼 없으면 NULL.
+        dayscore_select = "drr.day_score" if "day_score" in drr_columns else "NULL"
         # P&L은 daily_trade_summary(주문 가격 기반 계산)가 더 정확함
         base_select = f"""
                 SELECT
@@ -847,6 +849,7 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
                     drr.false_positive_count,
                     {equity_select} AS equity_pnl,
                     {eod_select} AS eod_total_eval,
+                    {dayscore_select} AS day_score,
                     COALESCE(dts.buy_orders, drr.total_trades, 0) AS trade_count,
                     COALESCE(dts.realized_pnl, 0.0) AS total_pnl,
                     COALESCE(dts.realized_pnl_pct, 0.0) AS pnl_rate,
@@ -877,22 +880,39 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
 
         dates = [r["trade_date"] for r in rows]
 
-    # 승/패는 당일 매매성적 SSOT(compute_daily_score)로 산출 — review·복기와 동일 단일 출처.
-    # 윈도우 전체 페어를 1회 조회 후 날짜별로 SSOT를 호출(rep_date 귀속·이월 포함).
-    date_wins: dict[str, int] = defaultdict(int)
-    date_losses: dict[str, int] = defaultdict(int)
-    if dates:
+    # 승/패는 **저장된 day_score(SSOT)** 를 읽는다 — Review와 같은 단일 출처(윈도우 의존 재계산 금지).
+    # 저장값이 없는 날만 폴백으로 라이브 산출(7일 윈도우). compute_daily_score는 페어링 윈도우에 따라
+    # 결과가 달라질 수 있어, 저장 시점(S10) 값을 그대로 읽는 것이 카드 간 정합의 핵심.
+    import json as _json
+
+    def _fallback_window_pairs():
+        if not dates:
+            return []
         from datetime import datetime as _dt0, timedelta as _td0
 
-        from ...services.engine.trade_pairs import compute_daily_score, get_trade_pairs
+        from ...services.engine.trade_pairs import get_trade_pairs
 
-        _min_d, _max_d = min(dates), max(dates)
-        _start = (_dt0.fromisoformat(_min_d) - _td0(days=7)).strftime("%Y-%m-%d")
-        _window_pairs = get_trade_pairs(_start, _max_d)
-        for _d in dates:
-            _score = compute_daily_score(_d, pairs=_window_pairs)
-            date_wins[_d] = _score["wins"]
-            date_losses[_d] = _score["losses"]
+        _start = (_dt0.fromisoformat(min(dates)) - _td0(days=7)).strftime("%Y-%m-%d")
+        return get_trade_pairs(_start, max(dates))
+
+    _wp_cache: list = []
+    _wp_loaded = [False]
+
+    def _scored(td: str) -> tuple[int, int]:
+        """저장 day_score 우선, 없으면 라이브 폴백."""
+        for r in rows:
+            if r["trade_date"] == td and r["day_score"]:
+                try:
+                    ds = _json.loads(r["day_score"])
+                    return int(ds.get("wins") or 0), int(ds.get("losses") or 0)
+                except Exception:
+                    break
+        if not _wp_loaded[0]:
+            _wp_cache.extend(_fallback_window_pairs())
+            _wp_loaded[0] = True
+        from ...services.engine.trade_pairs import compute_daily_score
+        s = compute_daily_score(td, pairs=_wp_cache)
+        return s["wins"], s["losses"]
 
     from datetime import datetime as _dt, timedelta as _td
 
@@ -926,8 +946,7 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
     for row in rows:
         d = dict(row)
         td = d["trade_date"]
-        wins = date_wins.get(td, 0)
-        losses = date_losses.get(td, 0)
+        wins, losses = _scored(td)
         total_closed = wins + losses
         d["win_count"] = wins
         d["loss_count"] = losses
