@@ -836,6 +836,8 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
             str(r["name"]) for r in conn.execute("PRAGMA table_info(daily_review_reports)").fetchall()
         }
         equity_select = "drr.equity_pnl" if "equity_pnl" in drr_columns else "NULL"
+        # 종가 총평가(eod_total_eval) — 계좌 P&L(전일종가 대비 Δ) 산출용. 컬럼 없으면 NULL.
+        eod_select = "drr.equity_eod_total_eval" if "equity_eod_total_eval" in drr_columns else "NULL"
         # P&L은 daily_trade_summary(주문 가격 기반 계산)가 더 정확함
         base_select = f"""
                 SELECT
@@ -844,6 +846,7 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
                     drr.integrity_warnings,
                     drr.false_positive_count,
                     {equity_select} AS equity_pnl,
+                    {eod_select} AS eod_total_eval,
                     COALESCE(dts.buy_orders, drr.total_trades, 0) AS trade_count,
                     COALESCE(dts.realized_pnl, 0.0) AS total_pnl,
                     COALESCE(dts.realized_pnl_pct, 0.0) AS pnl_rate,
@@ -895,6 +898,25 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
 
     from ...services.engine.trading_calendar import is_trading_day, non_trading_reason
 
+    # 계좌 P&L(전일 종가 대비 Δ) 산출용 — 표시 범위 밖 전일 종가총평가도 참조해야 하므로 전체 조회.
+    import bisect
+
+    _eod_by_date: dict[str, float] = {}
+    try:
+        with get_connection() as _conn2:
+            for _r in _conn2.execute(
+                "SELECT trade_date, equity_eod_total_eval FROM daily_review_reports "
+                "WHERE equity_eod_total_eval IS NOT NULL ORDER BY trade_date"
+            ).fetchall():
+                _eod_by_date[str(_r["trade_date"])] = float(_r["equity_eod_total_eval"])
+    except Exception as _eod_exc:
+        logger.warning("WARN: daily-results 종가총평가 조회 실패 — %s", _eod_exc)
+    _eod_dates = sorted(_eod_by_date.keys())
+
+    def _prior_eod(td: str) -> float | None:
+        i = bisect.bisect_left(_eod_dates, td)
+        return _eod_by_date[_eod_dates[i - 1]] if i > 0 else None
+
     result = []
     for row in rows:
         d = dict(row)
@@ -905,6 +927,15 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
         d["win_count"] = wins
         d["loss_count"] = losses
         d["win_rate"] = round(wins / total_closed * 100, 1) if total_closed > 0 else 0
+        # 계좌 P&L = 종가총평가[오늘] − 종가총평가[전일종가]. (망가진 equity_pnl 대체, Total은 합산)
+        _eod = d.get("eod_total_eval")
+        _prev = _prior_eod(td)
+        if _eod is not None and _prev is not None:
+            d["account_pnl"] = round(float(_eod) - _prev)
+            d["account_pnl_pct"] = round((float(_eod) - _prev) / _prev * 100, 2) if _prev else None
+        else:
+            d["account_pnl"] = None
+            d["account_pnl_pct"] = None
         # 비거래일(주말·공휴일)이면 휴장 표식 — 과거에 쌓인 노이즈 행도 휴장으로 덮어 표시한다.
         if not is_trading_day(td):
             d["non_trading"] = True

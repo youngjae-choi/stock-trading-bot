@@ -136,7 +136,7 @@
       var t = r.market_tone;
       if (!t || !stats[t]) return;
       stats[t].days++;
-      stats[t].pnl += r.total_pnl || 0;
+      stats[t].pnl += r.account_pnl || 0;  // 계좌 P&L 기준으로 통일
       var w = r.win_count || 0, l = r.loss_count || 0;
       stats[t].wins += w;
       stats[t].total += w + l;
@@ -145,9 +145,8 @@
   }
 
   function _renderDailyResultsSummary(rows, start, end) {
-    var totalPnl    = rows.reduce(function(acc, r) { return acc + (r.total_pnl || 0); }, 0);
-    var totalNetPnl = rows.reduce(function(acc, r) { return acc + (r.net_pnl != null ? r.net_pnl : (r.total_pnl || 0)); }, 0);
-    var hasNetData  = rows.some(function(r) { return r.net_pnl != null; });
+    // Total P&L = 일별 계좌 P&L(종가총평가 전일대비 Δ)의 합 = 누적(마지막 종가 − 처음 직전 종가).
+    var totalPnl    = rows.reduce(function(acc, r) { return acc + (r.account_pnl || 0); }, 0);
     var tradingDays = rows.filter(function(r) { return !r.non_trading; }).length;
     var totalWins  = rows.reduce(function(acc, r) { return acc + (r.win_count || 0); }, 0);
     var totalLosses= rows.reduce(function(acc, r) { return acc + (r.loss_count || 0); }, 0);
@@ -156,8 +155,6 @@
 
     var pnlCls  = totalPnl > 0 ? 'good' : totalPnl < 0 ? 'bad' : '';
     var pnlSign = totalPnl >= 0 ? '+' : '';
-    var netCls  = totalNetPnl > 0 ? 'good' : totalNetPnl < 0 ? 'bad' : '';
-    var netSign = totalNetPnl >= 0 ? '+' : '';
     var rangeLabel = (start && end) ? (start + ' ~ ' + end) : 'All';
 
     // 톤별 승률 통계 카드
@@ -185,13 +182,9 @@
 
     return '<div class="grid cols-3" style="margin-bottom:12px;">'
       + '<div class="card compact">'
-      + '<div class="card-title">Total P&L (Gross) <span style="font-weight:400; color:var(--muted);">' + escapeHtml(rangeLabel) + '</span></div>'
+      + '<div class="card-title">Total P&L (계좌) <span style="font-weight:400; color:var(--muted);">' + escapeHtml(rangeLabel) + '</span></div>'
       + '<div class="metric ' + pnlCls + '">' + pnlSign + Math.round(totalPnl).toLocaleString() + '원</div>'
-      + (hasNetData
-        ? '<div style="font-size:11px; margin-top:4px;">'
-          + 'Net: <span class="' + netCls + '">' + netSign + Math.round(totalNetPnl).toLocaleString() + '원</span>'
-          + ' <span style="color:var(--muted); font-size:10px;">(비용 차감)</span></div>'
-        : '')
+      + '<div style="font-size:11px; margin-top:4px; color:var(--muted);">일별 종가총평가 변화의 합 = 누적</div>'
       + '</div>'
       + '<div class="card compact">'
       + '<div class="card-title">Trading Days <span>days</span></div>'
@@ -214,8 +207,7 @@
     var headerRow = '<thead><tr>'
       + '<th style="text-align:left;">Date</th>'
       + '<th style="text-align:center;">Market</th>'
-      + '<th style="text-align:right;">P&L (₩)</th>'
-      + '<th style="text-align:right;" title="자본변화 = 장마감 총평가 - 장시작 자본 (실현+미실현+비용)">자본변화</th>'
+      + '<th style="text-align:right;" title="계좌 P&L = 당일 종가 총평가 − 전일 종가 총평가 (실현+미실현 포함, 합산=누적)">P&L (계좌)</th>'
       + '<th style="text-align:right;">Return</th>'
       + '<th style="text-align:right;">Trades</th>'
       + '<th style="text-align:right;">W / L</th>'
@@ -230,24 +222,19 @@
         return '<tr style="opacity:0.5;">'
           + '<td style="font-size:13px; color:var(--muted);">' + escapeHtml(row.trade_date)
           + ' <span class="status" style="font-size:10px; background:rgba(139,148,158,0.15); color:var(--muted);">휴장</span></td>'
-          + '<td colspan="9" style="color:var(--muted); font-size:12px;">' + escapeHtml(row.non_trading_reason || '비거래일') + '</td>'
+          + '<td colspan="8" style="color:var(--muted); font-size:12px;">' + escapeHtml(row.non_trading_reason || '비거래일') + '</td>'
           + '</tr>';
       }
-      var pnl = row.total_pnl || 0;
-      var pnlCls  = pnl > 0 ? 'good' : pnl < 0 ? 'bad' : '';
-      var pnlSign = pnl >= 0 ? '+' : '';
-      var pnlHtml = '<span class="' + pnlCls + '">' + pnlSign + Math.round(pnl).toLocaleString() + '원</span>';
-
-      /* 자본변화(equity) — 짝 실현손익과 달리 미실현·비용·이월 포함. 미산출 시 '-' */
-      var eq = row.equity_pnl;
-      var eqHtml;
-      if (eq == null) {
-        eqHtml = '<span style="color:var(--muted);">-</span>';
-      } else {
-        var eqCls  = eq > 0 ? 'good' : eq < 0 ? 'bad' : '';
-        var eqSign = eq >= 0 ? '+' : '';
-        eqHtml = '<span class="' + eqCls + '">' + eqSign + Math.round(eq).toLocaleString() + '원</span>';
-      }
+      /* 계좌 P&L = 당일 종가총평가 − 전일 종가총평가 (실현+미실현, 합산=누적). 미산출 시 '-' */
+      var acct = row.account_pnl;
+      var acctCls = (acct || 0) > 0 ? 'good' : (acct || 0) < 0 ? 'bad' : '';
+      var acctHtml = (acct == null)
+        ? '<span style="color:var(--muted);">-</span>'
+        : '<span class="' + acctCls + '">' + ((acct >= 0 ? '+' : '') + Math.round(acct).toLocaleString()) + '원</span>';
+      var acctPct = row.account_pnl_pct;
+      var acctPctHtml = (acctPct == null)
+        ? '<span style="color:var(--muted);">-</span>'
+        : '<span class="' + acctCls + '">' + (acctPct >= 0 ? '+' : '') + acctPct.toFixed(2) + '%</span>';
 
       var totalTrades = (row.win_count || 0) + (row.loss_count || 0);
       var winRate = row.win_rate != null ? row.win_rate : (totalTrades > 0 ? Math.round((row.win_count || 0) / totalTrades * 100) : 0);
@@ -277,13 +264,8 @@
       return '<tr style="cursor:pointer;" data-action="openDayReview" data-date="' + escapeHtml(row.trade_date) + '">'
         + '<td style="font-size:13px; color:var(--accent);">' + escapeHtml(row.trade_date) + pnlStatusBadge + '</td>'
         + toneCell
-        + '<td style="text-align:right;">' + pnlHtml + '</td>'
-        + '<td style="text-align:right;">' + eqHtml + '</td>'
-        + '<td style="text-align:right; font-size:12px;">'
-          + (row.pnl_rate != null
-            ? '<span class="' + pnlCls + '">' + (row.pnl_rate >= 0 ? '+' : '') + (row.pnl_rate || 0).toFixed(2) + '%</span>'
-            : '<span style="color:var(--muted);">-</span>')
-        + '</td>'
+        + '<td style="text-align:right;">' + acctHtml + '</td>'
+        + '<td style="text-align:right; font-size:12px;">' + acctPctHtml + '</td>'
         + '<td style="text-align:right;">' + (row.trade_count || 0) + '</td>'
         + '<td style="text-align:right; font-size:12px;">'
           + '<span style="color:var(--green);">' + (row.win_count || 0) + '</span>'
