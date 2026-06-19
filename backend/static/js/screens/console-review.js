@@ -465,9 +465,13 @@
     var ds = r.day_score || null;
     if (total > 0) {
       if (ds) {
-        lines.push('<p>시스템은 <strong>' + ds.symbols + '개 종목</strong>에 매매를 실행했습니다. '
-          + '체결 매수 <strong>' + ds.buy_fills + '건</strong> / 매도 <strong>' + ds.sell_fills + '건</strong>'
-          + ' <span class="muted">(원시 주문 ' + buy + '/' + sell + '건 — 취소·미체결 재시도 포함)</span>.</p>');
+        // 종목 = 완료 + 미청산, 완료 = 승+패 로 다른 카드(매수판단·손실패턴)와 명시적으로 묶어 표시
+        var dsOpen = ds.open_positions != null ? ds.open_positions : Math.max(0, (ds.symbols || 0) - (ds.completed || 0));
+        lines.push('<p>시스템은 <strong>' + (ds.symbols || 0) + '개 종목</strong>에 매매 — '
+          + '완료 <strong>' + (ds.completed || 0) + '건</strong>(' + (ds.wins || 0) + '승 ' + (ds.losses || 0) + '패)'
+          + ', 미청산 <strong>' + dsOpen + '건</strong>.</p>'
+          + '<p style="font-size:12px;">체결 매수 <strong>' + ds.buy_fills + '건</strong> / 매도 <strong>' + ds.sell_fills + '건</strong>'
+          + ' <span class="muted">(원시 주문 ' + buy + '/' + sell + '건 — 취소·미체결 재시도 포함)</span></p>');
       } else {
         lines.push('<p>시스템은 <strong>' + pairs.length + '개 종목</strong>에 매매를 실행했습니다. '
           + '매수 ' + buy + '건 / 매도 ' + sell + '건 처리됨.</p>');
