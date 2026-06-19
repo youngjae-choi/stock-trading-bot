@@ -23,7 +23,7 @@ def test_equity_snapshot_computed(monkeypatch):
         return 108_000_000.0
 
     monkeypatch.setattr(ra, "_fetch_eod_total_eval", fake_total_eval)
-    monkeypatch.setattr(dc, "get_baseline", lambda d=None: 100_000_000.0)
+    monkeypatch.setattr(dc, "get_total_eval_baseline", lambda d=None: 100_000_000.0)
 
     snap = asyncio.run(ra._compute_equity_snapshot("2026-06-12"))
     assert snap["equity_eod_total_eval"] == 108_000_000.0
@@ -54,7 +54,7 @@ def test_equity_snapshot_without_baseline_keeps_total_eval(monkeypatch):
         return 108_000_000.0
 
     monkeypatch.setattr(ra, "_fetch_eod_total_eval", fake_total_eval)
-    monkeypatch.setattr(dc, "get_baseline", lambda d=None: None)
+    monkeypatch.setattr(dc, "get_total_eval_baseline", lambda d=None: None)
 
     snap = asyncio.run(ra._compute_equity_snapshot("2026-06-12"))
     assert snap["equity_eod_total_eval"] == 108_000_000.0
@@ -286,7 +286,7 @@ def test_run_review_audit_persists_equity_and_splits_carried(tmp_path, monkeypat
         return 108_000_000.0
 
     monkeypatch.setattr(ra, "_fetch_eod_total_eval", fake_total_eval)
-    monkeypatch.setattr(dc, "get_baseline", lambda dd=None: 100_000_000.0)
+    monkeypatch.setattr(dc, "get_total_eval_baseline", lambda dd=None: 100_000_000.0)
 
     # trade_pairs: 당일 신규 1 + 이월(전일 매수) 1
     today_pair = _pair("111111", "당일종목", "매도완료", d, d, d, 50_000.0)

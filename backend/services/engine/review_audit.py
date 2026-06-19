@@ -912,11 +912,13 @@ async def _compute_equity_snapshot(trade_date: str) -> dict[str, Any]:
             return snapshot
         snapshot["equity_eod_total_eval"] = total_eval
 
-        from .daily_capital import get_baseline
+        # baseline은 장시작 '총평가(total_eval)'여야 한다. deposit(예수금)을 쓰면 eod−예수금이 되어
+        # 보유주식가치만큼 부풀려진 쓰레기값(+30~72M)이 된다 — 2026-06-19 수정.
+        from .daily_capital import get_total_eval_baseline
 
-        baseline = get_baseline(trade_date)
+        baseline = get_total_eval_baseline(trade_date)
         if baseline is None or baseline <= 0:
-            logger.warning("WARN: [S10] equity 산출 불가 — baseline 미캡처 trade_date=%s", trade_date)
+            logger.warning("WARN: [S10] equity 산출 불가 — total_eval baseline 미캡처 trade_date=%s", trade_date)
             return snapshot
         snapshot["equity_pnl"] = total_eval - baseline
         snapshot["equity_pnl_pct"] = (total_eval - baseline) / baseline * 100.0
