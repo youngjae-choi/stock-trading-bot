@@ -828,7 +828,6 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
 
     start_date / end_date (YYYY-MM-DD): 범위 지정 시 해당 구간만 반환. 미지정 시 전체 반환.
     """
-    from collections import defaultdict
     with get_connection() as conn:
         # equity_pnl 컬럼은 S10 마이그레이션(_ensure_review_integrity_columns) 이후에만 존재 —
         # 미적용 DB에서도 라우트가 깨지지 않도록 존재 확인 후 선택한다.
@@ -878,28 +877,14 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
                 base_select + "ORDER BY drr.trade_date DESC",
             ).fetchall()
 
-        dates = [r["trade_date"] for r in rows]
-
-    # 승/패는 **저장된 day_score(SSOT)** 를 읽는다 — Review와 같은 단일 출처(윈도우 의존 재계산 금지).
-    # 저장값이 없는 날만 폴백으로 라이브 산출(7일 윈도우). compute_daily_score는 페어링 윈도우에 따라
-    # 결과가 달라질 수 있어, 저장 시점(S10) 값을 그대로 읽는 것이 카드 간 정합의 핵심.
+    # 승/패는 **저장된 day_score(SSOT)** 만 읽는다 — Review와 같은 단일 출처.
+    # 화면 로드 시점 재계산 금지(2026-06-20 Phase1): compute_daily_score는 조회 윈도우에 따라
+    # FIFO 페어링이 달라져 6/19가 1/9 vs 3/7로 갈리던 원흉이었다. 저장값(S10 1회 산출)만 읽고,
+    # 없는 날은 (None, None) → 화면은 '—'로 표기(엔진이 채울 때까지 가짜 숫자 표시 안 함).
     import json as _json
 
-    def _fallback_window_pairs():
-        if not dates:
-            return []
-        from datetime import datetime as _dt0, timedelta as _td0
-
-        from ...services.engine.trade_pairs import get_trade_pairs
-
-        _start = (_dt0.fromisoformat(min(dates)) - _td0(days=7)).strftime("%Y-%m-%d")
-        return get_trade_pairs(_start, max(dates))
-
-    _wp_cache: list = []
-    _wp_loaded = [False]
-
-    def _scored(td: str) -> tuple[int, int]:
-        """저장 day_score 우선, 없으면 라이브 폴백."""
+    def _scored(td: str) -> tuple[int | None, int | None]:
+        """저장된 day_score(SSOT)만 읽는다. 미저장이면 (None, None)."""
         for r in rows:
             if r["trade_date"] == td and r["day_score"]:
                 try:
@@ -907,12 +892,7 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
                     return int(ds.get("wins") or 0), int(ds.get("losses") or 0)
                 except Exception:
                     break
-        if not _wp_loaded[0]:
-            _wp_cache.extend(_fallback_window_pairs())
-            _wp_loaded[0] = True
-        from ...services.engine.trade_pairs import compute_daily_score
-        s = compute_daily_score(td, pairs=_wp_cache)
-        return s["wins"], s["losses"]
+        return None, None
 
     from datetime import datetime as _dt, timedelta as _td
 
@@ -947,10 +927,14 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
         d = dict(row)
         td = d["trade_date"]
         wins, losses = _scored(td)
-        total_closed = wins + losses
         d["win_count"] = wins
         d["loss_count"] = losses
-        d["win_rate"] = round(wins / total_closed * 100, 1) if total_closed > 0 else 0
+        if wins is None or losses is None:
+            # 저장 day_score 없음 — 재계산하지 않고 미집계로 둔다(화면 '—').
+            d["win_rate"] = None
+        else:
+            total_closed = wins + losses
+            d["win_rate"] = round(wins / total_closed * 100, 1) if total_closed > 0 else 0
         # 계좌 P&L = 종가총평가[오늘] − 종가총평가[전일종가]. (망가진 equity_pnl 대체, Total은 합산)
         # 당일 eod도 앵커 반영된 _eod_by_date에서 읽는다(DB 컬럼은 6/12·6/19 등 None일 수 있음).
         _eod = _eod_by_date.get(td)

@@ -267,10 +267,13 @@
         + '<td style="text-align:right;">' + acctHtml + '</td>'
         + '<td style="text-align:right; font-size:12px;">' + acctPctHtml + '</td>'
         + '<td style="text-align:right;">' + (row.trade_count || 0) + '</td>'
+        // 승/패는 저장 day_score(SSOT)만 표시. 미집계(null)면 '—' — 화면이 임의로 재계산하지 않는다.
         + '<td style="text-align:right; font-size:12px;">'
-          + '<span style="color:var(--green);">' + (row.win_count || 0) + '</span>'
-          + ' / '
-          + '<span style="color:var(--red);">' + (row.loss_count || 0) + '</span>'
+          + ((row.win_count == null && row.loss_count == null)
+              ? '<span style="color:var(--muted);">—</span>'
+              : '<span style="color:var(--green);">' + (row.win_count || 0) + '</span>'
+                + ' / '
+                + '<span style="color:var(--red);">' + (row.loss_count || 0) + '</span>')
         + '</td>'
         + '<td style="text-align:right;">' + winRateHtml + '</td>'
         + '<td style="text-align:right; color:var(--muted); font-size:12px;">' + (row.missed_entries_count || 0) + '</td>'

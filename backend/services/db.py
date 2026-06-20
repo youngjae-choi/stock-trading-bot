@@ -1464,6 +1464,26 @@ CREATE TABLE IF NOT EXISTS system_alerts (
 """,
         "CREATE INDEX IF NOT EXISTS idx_alerts_trade_date ON system_alerts(trade_date)",
         "CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON system_alerts(acknowledged)",
+        # 알림 요약 스냅샷 — 화면은 이 저장값만 읽는다(읽기시점 집계 금지). 알림 생성/확인 시점에
+        # 쓰기 경로에서 재계산·UPSERT하므로 항상 최신(자가치유: 없으면 읽기시 1회 백필).
+        """
+CREATE TABLE IF NOT EXISTS alert_summary_daily (
+    trade_date          TEXT PRIMARY KEY,
+    total_count         INTEGER NOT NULL DEFAULT 0,
+    severity_counts     TEXT    NOT NULL DEFAULT '{}',
+    unacknowledged_count INTEGER NOT NULL DEFAULT 0,
+    updated_at          TEXT NOT NULL
+)
+""",
+        # 배당 통계 캐시(연도별) — 화면은 이 저장값만 읽는다. 배당 입력/수정/삭제 쓰기 경로에서
+        # 전 연도를 재계산·UPSERT한다(데이터가 작아 전체 재계산이 단순·안전). 없으면 읽기시 1회 백필.
+        """
+CREATE TABLE IF NOT EXISTS dividend_stats_cache (
+    year        INTEGER PRIMARY KEY,
+    payload     TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+)
+""",
         """
 CREATE TABLE IF NOT EXISTS human_approval_queue (
     id           TEXT PRIMARY KEY,

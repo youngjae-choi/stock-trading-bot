@@ -90,9 +90,9 @@ def test_live_endpoint_payload_structure(monkeypatch):
             "cached": False,
         }
 
-    # 라우트 모듈이 import한 이름을 monkeypatch
+    # 라우트 모듈이 import한 이름을 monkeypatch (index-board DB 통합으로 scrape_both_with_db로 변경됨)
     import backend.api.routes.market_briefing as route_mod
-    monkeypatch.setattr(route_mod, "scrape_both_live", fake_scrape)
+    monkeypatch.setattr(route_mod, "scrape_both_with_db", fake_scrape)
 
     client = TestClient(main_mod.app)
     resp = client.get("/api/v1/market-briefing/live")

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -107,6 +106,7 @@ def create_alert(alert_type, title, severity: str = "WARNING", detail: str = "",
                 alert["created_at"],
             ),
         )
+    _refresh_alert_summary(alert["trade_date"])
     logger.info("SUCCESS: AlertCenter.create alert_id=%s", alert["id"])
     return alert
 
@@ -150,26 +150,92 @@ def acknowledge_alert(alert_id: str) -> bool:
     """
     logger.info("START: AlertCenter.acknowledge alert_id=%s", alert_id)
     with get_connection() as conn:
+        row = conn.execute("SELECT trade_date FROM system_alerts WHERE id = ?", (alert_id,)).fetchone()
         cursor = conn.execute("UPDATE system_alerts SET acknowledged = 1 WHERE id = ?", (alert_id,))
     acknowledged = cursor.rowcount > 0
+    if acknowledged and row:
+        _refresh_alert_summary(str(row["trade_date"]))
     logger.info("SUCCESS: AlertCenter.acknowledge alert_id=%s updated=%s", alert_id, acknowledged)
     return acknowledged
 
 
+def _refresh_alert_summary(trade_date: str) -> dict:
+    """알림 요약 스냅샷을 재계산해 영속(쓰기시점). 화면은 이 저장값만 읽는다.
+
+    create_alert / acknowledge_alert 등 알림 상태가 바뀌는 쓰기 경로에서 호출되어
+    alert_summary_daily를 항상 최신으로 유지한다(staleness 원천 차단).
+
+    Args:
+        trade_date: YYYY-MM-DD 대상 거래일.
+    """
+    import json as _json
+
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT severity, acknowledged FROM system_alerts WHERE trade_date = ?",
+            (trade_date,),
+        ).fetchall()
+        severity_counts: dict[str, int] = {}
+        unack = 0
+        for r in rows:
+            sev = str(r["severity"])
+            severity_counts[sev] = severity_counts.get(sev, 0) + 1
+            if not r["acknowledged"]:
+                unack += 1
+        summary = {
+            "trade_date": trade_date,
+            "total_count": len(rows),
+            "severity_counts": severity_counts,
+            "unacknowledged_count": unack,
+        }
+        conn.execute(
+            """
+            INSERT INTO alert_summary_daily
+                (trade_date, total_count, severity_counts, unacknowledged_count, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(trade_date) DO UPDATE SET
+                total_count = excluded.total_count,
+                severity_counts = excluded.severity_counts,
+                unacknowledged_count = excluded.unacknowledged_count,
+                updated_at = excluded.updated_at
+            """,
+            (trade_date, summary["total_count"], _json.dumps(severity_counts),
+             unack, _now_utc()),
+        )
+    return summary
+
+
 def get_alert_summary(trade_date: str) -> dict:
-    """Return total, severity counts, and unacknowledged count for one trade date.
+    """저장된 알림 요약 스냅샷을 읽는다 — 읽기시점 집계 금지(2026-06-20 Phase2).
+
+    화면은 그리기만 한다: 쓰기 경로(create/acknowledge)가 미리 계산해 저장한 값을 읽을 뿐.
+    스냅샷이 없으면(과거 데이터·최초 1회) 1회 백필 후 읽는다(서버 내부 단일 writer, 안전).
 
     Args:
         trade_date: YYYY-MM-DD trade date to summarize.
     """
+    import json as _json
+
     logger.info("START: AlertCenter.summary trade_date=%s", trade_date)
-    alerts = get_today_alerts(trade_date)
-    severity_counts = dict(Counter(alert["severity"] for alert in alerts))
-    summary = {
-        "trade_date": trade_date,
-        "total_count": len(alerts),
-        "severity_counts": severity_counts,
-        "unacknowledged_count": sum(1 for alert in alerts if not alert["acknowledged"]),
-    }
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT total_count, severity_counts, unacknowledged_count "
+            "FROM alert_summary_daily WHERE trade_date = ?",
+            (trade_date,),
+        ).fetchone()
+    if row is None:
+        # 저장값 없음 — 1회 백필(쓰기시점 계산을 lazy하게 보충).
+        summary = _refresh_alert_summary(trade_date)
+    else:
+        try:
+            severity_counts = _json.loads(row["severity_counts"]) or {}
+        except Exception:
+            severity_counts = {}
+        summary = {
+            "trade_date": trade_date,
+            "total_count": int(row["total_count"] or 0),
+            "severity_counts": severity_counts,
+            "unacknowledged_count": int(row["unacknowledged_count"] or 0),
+        }
     logger.info("SUCCESS: AlertCenter.summary trade_date=%s total=%d", trade_date, summary["total_count"])
     return summary

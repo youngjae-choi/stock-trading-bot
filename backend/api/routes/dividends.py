@@ -238,6 +238,7 @@ async def create_dividend_entry(payload: DividendEntryCreate):
              payload.dividend_date, payload.amount, payload.tax, payload.net_amount,
              payload.dividend_rate, payload.memo, now, now),
         )
+    refresh_dividend_stats_cache()  # 쓰기시점 재계산 — 화면은 저장값만 읽는다
     return {"ok": True, "entry_id": entry_id}
 
 @router.get("/history")
@@ -285,6 +286,7 @@ async def update_dividend_entry(entry_id: str, payload: DividendEntryCreate):
         )
         if res.rowcount == 0:
             raise HTTPException(status_code=404, detail="Entry not found.")
+    refresh_dividend_stats_cache()  # 쓰기시점 재계산
     return {"ok": True}
 
 @router.delete("/entries/{entry_id}")
@@ -294,6 +296,7 @@ async def delete_dividend_entry(entry_id: str):
         res = conn.execute("DELETE FROM dividends WHERE id = ?", (entry_id,))
         if res.rowcount == 0:
             raise HTTPException(status_code=404, detail="Entry not found.")
+    refresh_dividend_stats_cache()  # 쓰기시점 재계산
     return {"ok": True}
 
 @router.post("/entries/bulk-delete")
@@ -308,53 +311,95 @@ async def bulk_delete_dividend_entries(payload: BulkDeleteIds):
             f"DELETE FROM dividends WHERE id IN ({placeholders})",
             payload.ids
         )
+    refresh_dividend_stats_cache()  # 쓰기시점 재계산
     return {"ok": True, "count": res.rowcount}
+
+
+# ─── Stats materialization (쓰기시점 계산·저장 → 화면은 읽기만) ────────────────
+# PM 원칙(2026-06-20): 웹 화면은 그리기만 하고 DB 저장값을 읽는다. 연도별 집계(GROUP BY)를
+# 읽기 시점에 매번 재계산하지 않고, 배당 입력/수정/삭제 쓰기 경로에서 전 연도를 재계산해
+# dividend_stats_cache에 저장한다(데이터가 작아 전체 재계산이 단순·staleness 없음).
+
+def _compute_dividend_stats(conn, year: int) -> dict:
+    """한 연도의 배당 통계를 산출(월별/계좌별/합계). 쓰기시점·lazy 백필 공용."""
+    date_prefix = f"{year}-%"
+    monthly_rows = conn.execute(
+        """
+        SELECT strftime('%m', dividend_date) as month, SUM(net_amount) as total_net
+        FROM dividends WHERE dividend_date LIKE ? GROUP BY month ORDER BY month ASC
+        """,
+        (date_prefix,),
+    ).fetchall()
+    account_rows = conn.execute(
+        """
+        SELECT a.bank_name, a.owner_name, a.account_number, SUM(d.net_amount) as total_net
+        FROM dividends d JOIN dividend_accounts a ON d.account_id = a.id
+        WHERE d.dividend_date LIKE ? GROUP BY a.id ORDER BY total_net DESC
+        """,
+        (date_prefix,),
+    ).fetchall()
+    total_row = conn.execute(
+        "SELECT SUM(amount) as gross, SUM(tax) as tax, SUM(net_amount) as net "
+        "FROM dividends WHERE dividend_date LIKE ?",
+        (date_prefix,),
+    ).fetchone()
+    return {
+        "year": year,
+        "total": dict(total_row) if total_row and total_row["gross"] is not None else {"gross": 0, "tax": 0, "net": 0},
+        "monthly": [dict(row) for row in monthly_rows],
+        "by_account": [dict(row) for row in account_rows],
+    }
+
+
+def _store_dividend_stats(conn, year: int, payload: dict) -> None:
+    import json as _json
+    conn.execute(
+        """
+        INSERT INTO dividend_stats_cache (year, payload, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(year) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at
+        """,
+        (year, _json.dumps(payload, ensure_ascii=False),
+         datetime.now(timezone.utc).isoformat()),
+    )
+
+
+def refresh_dividend_stats_cache() -> None:
+    """배당 데이터가 바뀌는 쓰기 경로에서 호출 — 데이터가 있는 전 연도를 재계산·저장."""
+    with get_connection() as conn:
+        years = [int(r["y"]) for r in conn.execute(
+            "SELECT DISTINCT CAST(strftime('%Y', dividend_date) AS INTEGER) AS y "
+            "FROM dividends WHERE dividend_date IS NOT NULL"
+        ).fetchall() if r["y"] is not None]
+        for y in years:
+            _store_dividend_stats(conn, y, _compute_dividend_stats(conn, y))
 
 
 # ─── Routes: Stats ───────────────────────────────────────────────────────────
 
 @router.get("/stats/summary")
 async def get_dividend_stats(year: int | None = None):
-    """Return dividend statistics grouped by month and account."""
+    """배당 통계 — 저장된 캐시(dividend_stats_cache)만 읽는다(읽기시점 집계 금지).
+
+    캐시가 없으면(과거 데이터·최초 1회) 1회 산출·저장 후 읽는다(서버 내부 단일 writer, 안전).
+    """
+    import json as _json
+
     target_year = year or datetime.now(ZoneInfo("Asia/Seoul")).year
-    date_prefix = f"{target_year}-%"
-    
     with get_connection() as conn:
-        # Monthly breakdown
-        monthly_rows = conn.execute(
-            """
-            SELECT strftime('%m', dividend_date) as month, SUM(net_amount) as total_net
-            FROM dividends
-            WHERE dividend_date LIKE ?
-            GROUP BY month
-            ORDER BY month ASC
-            """,
-            (date_prefix,),
-        ).fetchall()
-        
-        # Account breakdown
-        account_rows = conn.execute(
-            """
-            SELECT a.bank_name, a.owner_name, a.account_number, SUM(d.net_amount) as total_net
-            FROM dividends d
-            JOIN dividend_accounts a ON d.account_id = a.id
-            WHERE d.dividend_date LIKE ?
-            GROUP BY a.id
-            ORDER BY total_net DESC
-            """,
-            (date_prefix,),
-        ).fetchall()
-        
-        # Total
-        total_row = conn.execute(
-            "SELECT SUM(amount) as gross, SUM(tax) as tax, SUM(net_amount) as net FROM dividends WHERE dividend_date LIKE ?",
-            (date_prefix,),
+        row = conn.execute(
+            "SELECT payload FROM dividend_stats_cache WHERE year = ?", (target_year,)
         ).fetchone()
+        if row is None:
+            payload = _compute_dividend_stats(conn, target_year)
+            _store_dividend_stats(conn, target_year, payload)  # lazy 백필
+        else:
+            payload = _json.loads(row["payload"])
 
     return {
         "ok": True,
         "year": target_year,
-        "total": dict(total_row) if total_row["gross"] is not None else {"gross": 0, "tax": 0, "net": 0},
-        "monthly": [dict(row) for row in monthly_rows],
-        "by_account": [dict(row) for row in account_rows]
+        "total": payload.get("total", {"gross": 0, "tax": 0, "net": 0}),
+        "monthly": payload.get("monthly", []),
+        "by_account": payload.get("by_account", []),
     }
