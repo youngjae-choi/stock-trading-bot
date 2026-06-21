@@ -36,17 +36,20 @@ async def get_market_tone_today():
     )
 
 
-@router.get("/today/slots", summary="오늘 시장 톤 슬롯 추이(장중 변화)")
-async def get_market_tone_slots():
-    """당일 시장 톤 슬롯 추이를 시각순으로 반환한다(장중 톤 변화 표시용, 순수 읽기)."""
+@router.get("/today/slots", summary="시장 톤 슬롯 추이(장중 변화)")
+async def get_market_tone_slots(trade_date: str | None = Query(default=None)):
+    """해당일 시장 톤 슬롯 추이를 시각순으로 반환한다(장중 톤 변화 표시용, 순수 읽기).
+
+    trade_date 미지정 시 오늘(KST). 과거 거래일도 조회 가능(타임라인 과거일 표시용).
+    """
     from datetime import datetime
     from zoneinfo import ZoneInfo
-    today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
-    logger.info("START: GET /api/v1/market-tone/today/slots trade_date=%s", today)
-    slots = market_tone.get_today_tone_slots(today)
+    target = trade_date or datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+    logger.info("START: GET /api/v1/market-tone/today/slots trade_date=%s", target)
+    slots = market_tone.get_today_tone_slots(target)
     logger.info("SUCCESS: GET /api/v1/market-tone/today/slots count=%d", len(slots))
     return {"ok": True, "source": "backend", "live": False,
-            "payload": {"trade_date": today, "slots": slots}}
+            "payload": {"trade_date": target, "slots": slots}}
 
 
 @router.post("/analyze", summary="시장 톤 즉시 분석 실행")

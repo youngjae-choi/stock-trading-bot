@@ -319,6 +319,190 @@
     }
   }
 
+  /* ── ②.5 장중 전략 변화 타임라인 ── */
+  // 전략 파라미터 라벨 맵(레짐 SET applied_settings 키) — 미래 키는 일반표시.
+  var PF_SETTINGS_LABELS = {
+    max_positions: { label: '최대 보유', fmt: function(v) { return v + '종목'; }, dir: true },
+    new_entry_allowed: { label: '신규매수', fmt: function(v) { return v ? '허용' : '차단'; } },
+    stop_loss_rate: { label: '손절', fmt: function(v) { return (Number(v) * 100).toFixed(1) + '%'; } },
+    take_profit_rate: { label: '익절', fmt: function(v) { return (Number(v) * 100).toFixed(1) + '%'; } },
+    trailing_activate_profit: { label: '트레일 발동', fmt: function(v) { return (Number(v) * 100).toFixed(1) + '%'; } },
+    trailing_stop_rate: { label: '트레일 폭', fmt: function(v) { return (Number(v) * 100).toFixed(1) + '%'; } },
+    trading_intensity: { label: '매매강도', fmt: function(v) { return String(v); } },
+  };
+
+  function _pfFmtSetting(key, v) {
+    var meta = PF_SETTINGS_LABELS[key];
+    if (v === undefined || v === null) return '-';
+    return meta ? meta.fmt(v) : String(v);
+  }
+
+  /* 직전 SET 대비 변경된 전략 파라미터만 "라벨 a→b" 로 반환(키-무관) */
+  function _pfDiffSettings(prev, next) {
+    prev = prev || {}; next = next || {};
+    var keys = {};
+    Object.keys(prev).forEach(function(k) { keys[k] = 1; });
+    Object.keys(next).forEach(function(k) { keys[k] = 1; });
+    var out = [];
+    Object.keys(keys).forEach(function(k) {
+      var a = prev[k], b = next[k];
+      if (JSON.stringify(a) === JSON.stringify(b)) return;
+      var meta = PF_SETTINGS_LABELS[k];
+      var label = meta ? meta.label : k;
+      var arrow = '';
+      if (meta && meta.dir && typeof a === 'number' && typeof b === 'number') arrow = b > a ? ' ↑' : (b < a ? ' ↓' : '');
+      out.push(label + ' ' + _pfFmtSetting(k, a) + '→' + _pfFmtSetting(k, b) + arrow);
+    });
+    return out;
+  }
+
+  /* 아침(첫) 행용 절대 요약 */
+  function _pfSettingsSummary(s) {
+    s = s || {};
+    var parts = [];
+    if (s.max_positions != null) parts.push('최대 ' + s.max_positions + '종목');
+    if (s.new_entry_allowed != null) parts.push('신규매수 ' + (s.new_entry_allowed ? '허용' : '차단'));
+    if (s.stop_loss_rate != null) parts.push('손절 ' + (Number(s.stop_loss_rate) * 100).toFixed(1) + '%');
+    if (s.take_profit_rate != null) parts.push('익절 ' + (Number(s.take_profit_rate) * 100).toFixed(1) + '%');
+    return parts.length ? parts.join(' · ') : '세부 설정 미기록';
+  }
+
+  function _pfRenderTlRow(row) {
+    var time = '<span style="font-size:11px; color:var(--muted); width:42px; flex-shrink:0;">' + escapeHtml(row.hhmm || '-') + '</span>';
+    if (row.kind === 'regime') {
+      var t = row.t;
+      var rc = PF_REGIME_COLORS[t.regime_label] || '#8b9bb4';
+      var rlab = PF_REGIME_LABELS[t.regime_label] || t.regime_label || '-';
+      var icon = row.isMorning ? '🌅' : '⚡';
+      var head, mkt = '', strat;
+      var vix = t.vix_value, kos = t.kospi_change_pct;
+      if (row.isMorning) {
+        head = '<span style="color:' + rc + '; font-weight:700;">[' + escapeHtml(rlab) + ']</span> SET ' + escapeHtml(t.set_name || '-');
+        mkt = '시장: ' + (vix != null ? 'VIX ' + vix : '') + (kos != null ? ' · KOSPI ' + (kos > 0 ? '+' : '') + kos + '%' : '');
+        strat = '전략: ' + escapeHtml(_pfSettingsSummary(t.applied_settings));
+      } else {
+        var pl = row.prev ? (PF_REGIME_LABELS[row.prev.regime_label] || row.prev.regime_label || '') : '';
+        head = '<span style="font-weight:700;">' + escapeHtml(pl) + ' → <span style="color:' + rc + ';">' + escapeHtml(rlab) + '</span></span> <span class="muted">← 시장 변화</span>';
+        if (row.prev) {
+          var pv = row.prev.vix_value, pk = row.prev.kospi_change_pct;
+          var vixTxt = (pv != null && vix != null) ? ('VIX ' + pv + '→' + vix) : (vix != null ? 'VIX ' + vix : '');
+          var kosTxt = (pk != null && kos != null) ? ('KOSPI ' + (pk > 0 ? '+' : '') + pk + '%→' + (kos > 0 ? '+' : '') + kos + '%') : (kos != null ? 'KOSPI ' + (kos > 0 ? '+' : '') + kos + '%' : '');
+          mkt = '시장: ' + [vixTxt, kosTxt].filter(Boolean).join(' · ');
+        }
+        var diffs = _pfDiffSettings(row.prev ? row.prev.applied_settings : {}, t.applied_settings);
+        strat = diffs.length ? ('→ 전략변경: ' + diffs.map(escapeHtml).join(' · ')) : '→ 전략 변경 적용 (세부 변경 항목 미기록)';
+      }
+      if (t.match_reason) mkt += (mkt ? ' ' : '') + '<span class="muted">(' + escapeHtml(t.match_reason) + ')</span>';
+      return '<div style="display:flex; gap:8px; padding:6px 8px; border-left:3px solid ' + rc + '; background:var(--bg2,transparent); border-radius:4px;">'
+        + time
+        + '<div style="flex:1; min-width:0; font-size:12px;">'
+        + '<div>' + icon + ' ' + head + '</div>'
+        + (mkt ? '<div class="muted" style="margin-top:2px;">' + mkt + '</div>' : '')
+        + '<div style="margin-top:2px;' + (row.isMorning ? '' : ' color:var(--accent); font-weight:600;') + '">' + strat + '</div>'
+        + '</div></div>';
+    }
+    if (row.kind === 'tone') {
+      return '<div style="display:flex; gap:8px; font-size:12px; padding:4px 8px;">' + time
+        + '<div style="flex:1;">🗣️ 시장 톤 변화: <strong>' + escapeHtml(row.from) + '</strong> → <strong>' + escapeHtml(row.to) + '</strong>'
+        + (row.conf != null ? ' <span class="muted">(신뢰도 ' + Math.round(Number(row.conf) * 100) + '%)</span>' : '') + '</div></div>';
+    }
+    if (row.kind === 'refresh') {
+      var sl = row.sl;
+      var avg = sl.avg_change;
+      var avgTxt = avg != null ? ((avg > 0 ? '+' : '') + Number(avg).toFixed(2) + '%') : '';
+      if (!sl.triggered) {
+        return '<div style="display:flex; gap:8px; font-size:12px; padding:4px 8px; color:var(--muted);">' + time
+          + '<div style="flex:1;">⚙️ 점검 — 변화 없음(검토 후 유지)' + (avgTxt ? ' · avg ' + escapeHtml(avgTxt) : '') + (sl.reason ? ' · ' + escapeHtml(sl.reason) : '') + '</div></div>';
+      }
+      var extra = [];
+      if (sl.new_candidates) extra.push('신규 유입 ' + sl.new_candidates + '종목');
+      if (row.sectors && row.sectors.length && row.sectors[0].gap_pct != null) extra.push('섹터 로테이션 gap ' + Number(row.sectors[0].gap_pct).toFixed(1) + '%');
+      if (row.reps && row.reps.length) extra.push('교체신호 ' + row.reps.length + '건');
+      return '<div style="display:flex; gap:8px; font-size:12px; padding:5px 8px; border-left:3px solid var(--accent); background:var(--bg2,transparent); border-radius:4px;">' + time
+        + '<div style="flex:1;">🔁 장중 재선별' + (avgTxt ? ' (avg ' + escapeHtml(avgTxt) + ' 임계초과)' : '')
+        + (extra.length ? '<div class="muted" style="margin-top:2px;">' + escapeHtml(extra.join(' · ')) + '</div>' : '') + '</div></div>';
+    }
+    return '';
+  }
+
+  async function _pfLoadStrategyTimeline(tradeDate) {
+    var box = document.getElementById('pf-strat-timeline');
+    var sumEl = document.getElementById('pf-strat-tl-summary');
+    var curEl = document.getElementById('pf-strat-tl-current');
+    if (!box) return;
+    box.innerHTML = '<div class="muted" style="padding:8px;">로딩중...</div>';
+    var qd = tradeDate ? '?trade_date=' + encodeURIComponent(tradeDate) : '';
+    var results = await Promise.allSettled([
+      fetch('/api/v1/regime/today' + qd).then(function(r) { return r.json(); }),
+      fetch('/api/v1/market-tone/today/slots' + qd).then(function(r) { return r.json(); }),
+      fetch('/api/v1/trading-monitor/reselection-stats' + qd).then(function(r) { return r.json(); }),
+    ]);
+    function val(i) { return results[i].status === 'fulfilled' ? results[i].value : null; }
+    var regime = val(0) || {}, toneR = val(1) || {}, resel = val(2) || {};
+    var transitions = (regime.ok && Array.isArray(regime.transitions)) ? regime.transitions : [];
+    var application = (regime.ok && regime.application) ? regime.application : null;
+    var toneSlots = (toneR.payload && toneR.payload.slots) || [];
+    var rp = resel.payload || {};
+    var reSlots = rp.slots || [], sectors = rp.sector_rotations || [], repls = rp.replacement_signals || [];
+
+    var curSet = (application && application.set_name) ? application.set_name
+      : (transitions.length ? transitions[transitions.length - 1].set_name : null);
+    if (curEl) curEl.textContent = '현재 SET: ' + (curSet || '-');
+
+    if (!transitions.length && !application) {
+      box.innerHTML = '<div class="muted" style="padding:8px;">레짐 데이터 수집 대기 중… (장 시작 전이거나 휴장일)</div>';
+      if (sumEl) sumEl.innerHTML = '';
+      return;
+    }
+
+    var rows = [];
+    // 같은 SET의 장중 재적용(트리거가 모두 'morning')은 변화가 아니다 —
+    // regime_label·set_name·applied_settings가 직전 대비 실제로 바뀐 "변화 지점"만 남긴다.
+    var rawList = transitions.length ? transitions : (application ? [application] : []);
+    var regimeList = [];
+    rawList.forEach(function(t) {
+      var prev = regimeList.length ? regimeList[regimeList.length - 1] : null;
+      var changed = !prev
+        || prev.regime_label !== t.regime_label
+        || prev.set_name !== t.set_name
+        || JSON.stringify(prev.applied_settings || {}) !== JSON.stringify(t.applied_settings || {});
+      if (changed) regimeList.push(t);
+    });
+    regimeList.forEach(function(t, idx) {
+      rows.push({ hhmm: _pfHHMM(t.applied_at), kind: 'regime', t: t,
+        prev: idx > 0 ? regimeList[idx - 1] : null, isMorning: idx === 0 });
+    });
+    var toneSeq = [];
+    toneSlots.forEach(function(s) {
+      var lab = _pfToneLabel(s.tone);
+      if (!toneSeq.length || toneSeq[toneSeq.length - 1].lab !== lab) toneSeq.push({ lab: lab, t: s.created_at, conf: s.confidence });
+    });
+    toneSeq.forEach(function(p, idx) {
+      if (idx === 0) return;
+      rows.push({ hhmm: _pfHHMM(p.t), kind: 'tone', from: toneSeq[idx - 1].lab, to: p.lab, conf: p.conf });
+    });
+    reSlots.forEach(function(sl) {
+      var slot = sl.slot || '';
+      rows.push({ hhmm: slot, kind: 'refresh', sl: sl,
+        sectors: sectors.filter(function(x) { return (x.slot || '') === slot && x.triggered; }),
+        reps: repls.filter(function(x) { return (x.slot || '') === slot; }) });
+    });
+    rows.sort(function(a, b) { return String(a.hhmm).localeCompare(String(b.hhmm)); });
+
+    // 실제 변화 지점 수(아침 baseline 제외) — 트리거값이 신뢰 불가하므로 dedup 결과로 센다.
+    var intradayChanges = Math.max(0, regimeList.length - 1);
+    var heldChecks = reSlots.filter(function(s) { return !s.triggered; }).length;
+    if (sumEl) {
+      if (intradayChanges > 0) {
+        sumEl.innerHTML = '<span style="color:var(--accent); font-weight:600;">오늘 장중 전략 ' + intradayChanges + '회 변경</span> — 시장 재분석으로 SET 전환됨.';
+      } else {
+        sumEl.innerHTML = '<span style="color:var(--green); font-weight:600;">✅ 오늘은 장중 변화 없음</span> (아침 전략 유지)'
+          + (reSlots.length ? ' · 장중 ' + reSlots.length + '회 점검' + (heldChecks ? (' 중 ' + heldChecks + '회 임계 미만 → 유지') : '') : '');
+      }
+    }
+    box.innerHTML = rows.length ? rows.map(_pfRenderTlRow).join('') : '<div class="muted" style="padding:8px;">표시할 변화 이력이 없습니다.</div>';
+  }
+
   /* Plan & Funnel 통합 화면 로드 진입점 */
   async function loadPlanFunnel() {
     var tradeDate = window._tcTradeDate || getKstDateString();
@@ -327,6 +511,7 @@
       _pfLoadPlanSummary(tradeDate),
       _pfLoadToneTrend(tradeDate),
       _pfLoadIndexChanges(tradeDate),
+      _pfLoadStrategyTimeline(tradeDate),
       _pfLoadIntradayEvents(tradeDate),
       _pfLoadFunnelSummary(),
     ]);
