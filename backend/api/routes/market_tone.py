@@ -36,6 +36,19 @@ async def get_market_tone_today():
     )
 
 
+@router.get("/today/slots", summary="오늘 시장 톤 슬롯 추이(장중 변화)")
+async def get_market_tone_slots():
+    """당일 시장 톤 슬롯 추이를 시각순으로 반환한다(장중 톤 변화 표시용, 순수 읽기)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+    logger.info("START: GET /api/v1/market-tone/today/slots trade_date=%s", today)
+    slots = market_tone.get_today_tone_slots(today)
+    logger.info("SUCCESS: GET /api/v1/market-tone/today/slots count=%d", len(slots))
+    return {"ok": True, "source": "backend", "live": False,
+            "payload": {"trade_date": today, "slots": slots}}
+
+
 @router.post("/analyze", summary="시장 톤 즉시 분석 실행")
 async def run_market_tone_now(trigger_source: str = Query(default="api_manual")):
     """LLM을 즉시 호출해 시장 톤 분석을 실행하고 결과를 저장한다.

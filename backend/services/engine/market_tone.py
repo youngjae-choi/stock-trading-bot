@@ -568,6 +568,28 @@ def get_today_market_tone(trade_date: str) -> dict[str, Any] | None:
     return d
 
 
+def get_today_tone_slots(trade_date: str) -> list[dict[str, Any]]:
+    """당일 시장 톤 슬롯 추이(장중 변화 표시용) — 시각 오름차순.
+
+    market_tone_results는 장중 슬롯마다 1행씩 쌓인다. 톤이 장중 어떻게 바뀌었는지
+    (예: positive→mixed)를 화면에서 보여주기 위해 슬롯 목록을 그대로 반환한다(순수 읽기).
+
+    Args:
+        trade_date: YYYY-MM-DD 대상 거래일.
+    """
+    _ensure_table()
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT created_at, tone, confidence FROM market_tone_results "
+            "WHERE trade_date = ? ORDER BY created_at ASC",
+            (trade_date,),
+        ).fetchall()
+    return [
+        {"created_at": r["created_at"], "tone": r["tone"], "confidence": r["confidence"]}
+        for r in rows
+    ]
+
+
 def get_today_morning_context(trade_date: str) -> dict[str, Any] | None:
     """DB에서 특정 날짜의 morning_context를 조회한다."""
     _ensure_table()

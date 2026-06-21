@@ -1,14 +1,21 @@
-  /* ── Plan & Funnel 통합 화면 (P4) ──
-   * 상단: 오늘 Daily Plan 요약 (레짐/톤/강도/프로파일 분포) — daily-plan/regime API 재사용
-   * 중단: 장중 선별 타임라인 — GET /api/v1/daily-plan/intraday-events?date=
-   * 하단: Funnel Progress 숫자 — GET /api/v1/funnel/summary 재사용
+  /* ── Plan & Funnel 통합 화면 (P4 재구성 2026-06-21) ──
+   * PM 의도: 종목 목록이 아니라 "환경 → 전략 → 선별" 인과 스토리를 본다.
+   *   ① 오늘 시장은?(환경)  — 레짐/톤/전일대비 지표/장중 톤 추이
+   *   ② 그래서 전략은?(전략) — 매매강도/신규매수/프로파일 분포/청산정책
+   *   ③ 그래서 고른 종목은?(선별) — Funnel 압축 + 선별 요약, 종목 리스트는 접힘
+   * 모두 기존 읽기 API 재사용 + 톤 슬롯 추이(GET /market-tone/today/slots, 순수 읽기).
    */
 
   var PF_PROFILE_COLORS = { LOW_VOL: '#6cb6ff', MID_VOL: '#3fb950', HIGH_VOL: '#d29922', THEME_SPIKE: '#f85149' };
   var PF_REGIME_LABELS = { risk_on: 'Risk On', neutral: '중립', risk_off: 'Risk Off', volatile: '변동성' };
   var PF_REGIME_COLORS = { risk_on: '#3fb950', neutral: '#8b9bb4', risk_off: '#f85149', volatile: '#d29922' };
-  // 모멘텀 스캔 유입 종목 — 프로파일 필터(L/M/H/T) 상태·캐시
+  var PF_TONE_LABELS = { positive: '긍정', mixed: '혼조', negative: '부정', neutral: '중립', defensive: '방어' };
   var PF_PROFILE_CODE = { L: 'LOW_VOL', M: 'MID_VOL', H: 'HIGH_VOL', T: 'THEME_SPIKE' };
+  // 전일 대비로 보여줄 핵심 지표(키: morning_context.market_data, 라벨)
+  var PF_INDEX_KEYS = [
+    ['vix', 'VIX'], ['sp500', 'S&P500'], ['nasdaq', '나스닥'],
+    ['sox', '필라델피아반도체'], ['kospi_night_futures', 'KOSPI야간선물'], ['usdkrw', '환율(USD/KRW)'],
+  ];
   var _pfScanUniq = [];
   var _pfScanFilter = 'ALL';
 
@@ -23,12 +30,16 @@
     try {
       var d = new Date(isoStr);
       if (isNaN(d.getTime())) {
-        // 'HH:MM:SS' 같은 시간 문자열 대응
         var m = String(isoStr).match(/^(\d{2}):(\d{2})/);
         return m ? m[1] + ':' + m[2] : String(isoStr);
       }
       return d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Seoul' });
     } catch (e) { return String(isoStr); }
+  }
+
+  function _pfToneLabel(t) {
+    if (!t) return '-';
+    return PF_TONE_LABELS[String(t).toLowerCase()] || t;
   }
 
   function _pfProfileBadge(profile) {
@@ -39,7 +50,7 @@
       + ' title="' + escapeHtml(profile || '') + '">' + escapeHtml(short) + '</span>';
   }
 
-  /* ── 상단: Daily Plan 요약 ── */
+  /* ── ① 환경 + ② 전략: Daily Plan 요약 + 레짐 ── */
   async function _pfLoadPlanSummary(tradeDate) {
     try {
       var url = tradeDate ? '/api/v1/daily-plan/today?trade_date=' + encodeURIComponent(tradeDate) : '/api/v1/daily-plan/today';
@@ -48,14 +59,16 @@
       var plan = d.payload;
       if (!plan) {
         _pfSet('pf-market-tone', '미수집·대기');
-        _pfSet('pf-intensity', '매매 강도: -');
+        _pfSet('pf-intensity', '-');
+        _pfSet('pf-new-entry', '-');
+        _pfSet('pf-plan-status', 'Plan 상태: 생성 전');
         _pfSet('pf-assignments-count', '-');
         var distEl0 = document.getElementById('pf-profile-dist');
         if (distEl0) distEl0.innerHTML = '<span class="muted">오늘 Daily Plan 생성 전</span>';
         return;
       }
-      _pfSet('pf-market-tone', plan.market_tone || '-');
-      _pfSet('pf-intensity', '매매 강도: ' + (plan.trading_intensity || '-'));
+      _pfSet('pf-market-tone', _pfToneLabel(plan.market_tone));
+      _pfSet('pf-intensity', plan.trading_intensity || '-');
       _pfSet('pf-new-entry', plan.new_entry_allowed ? '허용' : '차단');
       _pfSet('pf-plan-status', 'Plan 상태: ' + (plan.status || '-'));
 
@@ -73,7 +86,7 @@
       console.warn('[WARN] plan-funnel plan summary load failed', e.message);
     }
 
-    // 레짐(오늘 Regime Set 적용 결과) — Daily Plan 화면과 동일 API 재사용
+    // 레짐(오늘 Regime Set 적용 결과 + 근거)
     try {
       var regimeUrl = tradeDate ? '/api/v1/regime/today?trade_date=' + encodeURIComponent(tradeDate) : '/api/v1/regime/today';
       var sr = await fetch(regimeUrl);
@@ -86,9 +99,11 @@
           regimeEl.innerHTML = '<span style="color:' + rc + '; font-weight:700;">'
             + escapeHtml(PF_REGIME_LABELS[app.regime_label] || app.regime_label) + '</span>';
           _pfSet('pf-regime-set', app.set_name || '-');
+          _pfSet('pf-regime-reason', app.match_reason ? ('근거: ' + app.match_reason) : '');
         } else {
           regimeEl.textContent = '-';
           _pfSet('pf-regime-set', '오늘 적용 기록 없음');
+          _pfSet('pf-regime-reason', '');
         }
       }
     } catch (e) {
@@ -96,7 +111,77 @@
     }
   }
 
-  /* "재선별" 뱃지 (장중 재선별 종목 표식) */
+  /* ① 환경: 시장 톤 + 장중 톤 추이(슬롯) */
+  async function _pfLoadToneTrend(tradeDate) {
+    var confEl = document.getElementById('pf-tone-confidence');
+    var trendEl = document.getElementById('pf-tone-trend');
+    try {
+      var r = await fetch('/api/v1/market-tone/today/slots');
+      var d = await r.json();
+      var slots = (d && d.payload && d.payload.slots) || [];
+      if (!slots.length) {
+        if (trendEl) trendEl.innerHTML = '<span class="muted">장중 톤 기록 없음</span>';
+        return;
+      }
+      var last = slots[slots.length - 1];
+      if (confEl && last.confidence != null) {
+        confEl.textContent = '신뢰도 ' + Math.round(Number(last.confidence) * 100) + '%';
+      }
+      // 톤이 바뀐 지점만 추려 추이 표시 (예: 긍정 → 혼조)
+      var seq = [];
+      slots.forEach(function(s) {
+        var lab = _pfToneLabel(s.tone);
+        if (!seq.length || seq[seq.length - 1] !== lab) seq.push(lab);
+      });
+      if (trendEl) {
+        if (seq.length <= 1) {
+          trendEl.innerHTML = '<span class="muted">장중 변화 없음 (' + escapeHtml(seq[0] || '-') + ' 유지, ' + slots.length + '슬롯)</span>';
+        } else {
+          trendEl.innerHTML = '<span class="muted">장중 변화: </span>'
+            + seq.map(function(x) { return '<strong>' + escapeHtml(x) + '</strong>'; }).join('<span class="muted"> → </span>');
+        }
+      }
+    } catch (e) {
+      if (trendEl) trendEl.innerHTML = '<span class="muted">톤 추이 조회 실패</span>';
+    }
+  }
+
+  /* ① 환경: 전일 대비 해외지표·변동성 (morning_context.market_data 내장값) */
+  async function _pfLoadIndexChanges(tradeDate) {
+    var box = document.getElementById('pf-index-changes');
+    if (!box) return;
+    try {
+      var url = tradeDate ? '/api/v1/morning-context/today?trade_date=' + encodeURIComponent(tradeDate) : '/api/v1/morning-context/today';
+      var r = await fetch(url);
+      var d = await r.json();
+      var md = (d && d.ok && d.data && d.data.market_data) ? d.data.market_data : null;
+      if (!md) {
+        box.innerHTML = '<span class="muted">아침 시장 데이터 없음(S2 미실행)</span>';
+        return;
+      }
+      var parts = PF_INDEX_KEYS.map(function(pair) {
+        var key = pair[0], label = pair[1];
+        var v = md[key];
+        if (!v || v.change_pct == null) return '';
+        var pct = Number(v.change_pct);
+        var up = pct > 0, down = pct < 0;
+        var color = up ? 'var(--green)' : (down ? 'var(--red)' : 'var(--muted)');
+        var arrow = up ? '▲' : (down ? '▼' : '–');
+        return '<span title="' + escapeHtml(label) + '">'
+          + '<span class="muted">' + escapeHtml(label) + '</span> '
+          + '<span style="color:' + color + '; font-weight:600;">' + arrow + ' ' + (up ? '+' : '') + pct.toFixed(2) + '%</span>'
+          + '</span>';
+      }).filter(Boolean);
+      box.innerHTML = parts.length ? parts.join('') : '<span class="muted">전일 대비 데이터 없음</span>';
+      if (d.is_today === false) {
+        box.innerHTML += '<span class="muted" style="flex-basis:100%; font-size:11px;">(오늘 데이터 없어 최근일 기준)</span>';
+      }
+    } catch (e) {
+      box.innerHTML = '<span class="muted">지표 조회 실패: ' + escapeHtml(e.message) + '</span>';
+    }
+  }
+
+  /* "재선별" 뱃지 */
   function _pfReselectBadge() {
     return '<span style="display:inline-block; font-size:9px; font-weight:700; color:#fff;'
       + ' background:var(--accent); border-radius:3px; padding:1px 5px; flex-shrink:0;">재선별</span>';
@@ -137,7 +222,7 @@
   }
   window.pfFilterScan = pfFilterScan;
 
-  /* ── 중단: 장중 선별 타임라인 — 모멘텀 스캔만(momentum_scan), 재선별은 하단 리스트로 분리 ── */
+  /* ③ 선별 하위(접힘): 장중 선별 타임라인 — 모멘텀 스캔 + 재선별 */
   async function _pfLoadIntradayEvents(tradeDate) {
     var box = document.getElementById('pf-intraday-timeline');
     var listBox = document.getElementById('pf-reselect-list');
@@ -150,8 +235,7 @@
       var scanEvents = events.filter(function(ev) { return ev.trigger === 'momentum_scan'; });
       var reselectEvents = events.filter(function(ev) { return ev.trigger === 'intraday_refresh'; });
 
-      // ── 상단: 모멘텀 스캔 유입 종목 — 종목별 중복 제거 후 "최초 유입 시각"만 표시 ──
-      // (기존: 스캔 이벤트별로 수십 종목을 통째 나열 → 거대한 벽. PM 요청 2026-06-18로 간결화)
+      // 모멘텀 스캔 — 종목별 중복 제거 후 "최초 유입 시각"만 표시
       var firstSeen = {};
       scanEvents.forEach(function(ev) {
         (ev.symbols_added || []).forEach(function(s) {
@@ -161,7 +245,7 @@
           if (!firstSeen[key]) {
             firstSeen[key] = { name: s.name, symbol: s.symbol, profile: s.profile, time: t };
           } else if (t && (!firstSeen[key].time || t < firstSeen[key].time)) {
-            firstSeen[key].time = t;  // 더 이른 유입 시각으로 갱신
+            firstSeen[key].time = t;
             if (s.profile) firstSeen[key].profile = firstSeen[key].profile || s.profile;
           }
         });
@@ -170,14 +254,11 @@
       _pfScanUniq.sort(function(a, b) { return String(a.time).localeCompare(String(b.time)); });
       _pfRenderScanList();
 
-      // ── 하단: 장중 재선별 종목 리스트 (각 종목에 재선별 뱃지) ──
+      // 장중 재선별 종목 리스트
       if (listBox) {
-        // 이벤트별 종목을 평탄화 — 시각·레짐 컨텍스트를 종목 행에 부착
         var reselectRows = [];
         reselectEvents.forEach(function(ev) {
-          (ev.symbols_added || []).forEach(function(s) {
-            reselectRows.push({ ev: ev, s: s });
-          });
+          (ev.symbols_added || []).forEach(function(s) { reselectRows.push({ ev: ev, s: s }); });
         });
         _pfSet('pf-reselect-count', reselectRows.length + '종목');
         if (!reselectRows.length) {
@@ -205,8 +286,9 @@
     }
   }
 
-  /* ── 하단: Funnel Progress 숫자 ── */
+  /* ③ 선별: Funnel 압축 숫자 + 선별 요약 */
   async function _pfLoadFunnelSummary() {
+    var sumEl = document.getElementById('pf-select-summary');
     try {
       var r = await fetchJson('/api/v1/funnel/summary');
       var fp = (r && r.ok && r.payload) ? r.payload : {};
@@ -214,6 +296,16 @@
       _pfSet('pf-funnel-layer1', fp.layer1_count != null ? fp.layer1_count.toLocaleString() : '-');
       _pfSet('pf-funnel-layer2', fp.layer2_count != null ? fp.layer2_count.toLocaleString() : '-');
       _pfSet('pf-funnel-signals', fp.signals_count != null ? String(fp.signals_count) : '-');
+      if (sumEl) {
+        var l2 = fp.layer2_count, sig = fp.signals_count;
+        if (l2 != null && l2 > 0) {
+          sumEl.innerHTML = '전략 통과 <strong>' + l2 + '종목</strong>'
+            + (sig != null ? ' · BUY 신호 <strong>' + sig + '건</strong>' : '')
+            + '<span class="muted"> — 상세 종목은 아래 펼쳐보기</span>';
+        } else {
+          sumEl.innerHTML = '<span class="muted">아직 선별 통과 종목이 없습니다.</span>';
+        }
+      }
       var noteEl = document.getElementById('pf-funnel-note');
       if (noteEl) {
         noteEl.textContent = fp.empty_reason
@@ -223,6 +315,7 @@
     } catch (e) {
       var noteEl2 = document.getElementById('pf-funnel-note');
       if (noteEl2) noteEl2.textContent = 'Funnel summary 조회 실패: ' + (e.message || 'unknown');
+      if (sumEl) sumEl.innerHTML = '';
     }
   }
 
@@ -232,6 +325,8 @@
     _pfSet('pf-trade-date', tradeDate);
     await Promise.allSettled([
       _pfLoadPlanSummary(tradeDate),
+      _pfLoadToneTrend(tradeDate),
+      _pfLoadIndexChanges(tradeDate),
       _pfLoadIntradayEvents(tradeDate),
       _pfLoadFunnelSummary(),
     ]);

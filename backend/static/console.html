@@ -445,76 +445,108 @@
           <div class="page-head">
             <div>
               <h1 class="page-title">Plan & Funnel</h1>
-              <p class="page-desc">오늘 Daily Plan 요약, 장중 선별 타임라인, Funnel 진행 숫자를 한 화면에서 확인합니다. 기준일 <strong id="pf-trade-date">-</strong></p>
+              <p class="page-desc">오늘은 <strong>어떤 시장(환경)</strong>에서 → <strong>어떤 전략</strong>을 세우고 → <strong>어떤 종목</strong>을 골랐는지 한 흐름으로 봅니다. 기준일 <strong id="pf-trade-date">-</strong></p>
             </div>
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
               <button type="button" class="btn" data-action="loadPlanFunnel">새로고침</button>
             </div>
           </div>
 
-          <!-- 상단: 오늘 Daily Plan 요약 -->
-          <div class="grid cols-4" style="margin-bottom:16px;">
-            <div class="card compact">
-              <div class="card-title">레짐 <span>regime</span></div>
-              <div class="metric" id="pf-regime">-</div>
-              <div class="muted" id="pf-regime-set">Regime Set 확인 전</div>
-            </div>
-            <div class="card compact">
-              <div class="card-title">시장 톤 <span>market tone</span></div>
-              <div class="metric" id="pf-market-tone">-</div>
-              <div class="muted" id="pf-intensity">매매 강도: -</div>
-            </div>
-            <div class="card compact">
-              <div class="card-title">신규매수 <span>new entry</span></div>
-              <div class="metric" id="pf-new-entry">-</div>
-              <div class="muted" id="pf-plan-status">Plan 상태: -</div>
-            </div>
-            <div class="card compact">
-              <div class="card-title">배정 프로파일 분포 <span>profiles</span></div>
-              <div class="metric" id="pf-assignments-count">-</div>
-              <div id="pf-profile-dist" style="font-size:12px; margin-top:4px; line-height:1.8;">-</div>
-            </div>
-          </div>
-
-          <!-- 중단: 장중 선별 타임라인 (모멘텀 스캔) -->
-          <div class="card" style="margin-bottom:16px;">
-            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-              <span>모멘텀 스캔 유입 종목 <span>최초 유입 시각순</span></span>
-              <span class="badge" id="pf-intraday-count">-</span>
-            </div>
-            <div style="display:flex; gap:6px; margin-bottom:8px; flex-wrap:wrap;">
-              <button type="button" id="pf-scanf-ALL" class="btn primary" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('ALL')">전체</button>
-              <button type="button" id="pf-scanf-L" class="btn" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('L')">저변동 L</button>
-              <button type="button" id="pf-scanf-M" class="btn" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('M')">중변동 M</button>
-              <button type="button" id="pf-scanf-H" class="btn" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('H')">고변동 H</button>
-              <button type="button" id="pf-scanf-T" class="btn" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('T')">테마급등 T</button>
-            </div>
-            <div id="pf-intraday-timeline" style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px;">
-              <div class="muted" style="padding:8px;">로딩중...</div>
+          <!-- ① 환경 — 시장상황 변화를 잘 캐치하는가 -->
+          <div class="card" style="margin-bottom:4px; border-left:3px solid #6cb6ff;">
+            <div class="card-title"><span style="color:#6cb6ff;">① 오늘 시장은?</span> <span>환경 변화를 잘 캐치하는가</span></div>
+            <div class="grid cols-2" style="gap:16px; margin-top:6px;">
+              <div>
+                <div style="display:flex; gap:8px; align-items:baseline; flex-wrap:wrap;">
+                  <span class="muted" style="font-size:12px;">레짐</span>
+                  <span class="metric" id="pf-regime" style="font-size:18px;">-</span>
+                  <span class="muted" id="pf-regime-set" style="font-size:12px;">Regime Set 확인 전</span>
+                </div>
+                <div class="muted" id="pf-regime-reason" style="font-size:12px; margin-top:2px;"></div>
+                <div style="display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; margin-top:10px;">
+                  <span class="muted" style="font-size:12px;">시장 톤</span>
+                  <span class="metric" id="pf-market-tone" style="font-size:18px;">-</span>
+                  <span class="muted" id="pf-tone-confidence" style="font-size:12px;"></span>
+                </div>
+                <div id="pf-tone-trend" style="font-size:12px; margin-top:2px;"></div>
+              </div>
+              <div>
+                <div class="muted" style="font-size:12px; margin-bottom:4px;">전일 대비 (해외지표·변동성)</div>
+                <div id="pf-index-changes" style="display:flex; flex-wrap:wrap; gap:6px 14px; font-size:12px;">
+                  <span class="muted">로딩중...</span>
+                </div>
+              </div>
             </div>
           </div>
+          <div style="text-align:center; color:var(--muted); font-size:11px; margin:2px 0;">↓ 그래서</div>
 
-          <!-- 중단2: 장중 재선별 종목 리스트 -->
-          <div class="card" style="margin-bottom:16px;">
-            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-              <span>장중 재선별 종목 <span>intraday_refresh 유입 종목</span></span>
-              <span class="badge" id="pf-reselect-count">-</span>
+          <!-- ② 전략 — 환경에 따라 매매전략이 알맞게 변하는가 -->
+          <div class="card" style="margin-bottom:4px; border-left:3px solid #3fb950;">
+            <div class="card-title"><span style="color:#3fb950;">② 그래서 전략은?</span> <span>전략이 알맞게 변하는가</span></div>
+            <div class="grid cols-3" style="gap:16px; margin-top:6px;">
+              <div>
+                <div class="muted" style="font-size:12px;">매매 강도</div>
+                <div class="metric" id="pf-intensity" style="font-size:18px;">-</div>
+              </div>
+              <div>
+                <div class="muted" style="font-size:12px;">신규매수</div>
+                <div class="metric" id="pf-new-entry" style="font-size:18px;">-</div>
+                <div class="muted" id="pf-plan-status" style="font-size:11px;">Plan 상태: -</div>
+              </div>
+              <div>
+                <div class="muted" style="font-size:12px;">배정 프로파일 분포 <span id="pf-assignments-count" class="badge">-</span></div>
+                <div id="pf-profile-dist" style="font-size:12px; margin-top:4px; line-height:1.8;">-</div>
+              </div>
             </div>
-            <div id="pf-reselect-list" style="display:flex; flex-direction:column; gap:6px;">
-              <div class="muted" style="padding:8px;">로딩중...</div>
+            <div class="muted" style="font-size:11px; margin-top:10px; line-height:1.6;">
+              청산: 고정 익절 미사용 · 프로파일별 초기손절 + 트레일링 스탑(손절선 상향만) · 15:20 강제청산
             </div>
           </div>
+          <div style="text-align:center; color:var(--muted); font-size:11px; margin:2px 0;">↓ 그래서</div>
 
-          <!-- 하단: Funnel Progress -->
-          <div class="card">
-            <div class="card-title">Funnel Progress <span>오늘 단계별 압축 현황</span></div>
-            <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px;">
+          <!-- ③ 선별 — 전략에 따라 종목을 잘 선택하는가 -->
+          <div class="card" style="border-left:3px solid #d29922;">
+            <div class="card-title"><span style="color:#d29922;">③ 그래서 고른 종목은?</span> <span>전략대로 선별하는가</span></div>
+            <!-- Funnel 압축 가로 흐름 -->
+            <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:6px;">
               <div class="card compact"><div class="card-title">기준 universe</div><div class="metric" id="pf-funnel-total">-</div></div>
               <div class="card compact"><div class="card-title">Layer 1 통과</div><div class="metric" id="pf-funnel-layer1">-</div></div>
               <div class="card compact"><div class="card-title">Layer 2 통과</div><div class="metric" id="pf-funnel-layer2">-</div></div>
-              <div class="card compact"><div class="card-title">오늘 BUY 신호 (원본)</div><div class="metric" id="pf-funnel-signals">-</div></div>
+              <div class="card compact"><div class="card-title">BUY 신호 (원본)</div><div class="metric" id="pf-funnel-signals">-</div></div>
             </div>
-            <div class="muted" id="pf-funnel-note" style="font-size:12px; margin-top:8px;"></div>
+            <div id="pf-select-summary" style="font-size:13px; margin-top:10px;"></div>
+            <div class="muted" id="pf-funnel-note" style="font-size:12px; margin-top:6px;"></div>
+
+            <!-- 종목 리스트 — 기본 접힘(PM: 궁금하면 펼쳐본다) -->
+            <details class="pf-details-section" style="margin-top:12px;">
+              <summary class="pf-details-summary" style="font-size:13px; cursor:pointer;">
+                <span>종목 리스트 보기</span>
+                <span style="font-size:11px; color:var(--muted);">모멘텀 스캔 · 장중 재선별 (클릭해서 펼치기)</span>
+              </summary>
+              <div style="margin-top:10px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                  <span style="font-size:12px; font-weight:600;">모멘텀 스캔 유입 <span class="muted" style="font-weight:400;">최초 유입 시각순</span></span>
+                  <span class="badge" id="pf-intraday-count">-</span>
+                </div>
+                <div style="display:flex; gap:6px; margin-bottom:8px; flex-wrap:wrap;">
+                  <button type="button" id="pf-scanf-ALL" class="btn primary" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('ALL')">전체</button>
+                  <button type="button" id="pf-scanf-L" class="btn" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('L')">저변동 L</button>
+                  <button type="button" id="pf-scanf-M" class="btn" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('M')">중변동 M</button>
+                  <button type="button" id="pf-scanf-H" class="btn" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('H')">고변동 H</button>
+                  <button type="button" id="pf-scanf-T" class="btn" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('T')">테마급등 T</button>
+                </div>
+                <div id="pf-intraday-timeline" style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px;">
+                  <div class="muted" style="padding:8px;">로딩중...</div>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin:12px 0 6px;">
+                  <span style="font-size:12px; font-weight:600;">장중 재선별 <span class="muted" style="font-weight:400;">intraday_refresh 유입</span></span>
+                  <span class="badge" id="pf-reselect-count">-</span>
+                </div>
+                <div id="pf-reselect-list" style="display:flex; flex-direction:column; gap:6px;">
+                  <div class="muted" style="padding:8px;">로딩중...</div>
+                </div>
+              </div>
+            </details>
           </div>
 
           <!-- ── 접을 수 있는 상세: Daily Plan ── -->
@@ -2613,7 +2645,7 @@
   <script src="/static/js/screens/console-statistics.js?v=2"></script>
   <script src="/static/js/screens/console-regime-analytics.js?v=7"></script>
   <script src="/static/js/screens/console-daily-plan.js?v=12"></script>
-  <script src="/static/js/screens/console-plan-funnel.js?v=4"></script>
+  <script src="/static/js/screens/console-plan-funnel.js?v=5"></script>
   <script src="/static/js/screens/console-expert-knowledge.js"></script>
   <script src="/static/js/screens/console-dividends.js"></script>
   <script src="/static/js/screens/console-dividend-stats.js"></script>
