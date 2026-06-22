@@ -1015,9 +1015,12 @@ class DecisionEngine:
     async def _refresh_realtime_subscriptions(self) -> bool:
         """Restart realtime subscriptions when KIS sync changes protected symbols."""
         from .position_manager import position_manager
+        from ..settings_store import get_setting as _gs
 
         managed_symbols = [str(pos.get("symbol") or "") for pos in position_manager.get_positions()]
-        symbols = list(dict.fromkeys([*list(self._candidates.keys()), *managed_symbols]))
+        # 보유종목 우선(절대 미절단) + 후보(상한 내). 후보-우선 순서면 상한 절단에서 보유가 빠진다.
+        _cap = int(_gs("realtime.ws_max", 41) or 41)
+        symbols = _subscription_symbols(managed_symbols, list(self._candidates.keys()), cap=_cap)
         current_symbols = list(getattr(realtime_ws_manager, "_symbols", []) or [])
         if not symbols or symbols == current_symbols:
             return False
@@ -1256,7 +1259,10 @@ class DecisionEngine:
                 self._signal_sent.discard(symbol)
                 rearmed.append(symbol)
 
-        all_symbols = list(dict.fromkeys([*list(self._candidates.keys()), *managed_symbols]))
+        from ..settings_store import get_setting as _gs
+        # 보유종목 우선(절대 미절단) + 후보(상한 내) — 후보-우선 순서면 상한 절단에서 보유가 빠진다.
+        _cap = int(_gs("realtime.ws_max", 41) or 41)
+        all_symbols = _subscription_symbols(managed_symbols, list(self._candidates.keys()), cap=_cap)
         try:
             await realtime_ws_manager.stop()
             await realtime_ws_manager.start(symbols=all_symbols)

@@ -108,6 +108,9 @@ class PositionManager:
         self._active = False
         # WS 마지막 틱 수신 시각(monotonic). None이면 틱을 한 번도 못 받은 상태(stale 간주).
         self._last_tick_monotonic: float | None = None
+        # 종목별 마지막 틱 수신 시각(monotonic) — 개별 무틱 종목 손절 백업 판정용.
+        # 전역값만으로는 "다른 종목이 틱하면 전 종목 백업 skip"되어 무틱 종목이 방치된다.
+        self._last_tick_by_symbol: dict[str, float] = {}
 
     def add_position(
         self,
@@ -317,9 +320,13 @@ class PositionManager:
 
     async def on_tick(self, tick: dict[str, Any]) -> None:
         # WS 생존 판정용 — 어떤 틱이든 수신했다면 WS 경로가 살아있는 것이다 (REST 백업 가드)
-        self._last_tick_monotonic = time.monotonic()
+        now_mono = time.monotonic()
+        self._last_tick_monotonic = now_mono
 
         symbol = str(tick.get("symbol") or "").strip()
+        if symbol:
+            # 종목별 최신 틱 시각 — 개별 무틱 종목을 REST 백업이 골라내는 기준.
+            self._last_tick_by_symbol[symbol] = now_mono
         position = self._positions.get(symbol)
         if not position or symbol in self._closing:
             return
@@ -382,17 +389,20 @@ class PositionManager:
         return reason
 
     async def check_exits_via_rest(self) -> dict[str, Any]:
-        """손절 REST 폴링 백업 — WS 정체 시 보유 포지션을 REST 현재가로 감시한다.
+        """손절 REST 폴링 백업 — **종목별**로 WS 틱이 끊긴 보유 포지션만 REST로 감시한다.
 
-        WS가 정상(최근 stale_threshold 이내 틱 수신)이면 REST를 호출하지 않는다
-        (KIS rate-limit 보호). WS 정체 또는 틱 미수신 상태에서만 보유 심볼별
-        현재가를 조회해 on_tick과 동일한 _process_price 경로로 청산을 판정한다.
+        과거에는 *전역* 마지막 틱이 신선하면(=어떤 종목이든 틱하면) 전 종목 백업을 skip해,
+        개별 무틱 종목(예: KIS가 실시간을 안 보내는 ETN/ETF, 구독 거절·절단 종목)의 손절이
+        장중 내내 방치됐다. 이제 **각 보유 종목의 마지막 틱 시각**을 기준으로, stale_threshold
+        이상 틱이 없는(또는 한 번도 못 받은) 종목만 골라 REST 현재가로 손절을 판정한다
+        (on_tick과 동일한 _process_price 경로). 보유 종목만, 그것도 무틱인 것만 폴링하므로
+        KIS rate-limit 부담은 작다.
 
         Returns:
-            {"ok", "checked", "triggered", "errors"} 또는 skip 사유 dict.
+            {"ok", "checked", "triggered", "stale", "errors"} 또는 skip 사유 dict.
         """
-        symbols = [s for s, p in self._positions.items() if s not in self._closing]
-        if not symbols:
+        all_symbols = [s for s, p in self._positions.items() if s not in self._closing]
+        if not all_symbols:
             return {"ok": True, "checked": 0}
 
         try:
@@ -407,14 +417,19 @@ class PositionManager:
         except Exception:
             stale_threshold = 90.0
 
-        # 최근 틱이 있으면 WS 경로가 살아있다 — REST 백업 불필요. None이면 stale 간주.
-        last_tick = self._last_tick_monotonic
-        if last_tick is not None and (time.monotonic() - last_tick) < stale_threshold:
-            return {"ok": True, "skipped": "ws_alive"}
+        # 종목별 stale 판정 — 마지막 틱이 임계 이상 오래됐거나(또는 미수신) 종목만 백업 대상.
+        now_mono = time.monotonic()
+        symbols = []
+        for symbol in all_symbols:
+            last = self._last_tick_by_symbol.get(symbol)
+            if last is None or (now_mono - last) >= stale_threshold:
+                symbols.append(symbol)
+        if not symbols:
+            return {"ok": True, "checked": 0, "skipped": "all_fresh"}
 
         logger.warning(
-            "WARN: [S8] WS stale(>%ss) — REST 손절 백업 폴링 시작 symbols=%d",
-            int(stale_threshold), len(symbols),
+            "WARN: [S8] 종목별 틱 정체(>%ss) — REST 손절 백업 폴링 stale=%d/%d symbols=%s",
+            int(stale_threshold), len(symbols), len(all_symbols), symbols,
         )
 
         from ..kis.domestic import service as domestic_service
@@ -444,7 +459,7 @@ class PositionManager:
                 triggered.append(symbol)
                 logger.info("SUCCESS: [S8] REST 백업 청산 트리거 symbol=%s reason=%s price=%.2f", symbol, reason, price)
 
-        return {"ok": True, "checked": checked, "triggered": triggered, "errors": errors}
+        return {"ok": True, "checked": checked, "triggered": triggered, "stale": symbols, "errors": errors}
 
     async def _notify_trailing_slot_opened(self, symbol: str, reason: str) -> None:
         """Re-arm S6 candidate evaluation after a trailing stop opens capacity.

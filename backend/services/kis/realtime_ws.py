@@ -75,6 +75,9 @@ class RealtimeWSManager:
         self.is_connected: bool = False
         self._consecutive_fail_count: int = 0
         self._ws_block_published: bool = False
+        # 구독 거절 추적 — KIS가 rt_cd≠0(예: 41 동시등록 한도 초과)로 거절하면 그 종목은
+        # _symbols에 있어도 틱이 0이다(과거엔 무시돼 '구독된 줄' 오인). {symbol: msg}.
+        self._subscribe_rejected: dict[str, str] = {}
 
     async def start(self, symbols: list[str]) -> None:
         safe_symbols = [str(s).strip() for s in symbols if str(s).strip()]
@@ -91,6 +94,7 @@ class RealtimeWSManager:
             await self.stop()
 
         self._symbols = unique_symbols
+        self._subscribe_rejected = {}  # 새 구독 세션 시작 — 이전 거절 기록 초기화
         self._stop_event = asyncio.Event()
         self._runner_task = asyncio.create_task(self._run(), name="kis-realtime-ws")
 
@@ -211,6 +215,8 @@ class RealtimeWSManager:
                     logger.info("SUCCESS: realtime PINGPONG handled")
                 elif tr_id:
                     entry["tr_id"] = tr_id
+                    # 구독 응답(rt_cd) 검사 — 거절(한도 초과 등) 시 surfacing해 손절 백업/운영이 인지한다.
+                    self._handle_subscribe_ack(entry["json"], header, tr_id)
                     logger.info("INFO: realtime control message tr_id=%s", tr_id)
             except Exception:
                 pass
@@ -257,6 +263,61 @@ class RealtimeWSManager:
                         await result
                 except Exception as exc:
                     logger.error("FAIL: tick callback error — %s", exc)
+
+    def _handle_subscribe_ack(self, payload: Any, header: Any, tr_id: str) -> None:
+        """KIS 구독 응답(rt_cd)을 검사해 거절을 surfacing한다.
+
+        성공(rt_cd=='0') 또는 'ALREADY IN SUBSCRIBE'(이미 구독, 사실상 정상)는 무시하고,
+        그 외 실패(예: 동시등록 41 한도 초과)는 종목별 거절로 기록·경고·알림한다.
+        거절된 종목은 _symbols에 남아도 틱이 안 오므로, 손절 REST 백업이 이를 받아야 한다.
+
+        Args:
+            payload: 파싱된 제어 메시지 JSON(dict 예상).
+            header: payload의 header(dict 예상).
+            tr_id: 헤더 tr_id.
+        """
+        try:
+            if not isinstance(payload, dict):
+                return
+            body = payload.get("body") if isinstance(payload.get("body"), dict) else {}
+            rt_cd = str(body.get("rt_cd") or "").strip()
+            msg1 = str(body.get("msg1") or body.get("msg") or "").strip()
+            symbol = ""
+            if isinstance(header, dict):
+                symbol = str(header.get("tr_key") or "").strip()
+            if not rt_cd:
+                return  # 체결 데이터 등 rt_cd 없는 제어메시지는 대상 아님
+            if rt_cd == "0" or "ALREADY" in msg1.upper():
+                if symbol:
+                    self._subscribe_rejected.pop(symbol, None)  # 정상 — 이전 거절 해제
+                return
+            # 실패 — 거절로 기록
+            label = symbol or "?"
+            self._subscribe_rejected[label] = msg1 or f"rt_cd={rt_cd}"
+            logger.warning(
+                "WARN: realtime 구독 거절 symbol=%s tr_id=%s rt_cd=%s msg=%s (틱 미수신 — 손절 REST 백업 대상)",
+                label, tr_id, rt_cd, msg1,
+            )
+            try:
+                from ..engine.alert_center import create_alert
+                create_alert(
+                    alert_type="ws_delay",
+                    title=f"[실시간 구독 거절] {label}",
+                    severity="WARNING",
+                    detail=f"tr_id={tr_id} rt_cd={rt_cd} msg={msg1} — 해당 종목 실시간 틱 미수신. 손절은 REST 백업으로 감시됨.",
+                )
+            except Exception:
+                pass
+        except Exception as exc:
+            logger.warning("WARN: realtime 구독 응답 파싱 실패 — %s", exc)
+
+    def get_subscribe_health(self) -> dict[str, Any]:
+        """구독 건전성 — 구독 요청 종목수·거절 종목 맵 반환(진단·모니터링용)."""
+        return {
+            "subscribed": list(self._symbols),
+            "rejected": dict(self._subscribe_rejected),
+            "connected": self.is_connected,
+        }
 
     async def _issue_approval_key(self) -> str:
         url = f"{kis_client.base_url}/oauth2/Approval"

@@ -63,10 +63,16 @@ class StopLossBackupTest(unittest.IsolatedAsyncioTestCase):
         self.manager = PositionManager()
         self.manager._get_today_tone = Mock(return_value="fallback")
 
-    async def test_skips_rest_when_ws_alive(self) -> None:
-        """최근 틱이 있으면(WS 정상) REST를 호출하지 않고 skip 한다."""
+    async def test_skips_rest_when_symbol_tick_fresh(self) -> None:
+        """해당 종목의 최근 틱이 신선하면 그 종목은 REST를 호출하지 않는다(종목별 판정).
+
+        2026-06-22: '전역 WS alive면 전 종목 skip' → '종목별 stale 판정'으로 변경.
+        전역 틱이 신선해도 개별 무틱 종목은 폴링돼야 하므로, skip은 해당 종목 틱 기준이다.
+        """
         self.manager._positions["005930"] = _make_position()
-        self.manager._last_tick_monotonic = time.monotonic()
+        now = time.monotonic()
+        self.manager._last_tick_monotonic = now
+        self.manager._last_tick_by_symbol = {"005930": now}  # 이 종목 자체가 방금 틱
 
         rest = AsyncMock()
         with patch("backend.services.engine.position_manager.get_setting", side_effect=_settings()), \
@@ -74,7 +80,7 @@ class StopLossBackupTest(unittest.IsolatedAsyncioTestCase):
             result = await self.manager.check_exits_via_rest()
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result.get("skipped"), "ws_alive")
+        self.assertEqual(result.get("skipped"), "all_fresh")
         rest.assert_not_awaited()
 
     async def test_stale_ws_triggers_sell_below_stop(self) -> None:
