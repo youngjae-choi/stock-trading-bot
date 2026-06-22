@@ -57,6 +57,40 @@ def test_rest_backup_polls_only_stale_symbols(monkeypatch):
     assert "STALE" in result["stale"] and "FRESH" not in result["stale"]
 
 
+def test_rest_backup_falls_back_to_balance_price(monkeypatch):
+    """ETN 등 inquire-price가 0이면 잔고(output1 prpr)로 폴백해 손절 판정한다 (E)."""
+    from backend.services.engine.position_manager import PositionManager
+    import backend.services.engine.position_manager as pm_mod
+
+    pm = PositionManager()
+    pm._positions = {"520037": _fake_position("520037", 35000.0)}
+    pm._last_tick_by_symbol = {}  # 무틱 → stale
+    monkeypatch.setattr(pm_mod, "get_setting", lambda k, d=None: {"risk.stop_loss_backup_enabled": True,
+                                                                  "risk.stop_loss_backup_stale_sec": 90}.get(k, d))
+
+    import backend.services.kis.domestic.service as dsvc
+
+    async def bad_price(symbol):
+        return {"output": {"stck_prpr": "0"}}  # ETN inquire-price 무효
+
+    async def balance():
+        return {"output1": [{"pdno": "520037", "prpr": "37500"}]}  # 잔고는 정상 가격
+
+    monkeypatch.setattr(dsvc, "get_current_price", bad_price)
+    monkeypatch.setattr(dsvc, "get_balance", balance)
+
+    seen = {}
+
+    async def _capture(position, price):
+        seen["price"] = price
+        return ""
+    monkeypatch.setattr(pm, "_process_price", _capture)
+
+    result = asyncio.run(pm.check_exits_via_rest())
+    assert seen.get("price") == 37500.0, "잔고 폴백 가격으로 손절 판정해야 함"
+    assert result["checked"] == 1 and result["errors"] == []
+
+
 def test_rest_backup_skips_when_all_fresh(monkeypatch):
     from backend.services.engine.position_manager import PositionManager
     import backend.services.engine.position_manager as pm_mod

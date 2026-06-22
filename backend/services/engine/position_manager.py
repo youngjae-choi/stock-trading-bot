@@ -434,6 +434,26 @@ class PositionManager:
 
         from ..kis.domestic import service as domestic_service
 
+        # ETN 등 일부 종목은 inquire-price가 0/500을 반환한다(주식용 시세 엔드포인트 한계).
+        # 그 경우 KIS 잔고(output1 prpr)의 현재가로 폴백한다 — 잔고는 보유 전 종목 가격을
+        # 신뢰성 있게 제공하므로 손절 백업이 어떤 종목이든 가격을 확보할 수 있다. (E, 2026-06-22)
+        _balance_price: dict[str, float] | None = None
+
+        async def _balance_price_for(sym: str) -> float:
+            nonlocal _balance_price
+            if _balance_price is None:
+                _balance_price = {}
+                try:
+                    bal = await domestic_service.get_balance()
+                    rows = (bal or {}).get("output1") or []
+                    for it in (rows if isinstance(rows, list) else [rows]):
+                        code = str(it.get("pdno") or "").strip().lstrip("A")
+                        if code:
+                            _balance_price[code] = _to_float(it.get("prpr"))
+                except Exception as exc:
+                    logger.warning("WARN: [S8] REST 백업 잔고 폴백 조회 실패 reason=%s", exc)
+            return _balance_price.get(sym, 0.0)
+
         checked = 0
         triggered: list[str] = []
         errors: list[str] = []
@@ -450,8 +470,11 @@ class PositionManager:
             output = payload.get("output") if isinstance(payload, dict) else {}
             price = _to_float((output or {}).get("stck_prpr"))
             if price <= 0:
+                # inquire-price 무효 — 잔고 평가가격으로 폴백(ETN 등)
+                price = await _balance_price_for(symbol)
+            if price <= 0:
                 errors.append(symbol)
-                logger.warning("WARN: [S8] REST 백업 현재가 무효 symbol=%s price=%s", symbol, price)
+                logger.warning("WARN: [S8] REST 백업 현재가 무효(잔고 폴백도 실패) symbol=%s", symbol)
                 continue
             checked += 1
             reason = await self._process_price(position, price)

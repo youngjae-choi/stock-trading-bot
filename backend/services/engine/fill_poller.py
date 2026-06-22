@@ -125,11 +125,15 @@ def _ensure_fills_table() -> None:
             )
             """
         )
+        # order_id는 단순 링크(무FK). 과거 fills.order_id가 레거시 orders(id)를 FK 참조했는데
+        # 주문이 trading_orders로 옮겨가며 그 FK가 죽었고, INSERT OR IGNORE는 FK 위반을
+        # '삼키지 않고' RAISE해 체결기록이 실패 → 주문 영구 'submitted' → 중복가드가 손절
+        # 재매도를 차단(청산 실패 만성화: 368680 등). 그래서 FK 없이 둔다. (2026-06-22)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS fills (
                 id TEXT PRIMARY KEY,
-                order_id TEXT REFERENCES orders(id) ON DELETE SET NULL,
+                order_id TEXT,
                 broker_fill_id TEXT NOT NULL DEFAULT '',
                 symbol TEXT NOT NULL,
                 side TEXT NOT NULL,
@@ -142,6 +146,39 @@ def _ensure_fills_table() -> None:
             )
             """
         )
+        # 마이그레이션: 기존 DB의 fills가 아직 orders FK를 갖고 있으면 무FK 테이블로 재작성한다.
+        # (CREATE TABLE IF NOT EXISTS는 기존 테이블을 못 바꾸므로 명시적 재작성 필요)
+        try:
+            fk_list = conn.execute("PRAGMA foreign_key_list(fills)").fetchall()
+        except Exception:
+            fk_list = []
+        if fk_list:
+            logger.warning("WARN: [FillPoller] fills 레거시 FK 감지 — 무FK 테이블로 재작성(체결기록 실패 해소)")
+            conn.executescript(
+                """
+                PRAGMA foreign_keys=OFF;
+                BEGIN;
+                CREATE TABLE fills_new (
+                    id TEXT PRIMARY KEY,
+                    order_id TEXT,
+                    broker_fill_id TEXT NOT NULL DEFAULT '',
+                    symbol TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    quantity REAL NOT NULL,
+                    price REAL NOT NULL,
+                    fee REAL NOT NULL DEFAULT 0,
+                    tax REAL NOT NULL DEFAULT 0,
+                    filled_at TEXT NOT NULL,
+                    raw_json TEXT NOT NULL DEFAULT '{}'
+                );
+                INSERT INTO fills_new SELECT id, order_id, broker_fill_id, symbol, side,
+                    quantity, price, fee, tax, filled_at, raw_json FROM fills;
+                DROP TABLE fills;
+                ALTER TABLE fills_new RENAME TO fills;
+                COMMIT;
+                PRAGMA foreign_keys=ON;
+                """
+            )
 
 
 def _ensure_poll_tables() -> None:
