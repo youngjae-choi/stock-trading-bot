@@ -839,6 +839,10 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
         eod_select = "drr.equity_eod_total_eval" if "equity_eod_total_eval" in drr_columns else "NULL"
         # 저장된 당일성적 SSOT — 승/패는 이 저장값을 읽어 Review와 단일화(윈도우 의존 재계산 금지). 컬럼 없으면 NULL.
         dayscore_select = "drr.day_score" if "day_score" in drr_columns else "NULL"
+        # 그날 KOSPI 시초가/종가/등락율 — S10이 저장(읽기모델). 컬럼 없으면 NULL.
+        kospi_open_select = "drr.kospi_open" if "kospi_open" in drr_columns else "NULL"
+        kospi_close_select = "drr.kospi_close" if "kospi_close" in drr_columns else "NULL"
+        kospi_chg_select = "drr.kospi_change_pct" if "kospi_change_pct" in drr_columns else "NULL"
         # P&L은 daily_trade_summary(주문 가격 기반 계산)가 더 정확함
         base_select = f"""
                 SELECT
@@ -849,6 +853,9 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
                     {equity_select} AS equity_pnl,
                     {eod_select} AS eod_total_eval,
                     {dayscore_select} AS day_score,
+                    {kospi_open_select} AS kospi_open,
+                    {kospi_close_select} AS kospi_close,
+                    {kospi_chg_select} AS kospi_change_pct,
                     COALESCE(dts.buy_orders, drr.total_trades, 0) AS trade_count,
                     COALESCE(dts.realized_pnl, 0.0) AS total_pnl,
                     COALESCE(dts.realized_pnl_pct, 0.0) AS pnl_rate,
@@ -1061,6 +1068,52 @@ def _format_replacement_signals(signals: list[dict[str, Any]]) -> list[dict[str,
             }
         )
     return formatted
+
+
+@router.post("/backfill-kospi")
+async def backfill_kospi(start_date: str | None = None, end_date: str | None = None):
+    """과거 거래일의 KOSPI 시초가/종가/등락율을 일별 지수차트로 1회 백필한다.
+
+    daily-results는 S10이 EOD에 저장한 값을 읽는데, 컬럼 도입 전 과거일은 비어 있다.
+    KIS 일별 지수차트(inquire-daily-indexchartprice)로 정확한 OHLC를 받아 채운다(서버 내부 KIS).
+
+    start_date/end_date 미지정 시 daily_review_reports의 최소~최대 거래일 범위를 사용한다.
+    """
+    endpoint = "/api/v1/trading-monitor/backfill-kospi"
+    logger.info("START: POST %s start=%s end=%s", endpoint, start_date, end_date)
+    try:
+        from ...services.engine.review_audit import _ensure_review_integrity_columns
+        from ...services.kis.domestic.universe_service import get_index_daily_ohlc
+
+        _ensure_review_integrity_columns()
+        with get_connection() as conn:
+            if not (start_date and end_date):
+                row = conn.execute(
+                    "SELECT MIN(trade_date) lo, MAX(trade_date) hi FROM daily_review_reports"
+                ).fetchone()
+                start_date = start_date or (row["lo"] if row else None)
+                end_date = end_date or (row["hi"] if row else None)
+        if not (start_date and end_date):
+            return {"ok": True, "updated": 0, "reason": "no_rows"}
+
+        # 첫 표시일의 전일 종가까지 받아 등락율(전일 종가 대비)을 정확히 계산하도록 조회 시작을 앞당긴다.
+        from datetime import datetime as _dt, timedelta as _td
+        fetch_start = (_dt.fromisoformat(start_date) - _td(days=10)).strftime("%Y-%m-%d")
+        ohlc = await get_index_daily_ohlc("0001", fetch_start, end_date)
+        updated = 0
+        with get_connection() as conn:
+            for r in ohlc:
+                res = conn.execute(
+                    "UPDATE daily_review_reports SET kospi_open = ?, kospi_close = ?, kospi_change_pct = ? "
+                    "WHERE trade_date = ?",
+                    (r.get("open"), r.get("close"), r.get("change_rate"), r.get("date")),
+                )
+                updated += res.rowcount
+        logger.info("SUCCESS: POST %s fetched=%d updated=%d", endpoint, len(ohlc), updated)
+        return {"ok": True, "fetched": len(ohlc), "updated": updated, "start": start_date, "end": end_date}
+    except Exception as exc:
+        logger.error("FAIL: POST %s reason=%s", endpoint, exc)
+        return {"ok": False, "error": str(exc)}
 
 
 @router.get("/replacement-signals")

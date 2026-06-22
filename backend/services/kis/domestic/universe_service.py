@@ -271,10 +271,62 @@ async def get_market_index(index_code: str) -> dict[str, Any]:
     out = payload.get("output", {})
     return {
         "code": index_code,
-        "price": _to_float(out.get("bstp_nmix_prpr", 0)),
-        "change_rate": _to_float(out.get("bstp_nmix_prdy_ctrt", 0)),
+        "price": _to_float(out.get("bstp_nmix_prpr", 0)),       # 현재가(장마감 후=종가)
+        "open": _to_float(out.get("bstp_nmix_oprc", 0)),         # 시초가
+        "high": _to_float(out.get("bstp_nmix_hgpr", 0)),
+        "low": _to_float(out.get("bstp_nmix_lwpr", 0)),
+        "change_rate": _to_float(out.get("bstp_nmix_prdy_ctrt", 0)),  # 등락율
         "change": _to_float(out.get("bstp_nmix_prdy_vrss", 0)),
     }
+
+
+async def get_index_daily_ohlc(index_code: str, start_date: str, end_date: str) -> list[dict[str, Any]]:
+    """업종 지수 일별 OHLC·등락율 조회 (과거 백필용).
+
+    TR_ID FHKUP03500100 = 국내업종 기간별 지수(일/주/월/년) (inquire-daily-indexchartprice).
+    KOSPI=0001 / KOSDAQ=1001. 날짜는 YYYYMMDD.
+
+    Returns:
+        [{date(YYYY-MM-DD), open, close, change_rate}] 최신순. 실패 시 빈 리스트.
+    """
+    payload = await kis_client.request(
+        method="GET",
+        path="/uapi/domestic-stock/v1/quotations/inquire-daily-indexchartprice",
+        tr_id="FHKUP03500100",
+        params={
+            "FID_COND_MRKT_DIV_CODE": "U",
+            "FID_INPUT_ISCD": index_code,
+            "FID_INPUT_DATE_1": str(start_date).replace("-", ""),
+            "FID_INPUT_DATE_2": str(end_date).replace("-", ""),
+            "FID_PERIOD_DIV_CODE": "D",
+        },
+    )
+    rows = payload.get("output2") or []
+    if isinstance(rows, dict):
+        rows = [rows]
+    parsed: list[dict[str, Any]] = []
+    for row in rows:
+        raw_date = str(row.get("stck_bsop_date") or "").strip()
+        if len(raw_date) != 8:
+            continue
+        iso = f"{raw_date[0:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
+        parsed.append({
+            "date": iso,
+            "open": _to_float(row.get("bstp_nmix_oprc", 0)),
+            "close": _to_float(row.get("bstp_nmix_prpr", 0)),
+            "change_rate": _to_float(row.get("bstp_nmix_prdy_ctrt", 0)),
+        })
+    # 등락율은 일별 지수차트 응답에서 비어오는 경우가 많아 연속 종가로 직접 계산한다(시초가 대비가
+    # 아니라 전일 종가 대비 = 시장 통념의 등락율). 날짜 오름차순으로 prev_close 대비 산출.
+    parsed.sort(key=lambda r: r["date"])
+    prev_close = 0.0
+    for r in parsed:
+        if prev_close > 0 and r["close"] > 0:
+            r["change_rate"] = round((r["close"] - prev_close) / prev_close * 100, 2)
+        # prev_close가 없거나(첫 행) 종가 0이면 API 원값 유지
+        if r["close"] > 0:
+            prev_close = r["close"]
+    return parsed
 
 
 async def get_sector_index(sector_code: str) -> dict[str, Any]:

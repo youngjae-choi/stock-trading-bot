@@ -539,6 +539,11 @@ def _ensure_review_integrity_columns() -> None:
         ("equity_eod_total_eval", "ALTER TABLE daily_review_reports ADD COLUMN equity_eod_total_eval REAL"),
         # 당일 매매성적 SSOT(compute_daily_score) 영속 — 모든 복기 카드가 이 저장값을 읽는다 (2026-06-18)
         ("day_score", "ALTER TABLE daily_review_reports ADD COLUMN day_score TEXT"),
+        # 그날 KOSPI 시초가/종가/등락율 — Daily Results에 시장 맥락 병기 (2026-06-22). 엔진(S10)이
+        # EOD에 저장, 화면은 읽기만(읽기모델 계약). 과거는 일별 지수차트로 백필.
+        ("kospi_open", "ALTER TABLE daily_review_reports ADD COLUMN kospi_open REAL"),
+        ("kospi_close", "ALTER TABLE daily_review_reports ADD COLUMN kospi_close REAL"),
+        ("kospi_change_pct", "ALTER TABLE daily_review_reports ADD COLUMN kospi_change_pct REAL"),
     ]
     with get_connection() as conn:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(daily_review_reports)").fetchall()}
@@ -1407,6 +1412,34 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
     _store_win = win_count
     _store_loss = loss_count
 
+    # 그날 KOSPI 시초가/종가/등락율 — Daily Results 시장 맥락 병기 (2026-06-22).
+    # 당일(장마감 후) S10에서만 KIS 현재가(=종가)로 저장. 과거 날짜 재실행은 현재가가 그날 종가가
+    # 아니므로 fetch하지 않고 기존 저장값(일별 지수차트 백필)을 보존한다(DELETE+INSERT가 지우지 않게).
+    _kospi_open = _kospi_close = _kospi_chg = None
+    from zoneinfo import ZoneInfo as _ZI2
+    _today_kst_str = datetime.now(_ZI2("Asia/Seoul")).strftime("%Y-%m-%d")
+    if trade_date == _today_kst_str:
+        try:
+            from ..kis.domestic.universe_service import get_market_index
+            _idx = await get_market_index("0001")
+            _kospi_open = _idx.get("open") or None
+            _kospi_close = _idx.get("price") or None
+            _kospi_chg = _idx.get("change_rate")
+        except Exception as _kx:
+            logger.warning("WARN: [S10] KOSPI 지수 조회 실패 reason=%s", _kx)
+    else:
+        # 과거 재실행 — 기존 백필값 보존
+        try:
+            with get_connection() as _pc:
+                _prev = _pc.execute(
+                    "SELECT kospi_open, kospi_close, kospi_change_pct FROM daily_review_reports WHERE trade_date=?",
+                    (trade_date,),
+                ).fetchone()
+            if _prev:
+                _kospi_open, _kospi_close, _kospi_chg = _prev["kospi_open"], _prev["kospi_close"], _prev["kospi_change_pct"]
+        except Exception:
+            pass
+
     with get_connection() as conn:
         conn.execute("DELETE FROM no_trade_daily_reasons WHERE trade_date = ?", (trade_date,))
         if no_trade_count:
@@ -1425,8 +1458,9 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
                  profile_summary, exit_summary, trailing_quality, missed_entries,
                  false_positives, missed_entries_count, false_positive_count,
                  no_trade_count, memory_count, pnl_status, pnl_source, integrity_warnings,
-                 legacy_residual_positions, equity_pnl, equity_eod_total_eval, day_score, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
+                 legacy_residual_positions, equity_pnl, equity_eod_total_eval, day_score,
+                 kospi_open, kospi_close, kospi_change_pct, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(uuid.uuid4()),
@@ -1450,6 +1484,9 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
                 equity.get("equity_pnl"),
                 equity.get("equity_eod_total_eval"),
                 _json_dumps(_day_score) if _day_score is not None else None,
+                _kospi_open,
+                _kospi_close,
+                _kospi_chg,
                 now_iso,
             ),
         )

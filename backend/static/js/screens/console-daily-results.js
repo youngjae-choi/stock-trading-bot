@@ -207,6 +207,9 @@
     var headerRow = '<thead><tr>'
       + '<th style="text-align:left;">Date</th>'
       + '<th style="text-align:center;">Market</th>'
+      + '<th style="text-align:right;" title="그날 KOSPI 시초가(지수)">KOSPI 시초</th>'
+      + '<th style="text-align:right;" title="그날 KOSPI 종가(지수)">KOSPI 종가</th>'
+      + '<th style="text-align:right;" title="그날 KOSPI 등락율">KOSPI 등락%</th>'
       + '<th style="text-align:right;" title="계좌 P&L = 당일 종가 총평가 − 전일 종가 총평가 (실현+미실현 포함, 합산=누적)">P&L (계좌)</th>'
       + '<th style="text-align:right;">Return</th>'
       + '<th style="text-align:right;">Trades</th>'
@@ -222,7 +225,7 @@
         return '<tr style="opacity:0.5;">'
           + '<td style="font-size:13px; color:var(--muted);">' + escapeHtml(row.trade_date)
           + ' <span class="status" style="font-size:10px; background:rgba(139,148,158,0.15); color:var(--muted);">휴장</span></td>'
-          + '<td colspan="8" style="color:var(--muted); font-size:12px;">' + escapeHtml(row.non_trading_reason || '비거래일') + '</td>'
+          + '<td colspan="11" style="color:var(--muted); font-size:12px;">' + escapeHtml(row.non_trading_reason || '비거래일') + '</td>'
           + '</tr>';
       }
       /* 계좌 P&L = 당일 종가총평가 − 전일 종가총평가 (실현+미실현, 합산=누적). 미산출 시 '-' */
@@ -261,9 +264,24 @@
 
       var toneCell = '<td style="text-align:center;">' + _toneBadge(row.market_tone) + '</td>';
 
+      // 그날 KOSPI 시초가/종가/등락율 — S10 저장값을 읽기만(화면 연산 없음). 0/null이면 '-'.
+      var _kFmt = function(v) {
+        return (v == null || v === 0)
+          ? '<span style="color:var(--muted);">-</span>'
+          : Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      };
+      var _kP = row.kospi_change_pct;
+      var _kpCls = (_kP || 0) > 0 ? 'good' : (_kP || 0) < 0 ? 'bad' : '';
+      var _kPHtml = (_kP == null)
+        ? '<span style="color:var(--muted);">-</span>'
+        : '<span class="' + _kpCls + '">' + (_kP >= 0 ? '+' : '') + Number(_kP).toFixed(2) + '%</span>';
+
       return '<tr style="cursor:pointer;" data-action="openDayReview" data-date="' + escapeHtml(row.trade_date) + '">'
         + '<td style="font-size:13px; color:var(--accent);">' + escapeHtml(row.trade_date) + pnlStatusBadge + '</td>'
         + toneCell
+        + '<td style="text-align:right; font-size:12px; color:var(--muted);">' + _kFmt(row.kospi_open) + '</td>'
+        + '<td style="text-align:right; font-size:12px;">' + _kFmt(row.kospi_close) + '</td>'
+        + '<td style="text-align:right; font-size:12px;">' + _kPHtml + '</td>'
         + '<td style="text-align:right;">' + acctHtml + '</td>'
         + '<td style="text-align:right; font-size:12px;">' + acctPctHtml + '</td>'
         + '<td style="text-align:right;">' + (row.trade_count || 0) + '</td>'
