@@ -38,6 +38,19 @@ def _to_float(value: Any) -> float:
         return 0.0
 
 
+def is_leverage_product(name: str | None) -> bool:
+    """종목명이 레버리지/인버스/2X 파생형 ETF·ETN인지 판정(이름 기반).
+
+    매매기법 보정(2026-06-22): 레버리지/인버스 2X는 거래당 기대값이 구조적 음(-)이라
+    진입 차단 대상 식별에 재사용한다. classify_profile의 파생형 판정과 동일 키워드.
+
+    Args:
+        name: 종목명.
+    """
+    nm = str(name or "")
+    return any(k in nm for k in _DERIVATIVE_KEYWORDS)
+
+
 def classify_profile(candidate: dict[str, Any], regime: str | None) -> tuple[str, str]:
     """장중 유입 종목의 Risk Profile 휴리스틱 배정. returns (profile, reason).
 
@@ -64,7 +77,7 @@ def classify_profile(candidate: dict[str, Any], regime: str | None) -> tuple[str
         spike_threshold = _SPIKE_CHANGE_RATE_PCT_RISK_OFF
         regime_note += f", risk_off 보수화(급등 임계 {_SPIKE_CHANGE_RATE_PCT:.0f}%→{spike_threshold:.0f}%)"
 
-    if any(k in name for k in _DERIVATIVE_KEYWORDS):
+    if is_leverage_product(name):
         return "HIGH_VOL", f"파생형 ETF/ETN ({regime_note})"
     if change_rate >= spike_threshold or volume_surge >= _SPIKE_VOLUME_SURGE:
         return (

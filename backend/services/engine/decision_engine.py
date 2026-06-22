@@ -1669,6 +1669,21 @@ class DecisionEngine:
             price: Trigger price from realtime tick.
             matched: Rule evaluation result map.
         """
+        # 매매기법 보정(2026-06-22): 레버리지/인버스 2X는 거래당 기대값이 구조적 음(-)
+        # (R:R 0.89·승률 12%·거래당 -40만원)이라 신규 진입을 차단한다. 모든 진입 경로
+        # (베이스라인·탐색OR·모멘텀스캔·교체매매)가 이 단일 길목을 지나므로 여기서 한 번에 막는다.
+        # engine.leverage_restriction_mode=off 면 구동작(허용). 보유분 청산은 영향 없음(진입만 차단).
+        _name = str(candidate.get("name") or "")
+        try:
+            _lev_mode = str(get_setting("engine.leverage_restriction_mode", "exclude") or "exclude").lower()
+        except Exception:
+            _lev_mode = "exclude"
+        if _lev_mode != "off":
+            from .intraday_profile import is_leverage_product
+            if is_leverage_product(_name):
+                logger.info("INFO: [S6] SKIP 레버리지/인버스 진입 차단 symbol=%s name=%s (mode=%s)", symbol, _name, _lev_mode)
+                return
+
         today = _today_kst()
         signal_id = str(uuid.uuid4())
         confidence = _candidate_confidence(candidate)
