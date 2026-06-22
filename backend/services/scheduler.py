@@ -1567,6 +1567,27 @@ async def job_stop_loss_backup() -> None:
         logger.error("FAIL: [StopLossBackup] 실패 — reason=%s", exc)
 
 
+async def job_intraday_order_reconcile() -> None:
+    """장중 주문 정합 — 주문번호 없는 미확정 매도를 KIS와 대조해 해소(09~15시 매 3분).
+
+    제출 실패(KIS 주문 없음)면 취소해 재매도 차단을 풀고, KIS에 살아있으면 승격(블록 유지)해
+    이중매도를 막는다. 비거래일 스킵. (EOD에만 돌던 reconcile의 장중 공백 해소 — 2026-06-22)
+    """
+    if _non_trading_day_today():
+        return
+    try:
+        from .engine.order_reconciliation import reconcile_uncertain_sells_intraday
+        result = await reconcile_uncertain_sells_intraday(_today_kst())
+        if result.get("checked"):
+            logger.info(
+                "SUCCESS: [IntradayReconcile] checked=%s resolved=%s promoted=%s cancelled=%s",
+                result.get("checked"), len(result.get("resolved", [])),
+                len(result.get("promoted", [])), len(result.get("cancelled", [])),
+            )
+    except Exception as exc:
+        logger.error("FAIL: [IntradayReconcile] 실패 — reason=%s", exc)
+
+
 async def job_momentum_scan() -> None:
     """상시 모멘텀 스캐너 — 3분마다 현재 movers 발굴(09~15시). 비거래일·exploration 가드는 내부에서도 처리."""
     if _non_trading_day_today():
@@ -1706,6 +1727,17 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour="9-15", minute="*", timezone="Asia/Seoul"),
         id="job_stop_loss_backup",
         name="손절 REST 폴링 백업 (1분)",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # 장중 주문 정합 — 주문번호 없는 미확정 매도를 KIS와 대조해 해소(매 3분). 제출실패면 취소해
+    # 재매도 차단 해제, KIS에 살아있으면 승격(이중매도 방지). EOD에만 돌던 reconcile 공백 보완.
+    scheduler.add_job(
+        job_intraday_order_reconcile,
+        CronTrigger(hour="9-15", minute="*/3", timezone="Asia/Seoul"),
+        id="job_intraday_order_reconcile",
+        name="장중 주문 정합 (3분)",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
