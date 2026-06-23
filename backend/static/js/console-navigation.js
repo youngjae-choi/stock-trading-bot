@@ -121,13 +121,10 @@
     }
 
     if (name === "plan-funnel") {
-      loadPlanFunnel();
-      loadDailyPlanScreen();
-      loadFunnelData();
-      var td = window._tcTradeDate || null;
-      if (typeof loadIntradayReselectionTimeline === "function") loadIntradayReselectionTimeline(td);
-      if (typeof loadReplacementSignals === "function") loadReplacementSignals(td);
-      if (typeof loadIntradayKillSwitches === "function") loadIntradayKillSwitches();
+      loadPlanFunnel();          // ①환경 ②전략 ②.5장중변화 ③선별 + 종목리스트
+      loadDailyPlanScreen();     // DAILY PLAN 상세(운영 컨트롤 포함)
+      // 'Funnel Monitor 상세' 섹션 삭제(2026-06-23) — 퍼널 숫자는 ③선별, 재선별/교체는 ②.5,
+      // 데이터품질은 System Diagnostics, 킬스위치 토글은 Settings로 일원화. 관련 로더 호출 제거.
     }
 
     if (name === "expert-knowledge") {
