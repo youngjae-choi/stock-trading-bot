@@ -1535,6 +1535,34 @@ async def job_intraday_regime_monitor(slot: str) -> None:
         logger.error("FAIL: [IntradayRegimeMonitor] slot=%s reason=%s", slot, exc)
 
 
+# index-board 장중 브리핑 폴링 상태 — 마지막으로 본 generatedAt(변경 시에만 regime 재평가).
+_LAST_INTRADAY_BRIEFING: dict[str, str | None] = {"generated_at": None}
+
+
+async def job_intraday_briefing_poll() -> None:
+    """index-board 장중(regular) 브리핑을 2분마다 폴링 → 새 브리핑(generatedAt 변경) 시에만
+    regime 재평가(run_market_tone_analysis intraday, index-board 단일출처·LLM 미사용).
+
+    regime SET 전환(check_intraday_regime)은 자체 VIX/KOSPI 입력으로 별도 cadence에 동작하므로
+    여기서 호출하지 않는다(중복·오프케이던스 전환 방지). [후속: SET 모니터 index-board 숫자 연동]
+    """
+    if _non_trading_day_today():
+        return
+    try:
+        from .engine import index_board_scraper
+
+        briefing = await index_board_scraper.scrape_intraday()
+        gen = (briefing or {}).get("generated_at")
+        if gen and gen != _LAST_INTRADAY_BRIEFING["generated_at"]:
+            _LAST_INTRADAY_BRIEFING["generated_at"] = gen
+            logger.info("INFO: [BriefingPoll] 새 장중 브리핑 감지 → regime 재평가 generated_at=%s", gen)
+            await run_market_tone_analysis(trigger_source="intraday_refresh")
+        else:
+            logger.debug("DEBUG: [BriefingPoll] 장중 브리핑 변경 없음 generated_at=%s", gen)
+    except Exception as exc:
+        logger.error("FAIL: [BriefingPoll] 실패 reason=%s", exc)
+
+
 async def job_bar_store_flush() -> None:
     """10초봉 버퍼 → intraday_bars 일괄 저장 (장중 09~15시 매 1분). 비거래일 스킵."""
     if _non_trading_day_today():
@@ -1705,6 +1733,17 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour="9-15", minute="*/2", timezone="Asia/Seoul"),
         id="job_decision_engine_watchdog",
         name="Decision Engine 자동복구 워치독",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # index-board 장중 브리핑 폴링 — 장중(09~15시) 2분 간격. 새 브리핑(generatedAt 변경) 시에만
+    # regime 재평가(index-board 단일출처). 변경 없으면 no-op. (시황 단일출처 Phase 3)
+    scheduler.add_job(
+        job_intraday_briefing_poll,
+        CronTrigger(hour="9-15", minute="*/2", timezone="Asia/Seoul"),
+        id="job_intraday_briefing_poll",
+        name="index-board 장중 브리핑 폴링 (2분)",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
