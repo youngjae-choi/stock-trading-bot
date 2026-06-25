@@ -123,8 +123,20 @@ def _build_review_context_md(result: dict[str, Any], trade_date: str) -> str:
             )
 
     lines.append("\n## 매매 결과")
-    lines.append(f"- 총 거래: {result.get('total_trades', 0)}건")
-    lines.append(f"- 승/패: {result.get('win_count', 0)}/{result.get('loss_count', 0)}")
+    # 표시 거래수·승·패는 day_score(SSOT)를 단일 출처로 읽는다 — Daily Results와 동일한 숫자를
+    # 보장한다(A2). day_score가 없을 때만 시그널 기반 값으로 폴백(하위호환). 시그널 기반
+    # win_count/loss_count는 캘리브레이션용으로 result에 계속 존재하되 화면에는 쓰지 않는다.
+    _ds = result.get("day_score") or {}
+    if isinstance(_ds, dict) and _ds:
+        _disp_trades = _safe_int(_ds.get("completed"))
+        _disp_wins = _safe_int(_ds.get("wins"))
+        _disp_losses = _safe_int(_ds.get("losses"))
+    else:
+        _disp_trades = result.get("total_trades", 0)
+        _disp_wins = result.get("win_count", 0)
+        _disp_losses = result.get("loss_count", 0)
+    lines.append(f"- 총 거래: {_disp_trades}건")
+    lines.append(f"- 승/패: {_disp_wins}/{_disp_losses}")
     pnl = _safe_float(result.get("total_pnl"))
     pnl_pct = _safe_float(result.get("realized_pnl_pct"))
     lines.append(f"- 총 손익: {pnl:.0f}원 ({pnl_pct:+.2f}%)")
@@ -849,7 +861,12 @@ def _pair_buy_date(pair: dict[str, Any]) -> str | None:
         for order in pair.get("orders", [])
         if order.get("side") == "buy" and order.get("trade_date")
     ]
-    return min(buy_dates) if buy_dates else None
+    if buy_dates:
+        return min(buy_dates)
+    # 매수 주문이 없는 흡수/정합 포지션은 cost_basis 기록일을 매수일로 본다(A2) — 전일 흡수·당일
+    # 매도 포지션이 '이월'로 일관 분류되어 당일 신규 거래수/승률을 왜곡하지 않게 한다.
+    cb_date = pair.get("cost_basis_trade_date")
+    return str(cb_date) if cb_date else None
 
 
 def _pair_hold_minutes(pair: dict[str, Any]) -> float:

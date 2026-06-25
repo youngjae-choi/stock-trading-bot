@@ -120,30 +120,43 @@ async def run_daily_summary(trade_date: str | None = None) -> dict[str, Any]:
     except Exception as _cost_exc:
         logger.warning("WARN: DailySummary 거래 비용 설정 로드 실패, 기본값 사용 reason=%s", _cost_exc)
 
-    # 실현 손익 계산 (gross = 비용 미차감, net = 비용 차감)
+    # 실현 손익 계산 — trade_pairs 페어 원장(SSOT)으로 단일화한다(A2).
+    # 구식 주문가 인라인 계산은 체결가·FIFO·원가보강(흡수 포지션)을 반영하지 못해
+    # day_score/Review와 어긋났다. 그날 종료(rep_date==trade_date) 완료 페어만 합산한다.
+    # net(비용 차감)·평균 수익률은 페어 단위로 동일 비용식을 적용해 산출한다.
+    from .trade_pairs import get_trade_pairs
+
     gross_pnl = 0.0
     net_pnl = 0.0
     realized_pnl_pcts: list[float] = []
     net_pnl_pcts: list[float] = []
-    for sell in sell_list:
-        sym = sell.get("symbol")
-        sell_price = float(sell.get("price") or 0)
-        qty = int(sell.get("qty") or 0)
-        buys = [o for o in buy_list if o.get("symbol") == sym]
-        if buys and sell_price > 0 and qty > 0:
-            avg_buy = sum(float(b.get("price", 0)) for b in buys) / len(buys)
-            gross = (sell_price - avg_buy) * qty
-            # 비용: 매수 수수료 + 매도 수수료 + 매도 거래세
-            buy_amount = avg_buy * qty
-            sell_amount = sell_price * qty
+    cost_basis_contributed = False
+    try:
+        day_pairs = [
+            p for p in get_trade_pairs(trade_date, trade_date)
+            if p.get("trade_date") == trade_date and p.get("pnl_amount") is not None
+        ]
+    except Exception as _tp_exc:
+        logger.warning("WARN: DailySummary trade_pairs 집계 실패 reason=%s", _tp_exc)
+        day_pairs = []
+    for p in day_pairs:
+        gross = float(p.get("pnl_amount") or 0)
+        buy_p = float(p.get("buy_price") or 0)
+        sell_p = float(p.get("sell_price") or 0)
+        matched = min(int(p.get("buy_qty") or 0), int(p.get("sell_qty") or 0))
+        gross_pnl += gross
+        if p.get("cost_basis_source"):
+            cost_basis_contributed = True
+        if buy_p > 0 and sell_p > 0 and matched > 0:
+            buy_amount = buy_p * matched
+            sell_amount = sell_p * matched
             cost = buy_amount * commission_rate + sell_amount * (commission_rate + transaction_tax_rate)
-            net = gross - cost
-            gross_pnl += gross
-            net_pnl += net
-            pnl_pct = (sell_price - avg_buy) / avg_buy * 100 if avg_buy > 0 else 0
-            net_pnl_pct = pnl_pct - (commission_rate * 2 + transaction_tax_rate) * 100
+            net_pnl += gross - cost
+            pnl_pct = float(p.get("pnl_pct") or 0)
             realized_pnl_pcts.append(pnl_pct)
-            net_pnl_pcts.append(net_pnl_pct)
+            net_pnl_pcts.append(pnl_pct - (commission_rate * 2 + transaction_tax_rate) * 100)
+        else:
+            net_pnl += gross
 
     # realized_pnl = gross (기존 컬럼 유지, 하위호환), net_pnl 별도
     realized_pnl = gross_pnl
@@ -151,6 +164,8 @@ async def run_daily_summary(trade_date: str | None = None) -> dict[str, Any]:
     avg_net_pnl_pct = sum(net_pnl_pcts) / len(net_pnl_pcts) if net_pnl_pcts else 0.0
     symbols_traded = list({o.get("symbol") for o in orders if o.get("symbol")})
     integrity = summarize_order_integrity(trade_date)
+    # pnl_source: 흡수 원가가 기여하면 'fills+cost_basis', 아니면 무결성 판정값(fills/fills_incomplete 등) 보존.
+    pnl_source = "fills+cost_basis" if cost_basis_contributed else integrity.get("pnl_source", "orders_without_fills")
 
     # 시장 톤 조회
     market_tone = ""
@@ -191,7 +206,7 @@ async def run_daily_summary(trade_date: str | None = None) -> dict[str, Any]:
                     json.dumps(symbols_traded),
                     market_tone, rulepack_id,
                     integrity.get("pnl_status", "unverified"),
-                    integrity.get("pnl_source", "orders_without_fills"),
+                    pnl_source,
                     json_compact(integrity.get("warnings", [])),
                     now_iso, trade_date,
                 ),
@@ -211,7 +226,7 @@ async def run_daily_summary(trade_date: str | None = None) -> dict[str, Any]:
                     json.dumps(symbols_traded),
                     market_tone, rulepack_id,
                     integrity.get("pnl_status", "unverified"),
-                    integrity.get("pnl_source", "orders_without_fills"),
+                    pnl_source,
                     json_compact(integrity.get("warnings", [])),
                     now_iso, now_iso,
                 ),
@@ -219,7 +234,7 @@ async def run_daily_summary(trade_date: str | None = None) -> dict[str, Any]:
 
     logger.info(
         "SUCCESS: DailySummary saved trade_date=%s orders=%d pnl=%.0f pnl_status=%s pnl_source=%s",
-        trade_date, len(orders), realized_pnl, integrity.get("pnl_status"), integrity.get("pnl_source"),
+        trade_date, len(orders), realized_pnl, integrity.get("pnl_status"), pnl_source,
     )
 
     # False Positive 자동 생성: 당일 매도 완료된 손실 거래를 탐지해 DB에 저장
@@ -252,7 +267,7 @@ async def run_daily_summary(trade_date: str | None = None) -> dict[str, Any]:
         "net_pnl_pct": avg_net_pnl_pct,
         "trading_cost_rate_pct": round((commission_rate * 2 + transaction_tax_rate) * 100, 4),
         "pnl_status": integrity.get("pnl_status", "unverified"),
-        "pnl_source": integrity.get("pnl_source", "orders_without_fills"),
+        "pnl_source": pnl_source,
         "integrity_warnings": integrity.get("warnings", []),
         "pending_buy_orders": integrity.get("pending_buy_orders", []),
         "incomplete_fill_orders": integrity.get("incomplete_fill_orders", []),

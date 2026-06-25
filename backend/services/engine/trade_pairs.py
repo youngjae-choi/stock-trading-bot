@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from ..db import get_connection
+from .position_cost_basis import get_cost_basis_map
 from .symbol_norm import norm_symbol
 
 logger = logging.getLogger("TradePairs")
@@ -133,8 +134,27 @@ def get_trade_pairs(start_date: str, end_date: str) -> list[dict[str, Any]]:
         else:
             g["sells"].append(order)
 
+    # A2: 매수 fill 없는 흡수/정합 포지션의 매수측 원가를 보조 원장에서 일괄 조회한다.
+    # 매도만 있는 그룹(buy_qty==0 & sell_qty>0)만 대상 — as_of는 전체 매도일 상한으로 1회 조회.
+    cost_basis_map: dict[str, Any] = {}
+    sell_only_norms: list[str] = []
+    sell_only_as_of = ""
+    for key, g in by_symbol.items():
+        has_buy = any(_effective_qty(o, fill_map) > 0 and _effective_price(o, fill_map) > 0 for o in g["buys"])
+        if not has_buy and g["sells"]:
+            sell_only_norms.append(key)
+            g_rep = max(o["trade_date"] for o in g["sells"])
+            if g_rep > sell_only_as_of:
+                sell_only_as_of = g_rep
+    if sell_only_norms:
+        try:
+            cost_basis_map = get_cost_basis_map(sell_only_norms, sell_only_as_of)
+        except Exception as cb_exc:
+            logger.warning("WARN: TradePairs cost_basis 조회 실패 reason=%s", cb_exc)
+            cost_basis_map = {}
+
     pairs = []
-    for g in by_symbol.values():
+    for key, g in by_symbol.items():
         # 그룹이 두 형(Q/무Q)에서 합쳐질 수 있어 시간순 재정렬
         buys = sorted(g["buys"], key=lambda x: x.get("created_at") or "")
         sells = sorted(g["sells"], key=lambda x: x.get("created_at") or "")
@@ -149,6 +169,18 @@ def get_trade_pairs(start_date: str, end_date: str) -> list[dict[str, Any]]:
             rep_date = max(o["trade_date"] for o in sells)
         else:
             rep_date = max(o["trade_date"] for o in buys)
+
+        # A2: 매수측이 비고(buy_qty==0) 매도만 있을 때 cost_basis로 매수측 보강.
+        # 원가일이 매도일 이후면 무효(미래 원가). 보강 시 표시·이월 판정용 필드를 채운다.
+        cost_basis_source = None
+        cost_basis_trade_date = None
+        if buy_qty == 0 and sell_qty > 0:
+            cb_row = cost_basis_map.get(key)
+            if cb_row and cb_row.get("avg_price", 0) > 0 and str(cb_row.get("trade_date") or "") <= rep_date:
+                buy_avg = float(cb_row["avg_price"])
+                buy_qty = float(cb_row["qty"])
+                cost_basis_source = cb_row.get("source")
+                cost_basis_trade_date = cb_row.get("trade_date")
 
         # 손익 계산
         matched_qty = min(buy_qty, sell_qty) if buy_qty > 0 and sell_qty > 0 else 0.0
@@ -194,6 +226,8 @@ def get_trade_pairs(start_date: str, end_date: str) -> list[dict[str, Any]]:
             "pnl_pct": pnl_pct,
             "exit_reason": exit_reason,
             "risk_profile": None,
+            "cost_basis_source": cost_basis_source,
+            "cost_basis_trade_date": cost_basis_trade_date,
             "orders": orders_detail,
         })
 

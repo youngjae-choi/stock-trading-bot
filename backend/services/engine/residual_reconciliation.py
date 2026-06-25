@@ -23,19 +23,49 @@ def _detect_residuals(trade_date: str) -> list[dict[str, Any]]:
     return detect_legacy_residual_positions(trade_date)
 
 
+def _kis_balance_positions(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    return payload.get("positions", []) or []
+
+
 async def _kis_held_qty_map() -> dict[str, int]:
+    """KIS 실보유 수량 맵 {symbol: qty}. avg_price는 _kis_held_avg_map가 별도 제공."""
     from ...api.routes.account import _build_balance_payload
     from ..kis.domestic.service import get_balance
 
     payload = _build_balance_payload(await get_balance())
     out: dict[str, int] = {}
-    for p in payload.get("positions", []) or []:
+    for p in _kis_balance_positions(payload):
         sym = str(p.get("symbol") or "").strip()
         if sym:
             try:
                 out[sym] = int(float(str(p.get("qty") or p.get("hldg_qty") or 0)))
             except (TypeError, ValueError):
                 out[sym] = 0
+    return out
+
+
+async def _kis_held_avg_map() -> dict[str, float]:
+    """KIS 실보유 평단 맵 {symbol: avg_price} — A2 원가 보조 원장 기록용.
+
+    qty 맵과 분리해 기존 _kis_held_qty_map 계약(테스트 monkeypatch 포함)을 보존한다.
+    조회 실패 시 빈 맵을 반환해 정합(phantom 정리)을 차단하지 않는다(best-effort).
+    """
+    try:
+        from ...api.routes.account import _build_balance_payload
+        from ..kis.domestic.service import get_balance
+
+        payload = _build_balance_payload(await get_balance())
+    except Exception as exc:
+        logger.warning("WARN: [ResidualReconcile] KIS 평단 조회 실패 — cost_basis 보강 생략 reason=%s", exc)
+        return {}
+    out: dict[str, float] = {}
+    for p in _kis_balance_positions(payload):
+        sym = str(p.get("symbol") or "").strip()
+        if sym:
+            try:
+                out[sym] = float(p.get("avg_price") or 0)
+            except (TypeError, ValueError):
+                out[sym] = 0.0
     return out
 
 
@@ -70,12 +100,25 @@ async def reconcile_residual_positions_with_kis(trade_date: str) -> dict[str, An
     except Exception as exc:
         logger.warning("WARN: [ResidualReconcile] KIS 보유 조회 실패 — 정리 보류 reason=%s", exc)
         return {"reconciled": 0, "residuals": len(residuals), "skipped": True}
+    avg_map = await _kis_held_avg_map()  # best-effort, 실패 시 빈 맵(정리는 계속)
     count = 0
     for r in residuals:
         sym = str(r.get("symbol") or "").strip()
         net = int(r.get("net_qty") or 0)
         kis_qty = int(held.get(sym, 0))
+        kis_avg = float(avg_map.get(sym, 0) or 0)
         phantom = net - kis_qty
+
+        # KIS 실보유가 확인된 잔여(kis_qty>0)는 매수 fill이 없는 진짜 보유 — A2 원가 보조 원장에
+        # 기록해 trade_pairs가 청산 시 손익을 누락하지 않게 한다(phantom 분과 무관하게 기록).
+        if sym and kis_qty > 0 and kis_avg > 0:
+            try:
+                from .position_cost_basis import upsert_cost_basis
+
+                upsert_cost_basis(sym, kis_qty, kis_avg, "reconciled", trade_date)
+            except Exception as _cb_exc:
+                logger.warning("WARN: [ResidualReconcile] cost_basis 기록 실패 symbol=%s reason=%s", sym, _cb_exc)
+
         if sym and phantom > 0:
             _record_reconciliation(
                 symbol=sym,

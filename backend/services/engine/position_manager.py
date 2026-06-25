@@ -186,6 +186,20 @@ class PositionManager:
             "trailing_active": False,
             "profile_assigned": profile,
         })
+
+        # 원가 보조 원장 — 매수 fill이 없는 KIS 흡수 포지션의 매수측 원가를 기록한다(A2).
+        # auto_imported일 때만 기록(일반 진입은 trading_orders/fills가 원가의 단일출처).
+        if bool(auto_imported):
+            try:
+                from .position_cost_basis import upsert_cost_basis
+
+                upsert_cost_basis(
+                    safe_symbol, safe_qty, safe_entry, "auto_imported",
+                    _now_kst().strftime("%Y-%m-%d"),
+                )
+            except Exception as _cb_exc:
+                logger.warning("WARN: [S8] cost_basis 기록 실패 symbol=%s reason=%s", safe_symbol, _cb_exc)
+
         logger.info("SUCCESS: [S8] position added symbol=%s profile=%s entry=%.2f stop=%.2f auto_imported=%s",
                     safe_symbol, profile, safe_entry, initial_stop_price, bool(auto_imported))
 

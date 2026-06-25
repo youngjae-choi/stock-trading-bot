@@ -176,3 +176,117 @@ def test_review_context_uses_day_score(monkeypatch):
     assert "완료 10건 / 승 3 / 패 7" in md
     assert "미청산 3건" in md
     assert "자체 재계산 금지" in md
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ④ A2: 표시 거래수·승패가 day_score(SSOT)와 일치 — 시그널 기반 값과 갈리지 않음
+# ──────────────────────────────────────────────────────────────────────────────
+
+def test_review_displayed_trades_use_day_score(monkeypatch):
+    """'매매 결과' 줄의 총 거래/승·패가 day_score를 읽어 Daily Results와 동일.
+
+    시그널 기반 total_trades/win_count/loss_count가 다른 값이어도 화면 표시는 day_score를 따른다.
+    """
+    import backend.services.engine.review_audit as ra
+
+    class _NullConn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, *a, **k):
+            class _C:
+                def fetchone(self_inner): return None
+                def fetchall(self_inner): return []
+            return _C()
+
+    monkeypatch.setattr(ra, "get_connection", lambda: _NullConn())
+
+    # 시그널 기반(이월 미포함) 6/2, day_score(이월+원가보강 포함) 3/2 — 화면은 day_score를 표시.
+    result = {
+        "total_trades": 6, "win_count": 2, "loss_count": 4,
+        "day_score": {"completed": 3, "wins": 2, "losses": 1, "win_rate": 66.7, "open_positions": 1},
+    }
+    md = ra._build_review_context_md(result, "2026-06-24")
+    assert "- 총 거래: 3건" in md
+    assert "- 승/패: 2/1" in md
+    assert "총 거래: 6건" not in md
+
+
+def test_cross_surface_auto_imported_consistency(tmp_path, monkeypatch):
+    """2 정상 짝 + 1 흡수 매도 → day_score.completed == Review 표시 거래수 == 페어합 실현손익."""
+    import backend.services.engine.position_cost_basis as cb
+    import backend.services.engine.review_audit as ra
+    from backend.config import settings as cfg
+    from backend.services import db as db_mod
+    from backend.services.engine.trade_pairs import (
+        compute_daily_score,
+        get_today_realized_pnl,
+        get_trade_pairs,
+    )
+
+    p = tmp_path / "xsurf_a2.sqlite3"
+    monkeypatch.setattr(cfg, "APP_DB_PATH", str(p))
+    db_mod.initialize_database()
+    td = "2026-06-24"
+    with db_mod.get_connection() as conn:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS trading_orders(
+              id INTEGER PRIMARY KEY AUTOINCREMENT, trade_date TEXT, signal_id TEXT,
+              symbol TEXT, name TEXT, side TEXT, order_type TEXT, qty INTEGER, price REAL,
+              kis_order_no TEXT, status TEXT, reason TEXT, created_at TEXT);
+            CREATE TABLE IF NOT EXISTS fills(
+              id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER, price REAL, quantity REAL);
+            """
+        )
+
+        def _o(symbol, side, qty, price, no, ca):
+            conn.execute(
+                "INSERT INTO trading_orders(trade_date,symbol,name,side,order_type,qty,price,kis_order_no,status,created_at)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (td, symbol, "종목", side, "limit", qty, price, no, "filled", f"{td}T{ca}"),
+            )
+
+        _o("457370", "buy", 100, 10000, "B1", "10:00:00")
+        _o("457370", "sell", 100, 10500, "S1", "11:00:00")   # 정상 짝 +50000
+        _o("005930", "buy", 10, 70000, "B2", "10:05:00")
+        _o("005930", "sell", 10, 71000, "S2", "11:05:00")    # 정상 짝 +10000
+        _o("069500", "sell", 5, 9000, "S3", "11:10:00")      # 흡수 매도(매수 fill 없음)
+        conn.commit()
+    cb.upsert_cost_basis("069500", 5, 8000.0, "auto_imported", "2026-06-23")  # 전일 흡수 +5000
+
+    pairs = get_trade_pairs(td, td)
+    day_score = compute_daily_score(td, pairs=pairs)
+
+    # 흡수 매도가 완료로 집계됐는지 (정상2 + 흡수1 = 3)
+    assert day_score["completed"] == 3
+    assert day_score["wins"] == 3
+
+    # Review 표시 거래수가 day_score.completed와 동일
+    md = ra._build_review_context_md({"day_score": day_score}, td)
+    assert f"- 총 거래: {day_score['completed']}건" in md
+
+    # get_today_realized_pnl == 그날 페어 pnl_amount 합
+    pairs_sum = sum(x["pnl_amount"] for x in pairs if x.get("pnl_amount") is not None)
+    assert get_today_realized_pnl(td) == pairs_sum == 65000.0
+
+
+def test_carried_classification_uses_cost_basis_date():
+    """전일 흡수·당일 매도 페어는 cost_basis_trade_date로 '이월' 분류(당일 신규 아님)."""
+    import backend.services.engine.review_audit as ra
+
+    td = "2026-06-24"
+    carried_pair = {
+        "symbol": "069500", "trade_date": td, "status": "매도완료",
+        "pnl_pct": 12.5, "pnl_amount": 5000, "orders": [],  # 매수 주문 없음
+        "cost_basis_source": "auto_imported", "cost_basis_trade_date": "2026-06-23",
+    }
+    same_day_pair = {
+        "symbol": "457370", "trade_date": td, "status": "매도완료",
+        "pnl_pct": 5.0, "pnl_amount": 50000,
+        "orders": [{"side": "buy", "trade_date": td}, {"side": "sell", "trade_date": td}],
+        "cost_basis_source": None, "cost_basis_trade_date": None,
+    }
+    assert ra._pair_buy_date(carried_pair) == "2026-06-23"
+    day_pairs, carried = ra._split_carried_pairs([carried_pair, same_day_pair], td)
+    assert carried == [carried_pair]
+    assert same_day_pair in day_pairs
