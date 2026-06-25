@@ -25,6 +25,44 @@ _REMAINDER_REORDERED: set[str] = set()
 # 연속 정체 임계 — 폴링 60초 주기 기준 2회 연속 정체 ≈ 2분
 _PARTIAL_STALL_THRESHOLD = 2
 
+# B2: output2 체결필드(tot_ccld_qty) 반복 부재 추적 — order_id → 연속 스킵 횟수.
+# ETN 등 일부 주문이 output1/output2 모두에서 체결필드 없이 영구 submitted로
+# 묶이는 것을 막기 위해, N회 연속 부재 시 1회 운영 알림을 띄운다.
+_CCLD_FIELD_MISSING: dict[str, int] = {}
+# 알림 후 같은 주문에 대한 중복 알림 방지 집합 — 주문 해소 시 해제
+_CCLD_MISSING_ALERTED: set[str] = set()
+# 체결필드 반복 부재 알림 임계 (연속 N회)
+_CCLD_MISSING_THRESHOLD = 3
+
+
+def _send_ops_alert(title: str, body: str) -> None:
+    """운영 알림(텔레그램)을 비동기 예약한다 — 체결 흐름을 절대 깨지 않게 try/except로 감싼다.
+
+    프로젝트 표준 알림 경로(send_telegram_alert)를 재사용한다. 실행 중인
+    이벤트 루프가 있으면 create_task로 예약하고, 없으면(동기 테스트 등) 조용히 넘어간다.
+
+    Args:
+        title: 알림 제목.
+        body: 알림 본문.
+    """
+    try:
+        from ..alert_service import send_telegram_alert
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None:
+            loop.create_task(send_telegram_alert(title, body))
+        else:
+            # 실행 중 루프가 없으면(동기 컨텍스트) 이벤트 루프를 새로 돌려 발송 시도.
+            try:
+                asyncio.run(send_telegram_alert(title, body))
+            except Exception:
+                pass
+    except Exception as exc:  # 알림 실패가 체결 처리를 막아선 안 된다
+        logger.warning("WARN: [FillPoller] 운영 알림 발송 실패 reason=%s", exc)
+
 
 def _now_kst() -> datetime:
     """현재 Asia/Seoul 기준 시간을 반환한다."""
@@ -260,7 +298,11 @@ def _mark_order_filled(order: dict[str, Any], kis_fill_data: dict[str, Any]) -> 
     """
     now = _now_kst().isoformat()
     order_id = str(order.get("id") or "")
-    symbol = str(_kis_value(kis_fill_data, "pdno") or order.get("symbol") or "")
+    # B1: fills.symbol은 원주문이 쓴 심볼(원본 유지 원칙, symbol_norm.py 참고)을 우선 사용한다.
+    # KIS pdno는 ETN을 무Q형(520100)으로 주는데 매수 주문은 Q형(Q520100)으로 기록돼
+    # buy/fill 심볼이 갈리면 FIFO 짝맞춤이 어긋난다. 매칭은 norm_symbol이 흡수하되,
+    # 저장 일관성을 위해 주문 심볼을 우선하고 없을 때만 pdno로 폴백한다.
+    symbol = str(order.get("symbol") or _kis_value(kis_fill_data, "pdno") or "")
     qty = _to_int(_kis_value(kis_fill_data, "tot_ccld_qty", "ccld_qty") or order.get("qty"))
     order_qty = _to_int(order.get("qty"))
     if order_qty > 0 and qty > order_qty:
@@ -274,11 +316,29 @@ def _mark_order_filled(order: dict[str, Any], kis_fill_data: dict[str, Any]) -> 
         )
         qty = order_qty
     price = _to_float(_kis_value(kis_fill_data, "avg_prvs", "avg_prc", "ord_unpr") or order.get("price"))
+    # B2: 가격 0 가드 — qty>0인데 체결가가 0이면 원가(cost basis) 왜곡(특히 ETN).
+    # KIS 체결가가 0이면 주문 지정가(order.price)로 폴백, 그래도 0이면 기록은 하되
+    # CRITICAL+알림으로 운영자가 당일 수동 정정하게 한다(0원 원가는 P&L 오염).
+    zero_price_flagged = False
+    if qty > 0 and price <= 0:
+        fallback_price = _to_float(order.get("price"))
+        if fallback_price > 0:
+            logger.warning(
+                "WARN: [FillPoller] 체결가 0 — 주문 지정가로 폴백 order_id=%s symbol=%s order_price=%.2f",
+                order_id,
+                symbol,
+                fallback_price,
+            )
+            price = fallback_price
+        else:
+            zero_price_flagged = True
     side_code = str(_kis_value(kis_fill_data, "sll_buy_dvsn_cd") or "")
     side = "buy" if side_code == "02" else "sell" if side_code == "01" else str(order.get("side") or "")
     broker_fill_id = str(_kis_value(kis_fill_data, "odno") or order.get("kis_order_no") or "")
     # 직전 partial 폴링에서 이미 기록한 수량을 제외한 잔여분만 추가 기록 — fills 합계 == 총 체결수량 유지
-    fill_delta_qty = qty - _recorded_fill_qty(order_id)
+    recorded_before = _recorded_fill_qty(order_id)
+    fill_delta_qty = qty - recorded_before
+    insert_rowcount = 0  # B3: with 블록 내 예외 시에도 검증부에서 안전하게 참조
 
     with get_connection() as conn:
         conn.execute(
@@ -306,7 +366,10 @@ def _mark_order_filled(order: dict[str, Any], kis_fill_data: dict[str, Any]) -> 
             (price, order_id),
         )
         if fill_delta_qty > 0:
-            conn.execute(
+            # INSERT OR IGNORE 유지 — 과거 raising INSERT가 FK 위반을 RAISE해
+            # 체결기록 실패→영구 submitted→청산 만성화를 일으켰다(상단 fills 주석 참고).
+            # 여기선 raise 대신 '기록 실패를 탐지해 시끄럽게 알림'한다(B3).
+            cur = conn.execute(
                 """
                 INSERT OR IGNORE INTO fills
                     (id, order_id, broker_fill_id, symbol, side, quantity, price,
@@ -325,6 +388,59 @@ def _mark_order_filled(order: dict[str, Any], kis_fill_data: dict[str, Any]) -> 
                     json.dumps(kis_fill_data, ensure_ascii=False),
                 ),
             )
+            insert_rowcount = cur.rowcount
+
+    # ── B3: FAIL-LOUD 체결기록 검증 ────────────────────────────────────
+    # 주문은 'filled'로 표시됐는데 fills 행이 실제로 늘지 않았다면(드리프트 버그)
+    # CRITICAL 로그 + 운영 알림을 띄운다. raise는 하지 않는다(폴 루프 보호).
+    if fill_delta_qty > 0:
+        recorded_after = _recorded_fill_qty(order_id)
+        if recorded_after <= recorded_before or insert_rowcount <= 0:
+            logger.critical(
+                "CRIT: [FillPoller] fill 기록 실패/스킵 — 주문은 filled인데 fills 없음 "
+                "order_id=%s symbol=%s qty=%d",
+                order_id,
+                symbol,
+                fill_delta_qty,
+            )
+            _send_ops_alert(
+                "[매매봇] 🚨 체결기록 실패",
+                f"주문은 filled인데 fills 행이 기록되지 않았습니다(수동 확인 필요).\n"
+                f"order_id: {order_id}\n종목: {symbol}\n수량: {fill_delta_qty:,}주",
+            )
+    elif qty > 0:
+        # 주문수량 qty>0인데 추가 기록할 delta가 없다(<=0). 정상적인 partial 재관측이면
+        # 무해하지만, 신규 filled 표시 상황에서 발생하면 드리프트 신호다 → CRITICAL+알림.
+        if recorded_before <= 0:
+            logger.critical(
+                "CRIT: [FillPoller] fill delta<=0인데 기존 기록도 없음 — 주문 filled인데 fills 0 "
+                "order_id=%s symbol=%s qty=%d recorded_before=%d",
+                order_id,
+                symbol,
+                qty,
+                recorded_before,
+            )
+            _send_ops_alert(
+                "[매매봇] 🚨 체결기록 누락",
+                f"주문은 filled인데 체결수량 delta<=0이고 기존 fills도 없습니다(수동 확인 필요).\n"
+                f"order_id: {order_id}\n종목: {symbol}\n주문수량: {qty:,}주",
+            )
+
+    if zero_price_flagged:
+        # qty>0인데 체결가/지정가 모두 0 — 원가 0원 fill은 P&L을 오염시킨다.
+        # 기록은 유지하되(주문이 submitted로 영구히 묶이는 것보다 낫다) 시끄럽게 알린다.
+        logger.critical(
+            "CRIT: [FillPoller] 체결가 0원 fill 기록 — P&L 오염 위험, 수동 정정 필요 "
+            "order_id=%s symbol=%s qty=%d",
+            order_id,
+            symbol,
+            qty,
+        )
+        _send_ops_alert(
+            "[매매봇] 🚨 체결가 0원",
+            f"체결가/지정가 모두 0인 체결이 기록됐습니다(원가 0원, 수동 정정 필요).\n"
+            f"order_id: {order_id}\n종목: {symbol}\n수량: {qty:,}주",
+        )
 
 
 async def _fetch_symbol_output2(symbol: str, date_str: str, order_no: str) -> dict[str, Any]:
@@ -693,6 +809,8 @@ async def poll_once(trade_date: str) -> dict[str, Any]:
             # 전량 체결 — 부분체결 정체 추적 상태 정리
             _PARTIAL_PROGRESS.pop(order_id, None)
             _REMAINDER_REORDERED.discard(order_id)
+            _CCLD_FIELD_MISSING.pop(order_id, None)
+            _CCLD_MISSING_ALERTED.discard(order_id)
             filled_count += 1
             logger.info(
                 "SUCCESS: [FillPoller] output1 filled order_id=%s symbol=%s qty=%d price=%.2f",
@@ -737,14 +855,35 @@ async def poll_once(trade_date: str) -> dict[str, Any]:
                 out2 = await _fetch_symbol_output2(symbol, date_str, kis_order_no)
                 raw_ccld_qty = _kis_value(out2, "tot_ccld_qty") if out2 else ""
                 if out2 and str(raw_ccld_qty).strip() == "":
-                    # 체결수량 필드 부재 — 부분체결 판정 불가, 섣부른 partial/filled 처리 금지
+                    # 체결수량 필드 부재 — 부분체결 판정 불가, 섣부른 partial/filled 처리 금지.
+                    # B2: 같은 주문에서 N회 연속 부재면 영구 'submitted'로 묶일 수 있으니
+                    #     1회 운영 알림(수동 확인). 주문이 해소되면 카운터/알림 상태 해제.
+                    skip_count = _CCLD_FIELD_MISSING.get(order_id, 0) + 1
+                    _CCLD_FIELD_MISSING[order_id] = skip_count
                     logger.info(
-                        "INFO: [FillPoller] output2 ccld_field_missing symbol=%s order_no=%s keys=%s — 기존 동작 유지(판정 보류)",
+                        "INFO: [FillPoller] output2 ccld_field_missing symbol=%s order_no=%s keys=%s skip=%d — 기존 동작 유지(판정 보류)",
                         symbol,
                         kis_order_no,
                         sorted(out2.keys()),
+                        skip_count,
                     )
+                    if skip_count >= _CCLD_MISSING_THRESHOLD and order_id not in _CCLD_MISSING_ALERTED:
+                        _CCLD_MISSING_ALERTED.add(order_id)
+                        logger.warning(
+                            "WARN: [FillPoller] output2 체결필드 반복 부재(%d회) — 수동 확인 필요 symbol=%s order_no=%s",
+                            skip_count,
+                            symbol,
+                            kis_order_no,
+                        )
+                        _send_ops_alert(
+                            "[매매봇] ⚠️ 체결필드 반복 부재",
+                            f"output2 체결필드(tot_ccld_qty)가 {skip_count}회 연속 부재 — 수동 확인 필요.\n"
+                            f"종목: {symbol}\norder_no: {kis_order_no}\norder_id: {order_id}",
+                        )
                     continue
+                # 체결필드가 다시 잡혔으면 부재 추적 상태 해제
+                _CCLD_FIELD_MISSING.pop(order_id, None)
+                _CCLD_MISSING_ALERTED.discard(order_id)
                 ccld_qty = _to_int(raw_ccld_qty or "0")
                 if ccld_qty == 0:
                     logger.info(
@@ -777,6 +916,8 @@ async def poll_once(trade_date: str) -> dict[str, Any]:
                 # 전량 체결 — 부분체결 정체 추적 상태 정리
                 _PARTIAL_PROGRESS.pop(order_id, None)
                 _REMAINDER_REORDERED.discard(order_id)
+                _CCLD_FIELD_MISSING.pop(order_id, None)
+                _CCLD_MISSING_ALERTED.discard(order_id)
                 filled_count += 1
                 logger.info(
                     "SUCCESS: [FillPoller] output2 filled order_id=%s symbol=%s qty=%d price=%.2f",
