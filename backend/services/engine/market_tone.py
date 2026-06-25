@@ -46,6 +46,13 @@ def _ensure_table() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_market_tone_trade_date ON market_tone_results(trade_date)"
         )
+        # Phase 2: index-board에서 파싱한 객관 수치(JSON)를 저장하는 컬럼. 기존 DB는 가드 ALTER로 추가.
+        try:
+            conn.execute(
+                "ALTER TABLE market_tone_results ADD COLUMN parsed_numbers TEXT NOT NULL DEFAULT '{}'"
+            )
+        except Exception:
+            pass  # 이미 컬럼이 있으면(중복 ALTER) 무시 — 다른 마이그레이션 패턴과 동일
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS morning_context (
@@ -69,12 +76,21 @@ def _ensure_table() -> None:
         )
 
 
-def classify_regime_heuristic(text: str, market_data: dict | None = None) -> dict:
+def classify_regime_heuristic(
+    text: str, market_data: dict | None = None, numbers: dict | None = None
+) -> dict:
     """index-board 브리핑 텍스트를 regime으로 휴리스틱 분류. 애매하면 neutral(보수적).
+
+    Args:
+        text: 브리핑 원문.
+        market_data: KIS/야간 수집 데이터(백업 입력용). numbers가 없을 때 vix 폴백에만 사용.
+        numbers: parse_briefing_numbers() 결과. 있으면 객관 수치를 1차 신호로 쓰고
+                 키워드(net)는 보조로 결합한다. None이면 기존 키워드-only 동작과 동일.
 
     반환 dict 키(기존 parsed 구조와 호환):
       tone, confidence, summary, key_factors, risk_factors,
       regime, risk_level, stock_character, rulepack_hint, data_note
+    추가 키: numbers (입력 numbers를 그대로 반환, 없으면 빈 dict)
     """
     t = text or ""
     RISK_ON = ["위험선호", "강세", "회복", "반등", "상승 출발", "강세 출발", "급등", "우호적", "갭상승", "갭 상승"]
@@ -85,37 +101,118 @@ def classify_regime_heuristic(text: str, market_data: dict | None = None) -> dic
     vol = sum(t.count(k) for k in VOLATILE)
     net = on - off
     THRESHOLD = 2  # |net|이 이 미만이면 neutral (보수적)
-    if vol >= 2 and abs(net) < THRESHOLD:
-        regime = "volatile"
-    elif net >= THRESHOLD:
-        regime = "risk_on"
-    elif net <= -THRESHOLD:
-        regime = "risk_off"
+
+    nums = numbers if isinstance(numbers, dict) else None
+
+    # ── 1차 신호: 객관 수치 (numbers) ──
+    # fear_greed 극단 / 코스피200 선물 강한 방향성에서 bias를 잡고, 키워드 net과 결합한다.
+    num_lean = 0  # +면 risk_on, -면 risk_off 쪽으로 객관 수치가 끌어당김
+    num_signal_strong = False  # 객관 수치가 강한 방향성 신호를 줬는가(컨피던스 가산용)
+    if nums:
+        fg = nums.get("fear_greed")
+        fut = nums.get("kospi200_futures_pct")
+        try:
+            if fg is not None:
+                fg = float(fg)
+                if fg <= 25:  # extreme fear
+                    num_lean -= 1
+                    num_signal_strong = True
+                elif fg >= 75:  # extreme greed
+                    num_lean += 1
+                    num_signal_strong = True
+        except (TypeError, ValueError):
+            pass
+        try:
+            if fut is not None:
+                fut = float(fut)
+                if fut <= -1.0:  # 강한 하락 선물
+                    num_lean -= 1
+                    num_signal_strong = True
+                elif fut >= 1.0:  # 강한 상승 선물
+                    num_lean += 1
+                    num_signal_strong = True
+        except (TypeError, ValueError):
+            pass
+
+    # ── regime 결정: 키워드 net + 객관 lean 결합 ──
+    if nums and num_signal_strong:
+        # 객관 수치를 점수화해 키워드와 합산(객관 1점 = 키워드 THRESHOLD 가중치).
+        combined = net + num_lean * THRESHOLD
+        if vol >= 2 and abs(combined) < THRESHOLD:
+            regime = "volatile"
+        elif combined >= THRESHOLD:
+            regime = "risk_on"
+        elif combined <= -THRESHOLD:
+            regime = "risk_off"
+        else:
+            regime = "neutral"
     else:
-        regime = "neutral"
+        # numbers 없음 또는 약한 신호 → 기존 키워드-only 로직(완전 하위호환)
+        if vol >= 2 and abs(net) < THRESHOLD:
+            regime = "volatile"
+        elif net >= THRESHOLD:
+            regime = "risk_on"
+        elif net <= -THRESHOLD:
+            regime = "risk_off"
+        else:
+            regime = "neutral"
+
     tone = {"risk_on": "positive", "risk_off": "negative"}.get(regime, "neutral")
-    # risk_level: KIS VIX 기반
+
+    # ── risk_level: numbers vix 우선 → market_data vix 폴백 → normal ──
     risk_level = "normal"
-    try:
-        vix = (market_data or {}).get("vix")
-        vix_val = vix.get("price") if isinstance(vix, dict) else None
-        if vix_val is not None:
-            vix_val = float(vix_val)
-            risk_level = "low" if vix_val < 20 else ("high" if vix_val > 30 else "normal")
-    except Exception:
-        pass
+    vix_source = None
+    vix_val = None
+    if nums and nums.get("vix") is not None:
+        try:
+            vix_val = float(nums["vix"])
+            vix_source = "numbers"
+        except (TypeError, ValueError):
+            vix_val = None
+    if vix_val is None:
+        try:
+            vix = (market_data or {}).get("vix")
+            mv = vix.get("price") if isinstance(vix, dict) else None
+            if mv is not None:
+                vix_val = float(mv)
+                vix_source = "market_data"
+        except Exception:
+            vix_val = None
+    if vix_val is not None:
+        risk_level = "low" if vix_val < 20 else ("high" if vix_val > 30 else "normal")
+
+    # ── confidence: 키워드 net 기반 → 객관 수치 corroborate/conflict 보정 ──
     confidence = min(abs(net) / (THRESHOLD * 2), 1.0)
+    if nums and num_signal_strong:
+        keyword_dir = (net > 0) - (net < 0)  # +1/0/-1
+        num_dir = (num_lean > 0) - (num_lean < 0)
+        if keyword_dir == 0:
+            # 키워드가 중립이면 객관 수치가 컨피던스를 끌어올린다
+            confidence = max(confidence, 0.6)
+        elif keyword_dir == num_dir:
+            confidence = min(confidence + 0.25, 1.0)  # corroborate → 가산
+        else:
+            confidence = max(confidence - 0.25, 0.0)  # conflict → 감산
+
+    data_note = "index-board 휴리스틱 분류 (on=%d off=%d vol=%d net=%d)" % (on, off, vol, net)
+    if nums:
+        data_note += " | numbers(vix=%s,fg=%s,fut=%s,lean=%d,vix_src=%s)" % (
+            nums.get("vix"), nums.get("fear_greed"), nums.get("kospi200_futures_pct"),
+            num_lean, vix_source,
+        )
+
     return {
         "tone": tone,
         "confidence": round(confidence, 2),
         "summary": t,  # 브리핑 원문을 요약으로 사용
         "key_factors": [],
         "risk_factors": [],
-        "data_note": "index-board 휴리스틱 분류 (on=%d off=%d vol=%d net=%d)" % (on, off, vol, net),
+        "data_note": data_note,
         "regime": regime,
         "risk_level": risk_level,
         "stock_character": "",
         "rulepack_hint": "",
+        "numbers": nums or {},
     }
 
 
@@ -171,6 +268,45 @@ def _should_attach_open_snapshot(now: datetime) -> bool:
     if not is_trading_day(now):
         return False
     return (now.hour, now.minute) >= (9, 0)
+
+
+def _is_briefing_fresh(briefing: dict | None, is_intraday: bool) -> bool:
+    """index-board 브리핑이 '신선'한지 판정 — stale면 LLM 백업으로 폴백시키기 위함.
+
+    - 아침(장전): generated_at이 최근 ~18h 이내면 fresh
+      (장전 브리핑은 보통 새벽~장 시작 전 산출 → 08:00 실행 시점까지 커버).
+    - 장중(regular): generated_at이 briefing.intraday_stale_minutes(기본 120) 이내면 fresh.
+    generated_at은 UTC ISO('...Z')로 파싱한다. 파싱 실패/없음이면 stale로 본다(보수적).
+    """
+    if not briefing:
+        return False
+    raw = briefing.get("generated_at")
+    if not raw:
+        return False
+    try:
+        s = str(raw).strip()
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        gen = datetime.fromisoformat(s)
+        if gen.tzinfo is None:
+            gen = gen.replace(tzinfo=timezone.utc)
+    except Exception:
+        return False
+    now = datetime.now(timezone.utc)
+    age_sec = (now - gen).total_seconds()
+    if age_sec < 0:
+        # 미래 timestamp(시계 오차 등) — 최근 1h 이내면 허용, 그 이상이면 stale
+        return age_sec > -3600
+    if is_intraday:
+        try:
+            from ..settings_store import get_setting
+
+            stale_min = float(get_setting("briefing.intraday_stale_minutes", 120) or 120)
+        except Exception:
+            stale_min = 120.0
+        return age_sec <= stale_min * 60.0
+    # 아침: 18h
+    return age_sec <= 18 * 3600.0
 
 
 def _parse_tone_response(raw: str) -> dict[str, Any]:
@@ -264,7 +400,11 @@ async def run_market_tone_analysis(
         logger.error("FAIL: MarketToneService ensure table failed trade_date=%s reason=%s", today, exc)
         raise
 
-    is_intraday = safe_source == "intraday_refresh"
+    # 장중 판별은 원본 trigger_source 기준 — normalize는 intraday_refresh를 api_manual로
+    # 접어버리므로(audit 화이트리스트 밖) safe_source로 판별하면 항상 False가 된다.
+    # intraday_snapshot이 전달된 경우도 장중 호출로 간주한다(이중 안전).
+    raw_source = str(trigger_source or "").strip().lower()
+    is_intraday = raw_source == "intraday_refresh" or bool(intraday_snapshot)
     market_data: dict[str, Any] = {}
     briefing_scraped = False
     briefing: dict[str, Any] | None = None
@@ -340,51 +480,76 @@ async def run_market_tone_analysis(
                 logger.warning("WARN: MarketToneService S11 스냅샷 폴백도 실패 — %s", snap_exc)
                 market_data_text = "[전날 밤 해외 시장 현황]\n  데이터 수집 실패 — 가용한 정보만 기준으로 판단"
 
-    # 아침 경로: index-board 장전 브리핑 스크래핑으로 LLM 입력 보강 (실패 시 폴백).
-    # 스크래핑은 입력 보강일 뿐 regime 판단·저장 흐름은 그대로 유지한다.
-    if not is_intraday:
+    # index-board 브리핑 스크래핑 — Phase 2: 아침/장중 모두에서 시황 단일출처.
+    # 아침은 scrape_morning(pre/kospi), 장중은 scrape_intraday(regular). 둘 다 briefing.scrape_enabled 가드.
+    # 신선(fresh)한 브리핑이 있으면 그것이 regime 주력(단일출처)이고, Opus는 휴면 백업으로만 작동한다.
+    briefing_fresh = False
+    briefing_text = ""
+    try:
+        from ..settings_store import get_setting
+
+        scrape_enabled = bool(get_setting("briefing.scrape_enabled", True))
+    except Exception:
+        scrape_enabled = False
+    if scrape_enabled:
         try:
-            from ..settings_store import get_setting
+            from . import index_board_scraper
 
-            scrape_enabled = bool(get_setting("briefing.scrape_enabled", True))
-        except Exception:
-            scrape_enabled = False
-        if scrape_enabled:
-            try:
-                from . import index_board_scraper
-
+            if is_intraday:
+                briefing = await index_board_scraper.scrape_intraday()
+                briefing_label = "장중 정제(regular)"
+            else:
                 briefing = await index_board_scraper.scrape_morning()
-                if briefing and briefing.get("text"):
-                    market_data_text += (
-                        "\n\n[외부 AI 시황 브리핑 (index-board, 장전 정제)]\n"
-                        + str(briefing["text"])
-                    )
-                    briefing_scraped = True
-                    logger.info(
-                        "INFO: MarketToneService 장전 브리핑 스크랩 보강 적용 generated_at=%s",
-                        briefing.get("generated_at"),
-                    )
-                else:
-                    logger.info("INFO: MarketToneService 장전 브리핑 없음 — 기존 경로 폴백")
-            except Exception as scrape_exc:
-                logger.warning(
-                    "WARN: MarketToneService 장전 브리핑 스크랩 실패 (기존 경로 폴백) — %s",
-                    scrape_exc,
+                briefing_label = "장전 정제"
+            if briefing and briefing.get("text"):
+                briefing_scraped = True
+                briefing_text = str(briefing["text"])
+                briefing_fresh = _is_briefing_fresh(briefing, is_intraday)
+                market_data_text += (
+                    f"\n\n[외부 AI 시황 브리핑 (index-board, {briefing_label})]\n"
+                    + briefing_text
                 )
+                logger.info(
+                    "INFO: MarketToneService 브리핑 스크랩 적용 intraday=%s generated_at=%s fresh=%s",
+                    is_intraday, briefing.get("generated_at"), briefing_fresh,
+                )
+            else:
+                logger.info("INFO: MarketToneService 브리핑 없음 intraday=%s — LLM 백업 폴백", is_intraday)
+        except Exception as scrape_exc:
+            logger.warning(
+                "WARN: MarketToneService 브리핑 스크랩 실패 (LLM 백업 폴백) — %s",
+                scrape_exc,
+            )
 
-    # index-board 브리핑 성공 시: 휴리스틱으로 regime 판정, 비싼 Opus 분석 SKIP (하이브리드 주력).
-    # 스크랩 실패/비활성 또는 장중(is_intraday)이면 기존 LLM 풀분석 경로로 폴백.
-    use_index_board_primary = (
-        (not is_intraday) and briefing_scraped and bool(briefing and briefing.get("text"))
-    )
+    # index-board 브리핑이 있고 신선(fresh)하면: 휴리스틱(+객관 수치)로 regime 판정, Opus SKIP (단일출처 주력).
+    # 스크랩 실패/비활성/stale이면 기존 Opus 풀분석을 휴면 백업으로 사용(provider='llm-backup' + 운영 알림).
+    # briefing_scraped는 briefing 텍스트가 있을 때만 True이므로 briefing_text가 비어있지 않음을 보장한다.
+    use_index_board_primary = briefing_scraped and briefing_fresh and bool(briefing_text)
     if use_index_board_primary:
-        parsed = classify_regime_heuristic(str(briefing["text"]), market_data)
-        llm_result = {"ok": True, "raw": str(briefing["text"]), "provider": "index-board"}
+        from . import index_board_scraper as _ibs
+
+        parsed_numbers = _ibs.parse_briefing_numbers(briefing_text)
+        parsed = classify_regime_heuristic(briefing_text, market_data, numbers=parsed_numbers)
+        llm_result = {"ok": True, "raw": briefing_text, "provider": "index-board"}
         logger.info(
             "INFO: MarketToneService index-board 주력 regime=%s risk_level=%s (Opus SKIP) note=%s",
             parsed["regime"], parsed["risk_level"], parsed["data_note"],
         )
     else:
+        # ── 휴면 백업: index-board 미수신/stale → Opus regime 사용. 운영 알림 1회 발생. ──
+        _backup_reason = "stale" if (briefing_scraped and not briefing_fresh) else "missing"
+        try:
+            from .alert_center import create_alert
+
+            create_alert(
+                alert_type="ops_watch",
+                title="⚠️ index-board 시황 미수신 — LLM 백업 regime 사용",
+                severity="WARNING",
+                detail=f"intraday={is_intraday} reason={_backup_reason} trade_date={today}",
+                trade_date=today,
+            )
+        except Exception as _alert_exc:
+            logger.warning("WARN: MarketToneService 백업 알림 발생 실패 (비치명) — %s", _alert_exc)
         prompt_file = "intraday_market_tone.md" if is_intraday else "0805_opus_market_tone.md"
         prompt_vars = {"date": today, "market_data": market_data_text}
         if is_intraday:
@@ -449,6 +614,12 @@ async def run_market_tone_analysis(
                 "rulepack_hint": "",
             }
 
+        # 백업 경로 provider 태깅: 휴면 Opus 백업이 동작했음을 명시(index-board 정상 경로와 구분).
+        llm_result["provider"] = "llm-backup"
+
+    # 정상(index-board) 경로의 객관 수치 저장용 — 백업 경로는 빈 dict.
+    parsed_numbers_json = json.dumps(parsed.get("numbers", {}) or {}, ensure_ascii=False)
+
     # DB 저장
     record_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
@@ -458,8 +629,9 @@ async def run_market_tone_analysis(
                 """
                 INSERT OR REPLACE INTO market_tone_results
                     (id, trade_date, tone, confidence, summary,
-                     key_factors, risk_factors, raw_response, provider, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     key_factors, risk_factors, raw_response, provider, created_at,
+                     parsed_numbers)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record_id,
@@ -472,6 +644,7 @@ async def run_market_tone_analysis(
                     llm_result.get("raw", ""),
                     llm_result.get("provider", "none"),
                     now,
+                    parsed_numbers_json,
                 ),
             )
     except Exception as exc:
