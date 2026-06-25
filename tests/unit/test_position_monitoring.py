@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
+import tempfile
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from backend.api.routes import trading_monitor
+from backend.config import settings
 from backend.services.engine import decision_engine, eod_liquidation
 from backend.services.engine.position_manager import PositionManager
 
@@ -81,7 +83,9 @@ class PositionManagerTrailingPersistenceTest(unittest.TestCase):
         high-water를 현재가부터 추적해 손절선을 상향한다. 초기 손절선도 그대로 유지.
         """
         manager = PositionManager()
-        with patch("backend.services.engine.position_manager._upsert_stop_state"):
+        with tempfile.TemporaryDirectory() as tmp_dir, \
+             patch.object(settings, "APP_DB_PATH", tmp_dir + "/test_iso.sqlite3"), \
+             patch("backend.services.engine.position_manager._upsert_stop_state"):
             manager.sync_account_position(
                 symbol="005930",
                 name="삼성전자",

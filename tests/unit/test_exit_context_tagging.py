@@ -18,6 +18,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import backend.services.engine.trade_tagging as tt
+from backend.config import settings
 from backend.services.engine.position_manager import PositionManager
 
 _FIXED_NOW = datetime.fromisoformat("2026-06-10T10:00:00+09:00")
@@ -80,8 +81,9 @@ def test_exit_context_returns_none_without_position():
     assert manager.get_exit_context("999999") is None
 
 
-def test_exit_context_returns_none_for_auto_imported():
+def test_exit_context_returns_none_for_auto_imported(tmp_path, monkeypatch):
     """auto_imported(진입가 KIS 평균가, 진입 맥락 불명) 포지션은 None."""
+    monkeypatch.setattr(settings, "APP_DB_PATH", str(tmp_path / "test_iso.sqlite3"))
     manager = PositionManager()
     with patch("backend.services.engine.position_manager._upsert_stop_state"), \
          patch("backend.services.engine.position_manager._now_kst", return_value=_FIXED_NOW):
