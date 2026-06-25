@@ -132,6 +132,49 @@ def _get_current_kospi_change() -> float | None:
         return None
 
 
+def _get_index_board_regime(trade_date: str) -> str | None:
+    """오늘 최신 market_tone(index-board 단독출처)이 산출한 regime. 없으면 None.
+
+    시황 단일출처(PM 확정): regime 권위는 market_tone(index-board)이고 SET 모니터는
+    그 regime을 받아 SET 매핑만 한다. 자체 _judge_regime은 index-board 미가용 시 폴백.
+    morning_context.regime은 장중 2분 폴링의 market_tone 재평가마다 갱신된다.
+    """
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT regime FROM morning_context WHERE trade_date = ? ORDER BY created_at DESC LIMIT 1",
+                (trade_date,),
+            ).fetchone()
+        if row is None:
+            return None
+        regime = str(dict(row).get("regime") or "").strip()
+        return regime or None
+    except Exception as exc:
+        logger.warning("WARN: IntradayRegimeMonitor index-board regime lookup failed error=%s", exc)
+        return None
+
+
+def _get_index_board_vix(trade_date: str) -> float | None:
+    """오늘 최신 market_tone_results.parsed_numbers의 VIX(index-board 파싱). 없으면 None.
+
+    parsed_numbers 컬럼은 배포(ALTER) 후 존재 — 미존재/빈값이면 None 반환해 morning VIX로 폴백.
+    """
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT parsed_numbers FROM market_tone_results WHERE trade_date = ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (trade_date,),
+            ).fetchone()
+        if row is None:
+            return None
+        nums = _json_loads(dict(row).get("parsed_numbers"))
+        return _to_float(nums.get("vix"))
+    except Exception as exc:
+        logger.warning("WARN: IntradayRegimeMonitor index-board VIX lookup failed error=%s", exc)
+        return None
+
+
 def _judge_regime(vix: float | None, kospi_change: float | None) -> str:
     """Judge the intraday regime from fixed morning VIX and current KOSPI change."""
     vix_value = vix if vix is not None else 20.0
@@ -220,7 +263,10 @@ async def check_intraday_regime(slot: str = "") -> dict[str, Any]:
         logger.info("SKIP: IntradayRegimeMonitor min transition interval trade_date=%s", trade_date)
         return {"ok": True, "action": "skipped", "reason": "min_interval"}
 
-    vix = _get_morning_vix(trade_date)
+    # 시황 단일출처(PM 확정): VIX는 index-board 파싱값 우선(미가용 시 morning VIX 폴백),
+    # 실시간 KOSPI 등락은 KIS 거래데이터 유지(PM#2: 실시간가격은 KIS 전담).
+    ib_vix = _get_index_board_vix(trade_date)
+    vix = ib_vix if ib_vix is not None else _get_morning_vix(trade_date)
     kospi_change = _get_current_kospi_change()
     if kospi_change is None:
         logger.info("SKIP: IntradayRegimeMonitor KOSPI change missing trade_date=%s", trade_date)
@@ -228,7 +274,13 @@ async def check_intraday_regime(slot: str = "") -> dict[str, Any]:
 
     current_set_id = current_app.get("set_id")
     current_regime = current_app.get("regime_label") or "neutral"
-    new_regime = _judge_regime(vix, kospi_change)
+    # regime 권위는 market_tone(index-board); 미가용 시에만 자체 판정 폴백.
+    ib_regime = _get_index_board_regime(trade_date)
+    new_regime = ib_regime or _judge_regime(vix, kospi_change)
+    logger.info(
+        "INFO: IntradayRegimeMonitor regime=%s source=%s vix=%s kospi=%s",
+        new_regime, "index-board" if ib_regime else "judge_fallback", vix, kospi_change,
+    )
     new_match = get_match_preview(new_regime, vix, kospi_change, trade_date)
     if not new_match.get("set_id"):
         logger.warning("WARN: IntradayRegimeMonitor preview has no SET; creating auto SET regime=%s", new_regime)
