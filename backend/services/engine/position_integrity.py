@@ -658,6 +658,43 @@ def create_integrity_alert_once(
     return True
 
 
+def _opening_positions_before(trade_date: str) -> dict[str, int]:
+    """Compute carryover (opening) qty per normalized symbol strictly before trade_date.
+
+    = sum(active BUY qty) - sum(active SELL qty) for trading_orders with trade_date < ?,
+    clamped to >= 0. Used so a position bought on a prior day and sold today is not
+    flagged as a phantom over-sell (false positive). Uses the same active status sets
+    and norm_symbol grouping as load_order_net_positions.
+
+    Args:
+        trade_date: YYYY-MM-DD trade date; orders strictly before this count as opening.
+    """
+    if not _table_exists("trading_orders"):
+        return {}
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT symbol, side, status, qty FROM trading_orders WHERE trade_date < ?",
+            (trade_date,),
+        ).fetchall()
+    grouped: dict[str, int] = defaultdict(int)
+    for row in rows:
+        order = dict(row)
+        symbol = str(order.get("symbol") or "").strip()
+        if not symbol:
+            continue
+        side = str(order.get("side") or "").strip().lower()
+        status = str(order.get("status") or "").strip().lower()
+        qty = _safe_int(order.get("qty"))
+        if qty <= 0:
+            continue
+        key = norm_symbol(symbol)
+        if side == "buy" and status in _ACTIVE_BUY_STATUSES:
+            grouped[key] += qty
+        elif side == "sell" and status in _ACTIVE_SELL_STATUSES:
+            grouped[key] -= qty
+    return {sym: max(0, net) for sym, net in grouped.items()}
+
+
 def summarize_order_integrity(trade_date: str) -> dict[str, Any]:
     """Summarize whether orders/fills are complete enough to verify PnL.
 
@@ -747,6 +784,9 @@ def summarize_order_integrity(trade_date: str) -> dict[str, Any]:
             )
 
     order_summaries = load_order_net_positions(trade_date)
+    # 전일 보유분(carryover)을 가용수량에 더해 오탐 방지: 당일 매도가 (opening + 당일매수)를
+    # 초과할 때만 이상으로 본다(전일 매수→당일 매도 정상 청산은 경고에서 제외).
+    opening_positions = _opening_positions_before(trade_date)
     net_negative_positions = [
         {
             "symbol": str(item.get("symbol") or ""),
@@ -758,7 +798,8 @@ def summarize_order_integrity(trade_date: str) -> dict[str, Any]:
             "sell_count": _safe_int(item.get("sell_count")),
         }
         for item in order_summaries
-        if _safe_int(item.get("net_qty")) < 0
+        if _safe_int(item.get("sell_qty"))
+        > _safe_int(item.get("buy_qty")) + opening_positions.get(norm_symbol(item.get("symbol")), 0)
     ]
     duplicate_sell_orders = [
         {
@@ -777,10 +818,12 @@ def summarize_order_integrity(trade_date: str) -> dict[str, Any]:
             "name": str(item.get("name") or ""),
             "buy_qty": _safe_int(item.get("buy_qty")),
             "sell_qty": _safe_int(item.get("sell_qty")),
-            "excess_qty": _safe_int(item.get("sell_qty")) - _safe_int(item.get("buy_qty")),
+            "excess_qty": _safe_int(item.get("sell_qty"))
+            - (_safe_int(item.get("buy_qty")) + opening_positions.get(norm_symbol(item.get("symbol")), 0)),
         }
         for item in order_summaries
-        if _safe_int(item.get("sell_qty")) > _safe_int(item.get("buy_qty"))
+        if _safe_int(item.get("sell_qty"))
+        > _safe_int(item.get("buy_qty")) + opening_positions.get(norm_symbol(item.get("symbol")), 0)
     ]
     legacy_residuals = detect_legacy_residual_positions(trade_date)
 

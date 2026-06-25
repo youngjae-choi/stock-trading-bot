@@ -14,6 +14,7 @@ from typing import Any
 
 from ..db import get_connection
 from .fill_poller import _mark_order_filled
+from .symbol_norm import norm_symbol
 
 logger = logging.getLogger("OrderReconciliation")
 
@@ -88,6 +89,30 @@ def _build_fill_data(order: dict[str, Any], kis_row: dict[str, Any]) -> dict[str
     }
 
 
+async def _kis_held_qty_map() -> dict[str, int]:
+    """KIS 잔고 보유수량 맵 {정규화심볼: qty}. ETN Q-형 통일을 위해 norm_symbol 키 사용.
+
+    residual_reconciliation._kis_held_qty_map와 동일 소스(get_balance)지만,
+    여기서는 ETN Q-prefix 매칭을 위해 키를 norm_symbol로 정규화한다.
+    """
+    from ...api.routes.account import _build_balance_payload
+    from ..kis.domestic.service import get_balance
+
+    payload = _build_balance_payload(await get_balance())
+    out: dict[str, int] = {}
+    for p in payload.get("positions", []) or []:
+        sym = str(p.get("symbol") or "").strip()
+        if not sym:
+            continue
+        key = norm_symbol(sym)
+        try:
+            qty = int(float(str(p.get("qty") or p.get("hldg_qty") or 0)))
+        except (TypeError, ValueError):
+            qty = 0
+        out[key] = out.get(key, 0) + qty
+    return out
+
+
 async def reconcile_orders_with_kis(trade_date: str) -> dict[str, Any]:
     """orphan 주문을 KIS 당일 체결과 대조해 해소. {resolved, cancelled, checked}."""
     orphans = _load_orphan_orders(trade_date)
@@ -101,6 +126,10 @@ async def reconcile_orders_with_kis(trade_date: str) -> dict[str, Any]:
     kis_rows_by_side: dict[str, list[dict[str, Any]]] = {}
     kis_query_ok: dict[str, bool] = {}
     resolved, cancelled, skipped = [], [], []
+    # KIS 보유수량 맵은 매수 orphan 취소 가드용 — 1회만 조회(lazy), 종목별 남은보유를 차감해
+    # 같은 종목 orphan 2건이 동일 보유분에 중복 크레딧되는 것을 막는다.
+    # None=미조회, "failed"=조회실패(취소 금지), dict=정규화심볼별 남은 보유수량.
+    remaining_held: dict[str, int] | str | None = None
     for o in orphans:
         side = str(o.get("side") or "buy").lower()
         if side not in kis_rows_by_side:
@@ -135,6 +164,50 @@ async def reconcile_orders_with_kis(trade_date: str) -> dict[str, Any]:
                 )
             except Exception as exc:
                 logger.warning("WARN: [Reconcile] fill 기록 실패 order=%s reason=%s", oid, exc)
+        elif side == "buy":
+            # output1 매칭 없음 — 취소 전 KIS 실보유 대조(실주문 유실 방지).
+            if remaining_held is None:
+                try:
+                    held = await _kis_held_qty_map()
+                    remaining_held = {k: int(v) for k, v in held.items()}
+                except Exception as exc:
+                    remaining_held = "failed"
+                    logger.warning("WARN: [Reconcile] KIS 보유조회 실패 — 매수 취소 보류 reason=%s", exc)
+            if remaining_held == "failed":
+                # 보유 확인 불가 → 절대 취소하지 않는다(다음 실행/수동 처리).
+                skipped.append({"order_id": oid, "symbol": o.get("symbol"), "reason": "kis_holdings_query_failed"})
+                logger.warning("WARN: [Reconcile] 보유확인 불가로 매수 보류(취소 안 함) symbol=%s", o.get("symbol"))
+                continue
+            sym_key = norm_symbol(o.get("symbol"))
+            order_qty = _to_int(o.get("qty"))
+            avail = int(remaining_held.get(sym_key, 0))
+            if order_qty > 0 and avail >= order_qty:
+                # 실제 보유 확인 → 체결로 기록(취소 금지).
+                synthetic_row = {"tot_ccld_qty": str(order_qty), "odno": ""}
+                try:
+                    _mark_order_filled(o, _build_fill_data(o, synthetic_row))
+                    remaining_held[sym_key] = avail - order_qty
+                    resolved.append(
+                        {"order_id": oid, "symbol": o.get("symbol"), "odno": "", "source": "kis_holdings_guard"}
+                    )
+                    logger.warning(
+                        "WARN: [Reconcile] KIS 보유 확인 — 취소 대신 체결기록 symbol=%s qty=%d",
+                        o.get("symbol"), order_qty,
+                    )
+                except Exception as exc:
+                    logger.warning("WARN: [Reconcile] 보유기반 fill 기록 실패 order=%s reason=%s", oid, exc)
+            elif avail > 0:
+                # 일부만 보유 → 모호. 취소도 기록도 하지 않고 보류(다음 실행/수동).
+                skipped.append({"order_id": oid, "symbol": o.get("symbol"), "reason": "kis_holding_partial_hold"})
+                logger.warning(
+                    "WARN: [Reconcile] 보유 일부만 확인 — 매수 보류(취소 안 함) symbol=%s held=%d qty=%d",
+                    o.get("symbol"), avail, order_qty,
+                )
+            else:
+                # 보유 없음 → 실제 미체결 → 취소.
+                _set_order_cancelled(oid, "eod_reconcile_no_kis_fill")
+                cancelled.append({"order_id": oid, "symbol": o.get("symbol")})
+                logger.info("INFO: [Reconcile] orphan 취소(KIS 체결·보유 없음) symbol=%s", o.get("symbol"))
         else:
             _set_order_cancelled(oid, "eod_reconcile_no_kis_fill")
             cancelled.append({"order_id": oid, "symbol": o.get("symbol")})
