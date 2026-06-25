@@ -92,10 +92,56 @@
 
 ---
 
+---
+
+## 4-A. 당일 실현 P&L SSOT — position_cost_basis 원장 도입 (A2, 2026-06-25)
+
+### 문제 배경
+
+KIS 보유 흡수(`auto_imported`)나 EOD 정합(`reconciled`)으로 들어온 포지션은 매수 fill 행이 DB에 없다.
+`trade_pairs.get_trade_pairs`는 매수측 `matched_qty = min(buy_qty, sell_qty)`로 손익을 계산하는데,
+`buy_qty=0`이면 `matched_qty=0`이 되어 그 거래 전체가 집계에서 누락된다.
+이 누락이 Daily Results `day_score`(4건)와 Review 카드 signal 수(6건·손실 4건)의 불일치를 낳았다.
+
+### 해결: position_cost_basis 원장
+
+`backend/services/engine/position_cost_basis.py`에 신규 보조 원장 테이블(`position_cost_basis`)을 도입했다.
+
+- **키**: `(norm_symbol, trade_date)` UNIQUE — 재기동·재흡수 중복을 idempotent하게 흡수한다.
+- **기록 시점**: `position_manager.add_position`에서 `auto_imported` 포지션일 때, 또는 `residual_reconciliation`이 KIS 실보유를 확인할 때 (`source='reconciled'`) `upsert_cost_basis`를 호출한다.
+- **조회**: `trade_pairs.get_trade_pairs`에서 매도만 있는 그룹(`buy_qty=0 & sell_qty>0`)을 대상으로 `get_cost_basis_map`을 1회 일괄 조회하고, 원가일 ≤ 매도일 가드를 만족하면 `buy_avg`·`buy_qty`를 주입해 누락 거래를 복원한다.
+- **페어 필드**: 복원된 거래의 `cost_basis_source`(예: `'auto_imported'` / `'reconciled'`)와 `cost_basis_trade_date`가 함께 반환된다.
+
+### daily_summary와 화면 통일
+
+`daily_summary.run_daily_summary`의 실현손익 writer가 trade_pairs 집계로 단일화되어 `pnl_source='fills+cost_basis'`로 기록된다.
+`review_audit`는 표시 거래수·승패를 `day_score` (SSOT)로 통일하고, `_pair_buy_date`가 `cost_basis_trade_date`로 이월 일관 분류된다.
+
+### SSOT 확장 표
+
+| 숫자 | 단일 출처 | 변경점 |
+|---|---|---|
+| **당일 실현 P&L** | `trade_pairs` 집계 (`daily_summary.run_daily_summary`) | `position_cost_basis` 원장으로 흡수 포지션 복원, `pnl_source='fills+cost_basis'` |
+| **당일 승/패/거래수** | `daily_review_reports.day_score` (S10) | Daily Results + Review 카드 양쪽이 동일 필드 읽음 |
+
+### 3종 P&L은 분리 유지
+
+기존 [P&L 회계 모델](../memory/project_pnl_accounting_model.md)의 3종 분리는 변경 없다.
+
+| 종류 | 정의 | 저장 |
+|---|---|---|
+| 실현(거래별) | `trade_pairs` 집계, 진입→청산 pair P&L | `daily_summary_reports.realized_pnl` |
+| 계좌누적(종가-종가) | 전일 종가 대비 당일 종가 총평가 Δ | `daily_review_reports.equity_eod_total_eval` |
+| 자본변화(intraday) | 실시간 미실현+실현 합산 | 별도 저장 없음(B 라이브) |
+
+---
+
 ## 5. 정합이 다시 깨지지 않게 하는 가드
 
 - `tests/unit/test_cross_surface_consistency.py` — "Daily Results 승/패 == 저장 day_score ==
   손실패턴 건수 == LLM 복기텍스트"를 강제. 누가 어딘가에 또 따로 계산하는 코드를 넣으면 **CI에서 즉시 실패**.
+- `tests/unit/test_position_cost_basis.py` — `upsert_cost_basis` / `get_cost_basis_map`의 idempotent·유효성 검증.
+- `tests/unit/test_today_realized_pnl.py` — `position_cost_basis` 주입 후 `get_trade_pairs`가 흡수 포지션 거래를 올바르게 복원하는지 검증.
 - `tests/unit/test_materialized_summaries.py` — alerts/dividends가 쓰기시점 저장 + 읽기 순수 +
   lazy 백필을 지키는지 강제.
 - `tests/unit/test_daily_score.py` — 당일 성적 SSOT(`compute_daily_score`)의 구조 불변식.

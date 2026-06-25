@@ -180,3 +180,65 @@
 - 단계 변경 → 시간표 수정
 - 새 메트릭 → 헬스 지표 추가
 - 새 진단 케이스 → 체크리스트 추가
+
+---
+
+## 6. KIS↔DB 정합 안전 가드 (A1·A3·B, 2026-06-25)
+
+KIS와 DB 간 드리프트(포지션·fill 기록 불일치)를 예방하기 위해 3개 계층 가드가 추가됐다.
+
+### A1 — EOD 정합: 매수 orphan 취소 전 KIS 보유 대조 (`order_reconciliation.py`)
+
+`reconcile_orders_with_kis`는 당일 체결 내역(output1)에 매칭되지 않은 매수 orphan을 처리할 때,
+기존에는 바로 취소했다. 이제는 **취소 전 반드시 KIS 실보유를 대조**한다.
+
+| KIS 보유 확인 결과 | 처리 |
+|---|---|
+| 주문수량 전량 보유 확인 | 취소 대신 fill 기록 (`source: 'kis_holdings_guard'`) |
+| 일부만 보유 (모호) | 보류 — 취소·기록 모두 하지 않음 (`reason: 'kis_holding_partial_hold'`) |
+| KIS 보유 조회 실패 | 보류 — 절대 취소하지 않음 (`reason: 'kis_holdings_query_failed'`) |
+| 보유 없음 | 정상 취소 (`eod_reconcile_no_kis_fill`) |
+
+매도 orphan 취소 로직(이중매도 방지)은 변경 없다.
+KIS 보유조회는 같은 종목의 orphan이 여러 건일 때 중복 크레딧을 막기 위해 1회 조회 후 남은 수량을 차감해 관리한다(`remaining_held` 딕셔너리).
+
+### A3 — 무결성 경고: 이월(carryover) 포지션 오탐 제거 (`position_integrity.py`)
+
+`summarize_order_integrity`의 `net_negative_positions`·`duplicate_sell_orders` 경고 조건이
+**당일 매도가 (이월 보유량 + 당일 매수)를 초과할 때만** 경고로 변경됐다.
+
+이전에는 "전일 매수→당일 매도(정상 보유 청산)"도 순매도 음수·매도초과로 잡혔다(오탐).
+`_opening_positions_before(trade_date)` 함수가 해당 거래일 이전의 누적 순매수를 종목별로 산출해 가용 수량에 더한다.
+매수 기록이 전무한 진짜 phantom은 이 보정 이후에도 여전히 경고된다.
+
+테스트: `tests/unit/test_integrity_carryover.py` (11건).
+
+### B — FillPoller 경화: 체결기록 fail-loud (`fill_poller.py`)
+
+드리프트 발생원 예방을 위해 3가지를 강화했다.
+
+**B1 — fills.symbol 저장 일관성**
+`fills.symbol`은 이제 원주문 심볼을 우선 저장하고, 없을 때만 KIS `pdno`로 폴백한다.
+ETN의 경우 KIS는 Q-prefix 없는 심볼을 반환하지만 매수 주문은 Q형(`Q520100`)으로 기록돼, 이전 방식에서는 buy/fill 심볼이 갈려 FIFO 짝맞춤이 어긋났다.
+
+**B2 — output2 체결필드 반복 부재 에스컬레이션**
+output2의 `tot_ccld_qty`가 **3회 연속 부재**하면 1회 운영 알림(텔레그램)을 발송한다.
+같은 주문에 대한 중복 알림은 `_CCLD_MISSING_ALERTED` 집합으로 억제하고, 주문 해소 시 상태를 해제한다.
+체결가 0 가드: `qty>0`인데 KIS 체결가가 0이면 주문 지정가(`order.price`)로 폴백, 그래도 0이면 fill은 기록하되 CRITICAL 로그 + 운영 알림을 발송한다(P&L 오염 방지 수동 정정 요청).
+
+**B3 — fail-loud: 체결기록 검증**
+`_mark_order_filled`에서 `fills INSERT`의 `rowcount`와 기록 전후 수량(`_recorded_fill_qty`)을 검증한다.
+`fill_delta_qty > 0`인데 실제 행이 늘지 않으면(INSERT OR IGNORE가 무시한 경우 포함) **CRITICAL 로그 + 운영 알림**을 발송한다.
+`raise`는 하지 않는다 — 폴링 루프를 죽이지 않고 탐지·알림만 한다(FK 만성화 방지).
+
+운영 알림은 `_send_ops_alert` 함수가 기존 `send_telegram_alert`를 재사용하며,
+실행 중인 이벤트 루프가 있으면 `create_task`로 비동기 예약하고, 없으면 `asyncio.run`으로 발송 시도한다.
+
+테스트: `tests/unit/test_fill_poller_hardening.py` (8건).
+
+### 진단 체크리스트 — 드리프트 의심 시
+
+1. CRITICAL/WARN 로그에서 `[FillPoller] fill 기록 실패` 또는 `체결기록 누락` 탐색
+2. `order_reconciliation` 로그에서 `KIS 보유 확인 — 취소 대신 체결기록` 건 확인 → 반복 발생이면 output1 지연 원인 조사
+3. `summarize_order_integrity` 결과에 `net_negative_positions`가 남아있으면 진짜 phantom(매수 기록 전무) 수동 확인
+4. `position_cost_basis` 테이블에서 당일 `auto_imported`/`reconciled` 원가가 기록됐는지 확인 → 없으면 흡수 포지션 P&L 누락 가능
