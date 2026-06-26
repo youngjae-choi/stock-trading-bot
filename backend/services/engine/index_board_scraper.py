@@ -138,20 +138,31 @@ def parse_briefing_numbers(text: str) -> dict:
         if m:
             out["vix"] = _to_float(m.group(1))
 
-        # 공포&탐욕 지수: "공포&탐욕 지수가 26점(Fear)" — 점수 + 괄호 라벨
-        m = re.search(
-            r"(?:공포\s*[&·/]?\s*탐욕|공포\s*탐욕|fear\s*&?\s*greed)[^0-9]{0,12}"
-            r"([0-9]+)\s*점?\s*(?:\(([^)]+)\))?",
-            text,
-            re.I,
-        )
-        if m:
-            try:
-                out["fear_greed"] = int(m.group(1))
-            except (TypeError, ValueError):
-                out["fear_greed"] = None
-            if m.group(2):
-                out["fear_greed_label"] = m.group(2).strip()
+        # 공포&탐욕 지수: 두 발행 형식 모두 지원한다.
+        #   A) "공포&탐욕 지수가 26점(Fear)"          — 숫자 뒤 영문 괄호 라벨
+        #   B) "공포·탐욕 지수가 '극단적 공포(25점)'"  — 한글 라벨 뒤 괄호숫자(점)
+        anchor = re.search(r"공포\s*[&·/]?\s*탐욕|fear\s*&?\s*greed", text, re.I)
+        if anchor:
+            tail = text[anchor.end(): anchor.end() + 60]  # 앵커 단어 직후 구간만 본다
+            # 점수: "(25점)" / "26점" / "(26)" 형식의 인근 첫 정수(0~100 가정)
+            mnum = re.search(r"\(?\s*([0-9]{1,3})\s*점", tail) or re.search(
+                r"\(\s*([0-9]{1,3})\s*\)", tail
+            )
+            if mnum:
+                try:
+                    out["fear_greed"] = int(mnum.group(1))
+                except (TypeError, ValueError):
+                    out["fear_greed"] = None
+            # 라벨: 한글 감성어 우선, 없으면 영문 Fear/Greed/Neutral
+            mlab = re.search(r"극단적\s*공포|극단적\s*탐욕|공포|탐욕|중립", tail)
+            if mlab:
+                out["fear_greed_label"] = mlab.group(0).strip()
+            else:
+                meng = re.search(
+                    r"(Extreme\s+Fear|Extreme\s+Greed|Fear|Greed|Neutral)", tail, re.I
+                )
+                if meng:
+                    out["fear_greed_label"] = meng.group(1).strip()
 
         # 코스피200 선물 등락: "코스피200 선물 ...(-1.73%)" — 괄호 안 부호숫자%
         m = re.search(
@@ -168,13 +179,21 @@ def parse_briefing_numbers(text: str) -> dict:
         if m:
             out["usdkrw"] = _to_float(m.group(1))
 
-        # 필라델피아 반도체(SOX): "...반도체지수가 +3.93%" 또는 "...반도체지수가 3.39% 급등"
+        # 필라델피아 반도체(SOX): "...반도체지수가 +3.93%" / "...3.39% 급등" / "...4% 넘게 급락"
+        # 명시 부호가 있으면 그대로, 없으면 직후 방향어(급락/급등 등)로 부호를 결정한다.
         m = re.search(
-            r"필라델피아\s*반도체\S*[가이]?\s*(" + _SIGNED_NUM + r")\s*%",
+            r"필라델피아\s*반도체\S*[가이]?\s*(" + _SIGNED_NUM + r")\s*%(.{0,12})",
             text,
         )
         if m:
-            out["sox_pct"] = _to_float(m.group(1))
+            val = _to_float(m.group(1))
+            if val is not None and not re.match(r"^\s*[+\-]", m.group(1)):
+                trail = m.group(2) or ""
+                if re.search(r"급락|하락|약세|폭락|내림|밀린|미끄러", trail):
+                    val = -abs(val)
+                elif re.search(r"급등|상승|강세|뛰|올라|반등", trail):
+                    val = abs(val)
+            out["sox_pct"] = val
 
         # 외국인 수급(정성): "외국인 수급 불안" / "외국인 수급 호조" 등 — 뒤따르는 한 단어
         m = re.search(r"외국인\s*수급\s*([가-힣]{1,6})", text)

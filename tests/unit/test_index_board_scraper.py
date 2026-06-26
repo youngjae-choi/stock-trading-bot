@@ -173,3 +173,34 @@ def test_numbers_vix_without_particle():
 def test_numbers_sox_positive_sign():
     n = parse_briefing_numbers("필라델피아 반도체지수가 +1.20% 상승")
     assert n["sox_pct"] == 1.20
+
+
+# ─────────────────────────────────────────────────────────────
+# PART C-2 — 실제 6/27 장전 브리핑 형식 회귀
+#   (중첩 라벨 fear_greed "'극단적 공포(25점)'" + 부호없는 급락)
+# ─────────────────────────────────────────────────────────────
+SAMPLE_PRE_0627 = (
+    "간밤 필라델피아 반도체지수가 4% 넘게 급락하고 공포·탐욕 지수가 "
+    "'극단적 공포(25점)'를 가리키는 가운데, 원/달러 환율 하락과 코스피200 "
+    "선물 강세가 일부 하방을 지지하며 오늘 코스피는 혼조세 속 보합권 출발"
+)
+
+
+def test_numbers_nested_label_fear_greed_0627():
+    """'극단적 공포(25점)' 처럼 한글라벨 뒤 괄호숫자(점) 형식도 추출한다."""
+    n = parse_briefing_numbers(SAMPLE_PRE_0627)
+    assert n["fear_greed"] == 25
+    assert n["fear_greed_label"] is not None
+    assert "극단적 공포" in n["fear_greed_label"]
+
+
+def test_numbers_sox_unsigned_drop_is_negative_0627():
+    """부호 없이 '4% 넘게 급락' → 음수 부호 부여."""
+    n = parse_briefing_numbers(SAMPLE_PRE_0627)
+    assert n["sox_pct"] == -4.0
+
+
+def test_numbers_sox_unsigned_rise_is_positive():
+    """부호 없이 '3.39% 급등' → 양수 유지 (기존 동작 회귀)."""
+    n = parse_briefing_numbers("필라델피아 반도체지수가 3.39% 급등")
+    assert n["sox_pct"] == 3.39
