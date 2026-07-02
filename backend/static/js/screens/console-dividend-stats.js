@@ -10,8 +10,6 @@ async function refreshDividendStats() {
     const monthlyTbody = document.getElementById('divStatMonthlyTableBody');
     const accountTbody = document.getElementById('divStatAccountTableBody');
 
-    const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
     try {
         const data = await fetchJson(`/api/v1/dividends/stats/summary?year=${year}`);
 
@@ -22,34 +20,35 @@ async function refreshDividendStats() {
         taxEl.innerText   = data.total.tax.toLocaleString();
         netEl.innerText   = data.total.net.toLocaleString();
 
-        // ── 월별 표 ────────────────────────────────────────────────────
+        // ── 일자별 표 ──────────────────────────────────────────────────
         const totalNet = data.total.net || 1;
-        if (data.monthly.length === 0) {
+        const daily = Array.isArray(data.daily) ? data.daily : [];
+        if (daily.length === 0) {
             monthlyTbody.innerHTML = '<tr><td colspan="5" class="muted" style="text-align:center;">선택한 연도의 데이터가 없습니다.</td></tr>';
         } else {
             let rows = '';
             let sumGross = 0, sumTax = 0, sumNet = 0;
 
-            for (let i = 0; i < 12; i++) {
-                const monthStr = (i + 1).toString().padStart(2, '0');
-                const m = data.monthly.find(d => d.month === monthStr);
-                const gross = m ? (m.total_gross || 0) : 0;
-                const tax   = m ? (m.total_tax   || 0) : 0;
-                const net   = m ? (m.total_net   || 0) : 0;
+            daily.forEach(d => {
+                const gross = d.total_gross || 0;
+                const tax   = d.total_tax   || 0;
+                const net   = d.total_net   || 0;
                 sumGross += gross; sumTax += tax; sumNet += net;
 
                 const share = net > 0 ? (net / totalNet * 100).toFixed(1) + '%' : '-';
                 const netCls = net > 0 ? 'good' : net < 0 ? 'bad' : 'muted';
-                const isEmpty = gross === 0 && net === 0;
+                // YYYY-MM-DD → MM-DD (연도는 상단 선택값으로 고정)
+                const parts = (d.date || '').split('-');
+                const dateLabel = parts.length === 3 ? `${parts[1]}-${parts[2]}` : (d.date || '-');
 
-                rows += `<tr${isEmpty ? ' style="color:var(--muted);"' : ''}>
-                    <td style="font-weight:500;">${MONTH_NAMES[i]}</td>
+                rows += `<tr>
+                    <td style="font-weight:500;">${dateLabel}</td>
                     <td style="text-align:right;">${gross > 0 ? gross.toLocaleString() : '-'}</td>
                     <td style="text-align:right; color:var(--red);">${tax > 0 ? tax.toLocaleString() : '-'}</td>
                     <td style="text-align:right;" class="${netCls}">${net > 0 ? net.toLocaleString() : '-'}</td>
                     <td style="text-align:right; font-size:12px;">${share}</td>
                 </tr>`;
-            }
+            });
 
             // 합계 행
             rows += `<tr style="border-top:2px solid var(--line); font-weight:600;">

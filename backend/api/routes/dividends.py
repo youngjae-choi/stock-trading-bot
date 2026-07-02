@@ -320,12 +320,30 @@ async def bulk_delete_dividend_entries(payload: BulkDeleteIds):
 # 읽기 시점에 매번 재계산하지 않고, 배당 입력/수정/삭제 쓰기 경로에서 전 연도를 재계산해
 # dividend_stats_cache에 저장한다(데이터가 작아 전체 재계산이 단순·staleness 없음).
 
+# payload 스키마 버전 — 신규 필드(일자별 내역·총세전/세금) 추가 시 올려, 읽기시점 1회 재계산 유도.
+_STATS_SCHEMA_VERSION = 3
+
+
 def _compute_dividend_stats(conn, year: int) -> dict:
-    """한 연도의 배당 통계를 산출(월별/계좌별/합계). 쓰기시점·lazy 백필 공용."""
+    """한 연도의 배당 통계를 산출(일자별/월별/계좌별/합계). 쓰기시점·lazy 백필 공용."""
     date_prefix = f"{year}-%"
+    # 일자별 내역 — 같은 날 여러 배당은 그 날짜로 합산(화면 표시 단위)
+    daily_rows = conn.execute(
+        """
+        SELECT dividend_date as date,
+               SUM(amount) as total_gross,
+               SUM(tax) as total_tax,
+               SUM(net_amount) as total_net
+        FROM dividends WHERE dividend_date LIKE ? GROUP BY dividend_date ORDER BY dividend_date ASC
+        """,
+        (date_prefix,),
+    ).fetchall()
     monthly_rows = conn.execute(
         """
-        SELECT strftime('%m', dividend_date) as month, SUM(net_amount) as total_net
+        SELECT strftime('%m', dividend_date) as month,
+               SUM(amount) as total_gross,
+               SUM(tax) as total_tax,
+               SUM(net_amount) as total_net
         FROM dividends WHERE dividend_date LIKE ? GROUP BY month ORDER BY month ASC
         """,
         (date_prefix,),
@@ -345,7 +363,9 @@ def _compute_dividend_stats(conn, year: int) -> dict:
     ).fetchone()
     return {
         "year": year,
+        "schema_version": _STATS_SCHEMA_VERSION,
         "total": dict(total_row) if total_row and total_row["gross"] is not None else {"gross": 0, "tax": 0, "net": 0},
+        "daily": [dict(row) for row in daily_rows],
         "monthly": [dict(row) for row in monthly_rows],
         "by_account": [dict(row) for row in account_rows],
     }
@@ -395,11 +415,16 @@ async def get_dividend_stats(year: int | None = None):
             _store_dividend_stats(conn, target_year, payload)  # lazy 백필
         else:
             payload = _json.loads(row["payload"])
+            # 구버전 캐시(지급일·세전/세금 필드 없음)면 1회 재계산·저장 (서버 내부 단일 writer)
+            if payload.get("schema_version", 1) < _STATS_SCHEMA_VERSION:
+                payload = _compute_dividend_stats(conn, target_year)
+                _store_dividend_stats(conn, target_year, payload)
 
     return {
         "ok": True,
         "year": target_year,
         "total": payload.get("total", {"gross": 0, "tax": 0, "net": 0}),
+        "daily": payload.get("daily", []),
         "monthly": payload.get("monthly", []),
         "by_account": payload.get("by_account", []),
     }
