@@ -55,7 +55,10 @@ def test_exit_context_after_tick_flow_mfe_mae_hold():
     manager._positions["005930"]["entry_ts"] -= 60
 
     sell_mock = AsyncMock(return_value={})
+    # 이 테스트는 트레일링 이탈 exit·MFE/MAE 컨텍스트만 검증 — 스케일아웃 수확(+2% 익절)은 격리.
+    _no_harvest = lambda key, default=None: False if key == "engine.harvest_mode" else default
     with patch("backend.services.engine.position_manager._upsert_stop_state"), \
+         patch("backend.services.engine.position_manager.get_setting", side_effect=_no_harvest), \
          patch("backend.services.engine.position_manager._now_kst", return_value=_FIXED_NOW), \
          patch("backend.services.engine.order_executor.order_executor.execute_sell", sell_mock):
         asyncio.run(manager.on_tick({"symbol": "005930", "price": "100"}))

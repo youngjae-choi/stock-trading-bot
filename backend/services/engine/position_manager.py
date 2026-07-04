@@ -73,6 +73,18 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _as_bool(value: Any, default: bool = False) -> bool:
+    """설정값(문자열/정수/불리언)을 boolean으로 정규화. 파싱 불가하면 default."""
+    if isinstance(value, bool):
+        return value
+    s = str(value).strip().lower()
+    if s in ("1", "true", "yes", "on", "y", "t"):
+        return True
+    if s in ("0", "false", "no", "off", "n", "f", ""):
+        return False
+    return default
+
+
 def _upsert_stop_state(position_id: str, data: dict[str, Any]) -> None:
     now = _now_kst().isoformat()
     with get_connection() as conn:
@@ -170,6 +182,8 @@ class PositionManager:
             "trailing_stop_price": initial_stop_price,
             "trailing_activate_profit": trailing_activate,
             "trailing_stop_rate": trailing_rate,
+            # 스케일아웃 수확(+목표 도달 시 부분확정) 1회 여부
+            "harvested": False,
             # 시간 기반
             "max_holding_minutes": max_minutes,
             "force_exit_time": str(rule.get("force_exit_time") or "15:20:00"),
@@ -386,7 +400,9 @@ class PositionManager:
 
         reason = self._exit_reason(position, price)
         if not reason:
-            return ""
+            # 풀청산 사유가 없으면 스케일아웃 수확(+목표 도달 시 부분확정+잔량 러너) 시도.
+            # 손절/트레일링/EOD 등 풀청산이 항상 우선한다(안전).
+            return await self._scaleout_check(position, price)
 
         self._closing.add(symbol)
         logger.info("START: [S8] exit symbol=%s reason=%s price=%.2f", symbol, reason, price)
@@ -401,6 +417,106 @@ class PositionManager:
             logger.error("FAIL: [S8] exit order failed symbol=%s error=%s", symbol, exc)
             return ""
         return reason
+
+    def _scaleout_enabled(self) -> bool:
+        """수확(스케일아웃) 모드 on/off. 기본 ON. OFF면 기존 탐색모드 동작(익절 없음) 보존."""
+        try:
+            return _as_bool(get_setting("engine.harvest_mode", True), True)
+        except Exception:
+            return True
+
+    async def _scaleout_check(self, position: dict[str, Any], price: float) -> str:
+        """+목표수익률 도달 시 물량 일부를 확정 매도하고 잔량을 트레일링 러너로 전환한다.
+
+        PM 목표(하루 +2% 확정 + 트레일링 상승 보너스)를 스케일아웃으로 동시 달성한다.
+          - 확정 매도 사유 = 'take_profit_scaleout'. 포지션당 1회만(harvested 플래그).
+          - 잔량은 즉시 트레일링 활성화(고점=현재가 기준)로 상승분을 추적한다.
+          - harvest_mode OFF면 아무것도 하지 않는다(후퇴 안전).
+          - 풀청산(손절/트레일링/EOD)이 항상 우선하므로 이 함수는 그 뒤에만 호출된다.
+
+        Returns:
+            부분 물량이 남으면 "" (포지션 계속 관리), scaleout_ratio=1 등으로 잔량 0이면
+            전량 청산되어 'take_profit_scaleout'.
+        """
+        if not self._scaleout_enabled():
+            return ""
+        if position.get("harvested"):
+            return ""
+        symbol = str(position.get("symbol") or "")
+        if not symbol or symbol in self._closing:
+            return ""
+
+        entry_price = _to_float(position.get("entry_price"))
+        if entry_price <= 0:
+            return ""
+        target_rate = _to_float(get_setting("engine.scaleout_target_rate", 0.02), 0.02)
+        if target_rate <= 0 or price < entry_price * (1 + target_rate):
+            return ""
+
+        qty = int(_to_float(position.get("qty")))
+        if qty <= 1:
+            return ""  # 1주는 부분 확정 불가 — 트레일링/손절/EOD에 맡긴다
+        ratio = min(max(_to_float(get_setting("engine.scaleout_ratio", 0.6), 0.6), 0.0), 1.0)
+        sell_qty = int(qty * ratio)
+        if sell_qty <= 0:
+            return ""
+        remainder = qty - sell_qty
+        full_exit = remainder <= 0
+
+        # 낙관적 가드 — await 전에 harvested 선점(동시 틱 중복 확정 방지). 실패 시 원복.
+        position["harvested"] = True
+        if full_exit:
+            self._closing.add(symbol)
+        try:
+            from .order_executor import order_executor
+            sell_result = await order_executor.execute_sell(
+                symbol=symbol, qty=sell_qty, price=0,
+                reason="take_profit_scaleout", name=str(position.get("name") or ""),
+            )
+        except Exception as exc:
+            position["harvested"] = False
+            self._closing.discard(symbol)
+            logger.error("FAIL: [S8] scaleout sell failed symbol=%s error=%s", symbol, exc)
+            return ""
+        if not (isinstance(sell_result, dict) and sell_result.get("ok")):
+            position["harvested"] = False
+            self._closing.discard(symbol)
+            logger.warning("WARN: [S8] scaleout sell not ok symbol=%s result=%s", symbol, sell_result)
+            return ""
+
+        logger.info(
+            "SUCCESS: [S8] scaleout harvested symbol=%s sold=%d remainder=%d target=+%.1f%%",
+            symbol, sell_qty, remainder, target_rate * 100,
+        )
+
+        if full_exit:
+            self.remove_position(symbol)
+            return "take_profit_scaleout"
+
+        # 잔량 = 트레일링 러너로 전환 (고점=현재가 기준, 손절선 상향; 절대 하향 없음)
+        position["qty"] = remainder
+        position["trailing_active"] = True
+        new_high = max(_to_float(position.get("highest_price_since_entry")), price)
+        position["highest_price_since_entry"] = new_high
+        trailing_rate = _to_float(position.get("trailing_stop_rate"), 0.03)
+        new_trailing_stop = new_high * (1 - trailing_rate)
+        position["trailing_stop_price"] = new_trailing_stop
+        position["active_stop_price"] = max(
+            _to_float(position.get("active_stop_price")),
+            _to_float(position.get("initial_stop_price")),
+            new_trailing_stop,
+        )
+        _upsert_stop_state(position["position_id"], {
+            "symbol_code": symbol,
+            "entry_price": entry_price,
+            "highest_price_since_entry": new_high,
+            "initial_stop_price": _to_float(position.get("initial_stop_price")),
+            "trailing_stop_price": new_trailing_stop,
+            "active_stop_price": position["active_stop_price"],
+            "trailing_active": True,
+            "profile_assigned": position.get("profile_assigned", "MID_VOL"),
+        })
+        return ""  # 잔량은 계속 관리 (풀청산 아님)
 
     async def check_exits_via_rest(self) -> dict[str, Any]:
         """손절 REST 폴링 백업 — **종목별**로 WS 틱이 끊긴 보유 포지션만 REST로 감시한다.

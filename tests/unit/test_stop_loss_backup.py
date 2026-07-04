@@ -48,6 +48,8 @@ def _settings(enabled: bool = True, stale_sec: int = 90):
     table = {
         "risk.stop_loss_backup_enabled": enabled,
         "risk.stop_loss_backup_stale_sec": stale_sec,
+        # 이 스위트는 손절 백업 메커니즘만 검증 — 스케일아웃 수확(+2% 익절)은 격리.
+        "engine.harvest_mode": False,
     }
 
     def _get(key: str, default=None):
