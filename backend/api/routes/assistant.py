@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from ...api.dependencies import require_console_user
-from ...services.console_chat_store import append_note, read_chat
+from ...services.console_chat_store import append_note, append_screenshot, read_chat
 
 logger = logging.getLogger("ConsoleAssistantAPI")
 router = APIRouter(
@@ -43,6 +43,37 @@ async def post_note(request: NoteRequest) -> dict:
         date_str=request.date,
     )
     logger.info("SUCCESS: POST /api/v1/assistant/note file=%s", res.get("file"))
+    return {"ok": True, "payload": res}
+
+
+class ScreenshotRequest(BaseModel):
+    """카메라 버튼: DOM 스크린샷(dataURL) + 발화 + 화면 식별자."""
+
+    image: str                       # "data:image/png;base64,..."
+    screen_id: str = ""
+    note: str = ""
+    date: str | None = None
+
+
+@router.post("/screenshot")
+async def post_screenshot(request: ScreenshotRequest) -> dict:
+    """DOM 스크린샷을 파일로 저장하고 MD에 이미지 참조를 append (작성자=PM)."""
+    logger.info("START: POST /api/v1/assistant/screenshot screen=%s", request.screen_id)
+    try:
+        res = append_screenshot(
+            image_data_url=request.image,
+            screen_id=request.screen_id,
+            note=request.note,
+            author="PM",
+            date_str=request.date,
+        )
+    except ValueError as exc:
+        logger.warning("WARN: POST /api/v1/assistant/screenshot rejected: %s", exc)
+        return {"ok": False, "error": str(exc)}
+    logger.info(
+        "SUCCESS: POST /api/v1/assistant/screenshot file=%s image=%s bytes=%s",
+        res.get("file"), res.get("image"), res.get("bytes"),
+    )
     return {"ok": True, "payload": res}
 
 

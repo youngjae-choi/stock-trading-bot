@@ -75,6 +75,67 @@
 
   function sendScreenOnly() { sendAssistantNote('(화면 공유)'); }
 
+  /* html2canvas 지연 로드(최초 클릭 시 1회) — 평소 200KB 로드 안 함. */
+  function _loadHtml2Canvas() {
+    return new Promise(function (resolve, reject) {
+      if (window.html2canvas) { resolve(window.html2canvas); return; }
+      var s = document.createElement('script');
+      s.src = '/static/js/vendor/html2canvas.min.js';
+      s.onload = function () {
+        if (window.html2canvas) resolve(window.html2canvas);
+        else reject(new Error('html2canvas 로드 실패'));
+      };
+      s.onerror = function () { reject(new Error('html2canvas 스크립트 로드 실패')); };
+      document.head.appendChild(s);
+    });
+  }
+
+  /* 활성 화면 섹션을 (스크롤로 가려진 부분 포함) PNG로 캡처해 서버에 저장 →
+   * CLI의 Claude가 실제 UI(색·폰트·레이아웃)를 이미지로 본다. */
+  async function sendScreenshot() {
+    var snap = _collectScreenContext();
+    var id = snap.screen_id;
+    var sec = document.getElementById('screen-' + id) ||
+              document.querySelector('.screen:not([style*="display: none"])') ||
+              document.querySelector('.screen') || document.body;
+    var panel = document.getElementById('assistant-panel');
+    var prevVis = panel ? panel.style.visibility : '';
+    _setStatus('📸 캡처 중…');
+    try {
+      var html2canvas = await _loadHtml2Canvas();
+      if (panel) panel.style.visibility = 'hidden'; // 패널이 화면 가리지 않게(레이아웃 유지)
+      var bg = getComputedStyle(document.body).backgroundColor || '#0b0f16';
+      var canvas = await html2canvas(sec, {
+        backgroundColor: bg,
+        scale: Math.min(window.devicePixelRatio || 1, 2),
+        useCORS: true,
+        logging: false,
+        windowWidth: document.documentElement.clientWidth,
+      });
+      if (panel) panel.style.visibility = prevVis;
+      var dataUrl = canvas.toDataURL('image/png');
+      // 용량 가드: base64가 ~11MB(≈8MB 바이너리) 넘으면 JPEG로 다운스케일
+      if (dataUrl.length > 11 * 1024 * 1024) dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      _setStatus('보내는 중…');
+      var input = document.getElementById('assistant-input');
+      var note = input ? input.value : '';
+      var r = await fetch('/api/v1/assistant/screenshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: dataUrl, screen_id: id, note: note || '' }),
+      });
+      var j = await r.json();
+      if (!j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      if (input) input.value = '';
+      var kb = j.payload && j.payload.bytes ? Math.round(j.payload.bytes / 1024) : '?';
+      _setStatus('📸 전송됨 · ' + id + ' 스크린샷(' + kb + 'KB)');
+      _poll();
+    } catch (e) {
+      if (panel) panel.style.visibility = prevVis;
+      _setStatus('스크린샷 실패: ' + (e.message || e));
+    }
+  }
+
   function toggleAssistant() {
     var panel = document.getElementById('assistant-panel');
     if (!panel) return;
@@ -112,4 +173,5 @@
   window.toggleAssistantMic = toggleAssistantMic;
   window.sendAssistantNote = sendAssistantNote;
   window.sendScreenOnly = sendScreenOnly;
+  window.sendScreenshot = sendScreenshot;
 })();
