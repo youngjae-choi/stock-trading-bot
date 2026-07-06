@@ -123,6 +123,9 @@ class PositionManager:
         # 종목별 마지막 틱 수신 시각(monotonic) — 개별 무틱 종목 손절 백업 판정용.
         # 전역값만으로는 "다른 종목이 틱하면 전 종목 백업 skip"되어 무틱 종목이 방치된다.
         self._last_tick_by_symbol: dict[str, float] = {}
+        # 계좌 단위 일일 목표(+2%, 총자산 대비) 도달 래치 — (trade_date, reached).
+        # 도달하면 당일 동안 True 유지(재계산 없음). 미도달은 캐시하지 않고 계속 재확인한다.
+        self._daily_target_latch: tuple[str, bool] | None = None
 
     def add_position(
         self,
@@ -425,6 +428,46 @@ class PositionManager:
         except Exception:
             return True
 
+    async def _account_daily_target_reached(self) -> bool:
+        """계좌 총자산이 당일 장시작 baseline 대비 목표수익률(기본 +2%)에 도달했는지.
+
+        PM 정의(2026-07-06): 하루 목표 2%는 '계좌 잔고(총자산) 대비 매일 복리'. 도달하면
+        당일 동안 래치해 재계산하지 않는다. 조회 실패 시 False(수확 강화 미발동, 안전 후퇴).
+
+        비용: order_executor의 30초 캐시 잔고를 재사용하므로 틱 경로에서도 저렴하다.
+        도달 전에는 래치하지 않아 매 확인마다 캐시 잔고를 재확인(최대 30초 1회 KIS 호출)한다.
+        """
+        try:
+            rate = _to_float(get_setting("engine.daily_target_rate", 0.02), 0.02)
+            if rate <= 0:
+                return False
+            today = _now_kst().strftime("%Y-%m-%d")
+            latch = self._daily_target_latch
+            if latch is not None and latch[0] == today and latch[1]:
+                return True
+            from .daily_capital import get_total_eval_baseline
+            base = get_total_eval_baseline(today)
+            if not base or base <= 0:
+                return False
+            from .order_executor import order_executor
+            balance = await order_executor._get_cached_balance()
+            summary_rows = balance.get("output2") or []
+            summary = summary_rows[0] if summary_rows else {}
+            total_eval = _to_float(summary.get("tot_evlu_amt"))
+            if total_eval <= 0:
+                return False
+            reached = total_eval >= base * (1 + rate)
+            if reached:
+                self._daily_target_latch = (today, True)
+                logger.info(
+                    "SUCCESS: [S8] account daily target reached total_eval=%.0f base=%.0f target=+%.1f%%",
+                    total_eval, base, rate * 100,
+                )
+            return reached
+        except Exception as exc:
+            logger.warning("WARN: [S8] account daily target check failed — %s", exc)
+            return False
+
     async def _scaleout_check(self, position: dict[str, Any], price: float) -> str:
         """+목표수익률 도달 시 물량 일부를 확정 매도하고 잔량을 트레일링 러너로 전환한다.
 
@@ -457,6 +500,12 @@ class PositionManager:
         if qty <= 1:
             return ""  # 1주는 부분 확정 불가 — 트레일링/손절/EOD에 맡긴다
         ratio = min(max(_to_float(get_setting("engine.scaleout_ratio", 0.6), 0.6), 0.0), 1.0)
+        # 계좌가 당일 목표(+2%, 총자산 대비)에 도달했으면 확정 비중을 상향해 이익을 더 잠근다
+        # (부분 수확 강화 — PM 확정 2026-07-06). 잔량은 계속 트레일링 러너로 상승분을 추적.
+        if await self._account_daily_target_reached():
+            boosted = min(max(_to_float(get_setting("engine.scaleout_ratio_after_target", 0.8), 0.8), 0.0), 1.0)
+            if boosted > ratio:
+                ratio = boosted
         sell_qty = int(qty * ratio)
         if sell_qty <= 0:
             return ""

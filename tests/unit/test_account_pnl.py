@@ -58,7 +58,19 @@ def test_daily_uses_total_eval_baseline(monkeypatch):
     r = compute_account_pnl(_balance(115327435, 72292173, 61586057, 10000000, 52032519))
     assert r["daily_pnl"] == 115327435 - 110000000   # 5,327,435
     assert r["daily_baseline_available"] is True
-    assert abs(r["daily_return_pct"] - round(5327435 / 100000000 * 100, 2)) < 0.001  # ÷1억
+    # 당일 수익률은 '계좌 잔고 대비' = 당일 시작 baseline(1.1억) 기준. 고정 원금(1억) 아님.
+    assert abs(r["daily_return_pct"] - round(5327435 / 110000000 * 100, 2)) < 0.001  # ÷baseline
+
+
+def test_daily_return_pct_denominator_is_baseline_not_principal(monkeypatch):
+    """계좌가 원금보다 커졌을 때 당일% 는 원금이 아니라 당일 시작 잔고로 나눈다(복리 정의)."""
+    # baseline 1.2억(누적 이익 반영된 오늘 시작 잔고), 오늘 +2,400,000 = 정확히 +2%.
+    _patch_common(monkeypatch, baseline=120000000)
+    r = compute_account_pnl(_balance(122400000, 80000000, 61586057, 2400000, 42400000))
+    assert r["daily_pnl"] == 2400000
+    assert abs(r["daily_return_pct"] - 2.0) < 0.001            # ÷1.2억 = 정확히 2%
+    # 고정 원금(1억)으로 나눴다면 2.4% 가 나온다 — 그 버그가 아님을 못박는다.
+    assert abs(r["daily_return_pct"] - 2.4) > 0.3
 
 
 def test_cash_falls_back_to_total_minus_stock_when_ord_psbl_zero(monkeypatch):

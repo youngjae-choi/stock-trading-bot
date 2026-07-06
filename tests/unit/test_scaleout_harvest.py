@@ -144,6 +144,61 @@ class ScaleoutHarvestTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sell.call_args.kwargs["qty"], 100)
         self.assertNotEqual(sell.call_args.kwargs["reason"], "take_profit_scaleout")
 
+    # ── Gap B: 계좌 단위 일일 목표(+2%, 총자산 대비) 도달 시 부분 수확 강화 ──
+
+    async def test_scaleout_ratio_boosted_after_account_target(self):
+        """계좌 일일 목표(+2%) 도달 후에는 확정 비중 0.8로 상향 — 80주 확정, 잔량 20주 러너."""
+        pos = _make_position(qty=100, entry=100.0)
+        with patch.object(PositionManager, "_account_daily_target_reached",
+                          new=AsyncMock(return_value=True)):
+            mgr, sell, reason = await self._run(pos, 102.0)
+        sell.assert_awaited_once()
+        self.assertEqual(sell.call_args.kwargs["qty"], 80)   # 0.6 → 0.8 상향
+        self.assertEqual(pos["qty"], 20)                     # 잔량 20주 트레일링 러너
+        self.assertTrue(pos["trailing_active"])
+        self.assertEqual(reason, "")
+
+    async def test_scaleout_ratio_normal_when_target_not_reached(self):
+        """계좌 목표 미도달이면 기본 비중(0.6) 유지 — 60주 확정."""
+        pos = _make_position(qty=100, entry=100.0)
+        with patch.object(PositionManager, "_account_daily_target_reached",
+                          new=AsyncMock(return_value=False)):
+            _, sell, _ = await self._run(pos, 102.0)
+        self.assertEqual(sell.call_args.kwargs["qty"], 60)
+        self.assertEqual(pos["qty"], 40)
+
+    async def test_account_target_reached_latches_after_first_hit(self):
+        """총자산이 baseline 대비 +2% 도달 → True, 이후 재확인은 캐시 잔고를 다시 부르지 않는다(래치)."""
+        mgr = PositionManager()
+        bal = AsyncMock(return_value={"output2": [{"tot_evlu_amt": "102000000"}]})
+        with patch("backend.services.engine.position_manager.get_setting", side_effect=_settings()), \
+             patch("backend.services.engine.daily_capital.get_total_eval_baseline", return_value=100000000), \
+             patch("backend.services.engine.order_executor.order_executor._get_cached_balance", new=bal):
+            self.assertTrue(await mgr._account_daily_target_reached())
+            self.assertTrue(await mgr._account_daily_target_reached())
+        self.assertEqual(bal.await_count, 1)  # 래치되어 2회차는 잔고 재조회 없음
+
+    async def test_account_target_not_reached_does_not_latch(self):
+        """미도달(+1%)이면 False이고 래치하지 않아 매번 재확인한다."""
+        mgr = PositionManager()
+        bal = AsyncMock(return_value={"output2": [{"tot_evlu_amt": "101000000"}]})
+        with patch("backend.services.engine.position_manager.get_setting", side_effect=_settings()), \
+             patch("backend.services.engine.daily_capital.get_total_eval_baseline", return_value=100000000), \
+             patch("backend.services.engine.order_executor.order_executor._get_cached_balance", new=bal):
+            self.assertFalse(await mgr._account_daily_target_reached())
+            self.assertFalse(await mgr._account_daily_target_reached())
+        self.assertEqual(bal.await_count, 2)  # 미도달은 래치 안 함 → 재확인
+
+    async def test_account_target_false_when_no_baseline(self):
+        """baseline 미캡처(장전/비거래일)면 KIS 잔고 조회 전에 False로 빠진다(안전)."""
+        mgr = PositionManager()
+        bal = AsyncMock(return_value={"output2": [{"tot_evlu_amt": "999999999"}]})
+        with patch("backend.services.engine.position_manager.get_setting", side_effect=_settings()), \
+             patch("backend.services.engine.daily_capital.get_total_eval_baseline", return_value=None), \
+             patch("backend.services.engine.order_executor.order_executor._get_cached_balance", new=bal):
+            self.assertFalse(await mgr._account_daily_target_reached())
+        bal.assert_not_awaited()  # baseline 없으면 잔고 조회 자체를 하지 않는다
+
 
 if __name__ == "__main__":
     unittest.main()

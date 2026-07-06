@@ -370,6 +370,18 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
             "number",
             "스케일아웃 시 확정 매도 비중 (0.6 = 60% 확정, 40% 트레일링 러너). 1.0이면 전량 익절",
         ),
+        (
+            "engine.daily_target_rate",
+            0.02,
+            "number",
+            "계좌 단위 일일 목표 수익률 (0.02 = 총자산이 당일 장시작 대비 +2%). PM 정의: 하루 목표는 계좌 잔고 대비 매일 복리",
+        ),
+        (
+            "engine.scaleout_ratio_after_target",
+            0.8,
+            "number",
+            "계좌 일일 목표 도달 후 상향된 확정 매도 비중 (0.8 = 80% 확정). 목표 달성 시 이익을 더 잠그는 부분 수확 강화",
+        ),
         ("risk.emergency_halt_enabled", False, "boolean", "긴급정지 신규 주문 차단 상태"),
         ("schedule_trade_prep_time", "09:01", "string", "거래준비 프로세스 시작 시간 (S1~S5-A 순차 실행, HH:MM)"),
         ("schedule_s1_time", "07:45", "string", "[legacy] S1 개별 실행 시간 - scheduler 등록에는 사용하지 않음"),

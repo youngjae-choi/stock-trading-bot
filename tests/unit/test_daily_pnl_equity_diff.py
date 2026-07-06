@@ -2,7 +2,8 @@
 
 SSOT 통합(2026-06-15): 계산은 account_pnl.compute_account_pnl 단일 소스에서 온다.
 - baseline 은 장시작 total_eval (예수금 아님).
-- % 는 원금(1억) 기준으로 나눈다 (예수금/baseline 으로 나누는 버그 금지).
+- 당일 % 는 '계좌 잔고 대비' = 당일 시작 baseline 기준으로 나눈다 (PM 정의 2026-07-06:
+  하루 목표 2%는 총자산 대비 매일 복리). 예수금으로 나누는 버그는 여전히 금지.
 - baseline 미캡처(장전/비거래일)면 daily_pnl_total/daily_pnl_pct = None (0 아님), daily_pnl_available=False.
 """
 
@@ -30,8 +31,8 @@ def test_daily_pnl_is_equity_diff(monkeypatch):
     monkeypatch.setattr(tp, "get_today_realized_pnl", lambda d: -1_356_224)
     p = acct._build_balance_payload(_kis(total_eval=99_982_903, unrealized=1_470_411))
     assert p["daily_pnl_total"] == 99_982_903 - 102_260_271  # -2,277,368
-    # % 는 원금(1억) 기준.
-    assert p["daily_pnl_pct"] == round(-2_277_368 / 100_000_000 * 100, 2)
+    # 당일 % 는 '계좌 잔고 대비' = 당일 시작 baseline(102,260,271) 기준. 고정 원금(1억) 아님.
+    assert p["daily_pnl_pct"] == round(-2_277_368 / 102_260_271 * 100, 2)
     assert p["daily_pnl_available"] is True
     # 보조 분해는 유지
     assert p["today_realized_pnl"] == -1_356_224

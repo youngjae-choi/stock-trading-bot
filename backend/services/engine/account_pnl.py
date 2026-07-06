@@ -1,9 +1,11 @@
 """계좌 수익·평가 단일 계산 소스(SSOT). 모든 페이지/엔드포인트가 이걸 호출한다.
 
 원칙:
-- 모든 % 는 원금(principal) 기준으로 나눈다 (현금으로 나누는 버그 금지).
+- 누적 % 는 원금(principal) 기준으로 나눈다 (현금으로 나누는 버그 금지).
 - cumulative_pnl = total_eval - principal (계좌 진실).
 - daily_pnl = total_eval - 장시작 total_eval baseline (자본변화 A안). baseline 없으면 None.
+- daily_return_pct 는 '계좌 잔고 대비'(당일 시작 baseline 기준)로 나눈다. PM 정의: 하루 목표
+  2%는 총자산 대비 매일 복리(2026-07-06). 누적%(원금 기준)와 분모가 다름에 유의.
 """
 
 from __future__ import annotations
@@ -103,10 +105,10 @@ def compute_account_pnl(balance: dict, *, trade_date: str | None = None) -> dict
         if base and base > 0 and total_eval > 0:
             daily_pnl = int(total_eval - base)
             daily_baseline_available = True
-            if principal > 0:
-                daily_return_pct = round(daily_pnl / principal * 100, 2)
-            else:
-                daily_return_pct = 0.0
+            # 당일 수익률은 '계좌 잔고 대비'(당일 장시작 총평가 baseline 기준).
+            # PM 정의(2026-07-06): 하루 목표 2%는 총자산 대비 매일 복리 → 고정 원금이 아니라
+            # 당일 시작 계좌 잔고(base)로 나눈다. baseline이 매일 리셋되므로 복리 구조가 유지된다.
+            daily_return_pct = round(daily_pnl / base * 100, 2)
     except Exception as exc:
         logger.warning("WARN: daily baseline 조회 실패 — %s", exc)
         daily_pnl = None
