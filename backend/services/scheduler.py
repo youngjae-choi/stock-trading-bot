@@ -1323,6 +1323,17 @@ async def job_review_audit() -> None:
     except Exception as exc:
         logger.error("FAIL: [ReviewAudit] EV 가지치기 실패 — %s", exc)
 
+    # confidence 칼리브레이션 집계 — 함수만 있고 호출 배선이 없어 bins가 영원히 0이던
+    # silent failure (2026-07-09 발견). Phase 2 칼리브레이션 게이트의 표본 공급원.
+    try:
+        from .engine.confidence_calibration import run_confidence_calibration
+
+        cal_result = run_confidence_calibration(today)
+        _cal_total = sum(int(b.get("trade_count") or 0) for b in (cal_result or {}).get("bins", []))
+        logger.info("SUCCESS: [ReviewAudit] confidence 칼리브레이션 signals=%d", _cal_total)
+    except Exception as exc:
+        logger.error("FAIL: [ReviewAudit] confidence 칼리브레이션 실패 — %s", exc)
+
     # ── Step 7: 만료 학습메모리 비활성화 — expires_at(생성+7일) 지난 active 메모리를
     # 'expired'로 전환해 S3/S4/S5 파이프라인이 더는 소비하지 않도록 한다.
     try:

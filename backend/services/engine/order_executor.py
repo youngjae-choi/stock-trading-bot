@@ -282,6 +282,11 @@ class OrderExecutor:
                 if qty <= 0:
                     qty = self._calc_qty(deposit, self._position_size_pct(final_rule), price)
                 logger.info("INFO: [S7] 기존(보수) 사이징 symbol=%s qty=%d", symbol, qty)
+            # P3-5: 급락 방어 모드 인버스 1x 플레이북 — 계좌 대비 예산 상한(기본 30%) 강제
+            qty = self._apply_crash_playbook_cap(
+                name=str(signal.get("name") or ""), qty=qty, price=price,
+                balance=balance, today=today,
+            )
             if qty <= 0:
                 logger.info("INFO: [S7] 배포 여력 없음 — 매수 스킵 symbol=%s", symbol)
                 self._update_signal_status(signal_id, "skipped_no_room")
@@ -404,6 +409,71 @@ class OrderExecutor:
     def _effective_deployable(self, deposit: float, buffer: float) -> float:
         """사이징용 가용액 = 가용현금 - 버퍼 - 제출중 금액."""
         return max(0.0, deposit - buffer - self._inflight_amount())
+
+    def _todays_inverse_buy_amount(self, today: str) -> float:
+        """오늘 인버스 1x 종목의 누적 매수금액 (종목명 기반 판정, 플레이북 예산 관리용)."""
+        try:
+            from .intraday_profile import is_inverse_1x_product
+
+            with get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT name, qty, price FROM trading_orders "
+                    "WHERE trade_date = ? AND side = 'buy' AND status NOT IN ('cancelled', 'failed')",
+                    (today,),
+                ).fetchall()
+            return float(sum(
+                float(r["qty"]) * float(r["price"])
+                for r in rows
+                if is_inverse_1x_product(str(r["name"] or ""))
+            ))
+        except Exception as exc:
+            logger.warning("WARN: [S7] 인버스 누적매수 조회 실패 — 0 처리: %s", exc)
+            return 0.0
+
+    def _apply_crash_playbook_cap(
+        self, *, name: str, qty: int, price: float, balance: dict[str, Any], today: str
+    ) -> int:
+        """급락 방어 모드의 인버스 1x 매수 수량에 플레이북 예산 상한을 적용한다 (P3-5).
+
+        상한 = 당일 시작 총평가(baseline, 폴백: 현재 total_eval) × crash_playbook_budget_rate(기본 0.30)
+        − 오늘 인버스 1x 누적 매수금액. 방어 모드가 아니거나 인버스 1x가 아니면 원 수량 유지
+        (방어 모드의 비인버스 매수는 preflight가 별도 차단). 계산 실패 시 원 수량(fail-open).
+        """
+        try:
+            from .intraday_regime_monitor import is_flash_crash_defense_active
+
+            if not is_flash_crash_defense_active():
+                return qty
+            from .intraday_profile import is_inverse_1x_product
+
+            if not is_inverse_1x_product(name):
+                return qty
+            from ..settings_store import get_setting as _gs
+
+            rate = float(_gs("engine.crash_playbook_budget_rate", 0.30) or 0.30)
+            from .daily_capital import get_total_eval_baseline
+
+            base = get_total_eval_baseline(today) or self._extract_total_eval(balance)
+            if not base or base <= 0 or price <= 0 or rate <= 0:
+                return qty
+            spent = self._todays_inverse_buy_amount(today)
+            budget_left = base * rate - spent
+            if budget_left <= 0:
+                logger.info(
+                    "INFO: [S7] 플레이북 예산 소진 — 인버스 매수 스킵 spent=%.0f cap=%.0f",
+                    spent, base * rate,
+                )
+                return 0
+            capped = min(int(qty), int(budget_left // price))
+            if capped < qty:
+                logger.info(
+                    "INFO: [S7] 플레이북 예산 상한 적용 qty %d→%d (cap=%.0f spent=%.0f)",
+                    qty, capped, base * rate, spent,
+                )
+            return capped
+        except Exception as exc:
+            logger.warning("WARN: [S7] 플레이북 상한 계산 실패 — 원수량 유지: %s", exc)
+            return qty
 
     async def _get_cached_balance(self) -> dict[str, Any]:
         """Return KIS balance data using a 30-second cache to reduce API pressure."""

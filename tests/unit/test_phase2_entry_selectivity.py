@@ -87,6 +87,46 @@ def test_calibration_gate_fail_open_without_db():
         assert b is False and why == ""
 
 
+def test_calibration_gate_skips_unscored_confidence():
+    """confidence<=0(점수 미기록)은 판정 불가 — lt060 bin이 나빠도 차단하지 않는다.
+
+    (신호 대부분이 무점수(기본 0.0)라 lt060 차단 = 엔진 정지가 되는 함정 방지)
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir, \
+         patch.object(settings, "APP_DB_PATH", tmp_dir + "/t.sqlite3"):
+        from backend.services.db import get_connection, initialize_database
+        initialize_database()
+        with get_connection() as conn:
+            _set_bin(conn, "lt060", 200, 40, -50000.0)  # 나쁜 bin
+        from backend.services.engine.confidence_calibration import is_confidence_blocked
+        assert is_confidence_blocked(0.0, min_samples=30) == (False, "")   # 무점수 → 스킵
+        b, _ = is_confidence_blocked(0.45, min_samples=30)                 # 실제 저점수 → 차단
+        assert b is True
+
+
+def test_calibration_aggregation_excludes_unscored_signals():
+    """run_confidence_calibration은 confidence>0 신호만 집계한다."""
+    with tempfile.TemporaryDirectory() as tmp_dir, \
+         patch.object(settings, "APP_DB_PATH", tmp_dir + "/t.sqlite3"):
+        from backend.services.db import get_connection, initialize_database
+        initialize_database()
+        import backend.services.engine.decision_engine as de
+        de._ensure_signals_table()
+        today = _today()
+        with get_connection() as conn:
+            for i, (conf, pnl) in enumerate([(0.0, -100.0), (0.0, 50.0), (0.72, 200.0)]):
+                conn.execute(
+                    "INSERT INTO trading_signals (id, trade_date, symbol, name, signal_type, "
+                    "trigger_price, confidence, rule_matched, profile_assigned, status, created_at, realized_pnl) "
+                    "VALUES (?, ?, '005930', '', 'BUY', 100, ?, '{}', 'MID_VOL', 'done', ?, ?)",
+                    (f"sig-{i}", today, conf, today, pnl),
+                )
+        from backend.services.engine.confidence_calibration import run_confidence_calibration
+        result = run_confidence_calibration(today)
+        total = sum(b["trade_count"] for b in result["bins"])
+        assert total == 1  # 무점수 2건 제외, 0.72 1건만
+
+
 # ──────────────────────────────────────────────
 # P2-2: entry_fail 쿨다운
 # ──────────────────────────────────────────────

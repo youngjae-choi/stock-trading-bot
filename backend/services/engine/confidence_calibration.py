@@ -124,9 +124,14 @@ def is_confidence_blocked(
 ) -> tuple[bool, str]:
     """해당 confidence가 속한 bin이 누적 실적상 차단 대상인지.
 
+    confidence<=0(점수 미기록)은 판정 불가 — 차단하지 않는다. 무기록 진입의
+    선별은 entry_fail 쿨다운·방어레짐 confidence 강제·EV 가지치기가 담당한다.
+
     Returns:
         (blocked, reason) — reason은 로그/사유 기록용 요약 문자열.
     """
+    if _safe_float(confidence) <= 0:
+        return False, ""
     bin_label = get_confidence_bin(confidence)
     blocked = get_blocked_bins(min_samples=min_samples, gap_threshold=gap_threshold)
     info = blocked.get(bin_label)
@@ -156,9 +161,13 @@ def _load_signal_results(trade_date: str) -> list[dict[str, Any]]:
             FROM trading_signals
             WHERE trade_date = ?
               AND realized_pnl IS NOT NULL
+              AND confidence > 0
             """,
             (trade_date,),
         ).fetchall()
+    # confidence<=0은 '점수 미기록'(탐색 진입 기본값 0.0)이지 낮은 예측이 아니다 —
+    # 칼리브레이션에 섞으면 lt060 bin이 전체 진입을 대변해 게이트가 엔진 정지가 된다
+    # (2026-07-09: 신호 1,344건 중 confidence>=0.6은 2건뿐이던 데이터로 확인).
     return [dict(row) for row in rows]
 
 

@@ -289,6 +289,57 @@ def test_scaleout_uses_defensive_override():
 
 
 # ──────────────────────────────────────────────
+# P3-5: 인버스 플레이북 예산 상한 사이징
+# ──────────────────────────────────────────────
+
+def _cap_env(monkeypatch, *, defense=True, baseline=100_000_000.0, spent=0.0, rate=0.30):
+    import backend.services.engine.daily_capital as dc
+    import backend.services.engine.intraday_regime_monitor as irm
+    import backend.services.engine.order_executor as oe
+    import backend.services.settings_store as ss
+    monkeypatch.setattr(irm, "is_flash_crash_defense_active", lambda *a, **k: defense)
+    monkeypatch.setattr(dc, "get_total_eval_baseline", lambda d=None: baseline)
+    monkeypatch.setattr(ss, "get_setting",
+                        lambda k, d=None: rate if k == "engine.crash_playbook_budget_rate" else d)
+    executor = oe.OrderExecutor()
+    monkeypatch.setattr(oe.OrderExecutor, "_todays_inverse_buy_amount", lambda self, t: spent)
+    return executor
+
+
+def test_playbook_cap_limits_inverse_qty(monkeypatch):
+    """방어 모드 인버스 매수는 계좌×30% 예산 내로 수량 제한."""
+    ex = _cap_env(monkeypatch)  # cap = 30,000,000
+    qty = ex._apply_crash_playbook_cap(name="KODEX 인버스", qty=5000, price=10000.0,
+                                       balance={}, today=_today())
+    assert qty == 3000  # 30M // 10,000
+
+
+def test_playbook_cap_accounts_for_spent_budget(monkeypatch):
+    """이미 매수한 인버스 금액을 차감한 잔여 예산으로 제한."""
+    ex = _cap_env(monkeypatch, spent=25_000_000.0)  # 잔여 5M
+    qty = ex._apply_crash_playbook_cap(name="KODEX 인버스", qty=5000, price=10000.0,
+                                       balance={}, today=_today())
+    assert qty == 500
+
+
+def test_playbook_cap_zero_when_budget_exhausted(monkeypatch):
+    ex = _cap_env(monkeypatch, spent=30_000_000.0)
+    qty = ex._apply_crash_playbook_cap(name="KODEX 인버스", qty=100, price=10000.0,
+                                       balance={}, today=_today())
+    assert qty == 0
+
+
+def test_playbook_cap_noop_outside_defense_or_non_inverse(monkeypatch):
+    """방어 모드 아님/비인버스면 원 수량 유지 (비인버스 차단은 preflight 몫)."""
+    ex = _cap_env(monkeypatch, defense=False)
+    assert ex._apply_crash_playbook_cap(name="KODEX 인버스", qty=5000, price=10000.0,
+                                        balance={}, today=_today()) == 5000
+    ex2 = _cap_env(monkeypatch, defense=True)
+    assert ex2._apply_crash_playbook_cap(name="삼성전자", qty=5000, price=10000.0,
+                                         balance={}, today=_today()) == 5000
+
+
+# ──────────────────────────────────────────────
 # P3-1: KOSPI 등락률 프롬프트 주입
 # ──────────────────────────────────────────────
 

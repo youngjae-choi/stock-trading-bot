@@ -145,6 +145,60 @@ def test_crash_day_defense_and_inverse_playbook_yields_half_percent(monkeypatch)
         assert realized >= SOD_EQUITY * 0.005, f"realized={realized:,.0f}"
 
 
+def test_whipsaw_rebound_bounds_inverse_loss(monkeypatch):
+    """시나리오 C — V자 반등(휩쏘): 급락 감지 후 시장이 반등하면 인버스가 하락한다.
+
+    검증: ① 인버스 포지션도 초기 손절선(-1.2%)에서 전량 청산돼 손실이 제한된다
+          ② 수확 전 손절이므로 scaleout이 발동하지 않는다 (재수확 루프 없음)
+          ③ 계좌 손실이 플레이북 예산(30%) × 손절폭 수준으로 제한 — 최악에도 -0.5% 미만
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir, \
+         patch.object(settings, "APP_DB_PATH", tmp_dir + "/whipsaw.sqlite3"):
+        from backend.services.db import initialize_database
+        initialize_database()
+        import backend.services.engine.intraday_regime_monitor as irm
+        import backend.services.engine.position_manager as pmod
+        import backend.services.regime_set_service as rss
+        from backend.services.engine.position_manager import PositionManager
+
+        today = _today()
+        irm._activate_flash_crash_defense(today, -2.2, 30.0)
+        assert irm.is_flash_crash_defense_active(today) is True
+
+        monkeypatch.setattr(
+            rss, "get_today_application",
+            lambda d: {"regime_label": "risk_off", "applied_settings": {"new_entry_allowed": False}},
+        )
+        pmod._SCALEOUT_OVERRIDE_CACHE["at"] = 0.0
+
+        mgr = PositionManager()
+        sell = _SellRecorder()
+        with patch("backend.services.engine.order_executor.order_executor.execute_sell", sell), \
+             patch.object(PositionManager, "_account_daily_target_reached",
+                          new=AsyncMock(return_value=False)):
+            # 플레이북 예산 상한(30%) 내 인버스 진입: 3,000만
+            mgr.add_position(symbol="114800", name="KODEX 인버스", qty=3000,
+                             entry_price=10000.0, final_rule=_risk_off_rule())
+            pos = mgr._positions["114800"]
+
+            async def _drive():
+                # 시장 V자 반등 → 인버스 하락. 수확선(+1.5%) 미도달 상태에서
+                sell.set_price(10080.0)
+                await mgr._process_price(pos, 10080.0)   # +0.8% — 아무 일 없음
+                sell.set_price(9870.0)
+                await mgr._process_price(pos, 9870.0)    # 손절선(9,880) 이탈
+
+            asyncio.run(_drive())
+
+        assert len(sell.calls) == 1                      # 손절 1건뿐 — scaleout 미발동
+        exit_call = sell.calls[0]
+        assert exit_call["reason"] == "INITIAL_STOP_LOSS"
+        assert exit_call["qty"] == 3000                  # 전량 청산, 잔여 없음
+        loss = (exit_call["fill_price"] - 10000.0) * exit_call["qty"]
+        # 인버스 3,000만(계좌 30%) × 손절 — 계좌 대비 -0.5% 미만으로 제한
+        assert loss > -SOD_EQUITY * 0.005, f"loss={loss:,.0f}"
+
+
 def test_crash_day_intraday_stop_bounds_losses(monkeypatch):
     """시나리오 B — 장중 급락 시 보유 롱은 초기 손절선 부근에서 전량 청산(손실 제한)."""
     with tempfile.TemporaryDirectory() as tmp_dir, \
