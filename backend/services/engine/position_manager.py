@@ -93,8 +93,8 @@ def _upsert_stop_state(position_id: str, data: dict[str, Any]) -> None:
             INSERT OR REPLACE INTO position_stop_states
                 (position_id, symbol_code, entry_price, highest_price_since_entry,
                  initial_stop_price, trailing_stop_price, active_stop_price,
-                 trailing_active, profile_assigned, last_updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 trailing_active, profile_assigned, harvested, last_updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 position_id,
@@ -106,9 +106,33 @@ def _upsert_stop_state(position_id: str, data: dict[str, Any]) -> None:
                 data["active_stop_price"],
                 1 if data["trailing_active"] else 0,
                 data["profile_assigned"],
+                1 if data.get("harvested") else 0,
                 now,
             ),
         )
+
+
+def _symbol_harvested_today(symbol: str) -> bool:
+    """해당 심볼이 오늘 이미 스케일아웃 수확됐는지 — 영속 stop_states 기준.
+
+    포지션 재등록(자동편입)·서버 재시작으로 in-memory harvested가 소실돼도
+    '포지션당 1회 수확'을 하루 단위로 보장한다. 조회 실패 시 False(수확 허용,
+    풀청산 안전장치는 별도라 하루 2회 수확이 반복 루프보다 훨씬 덜 위험).
+    """
+    try:
+        today = _now_kst().strftime("%Y-%m-%d")
+        with get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM position_stop_states
+                WHERE symbol_code = ? AND harvested = 1 AND substr(last_updated_at, 1, 10) = ?
+                LIMIT 1
+                """,
+                (str(symbol or "").strip(), today),
+            ).fetchone()
+        return row is not None
+    except Exception:
+        return False
 
 
 class PositionManager:
@@ -165,6 +189,15 @@ class PositionManager:
         initial_stop_price = safe_entry * (1 + initial_stop_loss)
         position_id = f"{safe_symbol}-{_now_kst().strftime('%H%M%S%f')}"
 
+        # 수확 1회성 상속 — 오늘 이미 수확된 심볼이면 재등록/재시작 후에도 재수확하지 않는다.
+        # (자동편입이 harvested를 리셋해 60% 반복 매도 루프가 생겼던 P0 재발 방지)
+        inherited_harvested = _symbol_harvested_today(safe_symbol)
+        if inherited_harvested:
+            logger.info(
+                "INFO: [S8] harvested inherited symbol=%s — 오늘 이미 수확됨, 재수확 방지",
+                safe_symbol,
+            )
+
         self._positions[safe_symbol] = {
             "position_id": position_id,
             "symbol": safe_symbol,
@@ -185,8 +218,8 @@ class PositionManager:
             "trailing_stop_price": initial_stop_price,
             "trailing_activate_profit": trailing_activate,
             "trailing_stop_rate": trailing_rate,
-            # 스케일아웃 수확(+목표 도달 시 부분확정) 1회 여부
-            "harvested": False,
+            # 스케일아웃 수확(+목표 도달 시 부분확정) 1회 여부 — 당일 이력 상속
+            "harvested": inherited_harvested,
             # 시간 기반
             "max_holding_minutes": max_minutes,
             "force_exit_time": str(rule.get("force_exit_time") or "15:20:00"),
@@ -202,6 +235,7 @@ class PositionManager:
             "active_stop_price": initial_stop_price,
             "trailing_active": False,
             "profile_assigned": profile,
+            "harvested": inherited_harvested,
         })
 
         # 원가 보조 원장 — 매수 fill이 없는 KIS 흡수 포지션의 매수측 원가를 기록한다(A2).
@@ -521,6 +555,7 @@ class PositionManager:
             sell_result = await order_executor.execute_sell(
                 symbol=symbol, qty=sell_qty, price=0,
                 reason="take_profit_scaleout", name=str(position.get("name") or ""),
+                partial=not full_exit,
             )
         except Exception as exc:
             position["harvested"] = False
@@ -528,6 +563,15 @@ class PositionManager:
             logger.error("FAIL: [S8] scaleout sell failed symbol=%s error=%s", symbol, exc)
             return ""
         if not (isinstance(sell_result, dict) and sell_result.get("ok")):
+            if isinstance(sell_result, dict) and sell_result.get("uncertain"):
+                # 접수됐을 가능성이 있는 실패(주문번호 미확인) — harvested를 유지·영속화해
+                # 자동편입이 잔량을 재등록해도 재수확 루프가 생기지 않게 한다.
+                self._persist_harvested(position)
+                logger.warning(
+                    "WARN: [S8] scaleout sell uncertain symbol=%s — harvested 유지(재수확 차단)",
+                    symbol,
+                )
+                return ""
             position["harvested"] = False
             self._closing.discard(symbol)
             logger.warning("WARN: [S8] scaleout sell not ok symbol=%s result=%s", symbol, sell_result)
@@ -539,6 +583,8 @@ class PositionManager:
         )
 
         if full_exit:
+            # 수확 이력을 영속화한 뒤 제거 — 당일 재매수 시 재수확 방지(1일 1회).
+            self._persist_harvested(position)
             self.remove_position(symbol)
             return "take_profit_scaleout"
 
@@ -564,8 +610,29 @@ class PositionManager:
             "active_stop_price": position["active_stop_price"],
             "trailing_active": True,
             "profile_assigned": position.get("profile_assigned", "MID_VOL"),
+            "harvested": True,
         })
         return ""  # 잔량은 계속 관리 (풀청산 아님)
+
+    def _persist_harvested(self, position: dict[str, Any]) -> None:
+        """포지션의 수확(harvested) 상태를 stop_states에 영속화한다 — best-effort."""
+        try:
+            _upsert_stop_state(str(position.get("position_id") or ""), {
+                "symbol_code": str(position.get("symbol") or ""),
+                "entry_price": _to_float(position.get("entry_price")),
+                "highest_price_since_entry": _to_float(position.get("highest_price_since_entry")),
+                "initial_stop_price": _to_float(position.get("initial_stop_price")),
+                "trailing_stop_price": _to_float(position.get("trailing_stop_price")),
+                "active_stop_price": _to_float(position.get("active_stop_price")),
+                "trailing_active": bool(position.get("trailing_active")),
+                "profile_assigned": position.get("profile_assigned", "MID_VOL"),
+                "harvested": True,
+            })
+        except Exception as exc:
+            logger.warning(
+                "WARN: [S8] harvested 영속화 실패 symbol=%s reason=%s",
+                position.get("symbol"), exc,
+            )
 
     async def check_exits_via_rest(self) -> dict[str, Any]:
         """손절 REST 폴링 백업 — **종목별**로 WS 틱이 끊긴 보유 포지션만 REST로 감시한다.
@@ -720,6 +787,7 @@ class PositionManager:
                 "active_stop_price": new_active,
                 "trailing_active": position["trailing_active"],
                 "profile_assigned": position.get("profile_assigned", "MID_VOL"),
+                "harvested": bool(position.get("harvested")),
             })
 
     # 시장 톤별 강제청산 시간 (부정적 시황일수록 일찍 청산).

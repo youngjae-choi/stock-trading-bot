@@ -61,7 +61,20 @@ async def job_capture_capital_baseline() -> None:
     trade_date = _today_kst()
     logger.info("START: [JobCapital] baseline 캡처 trade_date=%s", trade_date)
     try:
-        balance = await get_balance()
+        try:
+            balance = await get_balance()
+        except Exception as first_exc:
+            # 서버측 토큰 무효화(EGW00123)는 클라이언트 캐시가 유효하다고 믿는 상태에서
+            # 발생한다 — 캐시 강제 만료 후 1회 재시도. (7/7 baseline 공백의 원인)
+            msg = str(first_exc)
+            if "EGW00123" not in msg and "만료된 token" not in msg:
+                raise
+            logger.warning("WARN: [JobCapital] 토큰 만료 감지 — 재발급 후 재시도: %s", msg)
+            from .kis.common.client import kis_client
+
+            kis_client.token = None
+            kis_client.token_expires_at = 0.0
+            balance = await get_balance()
         summary = (balance.get("output2") or [{}])[0]
         deposit = 0.0
         for key in ("ord_psbl_cash", "dnca_tot_amt", "nass_amt"):

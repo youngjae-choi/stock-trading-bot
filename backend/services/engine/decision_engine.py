@@ -276,6 +276,49 @@ def _account_holding_entry_price(holding: dict[str, Any]) -> float:
     ) or 0.0
 
 
+def _resolve_import_entry_price(symbol: str, kis_avg: float) -> tuple[float, str]:
+    """자동편입 포지션의 진입가를 원가 근거 우선순위로 결정한다.
+
+    KIS 평균매입가는 모의계좌에서 부분매도 직후 실매수가와 다르게 내려오는 사례가
+    있어(2026-07-08: 6,480 매수 → KIS avg 6,364로 편입 → 진입가 아래에서 익절 태깅),
+    실제 원가 근거를 우선한다:
+      1. 오늘 체결된 매수 주문의 수량가중 평균가 (trading_orders)
+      2. cost_basis 원장 (이월 포지션의 매수측 원가 SSOT)
+      3. KIS 평균매입가 (폴백)
+
+    Returns:
+        (entry_price, source) — source는 로그 추적용.
+    """
+    safe_symbol = str(symbol or "").strip()
+    today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT SUM(qty * price) * 1.0 / SUM(qty) AS avg_price
+                FROM trading_orders
+                WHERE symbol = ? AND trade_date = ? AND side = 'buy'
+                  AND status IN ('filled', 'partial') AND price > 0 AND qty > 0
+                """,
+                (safe_symbol, today),
+            ).fetchone()
+        if row is not None:
+            avg = row["avg_price"]
+            if avg is not None and float(avg) > 0:
+                return float(avg), "today_buy_orders"
+    except Exception as exc:
+        logger.warning("WARN: [S6] 편입 진입가 매수주문 조회 실패 symbol=%s reason=%s", safe_symbol, exc)
+    try:
+        from .position_cost_basis import get_cost_basis
+
+        ledger = get_cost_basis(safe_symbol, today)
+        if ledger and float(ledger.get("avg_price") or 0) > 0:
+            return float(ledger["avg_price"]), "cost_basis"
+    except Exception as exc:
+        logger.warning("WARN: [S6] 편입 진입가 원장 조회 실패 symbol=%s reason=%s", safe_symbol, exc)
+    return float(kis_avg or 0), "kis_avg"
+
+
 def _import_rule_for_account_holding(symbol: str) -> dict[str, Any]:
     """Return the active risk rule for a KIS-imported holding with LOW_VOL fallback.
 
@@ -365,7 +408,8 @@ def _sync_managed_positions_with_account(
         # 신규 등록은 KIS 원본 심볼 그대로 (정규화 키는 매칭 전용)
         symbol = str(holding.get("symbol") or "").strip()
         qty = _account_holding_qty(holding)
-        entry_price = _account_holding_entry_price(holding)
+        kis_entry = _account_holding_entry_price(holding)
+        entry_price, entry_source = _resolve_import_entry_price(symbol, kis_entry)
         if qty <= 0 or entry_price <= 0:
             logger.warning(
                 "WARN: [S6] KIS 보유 포지션 자동등록 스킵 symbol=%s qty=%s entry=%s",
@@ -374,6 +418,11 @@ def _sync_managed_positions_with_account(
                 entry_price,
             )
             continue
+        if entry_source != "kis_avg" and abs(entry_price - kis_entry) > 1e-9:
+            logger.info(
+                "INFO: [S6] 편입 진입가 보정 symbol=%s kis_avg=%.2f → %.2f (source=%s)",
+                symbol, kis_entry, entry_price, entry_source,
+            )
         if position_manager.sync_account_position(
             symbol=symbol,
             name=str(holding.get("name") or ""),

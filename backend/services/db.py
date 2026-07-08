@@ -54,6 +54,7 @@ def initialize_database() -> None:
         ensure_default_regime_sets(connection)
         _migrate_regime_set_applications(connection)
         _migrate_positions_entry_set(connection)
+        _migrate_stop_states_harvested(connection)
         _migrate_scheduler_process_settings(connection)
         _seed_system_settings(connection)
         _migrate_s10_review_schedule_setting(connection)
@@ -685,6 +686,20 @@ def _migrate_positions_entry_set(connection: sqlite3.Connection) -> None:
     logger.info("SUCCESS: db._migrate_positions_entry_set")
 
 
+def _migrate_stop_states_harvested(connection: sqlite3.Connection) -> None:
+    """Add position_stop_states.harvested — 스케일아웃 1회성(포지션당 1회)의 영속 보장.
+
+    재등록(자동편입)·서버 재시작 시 in-memory harvested 플래그가 소실되어 같은 포지션이
+    반복 수확되는 루프(P0, 2026-07-08 발견)를 막는다.
+    """
+    existing = {str(row["name"]) for row in connection.execute("PRAGMA table_info(position_stop_states)")}
+    if "harvested" not in existing:
+        connection.execute(
+            "ALTER TABLE position_stop_states ADD COLUMN harvested INTEGER NOT NULL DEFAULT 0"
+        )
+        logger.info("DB migration: added column harvested to position_stop_states")
+
+
 def _seed_rule_system(connection: sqlite3.Connection) -> None:
     """base_rulepacks, risk_profile_packs 초기값 삽입 (이미 있으면 skip)."""
     import json as _json
@@ -1200,6 +1215,7 @@ CREATE TABLE IF NOT EXISTS position_stop_states (
     active_stop_price         REAL NOT NULL DEFAULT 0.0,
     trailing_active           INTEGER NOT NULL DEFAULT 0,
     profile_assigned          TEXT NOT NULL DEFAULT 'MID_VOL',
+    harvested                 INTEGER NOT NULL DEFAULT 0,
     last_updated_at           TEXT NOT NULL
 )
 """,

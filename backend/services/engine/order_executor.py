@@ -423,6 +423,7 @@ class OrderExecutor:
         price: float = 0,
         reason: str = "manual",
         name: str = "",
+        partial: bool = False,
     ) -> dict[str, Any]:
         """Submit a SELL order for stop-loss, take-profit, manual, or EOD liquidation.
 
@@ -432,6 +433,9 @@ class OrderExecutor:
             price: Limit price. A value of 0 submits a market order.
             reason: Exit reason saved in trading_orders.reason.
             name: Optional stock display name from KIS holdings or local state.
+            partial: True면 부분매도(스케일아웃 등) — 잔량이 남으므로 포지션을 매니저에서
+                제거하지 않는다. 제거하면 잔량이 미관리 상태가 되어 S6 자동편입이
+                harvested 리셋+진입가 재설정으로 재등록하는 반복 매도 루프가 생긴다.
         """
         _ensure_orders_table()
         safe_symbol = str(symbol or "").strip()
@@ -635,6 +639,21 @@ class OrderExecutor:
                     "kis_order_no": kis_order_no,
                     "reason": "missing_kis_order_no",
                     "uncertain": True,
+                }
+            if partial:
+                # 부분매도: 잔량이 남으므로 포지션 유지·청산 태깅/쿨다운 없음.
+                # 포지션 상태(qty/트레일링) 갱신은 호출자(_scaleout_check)의 책임.
+                logger.info(
+                    "SUCCESS: [S8/S9] partial sell submitted order_id=%s symbol=%s qty=%d (position retained)",
+                    order_id, safe_symbol, safe_qty,
+                )
+                return {
+                    "ok": True,
+                    "order_id": order_id,
+                    "status": status,
+                    "symbol": safe_symbol,
+                    "qty": safe_qty,
+                    "kis_order_no": kis_order_no,
                 }
             # 청산 시점 컨텍스트(MFE/MAE/보유시간) — remove_position 전에 읽어야 한다.
             try:

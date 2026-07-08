@@ -72,6 +72,7 @@ class ScaleoutHarvestTest(unittest.IsolatedAsyncioTestCase):
         kwargs = sell.call_args.kwargs
         self.assertEqual(kwargs["qty"], 60)
         self.assertEqual(kwargs["reason"], "take_profit_scaleout")
+        self.assertTrue(kwargs.get("partial"))  # P0: 부분매도 플래그 — 포지션 제거 방지
         self.assertEqual(reason, "")  # 부분 확정 — 포지션 계속 관리
         self.assertEqual(pos["qty"], 40)
         self.assertTrue(pos["harvested"])
@@ -114,6 +115,7 @@ class ScaleoutHarvestTest(unittest.IsolatedAsyncioTestCase):
         mgr, sell, reason = await self._run(pos, 102.0, settings_over={"engine.scaleout_ratio": 1.0})
         sell.assert_awaited_once()
         self.assertEqual(sell.call_args.kwargs["qty"], 100)
+        self.assertFalse(sell.call_args.kwargs.get("partial"))  # 전량 청산은 partial 아님
         self.assertEqual(reason, "take_profit_scaleout")
         self.assertNotIn("005930", mgr._positions)
 
