@@ -342,3 +342,37 @@ def generate_false_positives_for_date(trade_date: str) -> dict:
         "saved": saved,
         "skipped": skipped,
     }
+
+
+def recent_entry_fail_count(symbol: str, days: int = 3, end_date: str | None = None) -> int:
+    """최근 days일(오늘 제외 안 함) 내 해당 심볼의 entry_fail 기록 건수 (Phase 2 쿨다운 게이트용).
+
+    같은 종목이 짧은 기간에 반복해서 손실 진입(entry_fail)되면 당일 재진입을 막는
+    근거로 쓴다. 조회 실패 시 0(차단 안 함) — 게이트는 fail-open, 손절 안전장치는 별도.
+
+    Args:
+        symbol: 종목 코드 (false_positive_cases.symbol 원본 그대로 매칭).
+        days: 조회 기간(일). 기본 3일.
+        end_date: 기준일(YYYY-MM-DD). None이면 KST 오늘.
+    """
+    safe_symbol = str(symbol or "").strip()
+    if not safe_symbol or days <= 0:
+        return 0
+    try:
+        end = end_date or datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+        start = (
+            datetime.strptime(end, "%Y-%m-%d") - timedelta(days=int(days))
+        ).strftime("%Y-%m-%d")
+        with get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS n FROM false_positive_cases
+                WHERE symbol = ? AND false_positive_type = 'entry_fail'
+                  AND trade_date > ? AND trade_date <= ?
+                """,
+                (safe_symbol, start, end),
+            ).fetchone()
+        return int(row["n"]) if row else 0
+    except Exception as exc:
+        logger.warning("WARN: FalsePositive recent count 조회 실패 symbol=%s — %s", symbol, exc)
+        return 0

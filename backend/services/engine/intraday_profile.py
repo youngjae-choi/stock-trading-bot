@@ -51,6 +51,21 @@ def is_leverage_product(name: str | None) -> bool:
     return any(k in nm for k in _DERIVATIVE_KEYWORDS)
 
 
+def is_inverse_1x_product(name: str | None) -> bool:
+    """종목명이 인버스 1배(비레버리지) ETF/ETN인지 판정(이름 기반).
+
+    폭락장 플레이북(P3-5): 인버스 2X·레버리지는 구조적 감쇄로 차단 유지하되,
+    인버스 1x는 급락 방어 모드에서 하락 수익 경로로 예외 허용한다.
+
+    Args:
+        name: 종목명.
+    """
+    nm = str(name or "")
+    if "인버스" not in nm:
+        return False
+    return not any(k in nm for k in ("2X", "2x", "레버리지"))
+
+
 def classify_profile(candidate: dict[str, Any], regime: str | None) -> tuple[str, str]:
     """장중 유입 종목의 Risk Profile 휴리스틱 배정. returns (profile, reason).
 

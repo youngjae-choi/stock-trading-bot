@@ -722,6 +722,115 @@ def _add_layer3_evaluation(
             observed_values["spread_source"] = spread_source
 
 
+def _entry_gate_block_reason(symbol: str, confidence: float, name: str = "") -> str:
+    """Phase 2·3 진입 선별성 게이트 — 차단 사유 문자열 반환, 통과면 "".
+
+    _emit_signal 단일 길목에서 호출되어 모든 진입 경로(베이스라인·탐색OR·
+    모멘텀스캔·교체매매)에 일괄 적용된다. 각 게이트는 fail-open(조회 실패 시
+    차단하지 않음) — 손절/청산 안전장치는 별도 경로라 진입 게이트는 보수적으로.
+
+    게이트:
+      0. 급락 방어 모드(P3-3/P3-5) — flash crash 시 인버스 1x 플레이북 외 차단
+      1. new_entry_allowed 강제(P3-2) — 당일 레짐 SET이 신규진입 금지면 차단
+      2. 칼리브레이션 게이트(P2-1) — 누적 실적이 나쁜 confidence bin 차단
+      3. entry_fail 쿨다운(P2-2) — 최근 반복 손실 진입 심볼 차단
+    """
+    # 0) 급락 방어 모드 — 인버스 1x(플레이북)만 예외 허용
+    try:
+        from .intraday_regime_monitor import is_flash_crash_defense_active
+
+        if is_flash_crash_defense_active():
+            from .intraday_profile import is_inverse_1x_product
+
+            playbook = bool(get_setting("engine.crash_playbook_enabled", True))
+            if not (playbook and is_inverse_1x_product(name)):
+                return "flash_crash_defense (급락 방어 모드 — 인버스 1x 외 신규진입 차단)"
+    except Exception as exc:
+        logger.warning("WARN: [S6] 급락 방어 게이트 조회 실패 — %s", exc)
+
+    # 1) new_entry_allowed 강제 (engine.enforce_new_entry_allowed, 기본 ON)
+    try:
+        if bool(get_setting("engine.enforce_new_entry_allowed", True)):
+            from ..regime_set_service import get_today_application
+
+            app = get_today_application(_today_kst())
+            applied = (app or {}).get("applied_settings") or {}
+            if isinstance(applied, str):
+                try:
+                    applied = json.loads(applied)
+                except Exception:
+                    applied = {}
+            if applied and not bool(applied.get("new_entry_allowed", True)):
+                return f"new_entry_not_allowed (레짐 {(app or {}).get('regime_label', 'n/a')})"
+    except Exception as exc:
+        logger.warning("WARN: [S6] new_entry_allowed 게이트 조회 실패 — %s", exc)
+
+    # 2) 칼리브레이션 게이트 — 실적 나쁜 confidence 구간 차단
+    try:
+        if bool(get_setting("engine.calibration_gate_enabled", True)):
+            from .confidence_calibration import is_confidence_blocked
+
+            min_samples = int(float(get_setting("engine.calibration_gate_min_samples", 30) or 30))
+            gap = float(get_setting("engine.calibration_gate_gap", 0.15) or 0.15)
+            blocked, why = is_confidence_blocked(confidence, min_samples=min_samples, gap_threshold=gap)
+            if blocked:
+                return why
+    except Exception as exc:
+        logger.warning("WARN: [S6] 칼리브레이션 게이트 조회 실패 — %s", exc)
+
+    # 3) entry_fail 쿨다운 — 최근 N일 내 반복 손실 진입 심볼 차단
+    try:
+        if bool(get_setting("engine.entry_fail_cooldown_enabled", True)):
+            from .false_positive import recent_entry_fail_count
+
+            days = int(float(get_setting("engine.entry_fail_cooldown_days", 3) or 3))
+            min_count = int(float(get_setting("engine.entry_fail_cooldown_min_count", 2) or 2))
+            n = recent_entry_fail_count(symbol, days=days)
+            if n >= max(min_count, 1):
+                return f"entry_fail_cooldown (최근 {days}일 {n}회 손실진입)"
+    except Exception as exc:
+        logger.warning("WARN: [S6] entry_fail 쿨다운 조회 실패 — %s", exc)
+
+    return ""
+
+
+_REGIME_CACHE: dict[str, Any] = {"at": 0.0, "label": ""}
+
+
+def _current_regime_label(ttl_seconds: float = 120.0) -> str:
+    """당일 적용 레짐 라벨 — regime_set_applications(장중 전환 반영) 우선, snapshot 폴백.
+
+    _evaluate_rules가 틱마다 호출하므로 TTL 캐시(기본 120초)로 DB 부하를 막는다.
+    조회 실패 시 'neutral'(방어 강화 미적용 — 게이트는 fail-open, 손절은 별도).
+    """
+    now = time.monotonic()
+    if _REGIME_CACHE["label"] and now - _REGIME_CACHE["at"] < ttl_seconds:
+        return _REGIME_CACHE["label"]
+    label = ""
+    try:
+        from ..regime_set_service import get_today_application
+
+        app = get_today_application(_today_kst())
+        if app:
+            label = str(app.get("regime_label") or "")
+    except Exception:
+        label = ""
+    if not label:
+        try:
+            with get_connection() as conn:
+                row = conn.execute(
+                    "SELECT regime FROM daily_context_snapshot WHERE trade_date = ?",
+                    (_today_kst(),),
+                ).fetchone()
+            label = str(row["regime"]) if row and row["regime"] else ""
+        except Exception:
+            label = ""
+    label = label or "neutral"
+    _REGIME_CACHE["at"] = now
+    _REGIME_CACHE["label"] = label
+    return label
+
+
 def _rules_allow_signal(matched: dict[str, Any]) -> bool:
     """현재 S6 매수 신호 발행에 필요한 게이트 조건 통과 여부를 반환한다.
 
@@ -1597,6 +1706,38 @@ class DecisionEngine:
         # AI가 생성한 진입 임계값에 Settings 가드레일을 적용한다.
         floor = _get_setting_float("engine.min_confidence_floor", 0.40)
         ai_conf_min = max(ai_conf_min, floor)
+
+        # P2-3(Phase 2): 방어 레짐(risk_off/volatile)에서는 confidence 하한을 가산하고
+        # 게이트로 강제한다. 평시(neutral/risk_on)는 탐색 철학대로 관찰용 유지.
+        # engine.confidence_gate_mode: off | regime_defensive(기본) | always
+        conf_gate_mode = _get_setting_str("engine.confidence_gate_mode", "regime_defensive")
+        regime_label = _current_regime_label() if conf_gate_mode != "off" else ""
+        defensive_regime = regime_label in ("risk_off", "volatile")
+        if defensive_regime:
+            if regime_label == "risk_off":
+                bonus = _get_setting_float("engine.regime_confidence_bonus_risk_off", 0.05)
+            else:
+                bonus = _get_setting_float("engine.regime_confidence_bonus_volatile", 0.10)
+            if bonus > 0:
+                ai_conf_min = min(ai_conf_min + bonus, 0.95)
+        enforce_confidence = conf_gate_mode == "always" or (
+            conf_gate_mode == "regime_defensive" and defensive_regime
+        )
+        if enforce_confidence and ai_conf < ai_conf_min:
+            return {
+                "pass": False,
+                "reason": (
+                    f"confidence 미달 (레짐 {regime_label or 'n/a'}: "
+                    f"{ai_conf:.2f} < {ai_conf_min:.2f})"
+                ),
+                "matched": {"ai_confidence": False},
+                "observed_values": {
+                    "ai_confidence": ai_conf,
+                    "ai_confidence_min": ai_conf_min,
+                    "regime": regime_label,
+                    "confidence_gate_mode": conf_gate_mode,
+                },
+            }
         price_floor = _get_setting_float("engine.min_price_change_pct", 1.5)
         price_ceil = _get_setting_float("engine.max_price_change_pct", 8.0)
         price_min_pct = max(price_min_pct, price_floor)
@@ -1728,14 +1869,32 @@ class DecisionEngine:
         except Exception:
             _lev_mode = "exclude"
         if _lev_mode != "off":
-            from .intraday_profile import is_leverage_product
+            from .intraday_profile import is_inverse_1x_product, is_leverage_product
             if is_leverage_product(_name):
-                logger.info("INFO: [S6] SKIP 레버리지/인버스 진입 차단 symbol=%s name=%s (mode=%s)", symbol, _name, _lev_mode)
-                return
+                # P3-5 폭락장 플레이북: 급락 방어 모드에서 인버스 1x만 예외 허용
+                # (2X/레버리지는 구조적 감쇄로 계속 차단).
+                _playbook_ok = False
+                try:
+                    if bool(get_setting("engine.crash_playbook_enabled", True)) and is_inverse_1x_product(_name):
+                        from .intraday_regime_monitor import is_flash_crash_defense_active
+                        _playbook_ok = is_flash_crash_defense_active()
+                except Exception:
+                    _playbook_ok = False
+                if not _playbook_ok:
+                    logger.info("INFO: [S6] SKIP 레버리지/인버스 진입 차단 symbol=%s name=%s (mode=%s)", symbol, _name, _lev_mode)
+                    return
+                logger.info("INFO: [S6] 인버스 1x 플레이북 허용 — 급락 방어 모드 symbol=%s name=%s", symbol, _name)
+
+        confidence = _candidate_confidence(candidate)
+
+        # ── Phase 2·3 진입 선별성 게이트 — 모든 진입 경로의 단일 길목 ──
+        gate_reason = _entry_gate_block_reason(symbol, confidence, name=_name)
+        if gate_reason:
+            logger.info("INFO: [S6] SKIP 진입 게이트 차단 symbol=%s reason=%s", symbol, gate_reason)
+            return
 
         today = _today_kst()
         signal_id = str(uuid.uuid4())
-        confidence = _candidate_confidence(candidate)
         profile_assigned = (get_rule(symbol) or {}).get("profile_assigned", "MID_VOL")
 
         _ensure_signals_table()

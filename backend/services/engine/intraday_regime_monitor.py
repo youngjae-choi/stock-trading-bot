@@ -244,6 +244,79 @@ def _insert_transition_alert(
         logger.warning("WARN: IntradayRegimeMonitor transition alert insert failed error=%s", exc)
 
 
+def is_flash_crash_defense_active(trade_date: str | None = None) -> bool:
+    """오늘 급락(flash crash) 방어 모드가 활성인지 — 날짜 스코프(다음 거래일 자동 해제).
+
+    방어 모드에서는 신규 진입이 차단되고(인버스 1x 플레이북 예외) 조회 실패 시
+    False(차단 안 함) — 손절/청산 안전장치는 별도 경로.
+    """
+    try:
+        from ..settings_store import get_setting
+
+        if not bool(get_setting("risk.flash_crash_defense_active", False)):
+            return False
+        flagged_date = str(get_setting("risk.flash_crash_defense_date", "") or "")
+        return flagged_date == (trade_date or _today())
+    except Exception:
+        return False
+
+
+def _activate_flash_crash_defense(trade_date: str, kospi_change: float | None, vix: float | None) -> None:
+    """급락 방어 모드 활성화 — 설정 플래그 + Alert (이미 활성이면 no-op)."""
+    if is_flash_crash_defense_active(trade_date):
+        return
+    try:
+        from ..settings_store import upsert_setting
+
+        upsert_setting(
+            "risk.flash_crash_defense_active", True, "boolean",
+            "급락 방어 모드 활성 플래그 (flash crash 감지 시 자동 ON, 날짜 스코프)", "system",
+        )
+        upsert_setting(
+            "risk.flash_crash_defense_date", trade_date, "string",
+            "급락 방어 모드 활성 날짜 (당일만 유효)", "system",
+        )
+        logger.warning(
+            "EVENT: [FlashCrash] 방어 모드 활성화 trade_date=%s kospi=%.2f%% vix=%s",
+            trade_date, kospi_change if kospi_change is not None else 0.0, vix,
+        )
+        try:
+            from .alert_center import create_alert
+
+            kospi_str = f"{kospi_change:+.2f}%" if kospi_change is not None else "N/A"
+            create_alert(
+                "risk_guard",
+                f"🚨 급락 방어 모드 발동 — KOSPI {kospi_str}",
+                severity="CRITICAL",
+                detail=(
+                    f"KOSPI {kospi_str} / VIX {vix if vix is not None else 'N/A'} — "
+                    "신규 진입 차단(인버스 1x 플레이북 예외), 보유 포지션은 손절/트레일링 유지"
+                ),
+                trade_date=trade_date,
+            )
+        except Exception as alert_exc:
+            logger.warning("WARN: [FlashCrash] alert 생성 실패 — %s", alert_exc)
+    except Exception as exc:
+        logger.error("FAIL: [FlashCrash] 방어 모드 활성화 실패 — %s", exc)
+
+
+def _flash_crash_detected(kospi_change: float | None, vix: float | None) -> bool:
+    """KOSPI 급락 또는 VIX 급등으로 flash crash 판정 (risk.flash_crash_* 설정)."""
+    try:
+        from ..settings_store import get_setting
+
+        if not bool(get_setting("risk.flash_crash_defense_enabled", True)):
+            return False
+        threshold = float(get_setting("risk.flash_crash_threshold_pct", -2.0) or -2.0)
+    except Exception:
+        return False
+    if kospi_change is not None and kospi_change <= threshold:
+        return True
+    if vix is not None and vix > 35:
+        return True
+    return False
+
+
 async def check_intraday_regime(slot: str = "") -> dict[str, Any]:
     """Check current market conditions and switch the active regime SET when needed.
 
@@ -259,15 +332,22 @@ async def check_intraday_regime(slot: str = "") -> dict[str, Any]:
         logger.info("SKIP: IntradayRegimeMonitor no active morning SET trade_date=%s", trade_date)
         return {"ok": True, "action": "skipped", "reason": "no_morning_set"}
 
-    if _should_skip_transition(trade_date):
-        logger.info("SKIP: IntradayRegimeMonitor min transition interval trade_date=%s", trade_date)
-        return {"ok": True, "action": "skipped", "reason": "min_interval"}
-
     # 시황 단일출처(PM 확정): VIX는 index-board 파싱값 우선(미가용 시 morning VIX 폴백),
     # 실시간 KOSPI 등락은 KIS 거래데이터 유지(PM#2: 실시간가격은 KIS 전담).
     ib_vix = _get_index_board_vix(trade_date)
     vix = ib_vix if ib_vix is not None else _get_morning_vix(trade_date)
     kospi_change = _get_current_kospi_change()
+
+    # P3-3: flash crash 감지 — 방어 모드 활성화 + 디바운스 우회(즉시 레짐 전환 허용).
+    # 폭락은 25분 디바운스를 기다릴 수 없다.
+    flash_crash = _flash_crash_detected(kospi_change, vix)
+    if flash_crash:
+        _activate_flash_crash_defense(trade_date, kospi_change, vix)
+
+    if not flash_crash and _should_skip_transition(trade_date):
+        logger.info("SKIP: IntradayRegimeMonitor min transition interval trade_date=%s", trade_date)
+        return {"ok": True, "action": "skipped", "reason": "min_interval"}
+
     if kospi_change is None:
         logger.info("SKIP: IntradayRegimeMonitor KOSPI change missing trade_date=%s", trade_date)
         return {"ok": True, "action": "skipped", "reason": "no_kospi_data"}

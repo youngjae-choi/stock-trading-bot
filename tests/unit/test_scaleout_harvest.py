@@ -54,12 +54,13 @@ def _settings(overrides: dict | None = None):
 
 
 class ScaleoutHarvestTest(unittest.IsolatedAsyncioTestCase):
-    async def _run(self, position, price, settings_over=None, sell_ok=True):
+    async def _run(self, position, price, settings_over=None, sell_ok=True, regime_override=None):
         mgr = PositionManager()
         mgr._positions[position["symbol"]] = position
         sell = AsyncMock(return_value={"ok": sell_ok, "symbol": position["symbol"]})
         with patch("backend.services.engine.position_manager.get_setting", side_effect=_settings(settings_over)), \
              patch("backend.services.engine.position_manager._upsert_stop_state"), \
+             patch("backend.services.engine.position_manager._regime_scaleout_overrides", return_value=regime_override), \
              patch("backend.services.engine.order_executor.order_executor.execute_sell", sell):
             reason = await mgr._process_price(position, price)
         return mgr, sell, reason

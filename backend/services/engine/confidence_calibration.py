@@ -71,6 +71,74 @@ def get_confidence_bin(confidence: float) -> str:
     return "lt060"
 
 
+def get_blocked_bins(
+    min_samples: int = 30,
+    gap_threshold: float = 0.15,
+) -> dict[str, dict[str, Any]]:
+    """누적 실적이 기대에 크게 못 미치는 confidence bin 목록 (Phase 2 진입 게이트용).
+
+    차단 조건 (누적 표본 min_samples 이상인 bin에 한해):
+      - 실제 승률이 기대 승률보다 gap_threshold 이상 낮음, 또는
+      - 누적 평균 손익이 음수 (EV<0)
+
+    Returns:
+        {bin_label: {"actual_win_rate", "expected_win_rate", "cumulative_trades",
+                     "cumulative_avg_pnl", "reason"}} — 조회 실패 시 빈 dict(차단 안 함).
+    """
+    blocked: dict[str, dict[str, Any]] = {}
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT bin_label, cumulative_trades, cumulative_wins, cumulative_avg_pnl "
+                "FROM confidence_calibration_bins"
+            ).fetchall()
+    except Exception as exc:
+        logger.warning("WARN: [Calibration] blocked bins 조회 실패 — %s", exc)
+        return {}
+    for row in rows:
+        label = str(row["bin_label"])
+        trades = int(row["cumulative_trades"] or 0)
+        if trades < max(int(min_samples), 1):
+            continue
+        wins = int(row["cumulative_wins"] or 0)
+        avg_pnl = _safe_float(row["cumulative_avg_pnl"])
+        actual = wins / trades if trades else 0.0
+        expected = EXPECTED_WIN_RATES.get(label, 0.5)
+        gap_bad = (expected - actual) >= gap_threshold
+        ev_bad = avg_pnl < 0
+        if gap_bad or ev_bad:
+            blocked[label] = {
+                "actual_win_rate": round(actual, 4),
+                "expected_win_rate": expected,
+                "cumulative_trades": trades,
+                "cumulative_avg_pnl": avg_pnl,
+                "reason": "win_rate_gap" if gap_bad else "negative_ev",
+            }
+    return blocked
+
+
+def is_confidence_blocked(
+    confidence: float,
+    min_samples: int = 30,
+    gap_threshold: float = 0.15,
+) -> tuple[bool, str]:
+    """해당 confidence가 속한 bin이 누적 실적상 차단 대상인지.
+
+    Returns:
+        (blocked, reason) — reason은 로그/사유 기록용 요약 문자열.
+    """
+    bin_label = get_confidence_bin(confidence)
+    blocked = get_blocked_bins(min_samples=min_samples, gap_threshold=gap_threshold)
+    info = blocked.get(bin_label)
+    if not info:
+        return False, ""
+    return True, (
+        f"calibration_bin={bin_label} {info['reason']} "
+        f"actual={info['actual_win_rate']:.0%} expected={info['expected_win_rate']:.0%} "
+        f"n={info['cumulative_trades']} avg_pnl={info['cumulative_avg_pnl']:.0f}"
+    )
+
+
 def _load_signal_results(trade_date: str) -> list[dict[str, Any]]:
     """Load confidence and realized PnL fields required for calibration.
 

@@ -184,6 +184,30 @@ def _get_morning_context(trade_date: str) -> dict[str, Any]:
         return {}
 
 
+def _kospi_change_line(mdata: Any) -> str:
+    """KOSPI 당일 등락률 라인 (P3-1 공란 주입 수정).
+
+    morning_context.market_data.kospi → 실시간 market_snapshots 순으로 조회하고,
+    끝까지 없으면 'N/A' 명시 — 빈 문자열/누락으로 LLM이 시황을 추측하게 두지 않는다.
+    """
+    if isinstance(mdata, dict):
+        kospi = mdata.get("kospi")
+        if kospi and isinstance(kospi, dict) and kospi.get("change_pct") is not None:
+            try:
+                return f"KOSPI: {kospi.get('price')} ({float(kospi['change_pct']):+.2f}%)"
+            except (TypeError, ValueError):
+                pass
+    try:
+        from .intraday_regime_monitor import _get_current_kospi_change
+
+        chg = _get_current_kospi_change()
+        if chg is not None:
+            return f"KOSPI 당일 등락률: {chg:+.2f}% (실시간 스냅샷)"
+    except Exception:
+        pass
+    return "KOSPI 당일 등락률: N/A (데이터 미수집)"
+
+
 def _format_morning_context_for_prompt(ctx: dict[str, Any]) -> str:
     """morning_context를 LLM 프롬프트용 텍스트로 변환한다."""
     if not ctx:
@@ -191,6 +215,7 @@ def _format_morning_context_for_prompt(ctx: dict[str, Any]) -> str:
     lines = [
         f"시장 레짐: {ctx.get('regime', 'N/A')}",
         f"리스크 레벨: {ctx.get('risk_level', 'N/A')}",
+        _kospi_change_line(ctx.get("market_data", {})),
         f"주도 종목 성격: {ctx.get('stock_character', 'N/A')}",
         f"RulePack 힌트: {ctx.get('rulepack_hint', 'N/A')}",
     ]

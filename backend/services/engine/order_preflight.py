@@ -538,6 +538,44 @@ def run_preflight(
     else:
         checks["emergency_halt"] = PREFLIGHT_OK
 
+    # 1b. 레짐 SET new_entry_allowed 강제 (P3-2) — 신호 게이트 통과 잔여 주문의 백스톱.
+    # engine.enforce_new_entry_allowed=False면 구동작(표시용). 조회 실패 시 fail-open.
+    checks["new_entry_allowed"] = PREFLIGHT_OK
+    try:
+        if bool(get_setting("engine.enforce_new_entry_allowed", True)):
+            from ..regime_set_service import get_today_application
+
+            _app = get_today_application(now.strftime("%Y-%m-%d"))
+            _applied = (_app or {}).get("applied_settings") or {}
+            if isinstance(_applied, str):
+                try:
+                    _applied = json.loads(_applied or "{}")
+                except Exception:
+                    _applied = {}
+            if _applied and not bool(_applied.get("new_entry_allowed", True)):
+                checks["new_entry_allowed"] = PREFLIGHT_BLOCK
+                block_reasons.append(
+                    f"레짐 SET 신규진입 금지 (regime={(_app or {}).get('regime_label', 'n/a')})"
+                )
+    except Exception as _nea_exc:
+        logger.warning("WARN: [S6-P] new_entry_allowed 확인 실패 — fail-open: %s", _nea_exc)
+
+    # 1c. 급락 방어 모드 (P3-3/P3-5) — 인버스 1x 플레이북만 예외 허용.
+    checks["flash_crash_defense"] = PREFLIGHT_OK
+    try:
+        from .intraday_regime_monitor import is_flash_crash_defense_active
+
+        if is_flash_crash_defense_active():
+            from .intraday_profile import is_inverse_1x_product
+
+            _sig_name = str(signal.get("name") or "")
+            _playbook = bool(get_setting("engine.crash_playbook_enabled", True))
+            if not (_playbook and is_inverse_1x_product(_sig_name)):
+                checks["flash_crash_defense"] = PREFLIGHT_BLOCK
+                block_reasons.append("급락 방어 모드 — 인버스 1x 외 신규매수 차단")
+    except Exception as _fc_exc:
+        logger.warning("WARN: [S6-P] 급락 방어 모드 확인 실패 — fail-open: %s", _fc_exc)
+
     # 2. 장 운영 시간 및 설정된 신규매수 금지 시간 확인
     market_open = now.replace(hour=9, minute=0, second=0, microsecond=0)
     cutoff_hour, cutoff_minute = _time_from_rule(final_rule.get("new_entry_cutoff_time"), (15, 20))

@@ -112,6 +112,54 @@ def _upsert_stop_state(position_id: str, data: dict[str, Any]) -> None:
         )
 
 
+# P3-4: 방어 레짐에서 더 빨리·더 많이 수확 (SET에 명시값 없으면 이 기본값 사용).
+# volatile은 전량 익절(러너 없음) — 급변동 장에서 이익을 잠그는 게 우선.
+_REGIME_SCALEOUT_DEFAULTS: dict[str, tuple[float, float]] = {
+    "risk_off": (0.015, 0.8),
+    "volatile": (0.012, 1.0),
+}
+_SCALEOUT_OVERRIDE_CACHE: dict[str, Any] = {"at": 0.0, "value": None}
+
+
+def _regime_scaleout_overrides(ttl_seconds: float = 120.0) -> tuple[float, float] | None:
+    """당일 적용 레짐 SET 기반 (scaleout_target_rate, scaleout_ratio) 오버라이드.
+
+    SET applied_settings에 명시값이 있으면 그것을, 없으면 방어 레짐(risk_off/volatile)
+    기본값을 쓴다. 평시(neutral/risk_on)나 조회 실패면 None(전역 설정 사용).
+    틱 경로에서 호출되므로 TTL 캐시(120초)로 DB 부하를 막는다.
+    """
+    now = time.monotonic()
+    if now - _SCALEOUT_OVERRIDE_CACHE["at"] < ttl_seconds:
+        return _SCALEOUT_OVERRIDE_CACHE["value"]
+    value: tuple[float, float] | None = None
+    try:
+        import json as _json
+
+        from ..regime_set_service import get_today_application
+
+        app = get_today_application(_now_kst().strftime("%Y-%m-%d"))
+        if app:
+            label = str(app.get("regime_label") or "")
+            applied = app.get("applied_settings") or {}
+            if isinstance(applied, str):
+                try:
+                    applied = _json.loads(applied or "{}")
+                except Exception:
+                    applied = {}
+            explicit_rate = _to_float(applied.get("scaleout_target_rate")) if applied else 0.0
+            explicit_ratio = _to_float(applied.get("scaleout_ratio")) if applied else 0.0
+            if explicit_rate > 0 and explicit_ratio > 0:
+                value = (explicit_rate, explicit_ratio)
+            elif label in _REGIME_SCALEOUT_DEFAULTS:
+                value = _REGIME_SCALEOUT_DEFAULTS[label]
+    except Exception as exc:
+        logger.warning("WARN: [S8] 레짐 스케일아웃 오버라이드 조회 실패 — %s", exc)
+        value = None
+    _SCALEOUT_OVERRIDE_CACHE["at"] = now
+    _SCALEOUT_OVERRIDE_CACHE["value"] = value
+    return value
+
+
 def _symbol_harvested_today(symbol: str) -> bool:
     """해당 심볼이 오늘 이미 스케일아웃 수확됐는지 — 영속 stop_states 기준.
 
@@ -527,13 +575,19 @@ class PositionManager:
         if entry_price <= 0:
             return ""
         target_rate = _to_float(get_setting("engine.scaleout_target_rate", 0.02), 0.02)
+        ratio_setting = _to_float(get_setting("engine.scaleout_ratio", 0.6), 0.6)
+        # P3-4: 방어 레짐(risk_off/volatile)에서는 레짐 SET 오버라이드로
+        # 더 낮은 목표(빨리)·더 큰 비중(많이) 수확한다.
+        regime_override = _regime_scaleout_overrides()
+        if regime_override:
+            target_rate, ratio_setting = regime_override
         if target_rate <= 0 or price < entry_price * (1 + target_rate):
             return ""
 
         qty = int(_to_float(position.get("qty")))
         if qty <= 1:
             return ""  # 1주는 부분 확정 불가 — 트레일링/손절/EOD에 맡긴다
-        ratio = min(max(_to_float(get_setting("engine.scaleout_ratio", 0.6), 0.6), 0.0), 1.0)
+        ratio = min(max(ratio_setting, 0.0), 1.0)
         # 계좌가 당일 목표(+2%, 총자산 대비)에 도달했으면 확정 비중을 상향해 이익을 더 잠근다
         # (부분 수확 강화 — PM 확정 2026-07-06). 잔량은 계속 트레일링 러너로 상승분을 추적.
         if await self._account_daily_target_reached():

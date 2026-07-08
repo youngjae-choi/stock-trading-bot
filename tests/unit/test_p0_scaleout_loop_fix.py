@@ -168,6 +168,7 @@ def test_harvested_persists_and_reimport_inherits():
         mgr._positions["005930"] = pos
         sell = AsyncMock(return_value={"ok": True, "symbol": "005930"})
         with patch("backend.services.engine.position_manager.get_setting", side_effect=_scaleout_settings), \
+             patch("backend.services.engine.position_manager._regime_scaleout_overrides", return_value=None), \
              patch("backend.services.engine.order_executor.order_executor.execute_sell", sell), \
              patch.object(PositionManager, "_account_daily_target_reached", new=AsyncMock(return_value=False)):
             asyncio.run(mgr._scaleout_check(pos, 102.0))
@@ -192,6 +193,7 @@ def test_harvested_persists_and_reimport_inherits():
         # 재수확 시도 → 발동하지 않아야 한다
         sell2 = AsyncMock(return_value={"ok": True})
         with patch("backend.services.engine.position_manager.get_setting", side_effect=_scaleout_settings), \
+             patch("backend.services.engine.position_manager._regime_scaleout_overrides", return_value=None), \
              patch("backend.services.engine.order_executor.order_executor.execute_sell", sell2):
             asyncio.run(mgr2._scaleout_check(reimported, 105.0))
         sell2.assert_not_awaited()
@@ -239,6 +241,7 @@ def test_scaleout_uncertain_result_keeps_harvested():
     with patch("backend.services.engine.position_manager.get_setting", side_effect=_scaleout_settings), \
          patch("backend.services.engine.position_manager._upsert_stop_state",
                side_effect=lambda pid, data: upserts.append(data)), \
+         patch("backend.services.engine.position_manager._regime_scaleout_overrides", return_value=None), \
          patch.object(PositionManager, "_account_daily_target_reached", new=AsyncMock(return_value=False)), \
          patch("backend.services.engine.order_executor.order_executor.execute_sell", sell):
         result = asyncio.run(mgr._scaleout_check(pos, 102.0))

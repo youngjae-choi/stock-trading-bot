@@ -95,6 +95,7 @@ class CheckIntradayRegimeWiringTest(unittest.IsolatedAsyncioTestCase):
              patch.object(m, "_get_morning_vix", return_value=30.0), \
              patch.object(m, "_get_current_kospi_change", return_value=-2.0), \
              patch.object(m, "_get_index_board_regime", return_value=None), \
+             patch.object(m, "_activate_flash_crash_defense"), \
              patch.object(m, "get_match_preview", side_effect=fake_preview):
             await m.check_intraday_regime(slot="test")
         # index-board 미가용 → _judge_regime(30.0, -2.0)=volatile 폴백
