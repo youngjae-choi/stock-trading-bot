@@ -870,6 +870,25 @@ def _get_setting_float(key: str, default: float) -> float:
     return default
 
 
+def _get_setting_bool(key: str, default: bool) -> bool:
+    """system_settings에서 불리언 값을 읽는다. 실패 시 default 반환.
+
+    Args:
+        key: system_settings key to read.
+        default: Fallback value when the key is absent or invalid.
+    """
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT value_json FROM system_settings WHERE key = ?", (key,)
+            ).fetchone()
+        if row:
+            return bool(json.loads(row["value_json"]))
+    except Exception as exc:
+        logger.warning("WARN: [S6] system setting bool 조회 실패 key=%s error=%s", key, exc)
+    return default
+
+
 def _get_setting_str(key: str, default: str) -> str:
     """system_settings에서 문자열 값을 읽는다. 실패 시 default 반환.
 
@@ -1740,8 +1759,31 @@ class DecisionEngine:
             }
         price_floor = _get_setting_float("engine.min_price_change_pct", 1.5)
         price_ceil = _get_setting_float("engine.max_price_change_pct", 8.0)
-        price_min_pct = max(price_min_pct, price_floor)
-        price_max_pct = min(price_max_pct, price_ceil)
+        # 가드레일이 스스로 역전(floor>ceil)돼 있으면 무시 — 잘못 튜닝된 설정이 진입을 영구차단하지 못하게.
+        if price_floor > price_ceil:
+            logger.warning(
+                "WARN: [S6] 가격밴드 가드레일 역전 floor=%.2f > ceil=%.2f — 가드레일 무시",
+                price_floor, price_ceil,
+            )
+            price_floor, price_ceil = 0.0, 999.0
+        _band_min = max(price_min_pct, price_floor)
+        _band_max = min(price_max_pct, price_ceil)
+        # 가드레일∩RulePack 밴드가 공집합(min>=max)이면 진입이 수학적으로 불가능해진다.
+        # (예: auto-tuner가 min_price_change_pct=8.0으로 래칫 → RulePack max=5.0과 충돌 → [8.0,5.0])
+        # 이 경우 RulePack 원본 밴드로, 그것도 무효면 안전 기본값으로 폴백하고 경고를 남긴다.
+        # 롤백: engine.band_inversion_guard_enabled=false 로 가드 비활성(구동작 유지).
+        if _band_min >= _band_max and _get_setting_bool("engine.band_inversion_guard_enabled", True):
+            if price_min_pct < price_max_pct:
+                _band_min, _band_max = price_min_pct, price_max_pct
+                _fallback = "RulePack 원본 밴드"
+            else:
+                _band_min, _band_max = 1.5, 12.0
+                _fallback = "안전 기본값[1.5,12.0]"
+            logger.warning(
+                "WARN: [S6] 진입 가격밴드 역전 — 가드레일[%.2f,%.2f]∩RulePack[%.2f,%.2f] 공집합 → %s 폴백",
+                price_floor, price_ceil, price_min_pct, price_max_pct, _fallback,
+            )
+        price_min_pct, price_max_pct = _band_min, _band_max
 
         change_rate = _first_float(
             tick.get("change_rate"),

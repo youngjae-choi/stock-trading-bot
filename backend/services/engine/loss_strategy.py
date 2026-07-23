@@ -10,10 +10,12 @@ from collections import defaultdict
 from typing import Any
 
 # key -> (min, max). 매매 파라미터만.
+# 주의: min_price_change_pct 상한은 RulePack max(통상 ~5%)보다 낮게 유지해야 밴드 역전이 안 난다.
+# (과거 손실기반 래칫이 8.0까지 올려 RulePack max 5.0과 충돌 → 진입 영구차단. 상한 4.0으로 제한.)
 TUNABLE_SETTINGS: dict[str, tuple[float, float]] = {
-    "engine.min_price_change_pct": (0.5, 8.0),
+    "engine.min_price_change_pct": (0.5, 4.0),
     "engine.max_price_change_pct": (1.0, 15.0),
-    "engine.min_volume_ratio": (1.0, 10.0),
+    "engine.min_volume_ratio": (1.0, 5.0),
     "risk.max_position_rate_per_stock": (0.01, 0.30),
     "risk.daily_loss_limit_percent": (-10.0, -0.5),
     "risk.max_positions": (1, 20),
