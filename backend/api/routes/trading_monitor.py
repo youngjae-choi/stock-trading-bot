@@ -919,9 +919,9 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
     except Exception as _eod_exc:
         logger.warning("WARN: daily-results 종가총평가 조회 실패 — %s", _eod_exc)
     # 하드코딩 앵커 — 계좌 누적수익/총평가 정합용. 코드 상수라 S10 재실행·DB 복구에도 안 지워진다. (PM 2026-06-20)
-    #  - 6/12: 원금(예수금총액) 앵커 = 누적 P&L 시작점.
-    #  - 6/19: S10이 eod 미저장한 날 보정(당시 총평가). Total(합)=현재 총평가−원금=누적수익으로 정합.
-    _EOD_ANCHORS = {"2026-06-12": 100_000_000.0, "2026-06-19": 115_146_855.0}
+    #  - 7/23: 새 KIS 모의계좌(50198548) 전환 + 거래이력 백지화. 원금 1억을 누적 P&L 시작점으로 재설정. (PM 2026-07-23)
+    #    (옛 계좌 50181813 앵커 6/12 100M·6/19 115,146,855는 계좌 만료·리셋으로 폐기)
+    _EOD_ANCHORS = {"2026-07-23": 100_000_000.0}
     _eod_by_date.update(_EOD_ANCHORS)
     _eod_dates = sorted(_eod_by_date.keys())
 
