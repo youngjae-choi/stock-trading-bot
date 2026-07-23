@@ -1,11 +1,14 @@
 """손실 분석 오케스트레이션: 수집 → 전역 게이트 → 전략 제안(미리보기). 반영은 EOD에서."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from ..db import get_connection
-from ..settings_store import upsert_setting
+from ..settings_store import get_setting, upsert_setting
 from . import loss_strategy
+
+logger = logging.getLogger("LossAnalysis")
 
 _GLOBAL_MIN_SAMPLE = 3
 
@@ -86,6 +89,16 @@ def consolidate_and_apply(trade_date: str) -> dict[str, Any]:
     false_proposed, _ = loss_strategy.derive_strategies(cases)
     missed_proposed: list[dict[str, Any]] = []  # v1: 후속 연결 지점
     merged = _merge_proposals(false_proposed, missed_proposed)
+    # [S10 정리 2026-07-23] 손실 auto-tuner 관찰전용 게이트(기본 OFF).
+    # 사람 확인 없는 자동 파라미터 변경을 막는다(과거 min_price_change_pct 8.0 래칫→밴드역전 유발).
+    # 제안은 로그로 남겨 관찰 가능. 되돌림: engine.loss_autotune_apply_enabled=true.
+    if not bool(get_setting("engine.loss_autotune_apply_enabled", False)):
+        logger.info(
+            "INFO: [LossAutoTune] 관찰전용(engine.loss_autotune_apply_enabled=false) — 제안 %d건 미반영: %s",
+            len(merged),
+            [f"{m.get('setting_key')}->{m.get('new_value')}" for m in merged],
+        )
+        return {"applied": [], "observed": merged, "case_count": len(cases), "mode": "observe_only"}
     apply_strategies(merged, cases)
     return {"applied": merged, "case_count": len(cases)}
 

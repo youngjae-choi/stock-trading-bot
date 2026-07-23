@@ -429,6 +429,20 @@ def _safe_int(value: Any) -> int:
         return 0
 
 
+def _get_setting_bool(key: str, default: bool) -> bool:
+    """system_settings에서 불리언 설정을 읽는다. 실패 시 default."""
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT value_json FROM system_settings WHERE key = ?", (key,)
+            ).fetchone()
+        if row:
+            return bool(_json_loads(row["value_json"], default))
+    except Exception as exc:
+        logger.warning("WARN: [S10] setting bool 조회 실패 key=%s error=%s", key, exc)
+    return default
+
+
 def _load_review_signals(trade_date: str) -> list[dict[str, Any]]:
     """Load reviewable trading signals for the requested trade date.
 
@@ -985,6 +999,35 @@ async def _send_action_plan_for_approval(result: dict[str, Any]) -> None:
 
     trade_date = str(result.get("trade_date") or "")
     now_iso = _now_kst_iso()
+
+    # [S10 정리 2026-07-23] AI 복기·자동 설정변경 비활성 게이트(기본 OFF).
+    # PM이 직접 Claude와 전략을 통제하므로 LLM 정성복기와 AI 자동 설정변경(override)을 끈다.
+    # 단, 결정론적 EOD 요약 텔레그램(손익·승패)은 유용하므로 유지한 뒤 early-return.
+    # 되돌림: engine.s10_llm_review_enabled=true.
+    if not _get_setting_bool("engine.s10_llm_review_enabled", False):
+        try:
+            from ..alert_service import send_telegram_alert
+
+            pnl_pct = _safe_float(result.get("realized_pnl_pct"))
+            sign = "+" if pnl_pct >= 0 else ""
+            ds = result.get("day_score") or {}
+            if not isinstance(ds, dict):
+                ds = {}
+            completed = _safe_int(ds.get("completed"))
+            wins = _safe_int(ds.get("wins"))
+            losses = _safe_int(ds.get("losses"))
+            body = (
+                f"손익: {sign}{pnl_pct:.2f}% | 완료 {completed}건 (승 {wins}·패 {losses})\n"
+                f"AI 복기/자동 설정변경 비활성 — 전략은 수동 통제"
+            )
+            await send_telegram_alert(f"매매봇 S10 요약 [{trade_date}]", body)
+        except Exception as exc:
+            logger.warning("WARN: [S10] 결정론적 요약 텔레그램 실패 reason=%s", exc)
+        logger.info(
+            "INFO: [S10] LLM 복기·자동 override 비활성(engine.s10_llm_review_enabled=false) — 결정론적 집계만 수행 trade_date=%s",
+            trade_date,
+        )
+        return
 
     context_md = _build_review_context_md(result, trade_date)
 
