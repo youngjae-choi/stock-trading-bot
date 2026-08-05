@@ -151,70 +151,56 @@ def test_daily_results_window_independent(temp_db):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# ③ LLM 복기 컨텍스트 — 같은 day_score에서 '확정 매매성적' 생성
+# ③ 결정론 EOD 요약(텔레그램) — 같은 day_score(SSOT)에서 '확정 매매성적' 생성
+#    (LLM 복기 컨텍스트는 제거됨 — 요약은 day_score만 읽는다)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def test_review_context_uses_day_score(monkeypatch):
-    """_build_review_context_md의 확정 매매성적 줄이 day_score 값과 일치(자체 재계산 금지)."""
+def _capture_eod_summary(monkeypatch, result):
+    """_send_action_plan_for_approval이 만든 텔레그램 본문을 캡처해 반환."""
+    import asyncio
+
+    import backend.services.alert_service as alert_service
     import backend.services.engine.review_audit as ra
 
-    # DB를 건드리는 보조 조회(mc/app)는 None이어도 무방하도록 get_connection을 비운다.
-    class _NullConn:
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def execute(self, *a, **k):
-            class _C:
-                def fetchone(self_inner): return None
-                def fetchall(self_inner): return []
-            return _C()
+    sent = {}
 
-    monkeypatch.setattr(ra, "get_connection", lambda: _NullConn())
+    async def _fake_send(title, body):
+        sent["title"] = title
+        sent["body"] = body
 
-    result = {"day_score": {"completed": 10, "wins": 3, "losses": 7,
+    monkeypatch.setattr(alert_service, "send_telegram_alert", _fake_send)
+    asyncio.run(ra._send_action_plan_for_approval(result))
+    return sent
+
+
+def test_eod_summary_uses_day_score(monkeypatch):
+    """EOD 요약의 완료/승/패가 day_score 값과 일치(자체 재계산 금지)."""
+    result = {"trade_date": "2026-06-19", "realized_pnl_pct": 1.23,
+              "day_score": {"completed": 10, "wins": 3, "losses": 7,
                             "win_rate": 30.0, "open_positions": 3}}
-    md = ra._build_review_context_md(result, "2026-06-19")
-    assert "완료 10건 / 승 3 / 패 7" in md
-    assert "미청산 3건" in md
-    assert "자체 재계산 금지" in md
+    sent = _capture_eod_summary(monkeypatch, result)
+    assert "완료 10건 (승 3·패 7)" in sent["body"]
+    assert "2026-06-19" in sent["title"]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# ④ A2: 표시 거래수·승패가 day_score(SSOT)와 일치 — 시그널 기반 값과 갈리지 않음
+# ④ A2: 요약 거래수·승패가 day_score(SSOT)와 일치 — 시그널 기반 값과 갈리지 않음
 # ──────────────────────────────────────────────────────────────────────────────
 
-def test_review_displayed_trades_use_day_score(monkeypatch):
-    """'매매 결과' 줄의 총 거래/승·패가 day_score를 읽어 Daily Results와 동일.
-
-    시그널 기반 total_trades/win_count/loss_count가 다른 값이어도 화면 표시는 day_score를 따른다.
-    """
-    import backend.services.engine.review_audit as ra
-
-    class _NullConn:
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def execute(self, *a, **k):
-            class _C:
-                def fetchone(self_inner): return None
-                def fetchall(self_inner): return []
-            return _C()
-
-    monkeypatch.setattr(ra, "get_connection", lambda: _NullConn())
-
-    # 시그널 기반(이월 미포함) 6/2, day_score(이월+원가보강 포함) 3/2 — 화면은 day_score를 표시.
-    result = {
-        "total_trades": 6, "win_count": 2, "loss_count": 4,
-        "day_score": {"completed": 3, "wins": 2, "losses": 1, "win_rate": 66.7, "open_positions": 1},
-    }
-    md = ra._build_review_context_md(result, "2026-06-24")
-    assert "- 총 거래: 3건" in md
-    assert "- 승/패: 2/1" in md
-    assert "총 거래: 6건" not in md
+def test_eod_summary_prefers_day_score_over_signal_counts(monkeypatch):
+    """요약은 day_score만 읽는다 — 시그널 기반 total_trades/win_count가 달라도 무시."""
+    result = {"trade_date": "2026-06-24", "realized_pnl_pct": 0.0,
+              "total_trades": 6, "win_count": 2, "loss_count": 4,
+              "day_score": {"completed": 3, "wins": 2, "losses": 1,
+                            "win_rate": 66.7, "open_positions": 1}}
+    sent = _capture_eod_summary(monkeypatch, result)
+    assert "완료 3건 (승 2·패 1)" in sent["body"]
+    assert "6건" not in sent["body"]
 
 
 def test_cross_surface_auto_imported_consistency(tmp_path, monkeypatch):
     """2 정상 짝 + 1 흡수 매도 → day_score.completed == Review 표시 거래수 == 페어합 실현손익."""
     import backend.services.engine.position_cost_basis as cb
-    import backend.services.engine.review_audit as ra
     from backend.config import settings as cfg
     from backend.services import db as db_mod
     from backend.services.engine.trade_pairs import (
@@ -260,10 +246,6 @@ def test_cross_surface_auto_imported_consistency(tmp_path, monkeypatch):
     # 흡수 매도가 완료로 집계됐는지 (정상2 + 흡수1 = 3)
     assert day_score["completed"] == 3
     assert day_score["wins"] == 3
-
-    # Review 표시 거래수가 day_score.completed와 동일
-    md = ra._build_review_context_md({"day_score": day_score}, td)
-    assert f"- 총 거래: {day_score['completed']}건" in md
 
     # get_today_realized_pnl == 그날 페어 pnl_amount 합
     pairs_sum = sum(x["pnl_amount"] for x in pairs if x.get("pnl_amount") is not None)

@@ -1,9 +1,9 @@
-"""index-board 주력 regime (하이브리드) 검증.
+"""index-board 주력 regime (결정론적) 검증.
 
-- 아침 경로 + 브리핑 스크랩 성공 → classify_regime_heuristic 사용, call_llm 미호출(Opus SKIP).
-- 브리핑 스크랩 실패(None) → 기존 call_llm 풀분석 경로로 폴백.
+- 아침 경로 + 브리핑 스크랩 성공 → classify_regime_heuristic 사용 (provider=index-board).
+- 브리핑 스크랩 실패(None) → 결정론적 중립 폴백(provider=none) + 운영 알림. LLM 미사용.
 
-네트워크/LLM 전부 mock — 네트워크 의존 0. DB는 격리 sqlite.
+네트워크/알림 전부 mock — 네트워크 의존 0. DB는 격리 sqlite.
 """
 import asyncio
 from datetime import datetime, timezone
@@ -13,7 +13,7 @@ import backend.services.db as db_mod
 import backend.services.engine.market_tone as mt
 import backend.services.engine.index_board_scraper as scraper
 import backend.services.engine.market_data_fetcher as mdf
-import backend.services.engine.llm_router as llm_router
+import backend.services.engine.alert_center as alert_center
 
 
 def _fresh_iso():
@@ -51,11 +51,9 @@ def _common_mocks(monkeypatch):
 
 
 def test_briefing_success_skips_llm(tmp_path, monkeypatch):
-    """브리핑 스크랩 성공 시 휴리스틱으로 처리, call_llm은 절대 호출되지 않아야 한다."""
+    """브리핑 스크랩 성공 시 결정론적 휴리스틱으로 처리(provider=index-board)."""
     _iso_db(tmp_path, monkeypatch)
     _common_mocks(monkeypatch)
-
-    calls = {"llm": 0}
 
     async def fake_scrape_morning():
         return {
@@ -63,16 +61,10 @@ def test_briefing_success_skips_llm(tmp_path, monkeypatch):
             "generated_at": _fresh_iso(),
         }
 
-    async def fake_call_llm(prompt, task_name=""):
-        calls["llm"] += 1
-        raise AssertionError("call_llm must NOT be invoked when briefing scraped")
-
     monkeypatch.setattr(scraper, "scrape_morning", fake_scrape_morning)
-    monkeypatch.setattr(llm_router, "call_llm", fake_call_llm)
 
     result = asyncio.run(mt.run_market_tone_analysis(trigger_source="auto_scheduler"))
 
-    assert calls["llm"] == 0
     assert result["ok"] is True
     assert result["provider"] == "index-board"
     assert result["regime"] == "risk_on"
@@ -84,34 +76,35 @@ def test_briefing_success_skips_llm(tmp_path, monkeypatch):
     assert mc["regime"] == "risk_on"
 
 
-def test_scrape_none_falls_back_to_llm(tmp_path, monkeypatch):
-    """브리핑 스크랩 실패(None) 시 기존 call_llm 풀분석 경로를 타야 한다."""
+def test_scrape_none_falls_back_to_neutral(tmp_path, monkeypatch):
+    """브리핑 스크랩 실패(None) 시 결정론적 중립 폴백(provider=none) + 운영 알림. LLM 미사용."""
     _iso_db(tmp_path, monkeypatch)
     _common_mocks(monkeypatch)
 
-    calls = {"llm": 0}
+    fired = []
+
+    def fake_create_alert(alert_type, title, severity="WARNING", detail="", trade_date=None):
+        fired.append({"alert_type": alert_type, "title": title, "severity": severity, "detail": detail})
+        return {"id": "x"}
 
     async def fake_scrape_morning():
         return None
 
-    async def fake_call_llm(prompt, task_name=""):
-        calls["llm"] += 1
-        assert "외부 AI 시황 브리핑" not in prompt
-        return {
-            "ok": True,
-            "provider": "test",
-            "raw": '{"tone":"neutral","confidence":0.5,"summary":"평이",'
-            '"regime":"neutral","risk_level":"normal"}',
-            "tried": ["test"],
-        }
-
     monkeypatch.setattr(scraper, "scrape_morning", fake_scrape_morning)
-    monkeypatch.setattr(llm_router, "call_llm", fake_call_llm)
+    monkeypatch.setattr(alert_center, "create_alert", fake_create_alert)
 
     result = asyncio.run(mt.run_market_tone_analysis(trigger_source="auto_scheduler"))
 
-    assert calls["llm"] == 1
     assert result["ok"] is True
-    # Phase 2: 백업 경로는 provider를 'llm-backup'으로 태깅(정상 LLM 경로 'test'와 구분).
-    assert result["provider"] == "llm-backup"
+    # 결정론적 중립 폴백: provider='none', 중립 regime/tone.
+    assert result["provider"] == "none"
     assert result["tone"] == "neutral"
+    assert result["regime"] == "neutral"
+    assert result["risk_level"] == "normal"
+    assert result["confidence"] == 0.0
+    # index-board 미수신 운영 알림 1회.
+    assert len(fired) == 1
+    assert fired[0]["alert_type"] == "ops_watch"
+    assert fired[0]["severity"] == "WARNING"
+    assert "미수신" in fired[0]["title"]
+    assert "reason=missing" in fired[0]["detail"]

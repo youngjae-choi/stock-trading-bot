@@ -142,6 +142,19 @@ async def call_llm(prompt: str, task_name: str = "") -> dict[str, Any]:
         }
     """
     logger.info("START: LLMRouter.call_llm task=%s", task_name or "unnamed")
+
+    # 전역 kill-switch — engine.llm_enabled=false면 provider를 호출하지 않고
+    # 즉시 {ok:False}를 반환한다. 모든 호출부가 결정론 폴백으로 동작한다.
+    # (LLM 삭제·시스템화 이행기 관찰/즉시차단용. 기본값 True는 무변경 배포.)
+    try:
+        from ..settings_store import get_setting
+
+        if not bool(get_setting("engine.llm_enabled", True)):
+            logger.info("INFO: LLMRouter — engine.llm_enabled=false, LLM 비활성(결정론 폴백) task=%s", task_name or "unnamed")
+            return {"ok": False, "provider": "none", "raw": "", "tried": [], "error": "llm_disabled"}
+    except Exception as exc:  # 설정 조회 실패는 비치명 — 기존 동작 유지
+        logger.warning("WARN: LLMRouter kill-switch 조회 실패, LLM 계속 — %s", exc)
+
     providers = _providers_in_order()
 
     if not providers:

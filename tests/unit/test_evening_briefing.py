@@ -1,12 +1,13 @@
-"""장후 브리핑 저장/조회 + 감성 분류 단위 테스트 (격리 DB)."""
-import asyncio
+"""장후 브리핑 저장/조회 + 결정론적 감성 분류 단위 테스트 (격리 DB).
 
-import pytest
-
+classify_sentiment는 LLM을 쓰지 않는 동기 함수로, index_board_scraper.parse_briefing_numbers
+가 반환한 객관 수치(vix/fear_greed/kospi200_futures_pct)를 임계값 규칙으로
+volatile/risk_off/risk_on/neutral 중 하나로 매핑한다.
+"""
 from backend.config import settings
 import backend.services.db as db_mod
 import backend.services.engine.evening_briefing as eb
-import backend.services.engine.llm_router as llm_router
+import backend.services.engine.index_board_scraper as scraper
 
 
 def _iso_db(tmp_path, monkeypatch):
@@ -51,37 +52,71 @@ def test_get_range_returns_recent_first(tmp_path, monkeypatch):
     assert [r["trade_date"] for r in rows] == ["2026-06-12", "2026-06-11", "2026-06-10"]
 
 
-def test_classify_sentiment_parses_llm_keyword(tmp_path, monkeypatch):
-    async def fake_call_llm(prompt, task_name=""):
-        return {"ok": True, "provider": "test", "raw": "risk_on", "tried": ["test"]}
+def _patch_numbers(monkeypatch, nums):
+    """classify_sentiment가 참조하는 parse_briefing_numbers를 고정 dict로 대체."""
+    def fake_parse(text):
+        return nums
 
-    monkeypatch.setattr(llm_router, "call_llm", fake_call_llm)
-    result = asyncio.run(eb.classify_sentiment("위험선호 강하게 회복"))
-    assert result == "risk_on"
-
-
-def test_classify_sentiment_extracts_from_sentence(tmp_path, monkeypatch):
-    async def fake_call_llm(prompt, task_name=""):
-        return {"ok": True, "provider": "test", "raw": "판단: risk_off 입니다.", "tried": ["test"]}
-
-    monkeypatch.setattr(llm_router, "call_llm", fake_call_llm)
-    result = asyncio.run(eb.classify_sentiment("위험회피 심리 확산"))
-    assert result == "risk_off"
+    monkeypatch.setattr(scraper, "parse_briefing_numbers", fake_parse)
 
 
-def test_classify_sentiment_fallback_neutral_on_failure(tmp_path, monkeypatch):
-    async def fake_call_llm(prompt, task_name=""):
-        return {"ok": False, "provider": "none", "raw": "", "tried": []}
+def test_classify_sentiment_volatile_from_vix(tmp_path, monkeypatch):
+    """VIX>=30 → 극단 변동성(volatile) 최우선."""
+    _patch_numbers(
+        monkeypatch,
+        {"vix": 32.0, "fear_greed": None, "kospi200_futures_pct": None,
+         "sox_pct": None, "usdkrw": None},
+    )
+    assert eb.classify_sentiment("변동성 급등") == "volatile"
 
-    monkeypatch.setattr(llm_router, "call_llm", fake_call_llm)
-    result = asyncio.run(eb.classify_sentiment("어떤 텍스트"))
-    assert result == "neutral"
+
+def test_classify_sentiment_risk_off_from_negative_futures(tmp_path, monkeypatch):
+    """코스피200 야간선물 <= -1.0 → risk_off."""
+    _patch_numbers(
+        monkeypatch,
+        {"vix": None, "fear_greed": None, "kospi200_futures_pct": -1.5,
+         "sox_pct": None, "usdkrw": None},
+    )
+    assert eb.classify_sentiment("야간선물 급락") == "risk_off"
 
 
-def test_classify_sentiment_fallback_neutral_on_unknown(tmp_path, monkeypatch):
-    async def fake_call_llm(prompt, task_name=""):
-        return {"ok": True, "provider": "test", "raw": "모르겠음", "tried": ["test"]}
+def test_classify_sentiment_risk_on_from_greed(tmp_path, monkeypatch):
+    """공포탐욕 >= 65 → risk_on."""
+    _patch_numbers(
+        monkeypatch,
+        {"vix": None, "fear_greed": 70, "kospi200_futures_pct": None,
+         "sox_pct": None, "usdkrw": None},
+    )
+    assert eb.classify_sentiment("탐욕 구간") == "risk_on"
 
-    monkeypatch.setattr(llm_router, "call_llm", fake_call_llm)
-    result = asyncio.run(eb.classify_sentiment("애매한 텍스트"))
-    assert result == "neutral"
+
+def test_classify_sentiment_neutral_when_mild(tmp_path, monkeypatch):
+    """모든 수치가 온화/None → neutral."""
+    _patch_numbers(
+        monkeypatch,
+        {"vix": 18.0, "fear_greed": 50, "kospi200_futures_pct": 0.2,
+         "sox_pct": None, "usdkrw": None},
+    )
+    assert eb.classify_sentiment("특이사항 없음") == "neutral"
+
+
+def test_classify_sentiment_neutral_on_empty_text(tmp_path, monkeypatch):
+    """빈 텍스트 → 파싱 없이 neutral 폴백."""
+    called = {"n": 0}
+
+    def fake_parse(text):
+        called["n"] += 1
+        return {}
+
+    monkeypatch.setattr(scraper, "parse_briefing_numbers", fake_parse)
+    assert eb.classify_sentiment("") == "neutral"
+    assert called["n"] == 0  # 빈 텍스트는 파싱 자체를 건너뜀
+
+
+def test_classify_sentiment_neutral_on_parse_exception(tmp_path, monkeypatch):
+    """parse_briefing_numbers가 예외를 던지면 neutral 폴백."""
+    def fake_parse(text):
+        raise ValueError("boom")
+
+    monkeypatch.setattr(scraper, "parse_briefing_numbers", fake_parse)
+    assert eb.classify_sentiment("어떤 텍스트") == "neutral"

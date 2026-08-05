@@ -1,7 +1,7 @@
 """Phase 2 — index-board 시황 단일출처 검증.
 
 - 장중(intraday)도 index-board(scrape_intraday/regular)를 주력으로 사용 → Opus SKIP.
-- 스크랩 실패(None) 또는 stale → provider='llm-backup' + 운영 알림 1회.
+- 스크랩 실패(None) → provider='none'(중립 폴백), stale → provider='heuristic-stale' + 운영 알림 1회. LLM 미사용.
 - classify_regime_heuristic의 numbers 결합(객관 수치) 동작 및 하위호환.
 - parsed_numbers가 market_tone_results에 저장되는지.
 
@@ -178,42 +178,33 @@ def test_intraday_uses_index_board_primary(tmp_path, monkeypatch):
 # 백업 경로 — 미수신 / stale
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_intraday_scrape_none_falls_back_to_llm_backup(tmp_path, monkeypatch):
-    """장중 스크랩 None → provider=llm-backup, Opus 호출, 알림 1회."""
+def test_intraday_scrape_none_falls_back_to_neutral(tmp_path, monkeypatch):
+    """장중 스크랩 None → 결정론적 중립 폴백(provider=none), LLM 미사용, 알림 1회(reason=missing)."""
     _iso_db(tmp_path, monkeypatch)
     _common_mocks(monkeypatch)
     fired = _capture_alerts(monkeypatch)
 
-    llm_calls = {"n": 0}
-
     async def fake_scrape_intraday():
         return None
 
-    async def fake_call_llm(prompt, task_name=""):
-        llm_calls["n"] += 1
-        return {
-            "ok": True,
-            "provider": "test-opus",
-            "raw": '{"tone":"neutral","confidence":0.5,"summary":"백업",'
-            '"regime":"neutral","risk_level":"normal"}',
-            "tried": ["test-opus"],
-        }
-
     monkeypatch.setattr(scraper, "scrape_intraday", fake_scrape_intraday)
-    monkeypatch.setattr(llm_router, "call_llm", fake_call_llm)
 
     result = asyncio.run(mt.run_market_tone_analysis(trigger_source="intraday_refresh"))
 
-    assert llm_calls["n"] == 1
-    assert result["provider"] == "llm-backup"
+    assert result["provider"] == "none"
+    assert result["tone"] == "neutral"
+    assert result["regime"] == "neutral"
+    assert result["risk_level"] == "normal"
+    assert result["confidence"] == 0.0
     assert len(fired) == 1
     assert fired[0]["alert_type"] == "ops_watch"
+    assert fired[0]["severity"] == "WARNING"
     assert "index-board 시황 미수신" in fired[0]["title"]
     assert "reason=missing" in fired[0]["detail"]
 
 
 def test_morning_scrape_none_fires_backup_alert(tmp_path, monkeypatch):
-    """아침 스크랩 None → llm-backup + 알림 1회."""
+    """아침 스크랩 None → 중립 폴백(provider=none) + 운영 알림 정확히 1회."""
     _iso_db(tmp_path, monkeypatch)
     _common_mocks(monkeypatch)
     fired = _capture_alerts(monkeypatch)
@@ -221,56 +212,38 @@ def test_morning_scrape_none_fires_backup_alert(tmp_path, monkeypatch):
     async def fake_scrape_morning():
         return None
 
-    async def fake_call_llm(prompt, task_name=""):
-        return {
-            "ok": True,
-            "provider": "test-opus",
-            "raw": '{"tone":"neutral","confidence":0.5,"summary":"백업",'
-            '"regime":"neutral","risk_level":"normal"}',
-            "tried": ["test-opus"],
-        }
-
     monkeypatch.setattr(scraper, "scrape_morning", fake_scrape_morning)
-    monkeypatch.setattr(llm_router, "call_llm", fake_call_llm)
 
     result = asyncio.run(mt.run_market_tone_analysis(trigger_source="auto_scheduler"))
-    assert result["provider"] == "llm-backup"
+    assert result["provider"] == "none"
     assert len(fired) == 1
+    assert fired[0]["alert_type"] == "ops_watch"
+    assert fired[0]["severity"] == "WARNING"
 
 
-def test_stale_briefing_falls_back_to_backup(tmp_path, monkeypatch):
-    """장중 stale 브리핑(오래된 generated_at) → 백업 경로, reason=stale."""
+def test_stale_briefing_falls_back_to_heuristic_stale(tmp_path, monkeypatch):
+    """장중 stale 브리핑(오래된 generated_at) → provider=heuristic-stale(중립강제 아님) + 알림 reason=stale."""
     _iso_db(tmp_path, monkeypatch)
     _common_mocks(monkeypatch)
     fired = _capture_alerts(monkeypatch)
 
-    llm_calls = {"n": 0}
-
     async def fake_scrape_intraday():
         return {
-            "text": "장중 약세 하락.",
+            "text": "장중 약세 하락 부진 경계 위축.",  # off 키워드 다수 → 휴리스틱 risk_off
             "type": "regular",
             "market": "kospi",
             "generated_at": _fresh_iso(minutes_ago=300),  # 5h 전 → 기본 120분 초과 stale
         }
 
-    async def fake_call_llm(prompt, task_name=""):
-        llm_calls["n"] += 1
-        return {
-            "ok": True,
-            "provider": "test-opus",
-            "raw": '{"tone":"negative","confidence":0.4,"summary":"백업",'
-            '"regime":"risk_off","risk_level":"normal"}',
-            "tried": ["test-opus"],
-        }
-
     monkeypatch.setattr(scraper, "scrape_intraday", fake_scrape_intraday)
-    monkeypatch.setattr(llm_router, "call_llm", fake_call_llm)
 
     result = asyncio.run(mt.run_market_tone_analysis(trigger_source="intraday_refresh"))
-    assert llm_calls["n"] == 1
-    assert result["provider"] == "llm-backup"
+    assert result["provider"] == "heuristic-stale"
+    # 휴리스틱으로 판정(중립 강제 아님) — off 키워드 다수 → risk_off.
+    assert result["regime"] == "risk_off"
     assert len(fired) == 1
+    assert fired[0]["alert_type"] == "ops_watch"
+    assert fired[0]["severity"] == "WARNING"
     assert "reason=stale" in fired[0]["detail"]
 
 

@@ -39,7 +39,7 @@ def test_collect_success_stores(tmp_path, monkeypatch):
             "generated_at": "2026-06-12T21:47:52Z",
         }
 
-    async def fake_classify(text):
+    def fake_classify(text):
         return "risk_on"
 
     monkeypatch.setattr(scraper, "scrape_evening", fake_scrape_evening)

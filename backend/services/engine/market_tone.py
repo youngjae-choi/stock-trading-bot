@@ -1,11 +1,14 @@
 """시장 톤 분석 서비스 (S2 — 08:00 KST).
 
-LLM Router를 통해 오늘의 시장 분위기(긍정/중립/부정)를 분석하고
-결과를 DB의 market_tone_results 테이블에 저장한다.
+index-board 브리핑 텍스트를 결정론적 휴리스틱(classify_regime_heuristic)으로
+분석해 오늘의 시장 분위기(긍정/중립/부정)와 regime을 판정하고 결과를
+DB의 market_tone_results 테이블에 저장한다. LLM은 사용하지 않는다.
 
 주의:
-- LLM 분석 결과는 "참고용 분석 보조"다. 매매 실행 판단은 Python 룰 엔진이 한다.
-- 분석 실패 시 기본값(neutral)을 반환하고 시스템은 계속 실행된다.
+- regime 판정은 "참고용 분석 보조"다. 매매 실행 판단은 Python 룰 엔진이 한다.
+- 브리핑이 아예 없으면 기본값(neutral)을 반환하고 시스템은 계속 실행된다.
+  (과거 LLM 백업이 index-board 장애 중 허구 KOSPI를 생성한 사례가 있어,
+   추측 대신 결정론적 중립 폴백을 명시적으로 선호한다.)
 """
 
 from __future__ import annotations
@@ -17,9 +20,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..db import get_connection
-from . import llm_router
 from .pipeline_audit import finish_pipeline_run, normalize_trigger_source, start_pipeline_run
-from .prompt_loader import render_prompt
 
 logger = logging.getLogger("MarketToneService")
 
@@ -309,53 +310,6 @@ def _is_briefing_fresh(briefing: dict | None, is_intraday: bool) -> bool:
     return age_sec <= 18 * 3600.0
 
 
-def _parse_tone_response(raw: str) -> dict[str, Any]:
-    """LLM 응답 문자열에서 JSON을 추출해 파싱한다."""
-    # 마크다운 코드 블록 제거
-    text = raw.strip()
-    if "```" in text:
-        lines = text.split("\n")
-        lines = [l for l in lines if not l.strip().startswith("```")]
-        text = "\n".join(lines).strip()
-
-    # JSON 파싱
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        # JSON 블록만 추출 시도
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start != -1 and end > start:
-            data = json.loads(text[start:end])
-        else:
-            raise
-
-    tone = str(data.get("tone", "neutral")).lower()
-    if tone not in ("positive", "neutral", "negative", "mixed"):
-        tone = "neutral"
-
-    regime = str(data.get("regime", "neutral")).lower()
-    if regime not in ("risk_on", "neutral", "risk_off", "volatile"):
-        regime = "neutral"
-
-    risk_level = str(data.get("risk_level", "normal")).lower()
-    if risk_level not in ("low", "normal", "high", "extreme"):
-        risk_level = "normal"
-
-    return {
-        "tone": tone,
-        "confidence": float(data.get("confidence", 0.0)),
-        "summary": str(data.get("summary", ""))[:200],
-        "key_factors": data.get("key_factors", []),
-        "risk_factors": data.get("risk_factors", []),
-        "data_note": str(data.get("data_note", "")),
-        "regime": regime,
-        "risk_level": risk_level,
-        "stock_character": str(data.get("stock_character", ""))[:200],
-        "rulepack_hint": str(data.get("rulepack_hint", ""))[:200],
-    }
-
-
 async def run_market_tone_analysis(
     trigger_source: str = "api_manual",
     intraday_snapshot: "dict[str, Any] | None" = None,
@@ -514,110 +468,85 @@ async def run_market_tone_analysis(
                     is_intraday, briefing.get("generated_at"), briefing_fresh,
                 )
             else:
-                logger.info("INFO: MarketToneService 브리핑 없음 intraday=%s — LLM 백업 폴백", is_intraday)
+                logger.info("INFO: MarketToneService 브리핑 없음 intraday=%s — 중립 폴백", is_intraday)
         except Exception as scrape_exc:
             logger.warning(
-                "WARN: MarketToneService 브리핑 스크랩 실패 (LLM 백업 폴백) — %s",
+                "WARN: MarketToneService 브리핑 스크랩 실패 (중립 폴백) — %s",
                 scrape_exc,
             )
 
-    # index-board 브리핑이 있고 신선(fresh)하면: 휴리스틱(+객관 수치)로 regime 판정, Opus SKIP (단일출처 주력).
-    # 스크랩 실패/비활성/stale이면 기존 Opus 풀분석을 휴면 백업으로 사용(provider='llm-backup' + 운영 알림).
+    # regime 판정은 전적으로 결정론적 휴리스틱(classify_regime_heuristic)으로 한다. LLM은 사용하지 않는다.
+    # - fresh 브리핑: index-board 객관 수치 + 키워드로 판정 (provider='index-board').
+    # - stale 브리핑(텍스트는 있으나 오래됨): 같은 휴리스틱으로 판정하되 provider='heuristic-stale'로 태깅
+    #   + index-board 부재/노후 운영 알림 1회.
+    # - 브리핑 텍스트 자체가 없음(스크랩 실패/비활성): 추측 대신 결정론적 중립 폴백(provider='none').
+    #   (과거 LLM 백업이 index-board 장애 중 허구 KOSPI를 생성한 사례가 있어 중립 폴백을 명시적으로 선호.)
     # briefing_scraped는 briefing 텍스트가 있을 때만 True이므로 briefing_text가 비어있지 않음을 보장한다.
-    use_index_board_primary = briefing_scraped and briefing_fresh and bool(briefing_text)
-    if use_index_board_primary:
+    if briefing_scraped and bool(briefing_text):
         from . import index_board_scraper as _ibs
 
         parsed_numbers = _ibs.parse_briefing_numbers(briefing_text)
         parsed = classify_regime_heuristic(briefing_text, market_data, numbers=parsed_numbers)
-        llm_result = {"ok": True, "raw": briefing_text, "provider": "index-board"}
-        logger.info(
-            "INFO: MarketToneService index-board 주력 regime=%s risk_level=%s (Opus SKIP) note=%s",
-            parsed["regime"], parsed["risk_level"], parsed["data_note"],
-        )
+        if briefing_fresh:
+            provider_tag = "index-board"
+            llm_result = {"ok": True, "raw": briefing_text, "provider": provider_tag}
+            logger.info(
+                "INFO: MarketToneService index-board 주력 regime=%s risk_level=%s note=%s",
+                parsed["regime"], parsed["risk_level"], parsed["data_note"],
+            )
+        else:
+            # stale 브리핑 — 휴리스틱은 그대로 쓰되 index-board 노후를 운영 알림으로 남긴다.
+            provider_tag = "heuristic-stale"
+            llm_result = {"ok": True, "raw": briefing_text, "provider": provider_tag}
+            try:
+                from .alert_center import create_alert
+
+                create_alert(
+                    alert_type="ops_watch",
+                    title="⚠️ index-board 시황 노후 — 휴리스틱(stale) regime 사용",
+                    severity="WARNING",
+                    detail=f"intraday={is_intraday} reason=stale trade_date={today}",
+                    trade_date=today,
+                )
+            except Exception as _alert_exc:
+                logger.warning("WARN: MarketToneService stale 알림 발생 실패 (비치명) — %s", _alert_exc)
+            logger.info(
+                "INFO: MarketToneService index-board stale — 휴리스틱 regime=%s risk_level=%s note=%s",
+                parsed["regime"], parsed["risk_level"], parsed["data_note"],
+            )
     else:
-        # ── 휴면 백업: index-board 미수신/stale → Opus regime 사용. 운영 알림 1회 발생. ──
-        _backup_reason = "stale" if (briefing_scraped and not briefing_fresh) else "missing"
+        # ── 브리핑 텍스트 없음: 결정론적 중립 폴백. index-board 부재 운영 알림 1회. ──
         try:
             from .alert_center import create_alert
 
             create_alert(
                 alert_type="ops_watch",
-                title="⚠️ index-board 시황 미수신 — LLM 백업 regime 사용",
+                title="⚠️ index-board 시황 미수신 — 중립 폴백 regime 사용",
                 severity="WARNING",
-                detail=f"intraday={is_intraday} reason={_backup_reason} trade_date={today}",
+                detail=f"intraday={is_intraday} reason=missing trade_date={today}",
                 trade_date=today,
             )
         except Exception as _alert_exc:
-            logger.warning("WARN: MarketToneService 백업 알림 발생 실패 (비치명) — %s", _alert_exc)
-        prompt_file = "intraday_market_tone.md" if is_intraday else "0805_opus_market_tone.md"
-        prompt_vars = {"date": today, "market_data": market_data_text}
-        if is_intraday:
-            prompt_vars["slot"] = slot
+            logger.warning("WARN: MarketToneService 중립 폴백 알림 발생 실패 (비치명) — %s", _alert_exc)
+        parsed = {
+            "tone": "neutral",
+            "confidence": 0.0,
+            "summary": "index-board 브리핑 미수신 — 기본값(중립) 적용",
+            "key_factors": [],
+            "risk_factors": ["index-board 미수신"],
+            "data_note": "briefing missing — deterministic neutral fallback",
+            "regime": "neutral",
+            "risk_level": "normal",
+            "stock_character": "",
+            "rulepack_hint": "",
+        }
+        llm_result = {"ok": True, "raw": "", "provider": "none"}
+        logger.info(
+            "INFO: MarketToneService 브리핑 미수신 — 중립 폴백 regime=neutral risk_level=normal intraday=%s",
+            is_intraday,
+        )
 
-        # LLM 호출
-        try:
-            prompt = render_prompt(
-                prompt_file,
-                prompt_vars,
-            )
-        except Exception as exc:
-            finish_pipeline_run(
-                run_id=run_audit_id,
-                status="failed",
-                message=f"prompt_render_failed: {exc}",
-                metadata={"trigger_source": safe_source},
-            )
-            logger.error("FAIL: MarketToneService prompt render failed trade_date=%s reason=%s", today, exc)
-            raise
-        try:
-            llm_result = await llm_router.call_llm(prompt, task_name="시장 톤 분석")
-        except Exception as exc:
-            finish_pipeline_run(
-                run_id=run_audit_id,
-                status="failed",
-                message=str(exc),
-                metadata={"trigger_source": safe_source},
-            )
-            logger.error("FAIL: MarketToneService LLM call exception trade_date=%s reason=%s", today, exc)
-            raise
-
-        # 파싱
-        if llm_result["ok"]:
-            try:
-                parsed = _parse_tone_response(llm_result["raw"])
-            except Exception as parse_exc:
-                logger.warning("WARN: MarketToneService JSON 파싱 실패 — %s", parse_exc)
-                parsed = {
-                    "tone": "neutral",
-                    "confidence": 0.0,
-                    "summary": "LLM 응답 파싱 실패",
-                    "key_factors": [],
-                    "risk_factors": ["파싱 오류"],
-                    "data_note": str(parse_exc),
-                    "regime": "neutral",
-                    "risk_level": "normal",
-                    "stock_character": "",
-                    "rulepack_hint": "",
-                }
-        else:
-            parsed = {
-                "tone": "neutral",
-                "confidence": 0.0,
-                "summary": "LLM 분석 실패 — 기본값(중립) 적용",
-                "key_factors": [],
-                "risk_factors": ["LLM 호출 실패"],
-                "data_note": llm_result.get("error", "unknown"),
-                "regime": "neutral",
-                "risk_level": "normal",
-                "stock_character": "",
-                "rulepack_hint": "",
-            }
-
-        # 백업 경로 provider 태깅: 휴면 Opus 백업이 동작했음을 명시(index-board 정상 경로와 구분).
-        llm_result["provider"] = "llm-backup"
-
-    # 정상(index-board) 경로의 객관 수치 저장용 — 백업 경로는 빈 dict.
+    # index-board 경로의 객관 수치 저장용 — 중립 폴백 경로는 빈 dict.
     parsed_numbers_json = json.dumps(parsed.get("numbers", {}) or {}, ensure_ascii=False)
 
     # DB 저장
