@@ -625,6 +625,22 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
             if len(chosen) >= target:
                 break
 
+    # 손실 스트릭 하드 차단(결정론) — LLM/지식주입과 무관하게 3연패 심볼을 후보에서 제외.
+    if bool(_get_setting("engine.loss_streak_hard_block_enabled", True)):
+        try:
+            from .loss_streak_guard import get_active_blocked_symbols
+            _blocked = get_active_blocked_symbols(today)
+            if _blocked:
+                _before = len(chosen)
+                for _bsym in list(chosen.keys()):
+                    if str(_bsym) in _blocked:
+                        chosen.pop(_bsym, None)
+                        skipped.append({"symbol": _bsym, "reason": "loss_streak_hard_block"})
+                if len(chosen) < _before:
+                    logger.info("INFO: HybridScreening 손실스트릭 하드차단 %d→%d", _before, len(chosen))
+        except Exception as _exc:
+            logger.warning("WARN: HybridScreening 손실스트릭 차단 조회 실패 — %s", _exc)
+
     candidates = list(chosen.values())
     logger.info("INFO: HybridScreening 후보 확장 target=%d held=%d final=%d", target, held, len(candidates))
 

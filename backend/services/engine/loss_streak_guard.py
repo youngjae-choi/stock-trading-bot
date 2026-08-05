@@ -31,6 +31,57 @@ def _expires_at(days: int) -> str:
     return (base + timedelta(days=days)).strftime("%Y-%m-%d")
 
 
+def _ensure_block_table() -> None:
+    """구조화된 결정론 진입차단 리스트 — LLM/지식텍스트와 분리된 하드 차단 소스."""
+    with get_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS symbol_entry_blocks (
+                symbol      TEXT PRIMARY KEY,
+                reason      TEXT NOT NULL DEFAULT '',
+                source      TEXT NOT NULL DEFAULT 'loss_streak',
+                loss_count  INTEGER NOT NULL DEFAULT 0,
+                blocked_at  TEXT NOT NULL,
+                expires_at  TEXT NOT NULL
+            )
+            """
+        )
+
+
+def add_symbol_block(symbol: str, reason: str, source: str, loss_count: int, expires_at: str) -> None:
+    """진입차단 심볼을 upsert(같은 심볼이면 최신 사유·만료로 갱신)."""
+    _ensure_block_table()
+    now = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO symbol_entry_blocks (symbol, reason, source, loss_count, blocked_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(symbol) DO UPDATE SET
+                reason=excluded.reason, source=excluded.source,
+                loss_count=excluded.loss_count, blocked_at=excluded.blocked_at,
+                expires_at=excluded.expires_at
+            """,
+            (str(symbol), reason, source, int(loss_count), now, expires_at),
+        )
+
+
+def get_active_blocked_symbols(trade_date: str | None = None) -> set[str]:
+    """오늘(포함) 아직 만료되지 않은 차단 심볼 집합. 조회 실패 시 빈 집합(fail-open)."""
+    day = trade_date or _today_kst()
+    try:
+        _ensure_block_table()
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT symbol FROM symbol_entry_blocks WHERE expires_at >= ?",
+                (day,),
+            ).fetchall()
+        return {str(r[0]) for r in rows}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("WARN: [LossStreakGuard] 차단목록 조회 실패 — %s", exc)
+        return set()
+
+
 def _get_loss_symbols(trade_date: str) -> list[tuple[str, int]]:
     """오늘 3회 이상 손실이 기록된 (symbol, loss_count) 목록을 반환한다."""
     with get_connection() as conn:
@@ -105,6 +156,13 @@ def auto_block_loss_streak_symbols(trade_date: str | None = None) -> dict:
                 auto_inject=True,
                 expires_at=_expires_at(_BLOCK_DAYS),
                 status="approved",
+            )
+            add_symbol_block(
+                symbol=symbol,
+                reason=f"{count}회 손실 ({today})",
+                source="loss_streak",
+                loss_count=count,
+                expires_at=_expires_at(_BLOCK_DAYS),
             )
             blocked.append(symbol)
             logger.info(

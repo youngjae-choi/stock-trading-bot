@@ -735,6 +735,16 @@ def _entry_gate_block_reason(symbol: str, confidence: float, name: str = "") -> 
       2. 칼리브레이션 게이트(P2-1) — 누적 실적이 나쁜 confidence bin 차단
       3. entry_fail 쿨다운(P2-2) — 최근 반복 손실 진입 심볼 차단
     """
+    # -1) 손실 스트릭 하드 차단(결정론 안전망) — 3연패 자동차단 심볼은 신규진입 금지.
+    try:
+        if bool(get_setting("engine.loss_streak_hard_block_enabled", True)):
+            from .loss_streak_guard import get_active_blocked_symbols
+
+            if str(symbol) in get_active_blocked_symbols():
+                return f"loss_streak_hard_block (3연패 자동차단 심볼 {symbol})"
+    except Exception as exc:
+        logger.warning("WARN: [S6] 손실스트릭 하드차단 게이트 조회 실패 — %s", exc)
+
     # 0) 급락 방어 모드 — 인버스 1x(플레이북)만 예외 허용
     try:
         from .intraday_regime_monitor import is_flash_crash_defense_active
