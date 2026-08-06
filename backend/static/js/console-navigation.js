@@ -149,8 +149,14 @@
         loadCumulativeReturn();
       });
       _todayTimer = setInterval(function() {
+        // 전 패널 재조회 — 진입 시 1회 로드가 실패(서버 재기동·순간 오류)해도 30초 내 자동 복구.
+        // (과거: 레짐·KOSPI·누적수익 3개만 재조회해, 초기 실패한 브리핑·플랜·주문 패널이 계속 blank로 남던 문제)
         _safeLoadConsoleData();
         var td = window._tcTradeDate || null;
+        loadTodayOrders(5, td);
+        loadTodayPlanStatus(td);
+        loadMorningBrief(td);
+        loadEveningBrief(td);
         loadTodayRegimeTimeline(td);
         loadKrIndexLive();
         loadCumulativeReturn();
