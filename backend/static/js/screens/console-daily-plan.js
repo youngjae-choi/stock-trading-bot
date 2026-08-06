@@ -382,7 +382,9 @@
           keys.forEach(function(k) {
             var item = d.market_data[k];
             if (!item) return;
-            var pct = item.change_pct;
+            // 등락률 키 호환: 해외지표는 change_pct, KIS 국내지수(kospi/kosdaq) 스냅샷은 change_rate 사용.
+            // (과거 kospi/kosdaq가 change_rate만 있어 change_pct=null→가격만 뜨거나 로드실패하던 원인)
+            var pct = (item.change_pct != null) ? item.change_pct : item.change_rate;
             // 등락률이 null/비수치면 가격만 표시(과거 pct.toFixed(null)이 throw→그리드 전체 '로드 실패'로 뜨던 버그).
             var hasPct = (pct != null && isFinite(Number(pct)));
             // 색상은 실제 등락 부호 기준: 상승=빨강(up), 하락=파랑(down). (PM 지시 2026-06-03)
