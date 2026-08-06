@@ -630,6 +630,23 @@ async def run_market_tone_analysis(
         k: v for k, v in market_data.items()
         if k not in ("fetched_at", "errors") and isinstance(v, dict)
     }
+    # [장전 스냅샷 보존 2026-08-06] "장전 시장 지표" 그리드는 아침(장전) 해외지표 스냅샷이어야 한다.
+    # 장중 재평가(is_intraday)는 regime/tone만 갱신하고, market_data(장전 지표)는 아침값을 유지한다
+    # (과거: 장중 실행이 국내 장중 kospi/kosdaq로 덮어 해외지표(NASDAQ/S&P500/VIX)가 사라지고
+    #  '장전' 라벨과도 어긋났다). 아침 스냅샷이 아직 없으면(첫 실행이 장중) 현재값으로 부트스트랩.
+    if is_intraday:
+        try:
+            with get_connection() as conn:
+                _row = conn.execute(
+                    "SELECT market_data FROM morning_context WHERE trade_date=? ORDER BY created_at DESC LIMIT 1",
+                    (today,),
+                ).fetchone()
+            if _row and _row[0]:
+                _prev_md = json.loads(_row[0])
+                if isinstance(_prev_md, dict) and _prev_md:
+                    raw_numbers = _prev_md  # 아침 스냅샷 보존
+        except Exception as _md_exc:
+            logger.warning("WARN: morning_context 장전 스냅샷 보존 조회 실패 (현재값 사용) — %s", _md_exc)
     try:
         with get_connection() as conn:
             conn.execute(
