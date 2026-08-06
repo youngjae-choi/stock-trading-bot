@@ -28,11 +28,8 @@ class Settings(BaseSettings):
     APP_ADMIN_PASSWORD: str = ""
     APP_SESSION_TTL_HOURS: int = 12
 
-    # LLM API Keys (fallback 순서: Anthropic → Gemini → Groq → OpenAI)
-    ANTHROPIC_API_KEY: str = ""  # Anthropic Claude API key (1순위)
-    GEMINI_API_KEY: str = ""     # Google Gemini API key (2순위)
-    GROQ_API_KEY: str = ""       # Groq API key (3순위)
-    OPENAI_API_KEY: str = ""     # OpenAI GPT fallback key (4순위)
+    # [LLM 제거 2026-08-05] Anthropic/Gemini/Groq/OpenAI 키 필드 삭제.
+    # 전략·시황·복기 전부 결정론화되어 LLM을 호출하지 않는다. .env의 잔여 키는 extra=ignore로 무시된다.
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

@@ -909,7 +909,7 @@ def get_data_health() -> dict[str, Any]:
         "metrics": {
             "kis_rest": {"status": kis_status, "detail": kis_detail},
             "kis_ws": {"status": ws_status, "detail": ws_detail},
-            "llm_router": {"status": "ok", "detail": "LLM Router 활성화 (/api/v1/market-tone/providers 참조)"},
+            "llm_router": {"status": "ok", "detail": "LLM 제거됨 — 전략/시황 전부 결정론(2026-08-05)"},
             "db": {"status": db_status, "detail": db_detail},
             "schedule_skip": {
                 "status": "warn" if schedule_skip.get("skip") else "ok",

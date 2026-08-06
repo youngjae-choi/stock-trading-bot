@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..db import get_connection
-from . import llm_router
 from .expert_knowledge import build_knowledge_prompt_snippet, get_active_knowledge
 from .hybrid_screening import get_today_screening
 from .learning_memory import get_active_memories

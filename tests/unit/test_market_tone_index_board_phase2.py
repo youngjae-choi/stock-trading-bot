@@ -16,7 +16,6 @@ import backend.services.db as db_mod
 import backend.services.engine.market_tone as mt
 import backend.services.engine.index_board_scraper as scraper
 import backend.services.engine.market_data_fetcher as mdf
-import backend.services.engine.llm_router as llm_router
 import backend.services.engine.alert_center as alert_center
 
 
@@ -145,11 +144,7 @@ def test_intraday_uses_index_board_primary(tmp_path, monkeypatch):
             "generated_at": _fresh_iso(10),  # 10분 전 → fresh (기본 120분 이내)
         }
 
-    async def fake_call_llm(prompt, task_name=""):
-        raise AssertionError("call_llm must NOT be invoked when fresh briefing present")
-
     monkeypatch.setattr(scraper, "scrape_intraday", fake_scrape_intraday)
-    monkeypatch.setattr(llm_router, "call_llm", fake_call_llm)
 
     result = asyncio.run(mt.run_market_tone_analysis(trigger_source="intraday_refresh"))
 
@@ -261,11 +256,7 @@ def test_morning_stale_briefing_uses_18h_window(tmp_path, monkeypatch):
             "generated_at": _fresh_iso(minutes_ago=600),  # 10h 전 → 아침 18h 윈도우 내 fresh
         }
 
-    async def fake_call_llm(prompt, task_name=""):
-        raise AssertionError("call_llm must NOT be invoked for fresh morning briefing")
-
     monkeypatch.setattr(scraper, "scrape_morning", fake_scrape_morning)
-    monkeypatch.setattr(llm_router, "call_llm", fake_call_llm)
 
     result = asyncio.run(mt.run_market_tone_analysis(trigger_source="auto_scheduler"))
     assert result["provider"] == "index-board"

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 from ...api.dependencies import require_console_user
-from ...services.engine import llm_router, market_tone
+from ...services.engine import market_tone
 from .status_envelope import build_pipeline_read_envelope
 
 logger = logging.getLogger("BackendMarketToneAPI")
@@ -71,15 +71,13 @@ async def run_market_tone_now(trigger_source: str = Query(default="api_manual"))
         )
 
 
-@router.get("/providers", summary="LLM provider 상태 조회")
+@router.get("/providers", summary="LLM provider 상태 조회(제거됨)")
 async def get_llm_providers():
-    """현재 설정된 LLM provider 목록과 활성화 여부를 반환한다."""
-    logger.info("START: GET /api/v1/market-tone/providers")
-    providers = llm_router.provider_status()
-    logger.info("SUCCESS: GET /api/v1/market-tone/providers count=%s", len(providers))
+    """[LLM 제거 2026-08-05] LLM provider가 없어졌다. 호환을 위해 빈 목록을 반환한다."""
+    logger.info("START: GET /api/v1/market-tone/providers (LLM 제거 — 빈 목록)")
     return {
         "ok": True,
         "source": "backend",
-        "live": True,
-        "payload": {"providers": providers},
+        "live": False,
+        "payload": {"providers": [], "note": "LLM 제거됨 — 시장 톤은 index-board 결정론"},
     }

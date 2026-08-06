@@ -18,7 +18,6 @@ from typing import Any
 
 from ..db import get_connection
 from .universe_filter import get_today_universe
-from . import llm_router
 from .expert_knowledge import build_knowledge_prompt_snippet, get_active_knowledge
 from .learning_memory import get_active_memories
 from .missed_opportunity import record_missed_opportunity
@@ -445,13 +444,7 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
     except Exception as exc:
         logger.warning("WARN: HybridScreening morning_context 조회 실패 — %s", exc)
 
-    # 뉴스 헤드라인 수집 (상위 5종목, 실패해도 스크리닝 계속 진행)
-    news_summary: str | None = None
-    try:
-        news_summary = await _fetch_news_summary(items, max_symbols=5)
-        logger.info("INFO: HybridScreening 뉴스 수집 완료 lines=%d", news_summary.count("\n") + 1 if news_summary else 0)
-    except Exception as exc:
-        logger.warning("WARN: HybridScreening 뉴스 수집 실패 (스크리닝 계속) reason=%s", exc)
+    # [LLM 제거 2026-08-05] 뉴스 헤드라인 수집(KIS 호출)은 LLM 프롬프트 전용이었으므로 제거.
 
     # ── 결정론 선정 (LLM 제거 2026-08-05) ──────────────────────────────────
     # 후보 선정은 아래 블렌드(0.4×TSI + 0.4×유니버스점수)가 전담한다. LLM 정성평가를
