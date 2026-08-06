@@ -8,9 +8,16 @@ harvest_mode OFF면 기존 탐색모드 동작(익절 없음)을 100% 보존한�
 from __future__ import annotations
 
 import unittest
+from datetime import datetime
 from unittest.mock import AsyncMock, patch
+from zoneinfo import ZoneInfo
 
 from backend.services.engine.position_manager import PositionManager
+
+# 시각 독립 테스트: 장중(15:20 강제청산 이전)으로 시간을 고정한다.
+# (실행 시각이 15:20 이후면 DAILY_FORCE_EXIT가, entry_ts=0이면 TIME_EXIT가 먼저 발동해
+#  스케일아웃 경로를 못 타던 flaky 문제 해결 — _now_kst를 고정하고 진입을 '1분 전'으로 둔다.)
+_FIXED_NOW = datetime(2026, 8, 6, 10, 0, 0, tzinfo=ZoneInfo("Asia/Seoul"))
 
 
 def _make_position(qty: int = 100, entry: float = 100.0) -> dict:
@@ -20,8 +27,8 @@ def _make_position(qty: int = 100, entry: float = 100.0) -> dict:
         "name": "삼성전자",
         "qty": qty,
         "entry_price": entry,
-        "entry_time": "2026-07-04T09:00:00+09:00",
-        "entry_ts": 0.0,
+        "entry_time": "2026-08-06T09:59:00+09:00",
+        "entry_ts": _FIXED_NOW.timestamp() - 60.0,  # 1분 전 진입(TIME_EXIT 미발동)
         "profile_assigned": "MID_VOL",
         "auto_imported": False,
         "initial_stop_price": entry * 0.97,
@@ -58,7 +65,8 @@ class ScaleoutHarvestTest(unittest.IsolatedAsyncioTestCase):
         mgr = PositionManager()
         mgr._positions[position["symbol"]] = position
         sell = AsyncMock(return_value={"ok": sell_ok, "symbol": position["symbol"]})
-        with patch("backend.services.engine.position_manager.get_setting", side_effect=_settings(settings_over)), \
+        with patch("backend.services.engine.position_manager._now_kst", return_value=_FIXED_NOW), \
+             patch("backend.services.engine.position_manager.get_setting", side_effect=_settings(settings_over)), \
              patch("backend.services.engine.position_manager._upsert_stop_state"), \
              patch("backend.services.engine.position_manager._regime_scaleout_overrides", return_value=regime_override), \
              patch("backend.services.engine.order_executor.order_executor.execute_sell", sell):
@@ -95,7 +103,8 @@ class ScaleoutHarvestTest(unittest.IsolatedAsyncioTestCase):
         mgr, sell, _ = await self._run(pos, 102.0)
         sell.assert_awaited_once()
         sell2 = AsyncMock(return_value={"ok": True})
-        with patch("backend.services.engine.position_manager.get_setting", side_effect=_settings()), \
+        with patch("backend.services.engine.position_manager._now_kst", return_value=_FIXED_NOW), \
+             patch("backend.services.engine.position_manager.get_setting", side_effect=_settings()), \
              patch("backend.services.engine.position_manager._upsert_stop_state"), \
              patch("backend.services.engine.order_executor.order_executor.execute_sell", sell2):
             await mgr._process_price(pos, 103.0)
