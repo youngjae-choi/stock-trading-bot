@@ -16,6 +16,13 @@ client = TestClient(main_mod.app)
 KST = ZoneInfo("Asia/Seoul")
 
 
+@pytest.fixture(autouse=True)
+def _reset_index_cache():
+    """엔드포인트 TTL 캐시가 테스트 간 누수되지 않도록 매 테스트 전 초기화."""
+    market_mod._KR_INDEX_CACHE.update({"kospi": None, "kosdaq": None, "ts": 0.0})
+    yield
+
+
 def _snapshot_ok():
     return {
         "ok": True,

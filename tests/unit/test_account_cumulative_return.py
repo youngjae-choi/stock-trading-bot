@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 import backend.main as main_mod
@@ -13,6 +14,13 @@ import backend.api.routes.account as account_mod
 import backend.services.engine.account_pnl as account_pnl_mod
 
 client = TestClient(main_mod.app)
+
+
+@pytest.fixture(autouse=True)
+def _reset_balance_cache():
+    """엔드포인트 TTL 캐시가 테스트 간 누수되지 않도록 매 테스트 전 초기화."""
+    account_mod._BALANCE_CACHE.update({"payload": None, "ts": 0.0})
+    yield
 
 
 def _balance_data(tot_evlu_amt: int):

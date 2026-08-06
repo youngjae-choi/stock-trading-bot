@@ -17,6 +17,15 @@ KST = ZoneInfo("Asia/Seoul")
 # 모듈 레벨 재바인딩(테스트 monkeypatch 대상)
 from ...services.kis.domestic.universe_service import fetch_intraday_kr_market_snapshot  # noqa: E402
 
+import asyncio  # noqa: E402
+import time as _time  # noqa: E402
+
+# 화면 라이브 KIS 콜 완충 — 엔진 KIS 부하와 경합해 초당호출 초과(EGW00201)가 나던 문제 대응.
+# 짧은 TTL 내 새로고침은 KIS 재호출 없이 캐시 반환, KIS 실패 시 마지막 성공값 유지(빈칸 방지).
+_KR_INDEX_CACHE: dict[str, Any] = {"kospi": None, "kosdaq": None, "ts": 0.0}
+_KR_INDEX_TTL = 12.0
+_KR_INDEX_LOCK = asyncio.Lock()
+
 
 def _now_kst() -> datetime:
     """현재 KST 시각 (테스트에서 monkeypatch 가능)."""
@@ -58,14 +67,35 @@ async def get_kr_index_live() -> dict[str, Any]:
     now = _now_kst()
     market_open = _is_market_open(now)
 
-    kospi = {"price": None, "change_rate": None}
-    kosdaq = {"price": None, "change_rate": None}
-    try:
-        snapshot = await fetch_intraday_kr_market_snapshot()
-        kospi = _index_view(snapshot.get("kospi"))
-        kosdaq = _index_view(snapshot.get("kosdaq"))
-    except Exception as exc:
-        logger.warning("WARN: GET /api/v1/market/kr-index-live 스냅샷 실패 — %s", exc)
+    _empty = {"price": None, "change_rate": None}
+    mono = _time.monotonic()
+    cached = False
+    stale = False
+
+    def _cache_fresh() -> bool:
+        return _KR_INDEX_CACHE["kospi"] is not None and (mono - _KR_INDEX_CACHE["ts"]) < _KR_INDEX_TTL
+
+    if _cache_fresh():
+        kospi, kosdaq, cached = _KR_INDEX_CACHE["kospi"], _KR_INDEX_CACHE["kosdaq"], True
+    else:
+        async with _KR_INDEX_LOCK:
+            # 락 획득 사이 다른 요청이 갱신했을 수 있으니 재확인(thundering-herd 방지).
+            mono = _time.monotonic()
+            if _cache_fresh():
+                kospi, kosdaq, cached = _KR_INDEX_CACHE["kospi"], _KR_INDEX_CACHE["kosdaq"], True
+            else:
+                try:
+                    snapshot = await fetch_intraday_kr_market_snapshot()
+                    kospi = _index_view(snapshot.get("kospi"))
+                    kosdaq = _index_view(snapshot.get("kosdaq"))
+                    _KR_INDEX_CACHE.update({"kospi": kospi, "kosdaq": kosdaq, "ts": _time.monotonic()})
+                except Exception as exc:
+                    logger.warning("WARN: GET /api/v1/market/kr-index-live 스냅샷 실패 — %s", exc)
+                    # KIS 실패 시 마지막 성공값 유지(빈칸 방지). 최초 실패면 None.
+                    kospi = _KR_INDEX_CACHE["kospi"] or dict(_empty)
+                    kosdaq = _KR_INDEX_CACHE["kosdaq"] or dict(_empty)
+                    cached = True
+                    stale = _KR_INDEX_CACHE["kospi"] is not None
 
     return {
         "ok": True,
@@ -74,5 +104,7 @@ async def get_kr_index_live() -> dict[str, Any]:
             "kosdaq": kosdaq,
             "market_open": market_open,
             "as_of": now.isoformat(),
+            "cached": cached,
+            "stale": stale,
         },
     }

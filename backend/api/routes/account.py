@@ -174,19 +174,50 @@ def _build_balance_payload(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# 화면 라이브 KIS 잔고 콜 완충 — 엔진 KIS 부하와 경합해 초당호출 초과(EGW00201) 시
+# 잔고 카드가 502로 비던 문제 대응. 짧은 TTL 캐시 + KIS 실패 시 마지막 성공 payload 유지.
+import asyncio  # noqa: E402
+import time as _time  # noqa: E402
+
+_BALANCE_CACHE: dict[str, Any] = {"payload": None, "ts": 0.0}
+_BALANCE_TTL = 15.0
+_BALANCE_LOCK = asyncio.Lock()
+
+
 @router.get("/balance")
 async def get_account_balance():
-    """계좌 잔고 조회 — 예수금, 보유종목, 평가손익."""
+    """계좌 잔고 조회 — 예수금, 보유종목, 평가손익.
+
+    화면 새로고침 폭주로 KIS 초당호출이 초과되지 않도록 짧은 TTL 캐시를 둔다.
+    KIS 실패 시 502 대신 마지막 성공 payload를 반환(빈 카드 방지, stale 플래그).
+    """
     endpoint = "/api/v1/account/balance"
     if not validate_config():
         return kis_config_error_response(endpoint)
 
+    mono = _time.monotonic()
+
+    def _cache_fresh() -> bool:
+        return _BALANCE_CACHE["payload"] is not None and (mono - _BALANCE_CACHE["ts"]) < _BALANCE_TTL
+
+    if _cache_fresh():
+        return {"ok": True, "payload": _BALANCE_CACHE["payload"], "cached": True}
+
     logger.info("START: GET %s", endpoint)
-    try:
-        data = await get_balance()
-        payload = _build_balance_payload(data)
-        logger.info("SUCCESS: GET %s positions=%d", endpoint, len(payload["positions"]))
-        return {"ok": True, "payload": payload}
-    except Exception as exc:
-        logger.error("FAIL: GET %s — %s", endpoint, exc)
-        return JSONResponse(status_code=502, content={"ok": False, "error": str(exc)})
+    async with _BALANCE_LOCK:
+        mono = _time.monotonic()
+        if _cache_fresh():
+            return {"ok": True, "payload": _BALANCE_CACHE["payload"], "cached": True}
+        try:
+            data = await get_balance()
+            payload = _build_balance_payload(data)
+            _BALANCE_CACHE.update({"payload": payload, "ts": _time.monotonic()})
+            logger.info("SUCCESS: GET %s positions=%d", endpoint, len(payload["positions"]))
+            return {"ok": True, "payload": payload}
+        except Exception as exc:
+            logger.error("FAIL: GET %s — %s", endpoint, exc)
+            # KIS 실패 시 마지막 성공값 유지(빈 카드 방지). 최초 실패면 502.
+            if _BALANCE_CACHE["payload"] is not None:
+                logger.warning("WARN: GET %s — KIS 실패, 마지막 캐시값 반환(stale)", endpoint)
+                return {"ok": True, "payload": _BALANCE_CACHE["payload"], "cached": True, "stale": True}
+            return JSONResponse(status_code=502, content={"ok": False, "error": str(exc)})
