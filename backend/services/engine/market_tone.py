@@ -515,15 +515,52 @@ async def run_market_tone_analysis(
                 parsed["regime"], parsed["risk_level"], parsed["data_note"],
             )
     else:
-        # ── 브리핑 텍스트 없음: 결정론적 중립 폴백. index-board 부재 운영 알림 1회. ──
+        # ── 브리핑 텍스트 없음 ──
+        # [레짐 드리프트 방지 2026-08-06] 데이터 부재를 "시장 평온(중립)"으로 오해하지 않는다.
+        # 오늘 이미 산출된 레짐이 있으면 덮어쓰지 않고 직전 레짐을 유지한다(방어 레짐이 풀리는 것 방지).
+        # (실사례: 8/6 아침 negative(-4.9% 폭락일)가 장중 index-board 부재로 neutral로 드리프트).
+        # 장 첫 산출부터 데이터가 없을 때만(부트스트랩) 결정론적 중립을 쓴다.
+        prior_exists = False
+        try:
+            with get_connection() as conn:
+                prior_exists = conn.execute(
+                    "SELECT 1 FROM market_tone_results WHERE trade_date=? LIMIT 1", (today,),
+                ).fetchone() is not None
+        except Exception as _pe:
+            logger.warning("WARN: MarketToneService 직전 레짐 조회 실패 — %s", _pe)
+            prior_exists = False
+
+        if prior_exists:
+            try:
+                from .alert_center import create_alert
+
+                create_alert(
+                    alert_type="ops_watch",
+                    title="⚠️ index-board 미수신 — 직전 레짐 유지(덮어쓰기 생략)",
+                    severity="WARNING",
+                    detail=f"intraday={is_intraday} reason=missing_keep_prev trade_date={today}",
+                    trade_date=today,
+                )
+            except Exception as _alert_exc:
+                logger.warning("WARN: MarketToneService 미수신 알림 발생 실패 (비치명) — %s", _alert_exc)
+            logger.info(
+                "INFO: MarketToneService 브리핑 미수신 — 직전 레짐 유지, 덮어쓰기 생략 intraday=%s trade_date=%s",
+                is_intraday, today,
+            )
+            return {
+                "ok": True, "skipped": True, "reason": "briefing_missing_keep_prev",
+                "provider": "carry-forward", "trade_date": today,
+            }
+
+        # 직전 산출 없음(장 첫 산출부터 데이터 부재) → 결정론적 중립 부트스트랩. 운영 알림 1회.
         try:
             from .alert_center import create_alert
 
             create_alert(
                 alert_type="ops_watch",
-                title="⚠️ index-board 시황 미수신 — 중립 폴백 regime 사용",
+                title="⚠️ index-board 시황 미수신 — 중립 부트스트랩 regime 사용",
                 severity="WARNING",
-                detail=f"intraday={is_intraday} reason=missing trade_date={today}",
+                detail=f"intraday={is_intraday} reason=missing_bootstrap trade_date={today}",
                 trade_date=today,
             )
         except Exception as _alert_exc:
