@@ -18,10 +18,12 @@ class IntradayBriefingPollTest(unittest.IsolatedAsyncioTestCase):
         scheduler._LAST_INTRADAY_BRIEFING["generated_at"] = None
 
     async def _run(self, scrape_return, *, non_trading=False) -> AsyncMock:
-        scrape_mock = AsyncMock(return_value=scrape_return)
+        # 폴링 잡은 snapshot_briefing_to_db(스크랩+DB저장)를 호출하고 그 intraday로 regime 재평가한다.
+        snap_return = {"ok": bool(scrape_return), "morning": None, "evening": None, "intraday": scrape_return}
+        snap_mock = AsyncMock(return_value=snap_return)
         run_mock = AsyncMock()
         with patch.object(scheduler, "_non_trading_day_today", return_value=("휴장" if non_trading else None)), \
-             patch("backend.services.engine.index_board_scraper.scrape_intraday", scrape_mock), \
+             patch("backend.services.engine.index_board_scraper.snapshot_briefing_to_db", snap_mock), \
              patch.object(scheduler, "run_market_tone_analysis", run_mock):
             await scheduler.job_intraday_briefing_poll()
         return run_mock

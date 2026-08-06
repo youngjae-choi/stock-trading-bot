@@ -349,17 +349,22 @@ def _ensure_briefing_table() -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS index_board_briefing_cache (
-                trade_date   TEXT PRIMARY KEY,
-                morning_json TEXT,
-                evening_json TEXT,
-                updated_at   TEXT NOT NULL
+                trade_date    TEXT PRIMARY KEY,
+                morning_json  TEXT,
+                evening_json  TEXT,
+                intraday_json TEXT,
+                updated_at    TEXT NOT NULL
             )
             """
         )
+        # 기존 DB 호환: intraday_json 컬럼 없으면 추가(장중 시황 스냅샷 저장용).
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(index_board_briefing_cache)").fetchall()}
+        if "intraday_json" not in cols:
+            conn.execute("ALTER TABLE index_board_briefing_cache ADD COLUMN intraday_json TEXT")
 
 
 def _load_briefing_db(trade_date: str) -> dict:
-    """DB에 저장된 trade_date 브리핑 조각 반환. {morning, evening} (없으면 None)."""
+    """DB에 저장된 trade_date 브리핑 조각 반환. {morning, evening, intraday, updated_at} (없으면 None)."""
     import json
 
     _ensure_briefing_table()
@@ -367,20 +372,26 @@ def _load_briefing_db(trade_date: str) -> dict:
 
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT morning_json, evening_json FROM index_board_briefing_cache WHERE trade_date = ?",
+            "SELECT morning_json, evening_json, intraday_json, updated_at FROM index_board_briefing_cache WHERE trade_date = ?",
             (trade_date,),
         ).fetchone()
     if not row:
-        return {"morning": None, "evening": None}
+        return {"morning": None, "evening": None, "intraday": None, "updated_at": None}
     def _parse(s):
         try:
             return json.loads(s) if s else None
         except Exception:
             return None
-    return {"morning": _parse(row[0]), "evening": _parse(row[1])}
+    return {"morning": _parse(row[0]), "evening": _parse(row[1]),
+            "intraday": _parse(row[2]), "updated_at": row[3]}
 
 
-def _save_briefing_db(trade_date: str, morning: dict | None, evening: dict | None) -> None:
+def _save_briefing_db(
+    trade_date: str,
+    morning: dict | None,
+    evening: dict | None,
+    intraday: dict | None = None,
+) -> None:
     import json
     from datetime import datetime, timezone
 
@@ -390,20 +401,64 @@ def _save_briefing_db(trade_date: str, morning: dict | None, evening: dict | Non
     with get_connection() as conn:
         conn.execute(
             """
-            INSERT INTO index_board_briefing_cache (trade_date, morning_json, evening_json, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO index_board_briefing_cache (trade_date, morning_json, evening_json, intraday_json, updated_at)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(trade_date) DO UPDATE SET
-                morning_json = excluded.morning_json,
-                evening_json = excluded.evening_json,
-                updated_at   = excluded.updated_at
+                morning_json  = excluded.morning_json,
+                evening_json  = excluded.evening_json,
+                intraday_json = excluded.intraday_json,
+                updated_at    = excluded.updated_at
             """,
             (
                 trade_date,
                 json.dumps(morning, ensure_ascii=False) if morning else None,
                 json.dumps(evening, ensure_ascii=False) if evening else None,
+                json.dumps(intraday, ensure_ascii=False) if intraday else None,
                 datetime.now(timezone.utc).isoformat(),
             ),
         )
+
+
+def read_briefing_db(trade_date: str) -> dict:
+    """[화면 전용] DB만 조회 — 네트워크 스크랩 없음. 스케줄 잡이 채운 값을 그대로 반환.
+
+    반환: {ok, morning, intraday, evening, source:"db", updated_at}
+    """
+    db = _load_briefing_db(trade_date)
+    return {
+        "ok": bool(db.get("morning") or db.get("evening") or db.get("intraday")),
+        "morning": db.get("morning"),
+        "intraday": db.get("intraday"),
+        "evening": db.get("evening"),
+        "source": "db",
+        "updated_at": db.get("updated_at"),
+    }
+
+
+async def snapshot_briefing_to_db(trade_date: str) -> dict:
+    """[스케줄 전용 writer] index-board를 1회 스크랩해 morning/evening/intraday를 DB에 저장한다.
+
+    - morning/evening: 한 번 확정되면 유지(DB값 우선), 없을 때만 새 스크랩값으로 채움.
+    - intraday(장중): 휘발성이라 매 호출 최신값으로 덮어쓴다.
+    스크랩 실패는 비치명(기존 DB 유지). 반환: {ok, morning, intraday, evening, source:"snapshot"}
+    """
+    db = _load_briefing_db(trade_date)
+    db_morning, db_evening = db.get("morning"), db.get("evening")
+
+    live = await scrape_both_live()
+    ok = bool(live.get("ok"))
+    morning = db_morning or (live.get("morning") if ok else None)
+    evening = db_evening or (live.get("evening") if ok else None)
+    intraday = (live.get("intraday") if ok else None) or db.get("intraday")
+
+    if ok and (morning or evening or intraday):
+        try:
+            _save_briefing_db(trade_date, morning, evening, intraday)
+        except Exception as exc:  # 저장 실패는 비치명
+            logger.warning("WARN: index-board 스냅샷 DB 저장 실패 date=%s — %s", trade_date, exc)
+
+    return {"ok": bool(morning or evening or intraday), "morning": morning,
+            "intraday": intraday, "evening": evening, "source": "snapshot"}
 
 
 async def scrape_both_with_db(trade_date: str) -> dict:

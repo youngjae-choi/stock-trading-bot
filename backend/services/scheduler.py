@@ -1492,6 +1492,13 @@ async def job_evening_briefing() -> None:
         from .engine.evening_briefing import collect_and_store_evening_briefing
 
         result = await collect_and_store_evening_briefing(today)
+        # 화면 캐시(index_board_briefing_cache)에도 장후(evening_json) 스냅샷 저장 —
+        # /market-briefing/live가 DB만 읽으므로 장후 조각도 스케줄 잡이 채운다.
+        try:
+            from .engine.index_board_scraper import snapshot_briefing_to_db
+            await snapshot_briefing_to_db(today)
+        except Exception as _snap_exc:
+            logger.warning("WARN: [Job EveningBriefing] 화면캐시 스냅샷 실패(비치명) — %s", _snap_exc)
         if result.get("stored"):
             logger.info(
                 "SUCCESS: [Job EveningBriefing] 저장 완료 trade_date=%s sentiment=%s",
@@ -1564,25 +1571,32 @@ _LAST_INTRADAY_BRIEFING: dict[str, str | None] = {"generated_at": None}
 
 
 async def job_intraday_briefing_poll() -> None:
-    """index-board 장중(regular) 브리핑을 2분마다 폴링 → 새 브리핑(generatedAt 변경) 시에만
-    regime 재평가(run_market_tone_analysis intraday, index-board 단일출처·LLM 미사용).
+    """index-board 브리핑을 2분마다 스크랩해 **DB에 스냅샷 저장**(장전 morning·장중 intraday) +
+    새 장중 브리핑(generatedAt 변경) 시에만 regime 재평가.
 
+    화면(/api/v1/market-briefing/live)은 이 잡이 채운 DB만 읽는다(페이지 로드 시 스크랩 0).
     regime SET 전환(check_intraday_regime)은 자체 VIX/KOSPI 입력으로 별도 cadence에 동작하므로
-    여기서 호출하지 않는다(중복·오프케이던스 전환 방지). [후속: SET 모니터 index-board 숫자 연동]
+    여기서 호출하지 않는다(중복·오프케이던스 전환 방지).
     """
     if _non_trading_day_today():
         return
     try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
         from .engine import index_board_scraper
 
-        briefing = await index_board_scraper.scrape_intraday()
-        gen = (briefing or {}).get("generated_at")
+        today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+        # 1) 스크랩 1회 → morning/evening/intraday DB 저장(화면은 이 DB만 조회).
+        snap = await index_board_scraper.snapshot_briefing_to_db(today)
+        # 2) 장중 브리핑 generatedAt 변경 시에만 regime 재평가.
+        gen = ((snap or {}).get("intraday") or {}).get("generated_at")
         if gen and gen != _LAST_INTRADAY_BRIEFING["generated_at"]:
             _LAST_INTRADAY_BRIEFING["generated_at"] = gen
             logger.info("INFO: [BriefingPoll] 새 장중 브리핑 감지 → regime 재평가 generated_at=%s", gen)
             await run_market_tone_analysis(trigger_source="intraday_refresh")
         else:
-            logger.debug("DEBUG: [BriefingPoll] 장중 브리핑 변경 없음 generated_at=%s", gen)
+            logger.debug("DEBUG: [BriefingPoll] 스냅샷 저장 완료(변경 없음) generated_at=%s", gen)
     except Exception as exc:
         logger.error("FAIL: [BriefingPoll] 실패 reason=%s", exc)
 
@@ -1761,13 +1775,13 @@ def _build_scheduler() -> AsyncIOScheduler:
         max_instances=1,
         coalesce=True,
     )
-    # index-board 장중 브리핑 폴링 — 장중(09~15시) 2분 간격. 새 브리핑(generatedAt 변경) 시에만
-    # regime 재평가(index-board 단일출처). 변경 없으면 no-op. (시황 단일출처 Phase 3)
+    # index-board 브리핑 스냅샷 폴링 — 장전~장중(08~15시) 2분 간격. morning/intraday를 DB에
+    # 저장(화면은 DB만 조회, 페이지 로드 시 스크랩 0) + 새 장중 브리핑 시에만 regime 재평가.
     scheduler.add_job(
         job_intraday_briefing_poll,
-        CronTrigger(hour="9-15", minute="*/2", timezone="Asia/Seoul"),
+        CronTrigger(hour="8-15", minute="*/2", timezone="Asia/Seoul"),
         id="job_intraday_briefing_poll",
-        name="index-board 장중 브리핑 폴링 (2분)",
+        name="index-board 브리핑 스냅샷 폴링 (08~15시 2분)",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
