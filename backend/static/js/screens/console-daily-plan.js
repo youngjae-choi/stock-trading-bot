@@ -383,17 +383,20 @@
             var item = d.market_data[k];
             if (!item) return;
             var pct = item.change_pct;
+            // 등락률이 null/비수치면 가격만 표시(과거 pct.toFixed(null)이 throw→그리드 전체 '로드 실패'로 뜨던 버그).
+            var hasPct = (pct != null && isFinite(Number(pct)));
             // 색상은 실제 등락 부호 기준: 상승=빨강(up), 하락=파랑(down). (PM 지시 2026-06-03)
-            var dir = pct > 0 ? 'up' : (pct < 0 ? 'down' : 'flat');
-            var arrow = pct > 0 ? '▲' : (pct < 0 ? '▼' : '━');
+            var dir = !hasPct ? 'flat' : (pct > 0 ? 'up' : (pct < 0 ? 'down' : 'flat'));
+            var arrow = !hasPct ? '' : (pct > 0 ? '▲' : (pct < 0 ? '▼' : '━'));
             // 현재값(지수 레벨)을 등락률과 함께 표시
             var price = item.price;
             var priceStr = (price != null) ? Number(price).toLocaleString('en-US') : '';
+            var pctStr = hasPct ? (arrow + (pct >= 0 ? '+' : '') + Number(pct).toFixed(2) + '%') : '';
+            if (!priceStr && !pctStr) return;  // 가격·등락률 둘 다 없으면 항목 생략
             html += '<div class="mb-market-item">' +
               '<span class="mb-market-label">' + (marketLabels[k] || k) + '</span>' +
               '<span class="mb-market-value ' + dir + '">' +
-                (priceStr ? priceStr + ' ' : '') +
-                arrow + (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' +
+                (priceStr ? priceStr : '') + (priceStr && pctStr ? ' ' : '') + pctStr +
               '</span>' +
             '</div>';
           });
