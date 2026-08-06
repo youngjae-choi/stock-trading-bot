@@ -404,55 +404,41 @@ async def run_daily_plan_generation(
         )
         logger.error("FAIL: [S5] Daily Plan startup load failed trade_date=%s reason=%s", trade_date, exc)
         raise
-    try:
-        prompt = _build_prompt(candidates, market_tone, memories=memories, knowledge_items=knowledge_items)
-    except Exception as exc:
-        finish_pipeline_run(
-            run_id=run_audit_id,
-            status="failed",
-            message=f"prompt_render_failed: {exc}",
-            metadata={
-                "creation_mode": creation_mode,
-                "created_by": created_by,
-                "trigger_source": safe_source,
-            },
-        )
-        logger.error("FAIL: [S5] Daily Plan prompt render failed trade_date=%s reason=%s", trade_date, exc)
-        raise
-    plan_data: dict[str, Any] = {}
-    provider = "none"
+    # ── 결정론 배정 (LLM 제거 2026-08-05) ──────────────────────────────────
+    # 종목별 Risk Profile은 intraday_profile.classify_profile(레짐 반영 휴리스틱)로
+    # 배정한다. 장중 유입 종목이 이미 쓰는 것과 동일 규칙 — 아침/장중 일관.
+    from .intraday_profile import classify_profile
+    from .market_tone import get_today_morning_context
 
+    provider = "deterministic"
     try:
-        llm_result = await llm_router.call_llm(
-            prompt=prompt,
-            task_name="S5 Daily Trading Plan",
+        regime = str((get_today_morning_context(trade_date) or {}).get("regime") or "neutral")
+    except Exception as exc:
+        logger.warning("WARN: [S5] morning_context 레짐 조회 실패 — neutral 사용 reason=%s", exc)
+        regime = "neutral"
+
+    symbol_assignments: list[dict[str, Any]] = []
+    for c in candidates:
+        code = c.get("symbol") or c.get("ticker") or ""
+        if not code:
+            continue
+        profile, reason = classify_profile(c, regime)
+        symbol_assignments.append(
+            {"code": code, "name": c.get("name") or "", "profile": profile, "reason": reason}
         )
-        if llm_result.get("ok"):
-            response_text = llm_result.get("raw", "")
-            provider = llm_result.get("provider", "none")
-            # JSON 파싱
-            import re
-            json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
-            if json_match:
-                plan_data = json.loads(json_match.group())
-            else:
-                raise ValueError("JSON not found in LLM response")
-        else:
-            raise ValueError(f"LLM returned ok=False: {llm_result.get('error', 'unknown')}")
-    except Exception as e:
-        logger.error("FAIL: [S5] LLM 호출 실패 — 기본값 사용 error=%s", e)
-        provider = "none"
-        plan_data = {
-            "trading_intensity": "normal",
-            "new_entry_allowed": True,
-            "daily_overrides": {"volume_filter_multiplier": 2.0, "min_ai_confidence": 0.65, "max_theme_spike_positions": 1},
-            "symbol_assignments": [
-                {"code": c.get("symbol") or c.get("ticker") or "", "name": c.get("name") or "", "profile": "MID_VOL", "reason": "LLM 실패 기본 배정"}
-                for c in candidates if (c.get("symbol") or c.get("ticker"))
-            ],
-            "excluded_symbols": [],
-            "llm_summary": f"LLM 호출 실패 ({e}). 모든 종목 MID_VOL 기본 배정.",
-        }
+
+    plan_data = {
+        "trading_intensity": "normal",
+        "new_entry_allowed": True,
+        "daily_overrides": {"volume_filter_multiplier": 2.0, "min_ai_confidence": 0.65, "max_theme_spike_positions": 1},
+        "symbol_assignments": symbol_assignments,
+        "excluded_symbols": [],
+        "llm_summary": f"결정론 배정 — 후보 {len(symbol_assignments)}종목 (regime={regime}).",
+    }
+    logger.info(
+        "INFO: [S5] 결정론 프로파일 배정 완료 trade_date=%s regime=%s 종목=%d",
+        trade_date, regime, len(symbol_assignments),
+    )
 
     # 검증 결과는 저장하되, 상태 전환은 자동 파이프라인에서 수행한다.
     validation = _validate_plan(plan_data)

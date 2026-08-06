@@ -453,60 +453,27 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
     except Exception as exc:
         logger.warning("WARN: HybridScreening 뉴스 수집 실패 (스크리닝 계속) reason=%s", exc)
 
-    # 프롬프트 빌드 및 LLM 호출
-    try:
-        prompt = _build_prompt(
-            items,
-            market_tone,
-            morning_context=morning_context,
-            memories=memories,
-            knowledge_items=knowledge_items,
-            news_summary=news_summary,
-        )
-    except Exception as exc:
-        finish_pipeline_run(
-            run_id=run_audit_id,
-            status="failed",
-            message=f"prompt_render_failed: {exc}",
-            metadata={"trigger_source": safe_source},
-        )
-        logger.error("FAIL: HybridScreeningService prompt render failed trade_date=%s reason=%s", today, exc)
-        raise
-    try:
-        llm_result = await llm_router.call_llm(prompt, task_name="하이브리드 스크리닝")
-    except Exception as exc:
-        finish_pipeline_run(
-            run_id=run_audit_id,
-            status="failed",
-            message=str(exc),
-            metadata={"trigger_source": safe_source},
-        )
-        logger.error("FAIL: HybridScreeningService LLM call exception trade_date=%s reason=%s", today, exc)
-        raise
-
-    # LLM 응답 파싱
+    # ── 결정론 선정 (LLM 제거 2026-08-05) ──────────────────────────────────
+    # 후보 선정은 아래 블렌드(0.4×TSI + 0.4×유니버스점수)가 전담한다. LLM 정성평가를
+    # 제거했으므로 chosen을 빈 상태로 시작 → 블렌드가 유일 선정자가 된다(기존에도
+    # quant_topup 경로로 실질 선정하던 로직을 주력화). overall_confidence는 블렌드 후 산출.
     candidates: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
-    entry_rules: dict[str, Any] = {}
     overall_confidence = 0.0
+    provider = "deterministic"
 
-    if llm_result["ok"]:
-        try:
-            parsed = _parse_screening_response(llm_result["raw"])
-            candidates = parsed["candidates"]
-            skipped = parsed["skipped"]
-            parsed_entry_rules = parsed.get("entry_rules", {})
-            if isinstance(parsed_entry_rules, dict):
-                entry_rules = parsed_entry_rules
-            overall_confidence = parsed["overall_confidence"]
-        except Exception as parse_exc:
-            logger.warning(
-                "WARN: HybridScreening JSON 파싱 실패 — %s | raw_preview=%s",
-                parse_exc,
-                llm_result.get("raw", "")[:200],
-            )
-
-    provider = llm_result.get("provider", "none")
+    # entry_rules: 매매 파라미터 설정에서 결정론 구성 → 오늘 RulePack에 저장한다.
+    #   decision_engine _evaluate_rules가 읽는 키(min_price_change_pct/max_price_change_pct/
+    #   volume_ratio_min/min_ai_confidence)를 engine.* 설정과 정합하게 채운다
+    #   (Phase 0 밴드 역전 가드가 동일 설정 floor/ceil과 교집합하므로 역전 불가).
+    from ..settings_store import get_setting as _get_setting_er
+    entry_rules: dict[str, Any] = {
+        "min_ai_confidence": 0.65,
+        "min_price_change_pct": float(_get_setting_er("engine.min_price_change_pct", 1.5) or 1.5),
+        "max_price_change_pct": float(_get_setting_er("engine.max_price_change_pct", 8.0) or 8.0),
+        "volume_ratio_min": float(_get_setting_er("engine.min_volume_ratio", 1.5) or 1.5),
+        "entry_rule_reason": "결정론 entry_rules — engine.* 매매 파라미터 기반(LLM 제거)",
+    }
 
     # 거래 비용 기반 하드 필터: 예상 수익률이 비용 합계에 못 미치는 후보 제거
     cost_threshold_pct = _load_trading_cost_threshold()
@@ -620,8 +587,8 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
             _t = _pool_tsi.get(_sym)
             if _t is None or _t <= 0:
                 continue
-            # LLM이 보류/탈락시켰으나 정량 블렌드(TSI·거래량)로 재포함 — 출처 마킹(추후 EV로 강화/제거 판단)
-            chosen[_sym] = {**_it, "ticker": _it.get("symbol"), "tsi": _t, "suitability_score": _it.get("suitability_score", 0.0), "selection_source": "quant_topup"}
+            # 정량 블렌드(TSI·유니버스점수)로 선정 — 블렌드 점수를 suitability_score로 노출(EV·화면용).
+            chosen[_sym] = {**_it, "ticker": _it.get("symbol"), "tsi": _t, "suitability_score": round(_blend(_it), 4), "selection_source": "quant_topup"}
             if len(chosen) >= target:
                 break
 
@@ -642,7 +609,10 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
             logger.warning("WARN: HybridScreening 손실스트릭 차단 조회 실패 — %s", _exc)
 
     candidates = list(chosen.values())
-    logger.info("INFO: HybridScreening 후보 확장 target=%d held=%d final=%d", target, held, len(candidates))
+    # overall_confidence: 결정론 블렌드 점수 평균(화면·EV용). 후보 없으면 0.0.
+    _conf_scores = [float(c.get("suitability_score") or 0.0) for c in candidates]
+    overall_confidence = round(sum(_conf_scores) / len(_conf_scores), 4) if _conf_scores else 0.0
+    logger.info("INFO: HybridScreening 후보 확장 target=%d held=%d final=%d conf=%.3f", target, held, len(candidates), overall_confidence)
 
     # DB 저장
     record_id = str(uuid.uuid4())
