@@ -370,15 +370,29 @@
         var grid = document.getElementById('mbMarketGrid');
         if (grid && d.market_data) {
           var marketLabels = {
-            'nasdaq': 'NASDAQ', 'sp500': 'S&P500',
-            'vix': 'VIX', 'usdkrw': 'USD/KRW',
-            'nikkei': '닛케이', 'hangseng': '항셍',
-            'kospi': 'KOSPI', 'kosdaq': 'KOSDAQ', 'kospi_night_futures': '코스피 야간선물',
-            'oil_wti': 'WTI',
-            'sox': 'SOX', 'us_10y_yield': '미국10Y'
+            // 야간선물·국내선행
+            'kospi_night_futures': '코스피200 야간선물', 'nasdaq_futures': '나스닥100 선물', 'sp500_futures': 'S&P500 선물',
+            'sox': '필라델피아 반도체',
+            // 글로벌 지수/현물
+            'nasdaq': 'NASDAQ', 'sp500': 'S&P500', 'ftse100': 'FTSE100', 'dax': 'DAX', 'ewy_korea': 'EWY(한국ETF)',
+            // 리스크/원자재/환
+            'vix': 'VIX', 'usdkrw': 'USD/KRW', 'dollar_index': '달러인덱스', 'gold': '금', 'bitcoin': '비트코인', 'oil_wti': 'WTI',
+            // 금리
+            'us_10y_yield': '미국10년물', 'us_2y_yield': '미국2년물', 'yield_spread_10y_2y': '장단기 금리차',
+            // 섹터ETF
+            'sector_tech': '기술섹터', 'sector_finance': '금융섹터', 'sector_energy': '에너지섹터', 'sector_health': '헬스섹터', 'sector_industry': '산업섹터',
+            // 국내(장중 스냅샷일 때)
+            'kospi': 'KOSPI', 'kosdaq': 'KOSDAQ', 'nikkei': '닛케이', 'hangseng': '항셍'
           };
           var html = '';
-          var keys = ['nasdaq', 'sp500', 'vix', 'usdkrw', 'nikkei', 'hangseng', 'kospi', 'kosdaq', 'kospi_night_futures', 'oil_wti', 'sox', 'us_10y_yield'];
+          var keys = [
+            'kospi_night_futures', 'nasdaq_futures', 'sp500_futures', 'sox',
+            'nasdaq', 'sp500', 'ftse100', 'dax', 'ewy_korea',
+            'vix', 'usdkrw', 'dollar_index', 'gold', 'bitcoin', 'oil_wti',
+            'us_10y_yield', 'us_2y_yield', 'yield_spread_10y_2y',
+            'sector_tech', 'sector_finance', 'sector_energy', 'sector_health', 'sector_industry',
+            'kospi', 'kosdaq', 'nikkei', 'hangseng'
+          ];
           keys.forEach(function(k) {
             var item = d.market_data[k];
             if (!item) return;

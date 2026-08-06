@@ -135,10 +135,40 @@ def classify_regime_heuristic(
         except (TypeError, ValueError):
             pass
 
-    # ── regime 결정: 키워드 net + 객관 lean 결합 ──
-    if nums and num_signal_strong:
-        # 객관 수치를 점수화해 키워드와 합산(객관 1점 = 키워드 THRESHOLD 가중치).
-        combined = net + num_lean * THRESHOLD
+    # ── 선행지표 lean: 장전 시황 데이터(market_data)를 regime 판단에 실제 활용 (2026-08-06 PM) ──
+    # 간밤 미국 야간선물(S&P·나스닥) + 필라델피아 반도체(KOSPI 반도체 대형주 갭 선행)의 평균 방향.
+    # 강달러(달러인덱스)는 신흥국 부담 → risk_off 가산. 지표 없으면 li_lean=0(기존 동작 보존).
+    li_lean = 0
+    li_note = ""
+    _md = market_data if isinstance(market_data, dict) else {}
+
+    def _md_chg(_k: str) -> float | None:
+        _v = _md.get(_k)
+        _c = _v.get("change_pct") if isinstance(_v, dict) else None
+        try:
+            return float(_c) if _c is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    _fs = [x for x in (_md_chg("sp500_futures"), _md_chg("nasdaq_futures"), _md_chg("sox")) if x is not None]
+    _li_avg = (sum(_fs) / len(_fs)) if _fs else None
+    if _li_avg is not None:
+        if _li_avg >= 0.7:
+            li_lean += 1
+        elif _li_avg <= -0.7:
+            li_lean -= 1
+        li_note = "간밤 해외선물·반도체 %+.2f%%" % _li_avg
+    _dxy = _md_chg("dollar_index")
+    if _dxy is not None and _dxy >= 0.7 and li_lean >= 0:
+        li_lean -= 1  # 강달러 → 신흥국 리스크오프 가산(위험선호를 과하게 밀지 않게 li_lean>=0일 때만)
+        li_note = (li_note + " · 강달러 %+.2f%%" % _dxy).strip(" ·")
+
+    # ── regime 결정: 키워드 net + 객관 수치 lean + 선행지표 lean 결합 ──
+    total_lean = num_lean + li_lean
+    lean_strong = num_signal_strong or (li_lean != 0)
+    if lean_strong:
+        # 각 lean 1점 = 키워드 THRESHOLD 가중치로 환산해 합산.
+        combined = net + total_lean * THRESHOLD
         if vol >= 2 and abs(combined) < THRESHOLD:
             regime = "volatile"
         elif combined >= THRESHOLD:
@@ -148,7 +178,7 @@ def classify_regime_heuristic(
         else:
             regime = "neutral"
     else:
-        # numbers 없음 또는 약한 신호 → 기존 키워드-only 로직(완전 하위호환)
+        # 강한 신호 없음 → 기존 키워드-only 로직(완전 하위호환)
         if vol >= 2 and abs(net) < THRESHOLD:
             regime = "volatile"
         elif net >= THRESHOLD:
@@ -182,15 +212,15 @@ def classify_regime_heuristic(
     if vix_val is not None:
         risk_level = "low" if vix_val < 20 else ("high" if vix_val > 30 else "normal")
 
-    # ── confidence: 키워드 net 기반 → 객관 수치 corroborate/conflict 보정 ──
+    # ── confidence: 키워드 net 기반 → 객관 수치·선행지표 corroborate/conflict 보정 ──
     confidence = min(abs(net) / (THRESHOLD * 2), 1.0)
-    if nums and num_signal_strong:
+    if lean_strong:
         keyword_dir = (net > 0) - (net < 0)  # +1/0/-1
-        num_dir = (num_lean > 0) - (num_lean < 0)
+        lean_dir = (total_lean > 0) - (total_lean < 0)
         if keyword_dir == 0:
-            # 키워드가 중립이면 객관 수치가 컨피던스를 끌어올린다
+            # 키워드가 중립이면 객관 수치·선행지표가 컨피던스를 끌어올린다
             confidence = max(confidence, 0.6)
-        elif keyword_dir == num_dir:
+        elif keyword_dir == lean_dir:
             confidence = min(confidence + 0.25, 1.0)  # corroborate → 가산
         else:
             confidence = max(confidence - 0.25, 0.0)  # conflict → 감산
@@ -201,6 +231,8 @@ def classify_regime_heuristic(
             nums.get("vix"), nums.get("fear_greed"), nums.get("kospi200_futures_pct"),
             num_lean, vix_source,
         )
+    if li_lean != 0 or li_note:
+        data_note += " | 선행지표(lean=%d %s)" % (li_lean, li_note)
 
     return {
         "tone": tone,

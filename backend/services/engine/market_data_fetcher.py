@@ -32,6 +32,13 @@ _SYMBOLS = {
     "sector_health": "XLV",
     "sector_industry": "XLI",
     "sox": "^SOX",
+    # 장전 선행지표 확대(2026-08-06 PM) — 야간선물·안전자산·금리·환/코인.
+    "nasdaq_futures": "NQ=F",     # 나스닥100 선물(야간) — 미국장 방향 선행
+    "sp500_futures": "ES=F",      # S&P500 선물(야간)
+    "gold": "GC=F",               # 금(안전자산 선호 지표)
+    "bitcoin": "BTC-USD",         # 비트코인(위험선호/유동성)
+    "dollar_index": "DX-Y.NYB",   # 달러인덱스(DXY) — 강달러=신흥국 부담
+    "us_2y_yield": "2YY=F",       # 미국 2년물 국채금리(정책금리 기대)
 }
 _YAHOO_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=2d&interval=1d"
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; KairosMarketFetcher/1.0)"}
@@ -87,6 +94,16 @@ async def fetch_overnight_market_summary() -> dict[str, Any]:
             else:
                 results[fetched_key] = None
                 errors.append(fetched_key)
+
+    # 장단기 금리차(10Y-2Y) 파생 — 수익률 곡선 역전(음수)은 경기침체 선행 신호.
+    _t10 = (results.get("us_10y_yield") or {}).get("price")
+    _t2 = (results.get("us_2y_yield") or {}).get("price")
+    if _t10 is not None and _t2 is not None:
+        _spread = round(float(_t10) - float(_t2), 2)
+        results["yield_spread_10y_2y"] = {
+            "symbol": "10Y-2Y", "price": _spread, "prev_close": _spread,
+            "change_pct": 0.0, "direction": "up" if _spread >= 0 else "down",
+        }
 
     results["fetched_at"] = fetched_at
     results["errors"] = errors

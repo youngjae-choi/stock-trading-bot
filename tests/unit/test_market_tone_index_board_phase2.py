@@ -104,6 +104,38 @@ def test_classify_vix_low_from_numbers():
     assert res["risk_level"] == "low"
 
 
+def test_classify_leading_indicators_pull_risk_off():
+    """장전 선행지표(간밤 해외선물·반도체 강한 하락)를 regime 판단에 활용 → risk_off."""
+    md = {
+        "sp500_futures": {"change_pct": -1.4},
+        "nasdaq_futures": {"change_pct": -1.6},
+        "sox": {"change_pct": -1.5},
+    }
+    # 텍스트는 약한 약세 하나뿐이지만 선행지표가 강하게 risk_off로 끌어당긴다.
+    res = mt.classify_regime_heuristic("제한적 약세 출발이 예상됩니다.", market_data=md, numbers={})
+    assert res["regime"] == "risk_off"
+    assert "선행지표" in res["data_note"]
+
+
+def test_classify_leading_indicators_pull_risk_on():
+    """간밤 해외선물·반도체 강세 → risk_on."""
+    md = {
+        "sp500_futures": {"change_pct": 1.2},
+        "nasdaq_futures": {"change_pct": 1.5},
+        "sox": {"change_pct": 2.0},
+    }
+    res = mt.classify_regime_heuristic("강세 출발이 예상됩니다.", market_data=md, numbers={})
+    assert res["regime"] == "risk_on"
+
+
+def test_classify_no_leading_indicators_backward_compat():
+    """선행지표(market_data)가 없으면 기존 동작 그대로(하위호환)."""
+    text = "약세 하락 우려"
+    base = mt.classify_regime_heuristic(text)
+    with_empty_md = mt.classify_regime_heuristic(text, market_data={}, numbers={})
+    assert base["regime"] == with_empty_md["regime"] == "risk_off"
+
+
 def test_classify_numbers_override_neutral_keywords():
     """키워드가 중립이어도 극단 탐욕+강한 양의 선물이면 risk_on으로 끌어올림."""
     text = "특이사항 없음"  # 키워드 net=0
