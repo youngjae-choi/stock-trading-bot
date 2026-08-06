@@ -114,7 +114,18 @@
     _applyDailyResultsFilter();
   }
 
-  /* 시장톤 배지 HTML */
+  /* 실현 시장 방향 — 그날 KOSPI 실제 등락%로 분류(회고 화면이라 예보 톤이 아닌 실제 결과 기준).
+     ±1.0%를 보합 밴드로 둔다. 값 없으면 null(→ '-'). (2026-08-06: -4.9%가 '보합'으로 뜨던 버그 수정) */
+  function _marketFromKospi(pct) {
+    if (pct === null || pct === undefined || pct === '') return null;
+    var p = Number(pct);
+    if (!isFinite(p) || p === 0) return null;
+    if (p >= 1.0) return 'positive';
+    if (p <= -1.0) return 'negative';
+    return 'neutral';
+  }
+
+  /* 시장 배지 HTML */
   function _toneBadge(tone) {
     var cfg = {
       positive: { label: '상승장', color: 'var(--green)', bg: 'rgba(31,138,101,0.12)' },
@@ -133,7 +144,7 @@
     var stats = {};
     tones.forEach(function(t) { stats[t] = { wins: 0, total: 0, days: 0, pnl: 0 }; });
     rows.forEach(function(r) {
-      var t = r.market_tone;
+      var t = _marketFromKospi(r.kospi_change_pct);  // 실현 시장 방향(KOSPI 실제 등락%) 기준
       if (!t || !stats[t]) return;
       stats[t].days++;
       stats[t].pnl += r.account_pnl || 0;  // 계좌 P&L 기준으로 통일
@@ -197,7 +208,7 @@
       + '</div>'
       + (toneHtml
         ? '<div class="card" style="margin-bottom:16px; padding:12px 16px;">'
-          + '<div style="font-size:11px; font-weight:600; color:var(--muted); margin-bottom:10px; letter-spacing:.05em;">시장톤별 승률</div>'
+          + '<div style="font-size:11px; font-weight:600; color:var(--muted); margin-bottom:10px; letter-spacing:.05em;">시장별 승률 <span style="color:var(--muted);font-weight:400;">(당일 KOSPI 실현 등락 기준)</span></div>'
           + '<div style="display:flex; gap:8px; flex-wrap:wrap;">' + toneHtml + '</div>'
           + '</div>'
         : '');
@@ -262,7 +273,7 @@
         pnlStatusBadge = ' <span class="status ' + statusCls + '" style="font-size:10px;">' + escapeHtml(row.pnl_status) + '</span>';
       }
 
-      var toneCell = '<td style="text-align:center;">' + _toneBadge(row.market_tone) + '</td>';
+      var toneCell = '<td style="text-align:center;">' + _toneBadge(_marketFromKospi(row.kospi_change_pct)) + '</td>';
 
       // 그날 KOSPI 시초가/종가/등락율 — S10 저장값을 읽기만(화면 연산 없음). 0/null이면 '-'.
       var _kFmt = function(v) {
