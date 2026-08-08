@@ -159,6 +159,7 @@ def _ensure_table() -> None:
 def _merge_and_deduplicate(
     volume_items: list[dict[str, Any]],
     change_items: list[dict[str, Any]] | None = None,
+    decline_items: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """거래량·등락률 순위를 병합하고 중복을 제거한다.
 
@@ -207,6 +208,30 @@ def _merge_and_deduplicate(
                 "volume_surge": 0.0,
                 "volume_rank": 9999,
                 "change_rate_rank": idx + 1,
+            }
+
+    # 반등 트랙: 하락률 상위(급락주). 거래대금을 보존해 '거래활발 급락주'만 살아남게 하고
+    # (거래없는 급락주는 sanity 게이트가 제외), source_rebound로 태깅한다. ±29% 필터는 하한가를 계속 배제.
+    for idx, item in enumerate(decline_items or []):
+        sym = item.get("symbol", "")
+        if not sym:
+            continue
+        if sym in merged:
+            merged[sym]["rebound_rank"] = idx + 1
+            merged[sym]["source_rebound"] = True
+        else:
+            merged[sym] = {
+                "symbol": sym,
+                "name": item.get("name", ""),
+                "price": item.get("price", 0),
+                "change_rate": item.get("change_rate", 0.0),
+                "volume": 0,
+                "trade_amount": item.get("trade_amount", 0),  # 거래대금 보존 → 거래활발 급락주만 생존
+                "volume_surge": 0.0,
+                "volume_rank": 9999,
+                "change_rate_rank": 9999,
+                "rebound_rank": idx + 1,
+                "source_rebound": True,
             }
 
     return list(merged.values())
@@ -420,14 +445,25 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
     knowledge_items = get_active_knowledge(scope="S3_UNIVERSE_FILTER")
     knowledge_refs = [k["id"] for k in knowledge_items]
 
-    # KIS 병렬 호출 — 단타 모멘텀: 거래량 순위 + 등락률 순위 2종 (거래대금 소스 제거)
+    # 반등 트랙 토글 — 급락 반등 후보(하락률 상위)를 유니버스에 편입할지. 기본 ON, 롤백 가능.
     try:
-        volume_result, change_result = await asyncio.gather(
+        from ..settings_store import get_setting as _gs
+        _rebound_on = bool(_gs("engine.rebound_universe_enabled", True))
+    except Exception:
+        _rebound_on = True
+
+    # KIS 병렬 호출 — 거래량 순위 + 상승률 순위 + (반등) 하락률 순위
+    try:
+        _tasks = [
             get_volume_rank(market_code="J", top_n=_MAX_UNIVERSE),
             get_price_rank(sort_by="change_rate", market_code="J", top_n=_MAX_UNIVERSE),
-        )
-        volume_items = volume_result.get("items", [])
-        change_items = change_result.get("items", [])
+        ]
+        if _rebound_on:
+            _tasks.append(get_price_rank(sort_by="change_rate", market_code="J", top_n=_MAX_UNIVERSE, direction="down"))
+        _results = await asyncio.gather(*_tasks)
+        volume_items = _results[0].get("items", [])
+        change_items = _results[1].get("items", [])
+        decline_items = _results[2].get("items", []) if (_rebound_on and len(_results) > 2) else []
     except Exception as exc:
         finish_pipeline_run(
             run_id=run_audit_id,
@@ -445,9 +481,13 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
     raw_split_counts = {
         "volume": len(volume_items),
         "change_rate": len(change_items),
+        "rebound_decline": len(decline_items),
     }
-    raw_count = raw_split_counts["volume"] + raw_split_counts["change_rate"]
-    merged = _merge_and_deduplicate(volume_items, change_items)
+    raw_count = raw_split_counts["volume"] + raw_split_counts["change_rate"] + raw_split_counts["rebound_decline"]
+    merged = _merge_and_deduplicate(volume_items, change_items, decline_items)
+    if decline_items:
+        _reb = [m for m in merged if m.get("source_rebound")]
+        logger.info("INFO: UniverseFilter 반등 트랙 편입 후보=%d (하락률 상위∩거래활발)", len(_reb))
     rejection_counts = _count_filter_rejections(merged)
     filtered = _apply_filters(merged)
     ranked = _score_and_rank(filtered, total=len(merged), weights=weights)

@@ -141,7 +141,9 @@ async def get_price_rank(
     sort_by: Literal["change_rate", "trade_amount"] = "change_rate",
     market_code: str = "J",
     top_n: int = 100,
+    direction: Literal["up", "down"] = "up",
 ) -> Dict[str, Any]:
+    """국내 등락률/거래대금 순위. direction='down'이면 하락률 상위(급락 반등 후보)."""
     limit = _clamp_top_n(top_n)
     safe_sort_by = "trade_amount" if sort_by == "trade_amount" else "change_rate"
 
@@ -151,7 +153,7 @@ async def get_price_rank(
         path = "/uapi/domestic-stock/v1/ranking/fluctuation"
         scr_div_code = "20170"
         extra_params: Dict[str, Any] = {
-            "FID_RANK_SORT_CLS_CODE": "0",  # 0=상승률
+            "FID_RANK_SORT_CLS_CODE": "1" if direction == "down" else "0",  # 0=상승률 1=하락률
             "FID_INPUT_CNT_1": "0",
             "FID_PRC_CLS_CODE": "0",        # 0=현재가 기준
             "FID_RSFL_RATE1": "",
@@ -234,9 +236,10 @@ async def get_price_rank(
                 seen_symbols.add(sym)
                 raw_rows.append(row)
 
-    # 병합 후 정렬
+    # 병합 후 정렬. 하락률순(down)은 오름차순(가장 큰 하락 먼저).
     sort_field = "prdy_ctrt" if safe_sort_by == "change_rate" else "acml_tr_pbmn"
-    raw_rows.sort(key=lambda r: _to_float(_pick(r, sort_field, default=0)), reverse=True)
+    _reverse = not (safe_sort_by == "change_rate" and direction == "down")
+    raw_rows.sort(key=lambda r: _to_float(_pick(r, sort_field, default=0)), reverse=_reverse)
 
     items: list[Dict[str, Any]] = []
     for idx, row in enumerate(raw_rows[:limit], start=1):
