@@ -25,9 +25,10 @@ from ..settings_store import get_setting
 logger = logging.getLogger("PositionManager")
 
 _DEFAULT_RULE = {
-    "initial_stop_loss": -0.03,
-    "trailing_activate_profit": 0.025,
-    "trailing_stop_rate": 0.03,
+    # [P1-b 승자보호 2026-08-06] MID_VOL과 정합: trail(0.010) < activate(0.015) → 트레일 청산이 이익구간.
+    "initial_stop_loss": -0.025,
+    "trailing_activate_profit": 0.015,
+    "trailing_stop_rate": 0.010,
     "max_position_rate": 0.12,
     "max_holding_minutes": 180,
     "force_exit_time": "15:20:00",

@@ -799,32 +799,35 @@ def _seed_rule_system(connection: sqlite3.Connection) -> None:
     )
 
     # Risk Profile Pack v1.0
+    # [P1-b 승자보호 재튜닝 2026-08-06] 트레일링을 trail < activate 로 조여 트레일 청산이 항상
+    # 이익 구간에서 나게 하고(과거: activate≈trail → +도달 후 되돌림에 손실 청산=휨쏘), 초기손절도
+    # 조인다(지는건 불용). 사이징(max_position_rate)은 유지(공격적). 수확은 engine.scaleout_target_rate.
     profiles = {
         "LOW_VOL": {
-            "initial_stop_loss": -0.02,
-            "trailing_activate_profit": 0.015,
-            "trailing_stop_rate": 0.018,
+            "initial_stop_loss": -0.018,
+            "trailing_activate_profit": 0.010,
+            "trailing_stop_rate": 0.008,
             "max_position_rate": 0.15,
             "max_holding_minutes": 240,
         },
         "MID_VOL": {
-            "initial_stop_loss": -0.03,
-            "trailing_activate_profit": 0.025,
-            "trailing_stop_rate": 0.03,
+            "initial_stop_loss": -0.025,
+            "trailing_activate_profit": 0.015,
+            "trailing_stop_rate": 0.010,
             "max_position_rate": 0.12,
             "max_holding_minutes": 180,
         },
         "HIGH_VOL": {
-            "initial_stop_loss": -0.045,
-            "trailing_activate_profit": 0.04,
-            "trailing_stop_rate": 0.05,
+            "initial_stop_loss": -0.035,
+            "trailing_activate_profit": 0.020,
+            "trailing_stop_rate": 0.014,
             "max_position_rate": 0.08,
             "max_holding_minutes": 120,
         },
         "THEME_SPIKE": {
-            "initial_stop_loss": -0.06,
-            "trailing_activate_profit": 0.05,
-            "trailing_stop_rate": 0.06,
+            "initial_stop_loss": -0.040,
+            "trailing_activate_profit": 0.020,
+            "trailing_stop_rate": 0.014,
             "max_position_rate": 0.05,
             "max_holding_minutes": 60,
             "reentry_allowed": False,
