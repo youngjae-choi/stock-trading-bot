@@ -1797,13 +1797,14 @@ def _build_scheduler() -> AsyncIOScheduler:
         max_instances=1,
         coalesce=True,
     )
-    # 손절 REST 폴링 백업 — 장중(09~15시) 매 1분. WS 단절 시에도 보유 포지션 손절이
-    # 멈추지 않도록 REST 현재가로 백업 감시한다. WS 정상이면 내부 가드로 즉시 skip.
+    # 손절 REST 폴링 백업 — 장중(09~15시) 매 30초. WS 단절/저유동 무틱 시에도 보유 포지션 손절이
+    # 멈추지 않도록 REST 현재가로 백업 감시한다. WS 정상(틱 신선)이면 내부 가드로 즉시 skip.
+    # (2026-08-07: 저유동 종목 손절 지연 축소 위해 1분→30초, stale 임계 90→45초와 함께.)
     scheduler.add_job(
         job_stop_loss_backup,
-        CronTrigger(hour="9-15", minute="*", timezone="Asia/Seoul"),
+        CronTrigger(hour="9-15", second="0,30", timezone="Asia/Seoul"),
         id="job_stop_loss_backup",
-        name="손절 REST 폴링 백업 (1분)",
+        name="손절 REST 폴링 백업 (30초)",
         replace_existing=True,
         max_instances=1,
         coalesce=True,

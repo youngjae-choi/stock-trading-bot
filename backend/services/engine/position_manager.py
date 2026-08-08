@@ -714,9 +714,11 @@ class PositionManager:
             return {"ok": True, "skipped": "disabled"}
 
         try:
-            stale_threshold = float(get_setting("risk.stop_loss_backup_stale_sec", 90) or 90)
+            # 저유동 종목 손절 지연 축소(2026-08-07): 90→45초. 틱 드문 종목도 45초 무틱이면 REST 백업이
+            # 손절을 감시한다(REST 폴링도 30초로 상향). "지는건 불용" — 손절 발동 지연 최소화.
+            stale_threshold = float(get_setting("risk.stop_loss_backup_stale_sec", 45) or 45)
         except Exception:
-            stale_threshold = 90.0
+            stale_threshold = 45.0
 
         # 종목별 stale 판정 — 마지막 틱이 임계 이상 오래됐거나(또는 미수신) 종목만 백업 대상.
         now_mono = time.monotonic()
