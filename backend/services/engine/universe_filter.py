@@ -78,16 +78,24 @@ _EXCLUDED_CODE_PATTERNS: tuple[re.Pattern[str], ...] = (
 _PREFERRED_NAME_PATTERN = re.compile(r"\d*우[A-Z]?$")
 
 
-def _is_excluded_product(symbol: str, name: str) -> bool:
+def _is_excluded_product(symbol: str, name: str, allow_inverse_1x: bool = False) -> bool:
     """정책상 매수 제외 상품군 여부 판단.
 
     Args:
         symbol: 종목 코드 (예: '005930', 'Q610087', '0198D0').
         name: 종목명.
+        allow_inverse_1x: 폭락 방어 모드에서 인버스 1x(비레버리지)를 후보로 허용할지.
+            True면 인버스 1x는 제외하지 않는다(2X/레버리지는 계속 제외). 하락 수익 경로.
 
     Returns:
         True이면 매수 후보·미진입 추적에서 모두 제외.
     """
+    # 폭락 방어 모드: 인버스 1x(비레버리지)만 예외 허용 — 하락장에서 하락 수익을 낸다.
+    if allow_inverse_1x:
+        from .intraday_profile import is_inverse_1x_product
+        if is_inverse_1x_product(name):
+            return False
+
     sym = str(symbol or "").strip().upper()
     if sym and any(p.match(sym) for p in _EXCLUDED_CODE_PATTERNS):
         return True
@@ -237,8 +245,11 @@ def _merge_and_deduplicate(
     return list(merged.values())
 
 
-def _apply_filters(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """상한가/하한가, 가격/거래량 0 종목, 정책상 제외 상품군(ETF/ETN/인버스/레버리지)을 제거한다."""
+def _apply_filters(items: list[dict[str, Any]], allow_inverse_1x: bool = False) -> list[dict[str, Any]]:
+    """상한가/하한가, 가격/거래량 0 종목, 정책상 제외 상품군(ETF/ETN/인버스/레버리지)을 제거한다.
+
+    allow_inverse_1x=True(폭락 방어 모드)면 인버스 1x는 남긴다(하락 수익 경로).
+    """
     exclude_policy_products = _exclude_etf_enabled()
     result = []
     for item in items:
@@ -249,7 +260,7 @@ def _apply_filters(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         if item.get("volume", 0) <= 0 and item.get("trade_amount", 0) <= 0:
             continue
-        if exclude_policy_products and _is_excluded_product(item.get("symbol", ""), item.get("name", "")):
+        if exclude_policy_products and _is_excluded_product(item.get("symbol", ""), item.get("name", ""), allow_inverse_1x=allow_inverse_1x):
             continue
         result.append(item)
     return result
@@ -489,7 +500,22 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
         _reb = [m for m in merged if m.get("source_rebound")]
         logger.info("INFO: UniverseFilter 반등 트랙 편입 후보=%d (하락률 상위∩거래활발)", len(_reb))
     rejection_counts = _count_filter_rejections(merged)
-    filtered = _apply_filters(merged)
+
+    # 폭락 방어 모드 활성 시 인버스 1x를 유니버스에 허용 — 하락장에서 하락 수익(폭락장 +1% 경로).
+    # (평소엔 인버스 제외 유지. 진입 게이트는 flash_crash_defense가 인버스 1x만 허용, 예산은 crash_playbook_cap.)
+    _allow_inv1x = False
+    try:
+        from ..settings_store import get_setting as _gs2
+        if bool(_gs2("engine.crash_inverse_universe_enabled", True)) and bool(_gs2("engine.crash_playbook_enabled", True)):
+            from .intraday_regime_monitor import is_flash_crash_defense_active
+            _allow_inv1x = bool(is_flash_crash_defense_active(today))
+    except Exception as _e:
+        logger.warning("WARN: UniverseFilter 폭락방어 인버스 허용 판정 실패 — %s", _e)
+        _allow_inv1x = False
+    if _allow_inv1x:
+        logger.info("INFO: UniverseFilter 폭락 방어 모드 — 인버스 1x 유니버스 편입 허용")
+
+    filtered = _apply_filters(merged, allow_inverse_1x=_allow_inv1x)
     ranked = _score_and_rank(filtered, total=len(merged), weights=weights)
     top_n_count = _TONE_TOP_N.get(tone_used, _TOP_N_RESULT)
     top_n = ranked[:top_n_count]
