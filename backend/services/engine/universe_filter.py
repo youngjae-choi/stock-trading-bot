@@ -251,15 +251,28 @@ def _apply_filters(items: list[dict[str, Any]], allow_inverse_1x: bool = False) 
     allow_inverse_1x=True(폭락 방어 모드)면 인버스 1x는 남긴다(하락 수익 경로).
     """
     exclude_policy_products = _exclude_etf_enabled()
+    # 최소 유동성 하한(거래대금 근사) — 못 팔 극저유동주 배제로 EOD 완전청산 보장("매일 강제청산").
+    # 0이면 비활성. price×volume 또는 거래대금 중 큰 값 기준. 기본 1억(월요일 데이터로 튜닝 가능).
+    try:
+        min_liq = float(get_setting("engine.min_liquidity_krw", 100_000_000) or 0)
+    except Exception:
+        min_liq = 0.0
     result = []
     for item in items:
         change = abs(item.get("change_rate", 0.0))
         if change >= _CHANGE_RATE_LIMIT:
             continue
-        if item.get("price", 0) <= 0:
+        price = item.get("price", 0) or 0
+        if price <= 0:
             continue
-        if item.get("volume", 0) <= 0 and item.get("trade_amount", 0) <= 0:
+        vol = item.get("volume", 0) or 0
+        tamt = item.get("trade_amount", 0) or 0
+        if vol <= 0 and tamt <= 0:
             continue
+        if min_liq > 0:
+            liq = max(float(price) * float(vol), float(tamt))
+            if 0 < liq < min_liq:
+                continue  # 극저유동 — 매수해도 EOD 청산 불가 위험, 진입 배제
         if exclude_policy_products and _is_excluded_product(item.get("symbol", ""), item.get("name", ""), allow_inverse_1x=allow_inverse_1x):
             continue
         result.append(item)
