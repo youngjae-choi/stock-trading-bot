@@ -26,6 +26,47 @@ POSITION_SIZE_PCT_DEFAULT = 10.0
 _SELL_FAIL_COOLDOWN: dict[str, float] = {}
 _SELL_FAIL_COOLDOWN_SEC = 60.0
 
+# (A) KIS 실보유 상한 clamp — DB/매니저 수량이 KIS 실보유보다 부풀려진(드리프트) 매도를
+# 제출 직전에 차단·clamp해 '매도가능수량부족' 업무거부(=유령 매도, 매일 ~30%)를 없앤다.
+# TTL 캐시로 연속 매도의 KIS 잔고조회 폭주를 막고, 조회 실패 시 fail-open(정당 매도 절대 차단 안 함).
+_KIS_HELD_CACHE: dict[str, Any] = {"map": None, "ts": 0.0}
+_KIS_HELD_TTL_SEC = 15.0
+
+
+def _sell_clamp_enabled() -> bool:
+    """engine.sell_kis_qty_clamp_enabled 게이트(기본 ON). 설정/조회 실패 시 ON 유지."""
+    try:
+        from ..settings_store import get_setting as _gs
+
+        raw = _gs("engine.sell_kis_qty_clamp_enabled", True)
+    except Exception:
+        return True
+    return str(raw).strip().lower() not in ("false", "0", "no", "off", "none", "")
+
+
+async def _cached_kis_held_qty(symbol: str) -> int | None:
+    """KIS 실보유 수량(정규화 심볼 매칭). TTL 캐시. 조회 실패 시 None(=clamp fail-open)."""
+    from .symbol_norm import norm_symbol
+
+    nsym = norm_symbol(symbol)
+    now = time.monotonic()
+    cache = _KIS_HELD_CACHE
+    cached_map = cache.get("map")
+    if cached_map is not None and (now - float(cache.get("ts") or 0.0)) < _KIS_HELD_TTL_SEC:
+        return int(cached_map.get(nsym, 0))
+    try:
+        from .order_reconciliation import _kis_held_qty_map
+
+        held_map = await _kis_held_qty_map()
+    except Exception as exc:
+        logger.warning(
+            "WARN: [S8/S9] KIS 실보유 조회 실패 — clamp fail-open symbol=%s reason=%s", symbol, exc
+        )
+        return None
+    cache["map"] = held_map
+    cache["ts"] = now
+    return int(held_map.get(nsym, 0))
+
 
 def _now_kst() -> datetime:
     """Return the current Asia/Seoul datetime."""
@@ -595,6 +636,33 @@ class OrderExecutor:
                 "net_qty": summaries[0].get("net_qty"),
             }
 
+        # (A) KIS 실보유 상한 clamp — 부풀린 수량 매도('매도가능수량부족' 거부=유령 매도)를
+        # 제출 전에 차단. 게이트 기본 ON. KIS 조회 실패 시 held=None → fail-open(차단 안 함).
+        if _sell_clamp_enabled():
+            held_qty = await _cached_kis_held_qty(safe_symbol)
+            if held_qty is not None:  # None = 조회실패 → fail-open(기존 동작)
+                if held_qty <= 0:
+                    logger.warning(
+                        "WARN: [S8/S9] KIS 실보유 0 — 매도 스킵(유령 매도 차단) symbol=%s req_qty=%d",
+                        safe_symbol, safe_qty,
+                    )
+                    position_manager.remove_position(safe_symbol)
+                    self._discard_closing_mark(safe_symbol)
+                    return {
+                        "ok": False,
+                        "status": "skipped_no_kis_holding",
+                        "symbol": safe_symbol,
+                        "qty": safe_qty,
+                        "reason": "no_kis_holding",
+                    }
+                if held_qty < safe_qty:
+                    logger.warning(
+                        "WARN: [S8/S9] 매도 수량 KIS 실보유로 clamp symbol=%s req=%d → held=%d",
+                        safe_symbol, safe_qty, held_qty,
+                    )
+                    safe_qty = int(held_qty)
+
+        response: Any = None
         try:
             try:
                 response = await order_cash(
@@ -645,6 +713,7 @@ class OrderExecutor:
             _SELL_FAIL_COOLDOWN.pop(safe_symbol, None)
             await asyncio.sleep(0.2)
             kis_order_no = self._extract_order_no(response)
+            _rt_cd = ""  # KIS 응답 rt_cd(업무결과) — 아래 ODNO 누락 분기에서 채운다(A-2에서 참조).
 
             # KIS 모의투자 환경에서 rate-limit 부하 시 output에 ODNO가 빠지는 경우가 있다.
             # 주문 자체는 HTTP 200으로 접수됐으므로, 체결내역 재조회로 주문번호를 보정한다.
@@ -692,14 +761,24 @@ class OrderExecutor:
                 reason=saved_reason,
             )
             if not kis_order_no:
+                # (A-2) rt_cd != 0(업무거부: 매도가능수량부족·장종료 등)면 주문이 실제로
+                # 미접수된 것 → 포지션을 보존해 손절 감시 유지(재시도 경로가 처리). rt_cd=0/불명이면
+                # 접수됐을 가능성(ODNO만 유실)이므로 중복 매도 방지 위해 제거(기존 동작).
+                _biz_rejected = bool(_rt_cd) and _rt_cd != "0"
                 logger.warning(
-                    "WARN: [S8/S9] sell submit uncertain order_id=%s symbol=%s qty=%d reason=missing_kis_order_no",
+                    "WARN: [S8/S9] sell submit uncertain order_id=%s symbol=%s qty=%d rejected=%s reason=missing_kis_order_no",
                     order_id,
                     safe_symbol,
                     safe_qty,
+                    _biz_rejected,
                 )
-                # 주문은 접수됐을 가능성이 높으므로 포지션에서 제거해 중복 매도 방지
-                position_manager.remove_position(safe_symbol)
+                if _biz_rejected:
+                    # 업무거부(미접수) — 포지션 보존, 쿨다운 등록해 재청산 폭주만 방지.
+                    _SELL_FAIL_COOLDOWN[safe_symbol] = time.monotonic()
+                    self._discard_closing_mark(safe_symbol)
+                else:
+                    # 주문은 접수됐을 가능성이 높으므로 포지션에서 제거해 중복 매도 방지
+                    position_manager.remove_position(safe_symbol)
                 return {
                     "ok": False,
                     "order_id": order_id,

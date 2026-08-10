@@ -66,6 +66,12 @@ def _setup_sell_env(monkeypatch, order_cash_fn):
     import backend.services.engine.trade_tagging as tt
     monkeypatch.setattr(tt, "merge_exit_context", lambda *_a, **_k: 0)
     monkeypatch.setattr(ms, "note_exit", lambda *_a, **_k: None)
+
+    # KIS 실보유 상한 clamp가 이 테스트(스케일아웃 로직)를 막지 않도록 KIS 보유를 충분히 선언.
+    async def _held_all(_symbol):
+        return 10 ** 9
+
+    monkeypatch.setattr(oe, "_cached_kis_held_qty", _held_all)
     oe._SELL_FAIL_COOLDOWN.clear()
     return executor, pm, saved_orders
 

@@ -61,6 +61,13 @@ def _setup_sell_env(monkeypatch, order_cash_fn):
     import backend.services.engine.momentum_scanner as ms
     monkeypatch.setattr(tt, "merge_exit_context", lambda *_a, **_k: 0)
     monkeypatch.setattr(ms, "note_exit", lambda *_a, **_k: None)
+
+    # KIS 실보유 상한 clamp를 무력화(충분히 보유) — 이 파일은 제출실패/재시도 경로를 검증하므로
+    # clamp가 개입하지 않아야 한다. (clamp 자체는 test_sell_kis_clamp.py에서 검증)
+    async def _held_all(_symbol):
+        return 10 ** 9
+
+    monkeypatch.setattr(oe, "_cached_kis_held_qty", _held_all)
     # 테스트 간 모듈 상태 오염 방지
     oe._SELL_FAIL_COOLDOWN.clear()
     return executor, pm, saved_orders
