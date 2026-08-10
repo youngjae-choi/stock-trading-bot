@@ -13,10 +13,17 @@
   function _initDailyResultsFilter() {
     var s = document.getElementById('dr-start-date');
     var e = document.getElementById('dr-end-date');
-    if (!s || !e || s.dataset.init) return;
-    s.value = _daysAgo(29);
-    e.value = new Date().toISOString().slice(0, 10);
-    s.dataset.init = '1';
+    if (!s || !e) return;
+    var today = new Date().toISOString().slice(0, 10);
+    if (!s.dataset.init) {
+      s.value = _daysAgo(29);
+      e.value = today;
+      s.dataset.init = '1';
+    } else if (e.value && e.value < today) {
+      // 날이 바뀌면 종료일을 오늘로 자동 갱신 — 어제까지만 보이던 stale 버그 수정
+      // (과거: dataset.init 가드가 최초 1회만 설정해, SPA 재진입 시 종료일이 며칠 전으로 굳음)
+      e.value = today;
+    }
   }
 
   /* 전체 데이터를 API에서 가져와 캐시 */
