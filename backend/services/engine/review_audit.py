@@ -105,7 +105,7 @@ def _build_review_markdown(result: dict[str, Any]) -> str:
 
     # ── 거래 상세 ────────────────────────────────────────────────────────────
     trade_pairs = result.get("trade_pairs") or []
-    day_pairs, carried_pairs = _split_carried_pairs(trade_pairs, trade_date)
+    day_pairs, _carried_pairs = _split_carried_pairs(trade_pairs, trade_date)
     lines.extend(["## 📈 거래 상세", ""])
     if trade_pairs:
         completed = [p for p in day_pairs if p.get("status") == "매도완료"]
@@ -140,33 +140,35 @@ def _build_review_markdown(result: dict[str, Any]) -> str:
                 )
             lines.append("")
 
-        if carried_pairs:
-            carried_pnl_total = sum(_safe_float(p.get("pnl_amount")) for p in carried_pairs)
-            carried_sign = "+" if carried_pnl_total >= 0 else ""
-            lines.extend([
-                "### 이월 포지션 청산 (전일 매수)",
-                "",
-                f"전일 매수해 오늘 청산한 거래 {len(carried_pairs)}건 "
-                f"(손익 {carried_sign}{carried_pnl_total:,.0f}원) — 당일 승률/거래수 집계에서 제외.",
-                "",
-                "| 종목 | 매수일 | 매수가 | 매도가 | 수익률 | 금액 | 청산사유 |",
-                "|------|--------|--------|--------|--------|------|---------|",
-            ])
-            for p in carried_pairs:
-                pnl_pct = p.get("pnl_pct")
-                pnl_amt = p.get("pnl_amount")
-                pnl_pct_str = f"{pnl_pct:+.2f}%" if pnl_pct is not None else "-"
-                pnl_amt_str = f"{pnl_amt:+,.0f}원" if pnl_amt is not None else "-"
-                buy_p = p.get("buy_price") or 0
-                sell_p = p.get("sell_price") or 0
-                lines.append(
-                    f"| **{p.get('name', '')}** ({p.get('symbol', '')}) "
-                    f"| {_pair_buy_date(p) or '-'} "
-                    f"| {buy_p:,.0f}원 | {sell_p:,.0f}원 "
-                    f"| {pnl_pct_str} | {pnl_amt_str} "
-                    f"| {p.get('exit_reason', '-')} |"
-                )
-            lines.append("")
+        # 이월(전일 보유) 청산 — KIS 검증 open 스냅샷 기준으로 정확 산출(run_review_audit에서
+        # 선계산해 전달; 순수 빌더는 DB 미접근). 스냅샷 없는 과거일은 총액 fallback(가짜 숫자 금지).
+        carried = result.get("carried_snapshot")
+        if carried is not None:
+            items = carried.get("items") or []
+            if items:
+                total = float(carried.get("total") or 0.0)
+                sign = "+" if total >= 0 else ""
+                lines.extend([
+                    "### 이월 포지션 청산 (전일 보유·KIS 검증)",
+                    "",
+                    f"전일 보유(KIS 검증)해 오늘 청산 {len(items)}건 "
+                    f"(손익 {sign}{total:,.0f}원) — 당일 승률/거래수 집계에서 제외.",
+                    "",
+                    "| 종목 | 이월수량 | 이월평단 | 매도가 | 수익률 | 금액 |",
+                    "|------|--------|--------|--------|--------|------|",
+                ])
+                for it in items:
+                    lines.append(
+                        f"| **{it.get('name', '')}** ({it.get('symbol', '')}) "
+                        f"| {int(it.get('qty') or 0):,}주 "
+                        f"| {float(it.get('buy_price') or 0):,.0f}원 | {float(it.get('sell_price') or 0):,.0f}원 "
+                        f"| {float(it.get('pnl_pct') or 0):+.2f}% | {float(it.get('pnl_amount') or 0):+,.0f}원 |"
+                    )
+                lines.append("")
+        else:
+            fallback = result.get("carried_fallback")
+            if fallback:
+                lines.extend(["### 이월 포지션 (전일 보유)", "", str(fallback), ""])
     else:
         lines.extend(["거래 데이터 없음", ""])
 
@@ -862,6 +864,101 @@ def _split_carried_pairs(
     return day_pairs, carried
 
 
+def _today_sells_by_norm(trade_pairs: list[dict[str, Any]], trade_date: str) -> dict[str, dict[str, float]]:
+    """금일(trade_date) 매도를 종목(norm) 기준 가중평균가·수량으로 집계한다 — 이월 청산가 산출용.
+
+    Args:
+        trade_pairs: get_trade_pairs() 결과.
+        trade_date: 기준 거래일.
+    """
+    acc: dict[str, list[float]] = {}  # nsym -> [qty, amount]
+    for p in trade_pairs:
+        nsym = norm_symbol(str(p.get("symbol") or ""))
+        for o in p.get("orders", []) or []:
+            if o.get("side") != "sell" or str(o.get("trade_date")) != trade_date:
+                continue
+            q = _safe_float(o.get("fill_qty") or o.get("qty"))
+            px = _safe_float(o.get("fill_price") or o.get("price"))
+            if q > 0 and px > 0:
+                a = acc.setdefault(nsym, [0.0, 0.0])
+                a[0] += q
+                a[1] += px * q
+    return {k: {"sell_qty": v[0], "sell_avg": v[1] / v[0]} for k, v in acc.items() if v[0] > 0}
+
+
+def _compute_carried_from_snapshot(
+    trade_date: str, trade_pairs: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """KIS 검증 open 스냅샷(carried-in) × 금일 매도가로 이월 손익을 정확 산출한다.
+
+    drift로 오염된 trading_orders/fills 대신 daily_holdings_snapshot(장전 KIS 실보유)을
+    이월 수량·원가의 단일 진실로 삼는다. 이월 P&L = min(carried_qty, 금일매도량) ×
+    (금일 매도가 − KIS 평단).
+
+    Returns:
+        {"items": [...], "total": float} — 스냅샷 기반 정확 이월.
+        None — 해당 거래일 스냅샷 없음(과거일) → 호출자가 총액 fallback으로 표기.
+    """
+    try:
+        from .holdings_snapshot import get_holdings, has_snapshot
+
+        if not has_snapshot(trade_date):
+            return None
+        snap = get_holdings(trade_date)
+    except Exception as exc:
+        logger.warning("WARN: [S10] 이월 스냅샷 조회 실패 reason=%s", exc)
+        return None
+    today_sells = _today_sells_by_norm(trade_pairs, trade_date)
+    name_by_norm: dict[str, str] = {}
+    for p in trade_pairs:
+        name_by_norm.setdefault(
+            norm_symbol(str(p.get("symbol") or "")), str(p.get("name") or p.get("symbol") or "")
+        )
+    items: list[dict[str, Any]] = []
+    total = 0.0
+    for nsym, holding in snap.items():
+        sell = today_sells.get(nsym)
+        if not sell:
+            continue  # 이월분을 오늘 청산하지 않았으면 '이월 청산' 아님
+        carried_qty = int(holding.get("qty") or 0)
+        carried_cost = _safe_float(holding.get("avg_price"))
+        matched = min(carried_qty, int(sell["sell_qty"]))
+        if matched <= 0 or carried_cost <= 0:
+            continue
+        sell_avg = float(sell["sell_avg"])
+        pnl = round((sell_avg - carried_cost) * matched)
+        pnl_pct = round((sell_avg - carried_cost) / carried_cost * 100, 2)
+        items.append({
+            "symbol": holding.get("symbol"),
+            "name": name_by_norm.get(nsym) or holding.get("symbol"),
+            "qty": matched,
+            "buy_price": round(carried_cost),
+            "sell_price": round(sell_avg),
+            "pnl_amount": pnl,
+            "pnl_pct": pnl_pct,
+        })
+        total += pnl
+    return {"items": items, "total": total}
+
+
+def _carried_total_fallback_line(trade_date: str) -> str | None:
+    """스냅샷 없는 과거 거래일: 종목별 재구성 불가 → KIS 검증 시작 보유주식 총액만 표기(가짜 숫자 금지)."""
+    try:
+        from .daily_capital import get_baseline, get_total_eval_baseline
+
+        deposit = get_baseline(trade_date)
+        total_eval = get_total_eval_baseline(trade_date)
+        if total_eval and deposit and total_eval > deposit:
+            holdings_val = total_eval - deposit
+            return (
+                f"전일 보유(이월) 포지션 — 종목별 KIS 스냅샷 도입 이전 거래일이라 종목별 재구성 불가. "
+                f"KIS 검증 시작 보유주식 가치 ≈ {holdings_val:,.0f}원 (정확 손익은 당일 자본변화 지표 참조)."
+            )
+    except Exception as exc:
+        logger.warning("WARN: [S10] 이월 총액 fallback 산출 실패 reason=%s", exc)
+    return None
+
+
 async def _send_action_plan_for_approval(result: dict[str, Any]) -> None:
     """결정론적 EOD 요약(손익·승패)을 텔레그램으로 통보한다.
 
@@ -1247,6 +1344,13 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
     _day_pairs, _carried_pairs = _split_carried_pairs(trade_pairs, trade_date)
     carried_pnl = sum(_safe_float(p.get("pnl_amount")) for p in _carried_pairs)
 
+    # 이월 손익 정확 산출(Part2) — KIS 검증 open 스냅샷 기준(drift 오염된 trade_pairs
+    # 다중일 wavg 뭉침 대신). DB 접근은 여기(async 오케스트레이터)서 하고 순수 빌더엔 결과만 전달.
+    _carried_snapshot = _compute_carried_from_snapshot(trade_date, trade_pairs)
+    _carried_fallback = (
+        _carried_total_fallback_line(trade_date) if _carried_snapshot is None else None
+    )
+
     result = {
         "ok": True,
         "trade_date": trade_date,
@@ -1291,6 +1395,8 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
         "carried_count": len(_carried_pairs),
         "carried_pnl": carried_pnl,
         "carried_pairs": _carried_pairs,
+        "carried_snapshot": _carried_snapshot,
+        "carried_fallback": _carried_fallback,
         "llm_review": {},
         **_load_daily_plan_context(trade_date),
     }

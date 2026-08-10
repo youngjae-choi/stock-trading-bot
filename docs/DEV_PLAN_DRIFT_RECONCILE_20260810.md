@@ -87,3 +87,27 @@
 
 - **리스크**: 금융 핵심경로(매도) 수정 — 게이트+롤백 스위치로 즉시 원복. clamp 과도 시 정당 매도 차단 위험 → KIS 실보유 조회 실패 시 **fail-open**(기존 동작 유지, 절대 차단 안 함).
 - **아웃오브스코프**: 유령 **매수** 근본(auto_import가 KIS 미체결 매수를 흡수하는 경로), P2-a 반등 진입 트리거, R:R 튜닝 — 별건.
+
+---
+
+# Wave 2 (B) — 이월손익 정확화 (A-full) 개발노트
+
+## 재검증으로 뒤집힌 전제
+계획서 v0.1의 "cost_basis 스테일 로트" 가설은 **틀림**(검증). 실제 원인:
+- `get_trade_pairs`가 **trade_date−7일 범위를 종목별 가중평균 한 짝으로 뭉침** → `_pair_buy_date`=최소매수일≠오늘 → **이월 오분류**. 매드업 8/03~8/10 매수 17,846주@wavg 8,717 → 복기 "8,375" 재현.
+- **모든 DB net 소스가 드리프트 오염**: trading_orders·fills(0039P0 fills net +7,877인데 KIS 0)·cost_basis 전부 KIS 실보유와 불일치.
+- 신뢰 소스는 **daily_capital_baseline 총액**(KIS 검증)뿐 — **종목별 스냅샷은 애초에 캡처된 적 없음**(positions·account_snapshots 0행, 캡처 잡 미구축).
+
+## A-full 결정 (PM): EOD/장전 KIS 보유 스냅샷 잡 신설 → 종목별 정확
+### Part 1 — 토대 (구현·TDD 5통과)
+- 신규 `backend/services/engine/holdings_snapshot.py` + 테이블 `daily_holdings_snapshot(trade_date, norm_symbol PK, qty, avg_price, market_price)`.
+- `scheduler.job_capture_capital_baseline`(08:50)에 **동일 balance 재사용** 캡처 연결 → **추가 KIS 호출 0**(토큰 경합 없음). 이 open 스냅샷 = 밤사이 carried-in.
+### Part 2 — 이월 섹션 정확화 (구현·TDD 5통과)
+- `review_audit._compute_carried_from_snapshot`: 이월 P&L = min(carried_qty, 금일매도량) × (금일 매도가 − KIS 평단).
+- 스냅샷 없는 과거일(8/10 등) → `_carried_total_fallback_line`: KIS 검증 **시작 보유주식 총액**만 표기(가짜 종목별 숫자 금지).
+- DB 접근은 async `run_review_audit`에서 선계산 → 순수 빌더 `_build_review_markdown`은 `result["carried_snapshot"]`만 렌더(순수성 유지).
+- **day_score·realized SSOT 무손상**(day_score는 시그널 기반, _split_carried_pairs는 표시 전용).
+
+## 검증 (Wave 2)
+- 신규 TDD `test_holdings_snapshot.py`(5) + `test_carried_snapshot.py`(5) + 회귀 `test_review_equity_line`(갱신).
+- **정확도는 스냅샷 첫 캡처(배포 후 첫 거래일 08:50)부터**. 그 전 과거일은 총액 표기.

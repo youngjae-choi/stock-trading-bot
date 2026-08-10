@@ -95,6 +95,20 @@ async def job_capture_capital_baseline() -> None:
             "SUCCESS: [JobCapital] baseline=%s total_eval=%.0f trade_date=%s",
             result, total_eval, trade_date,
         )
+        # 이월손익 정확 산출용 종목별 KIS 보유 스냅샷 — 동일 balance 재사용(추가 KIS 호출 없음).
+        # 이 open 스냅샷 = 밤사이 이월된 carried-in. best-effort(baseline 성공을 깨지 않음).
+        try:
+            from .engine.holdings_snapshot import capture_from_balance
+
+            _snap_n = capture_from_balance(trade_date, balance)
+            logger.info(
+                "INFO: [JobCapital] KIS 보유 스냅샷 %d종목 캡처 trade_date=%s", _snap_n, trade_date
+            )
+        except Exception as _snap_exc:
+            logger.warning(
+                "WARN: [JobCapital] 보유 스냅샷 실패(비치명) trade_date=%s reason=%s",
+                trade_date, _snap_exc,
+            )
     except Exception as exc:
         logger.warning(
             "WARN: [JobCapital] baseline 캡처 실패 trade_date=%s reason=%s", trade_date, exc

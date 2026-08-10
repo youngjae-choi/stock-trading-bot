@@ -146,7 +146,18 @@ def test_markdown_carried_section_separated():
     d = "2026-06-12"
     today_pair = _pair("111111", "당일종목", "매도완료", d, d, d, 50_000.0)
     carried_pair = _pair("222222", "이월종목", "매도완료", d, "2026-06-11", d, 30_000.0)
-    md = ra._build_review_markdown(_base_result(trade_pairs=[today_pair, carried_pair]))
+    # 새 설계(Part2): 이월은 KIS 검증 스냅샷 기반으로 run_review_audit에서 선계산되어
+    # result["carried_snapshot"]로 전달된다(순수 빌더는 DB 미접근).
+    carried_snapshot = {
+        "items": [{
+            "symbol": "222222", "name": "이월종목", "qty": 100,
+            "buy_price": 1000, "sell_price": 1010, "pnl_amount": 30000, "pnl_pct": 1.0,
+        }],
+        "total": 30000.0,
+    }
+    md = ra._build_review_markdown(
+        _base_result(trade_pairs=[today_pair, carried_pair], carried_snapshot=carried_snapshot)
+    )
 
     assert "이월 포지션 청산" in md
     # 이월 종목은 "완료된 거래"(당일) 테이블이 아닌 이월 섹션에만 표기
