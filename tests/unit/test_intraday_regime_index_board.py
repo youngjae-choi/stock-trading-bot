@@ -8,7 +8,7 @@
 import json
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from backend.config import settings
 from backend.services.engine import intraday_regime_monitor as m
@@ -62,44 +62,67 @@ class IndexBoardRegimeHelpersTest(unittest.TestCase):
 
 
 class CheckIntradayRegimeWiringTest(unittest.IsolatedAsyncioTestCase):
-    async def test_prefers_index_board_regime_over_judge(self):
+    async def test_legacy_prefers_index_board_when_live_driver_off(self):
+        """롤백(intraday_live_driver_enabled=false) 시 기존 동작 — index-board regime 우선."""
         captured = {}
 
         def fake_preview(regime, vix, kospi, trade_date):
             captured["regime"] = regime
             captured["vix"] = vix
-            return {"set_id": "S1"}  # 현재 SET과 동일 → no_change(전환/기록 회피)
+            return {"set_id": "S1"}  # 현재 SET과 동일 → no_change
 
         with patch.object(m, "get_today_application", return_value={"set_id": "S1", "regime_label": "neutral", "set_name": "n"}), \
              patch.object(m, "_should_skip_transition", return_value=False), \
+             patch.object(m, "_intraday_live_driver_enabled", return_value=False), \
              patch.object(m, "_get_index_board_vix", return_value=18.84), \
-             patch.object(m, "_get_current_kospi_change", return_value=0.5), \
+             patch.object(m, "_fetch_kospi_change", new=AsyncMock(return_value=0.5)), \
              patch.object(m, "_get_index_board_regime", return_value="risk_off"), \
              patch.object(m, "get_match_preview", side_effect=fake_preview):
             res = await m.check_intraday_regime(slot="test")
-        # _judge_regime(18.84, 0.5)=neutral 이지만 index-board regime(risk_off)이 우선돼야 함
-        self.assertEqual(captured["regime"], "risk_off")
-        self.assertEqual(captured["vix"], 18.84)  # index-board VIX 사용
+        self.assertEqual(captured["regime"], "risk_off")  # 롤백: index-board 우선
+        self.assertEqual(captured["vix"], 18.84)
         self.assertEqual(res["action"], "no_change")
 
-    async def test_falls_back_to_judge_when_no_index_board(self):
+    async def test_live_driver_uses_judge_over_frozen_index_board(self):
+        """기본(live_driver ON) — 동결된 index-board risk_off 대신 실시간 KIS KOSPI로 판단.
+
+        오늘 8/11 버그: ib_regime=risk_off 동결(09:01 이후 미갱신) → 종일 방어 → 매수 0.
+        수정 후: 실시간 KOSPI +0.6% + VIX 15 → _judge_regime=risk_on 으로 장중 전환 가능.
+        """
         captured = {}
 
         def fake_preview(regime, vix, kospi, trade_date):
             captured["regime"] = regime
+            captured["kospi"] = kospi
             return {"set_id": "S1"}
 
-        with patch.object(m, "get_today_application", return_value={"set_id": "S1", "regime_label": "neutral", "set_name": "n"}), \
+        with patch.object(m, "get_today_application", return_value={"set_id": "S1", "regime_label": "risk_off", "set_name": "방어"}), \
              patch.object(m, "_should_skip_transition", return_value=False), \
-             patch.object(m, "_get_index_board_vix", return_value=None), \
-             patch.object(m, "_get_morning_vix", return_value=30.0), \
-             patch.object(m, "_get_current_kospi_change", return_value=-2.0), \
-             patch.object(m, "_get_index_board_regime", return_value=None), \
-             patch.object(m, "_activate_flash_crash_defense"), \
+             patch.object(m, "_get_index_board_vix", return_value=15.0), \
+             patch.object(m, "_fetch_kospi_change", new=AsyncMock(return_value=0.6)), \
+             patch.object(m, "_get_index_board_regime", return_value="risk_off"), \
              patch.object(m, "get_match_preview", side_effect=fake_preview):
             await m.check_intraday_regime(slot="test")
-        # index-board 미가용 → _judge_regime(30.0, -2.0)=volatile 폴백
-        self.assertEqual(captured["regime"], "volatile")
+        # 동결 risk_off 무시하고 실시간 _judge_regime(15.0, 0.6)=risk_on 사용
+        self.assertEqual(captured["regime"], "risk_on")
+        self.assertEqual(captured["kospi"], 0.6)
+
+
+class FetchKospiChangeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_uses_kis_index_when_available(self):
+        with patch("backend.services.kis.domestic.universe_service.get_market_index",
+                   new=AsyncMock(return_value={"change_rate": 0.73})):
+            change = await m._fetch_kospi_change()
+        self.assertEqual(change, 0.73)
+
+    async def test_falls_back_to_snapshot_on_kis_failure(self):
+        async def _boom(_code):
+            raise RuntimeError("KIS index down")
+
+        with patch("backend.services.kis.domestic.universe_service.get_market_index", new=_boom), \
+             patch.object(m, "_get_current_kospi_change", return_value=-0.4):
+            change = await m._fetch_kospi_change()
+        self.assertEqual(change, -0.4)  # market_snapshots 폴백
 
 
 if __name__ == "__main__":

@@ -132,6 +132,52 @@ def _get_current_kospi_change() -> float | None:
         return None
 
 
+def _intraday_kis_kospi_enabled() -> bool:
+    """실시간 KOSPI를 KIS 지수조회로 가져올지(기본 True). 롤백: false."""
+    try:
+        from ..settings_store import get_setting
+
+        return bool(get_setting("regime.intraday_kis_kospi_enabled", True))
+    except Exception:
+        return True
+
+
+def _intraday_live_driver_enabled() -> bool:
+    """장중 레짐 driver로 실시간 KIS KOSPI+VIX(_judge_regime)를 쓸지(기본 True).
+
+    index-board regime(morning_context)은 장전 스냅샷이라 장중 갱신이 없어(intraday_json 공백)
+    동결된다 → 장중 전환 판단엔 실시간 데이터를 쓴다. 장전 권위(morning SET 적용)는 유지.
+    롤백(=index-board 장전값을 장중에도 유지): false.
+    """
+    try:
+        from ..settings_store import get_setting
+
+        return bool(get_setting("regime.intraday_live_driver_enabled", True))
+    except Exception:
+        return True
+
+
+async def _fetch_kospi_change() -> float | None:
+    """실시간 KOSPI 등락률 — KIS 지수조회(0001) 우선, 실패 시 market_snapshots 폴백.
+
+    설계(check_intraday_regime L336): 실시간 KOSPI는 KIS 전담. market_snapshots는 채워지지
+    않으므로(0행) KIS 직접조회가 실질 소스다.
+    """
+    if _intraday_kis_kospi_enabled():
+        try:
+            from ..kis.domestic.universe_service import get_market_index
+
+            idx = await get_market_index("0001")
+            change = _to_float(idx.get("change_rate"))
+            if change is not None:
+                logger.info("SUCCESS: IntradayRegimeMonitor KIS KOSPI 실시간 change=%.2f%%", change)
+                return change
+            logger.warning("WARN: IntradayRegimeMonitor KIS KOSPI change 파싱 실패 — 폴백")
+        except Exception as exc:
+            logger.warning("WARN: IntradayRegimeMonitor KIS KOSPI 조회 실패 — 폴백 error=%s", exc)
+    return _get_current_kospi_change()
+
+
 def _get_index_board_regime(trade_date: str) -> str | None:
     """오늘 최신 market_tone(index-board 단독출처)이 산출한 regime. 없으면 None.
 
@@ -336,7 +382,7 @@ async def check_intraday_regime(slot: str = "") -> dict[str, Any]:
     # 실시간 KOSPI 등락은 KIS 거래데이터 유지(PM#2: 실시간가격은 KIS 전담).
     ib_vix = _get_index_board_vix(trade_date)
     vix = ib_vix if ib_vix is not None else _get_morning_vix(trade_date)
-    kospi_change = _get_current_kospi_change()
+    kospi_change = await _fetch_kospi_change()
 
     # P3-3: flash crash 감지 — 방어 모드 활성화 + 디바운스 우회(즉시 레짐 전환 허용).
     # 폭락은 25분 디바운스를 기다릴 수 없다.
@@ -356,10 +402,17 @@ async def check_intraday_regime(slot: str = "") -> dict[str, Any]:
     current_regime = current_app.get("regime_label") or "neutral"
     # regime 권위는 market_tone(index-board); 미가용 시에만 자체 판정 폴백.
     ib_regime = _get_index_board_regime(trade_date)
-    new_regime = ib_regime or _judge_regime(vix, kospi_change)
+    if _intraday_live_driver_enabled():
+        # 장중 driver = 실시간 KIS KOSPI+VIX. index-board regime은 장전 전용(장중 동결,
+        # intraday_json 공백)이라 장중 전환 판단엔 실시간 데이터를 쓴다(morning SET은 장전 경로가 적용).
+        new_regime = _judge_regime(vix, kospi_change)
+        regime_source = "judge_live"
+    else:
+        new_regime = ib_regime or _judge_regime(vix, kospi_change)
+        regime_source = "index-board" if ib_regime else "judge_fallback"
     logger.info(
         "INFO: IntradayRegimeMonitor regime=%s source=%s vix=%s kospi=%s",
-        new_regime, "index-board" if ib_regime else "judge_fallback", vix, kospi_change,
+        new_regime, regime_source, vix, kospi_change,
     )
     new_match = get_match_preview(new_regime, vix, kospi_change, trade_date)
     if not new_match.get("set_id"):
