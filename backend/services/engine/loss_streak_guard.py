@@ -101,6 +101,45 @@ def _get_loss_symbols(trade_date: str) -> list[tuple[str, int]]:
     return [(str(row[0]), int(row[1])) for row in rows]
 
 
+def intraday_stoploss_count(symbol: str, trade_date: str | None = None) -> int:
+    """오늘 해당 종목의 손절(INITIAL_STOP_LOSS) 청산 횟수 — 장중 재진입 churn 차단용.
+
+    false_positive_cases(EOD에만 생성)·loss_streak(다음날 적용)이 못 메우는 '장중' 공백을
+    trading_orders 직접 집계로 실시간 반영한다. 손절당한 종목을 몇 분 내 재매수하는 루프
+    (예: 126730 하루 10회)를 끊는 근거. norm_symbol로 ETN 변형까지 매칭.
+
+    Args:
+        symbol: 종목 코드.
+        trade_date: YYYY-MM-DD. None이면 오늘 KST.
+    """
+    safe = str(symbol or "").strip()
+    if not safe:
+        return 0
+    from .symbol_norm import norm_symbol
+
+    nsym = norm_symbol(safe)
+    today = trade_date or _today_kst()
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) FROM trading_orders
+                WHERE trade_date = ?
+                  AND side = 'sell'
+                  AND status IN ('filled', 'partial')
+                  AND reason = 'INITIAL_STOP_LOSS'
+                  AND symbol IN (?, ?)
+                """,
+                (today, safe, nsym),
+            ).fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+    except Exception as exc:
+        logger.warning(
+            "WARN: [LossStreakGuard] intraday_stoploss_count 실패 symbol=%s reason=%s", safe, exc
+        )
+        return 0
+
+
 def _is_already_blocked(symbol: str, trade_date: str) -> bool:
     """오늘 이미 같은 종목의 스트릭 차단이 등록돼 있으면 True 반환."""
     with get_connection() as conn:

@@ -734,6 +734,7 @@ def _entry_gate_block_reason(symbol: str, confidence: float, name: str = "") -> 
       1. new_entry_allowed 강제(P3-2) — 당일 레짐 SET이 신규진입 금지면 차단
       2. 칼리브레이션 게이트(P2-1) — 누적 실적이 나쁜 confidence bin 차단
       3. entry_fail 쿨다운(P2-2) — 최근 반복 손실 진입 심볼 차단
+      4. 장중 재진입 churn 차단(P-CHURN) — 오늘 N회 손절된 심볼 당일 재진입 금지
     """
     # -1) 손실 스트릭 하드 차단(결정론 안전망) — 3연패 자동차단 심볼은 신규진입 금지.
     try:
@@ -800,6 +801,20 @@ def _entry_gate_block_reason(symbol: str, confidence: float, name: str = "") -> 
                 return f"entry_fail_cooldown (최근 {days}일 {n}회 손실진입)"
     except Exception as exc:
         logger.warning("WARN: [S6] entry_fail 쿨다운 조회 실패 — %s", exc)
+
+    # 4) 장중 재진입 churn 차단(P-CHURN) — 오늘 N회 손절된 종목은 당일 재진입 금지.
+    # entry_fail_cooldown은 false_positive_cases(EOD 생성)를 세어 '오늘 장중' 손절을 못 막는다.
+    # trading_orders를 직접 집계해, 손절→즉시 재매수 루프(초비트장 churn)를 장중에 끊는다.
+    try:
+        if bool(get_setting("engine.intraday_reentry_block_enabled", True)):
+            from .loss_streak_guard import intraday_stoploss_count
+
+            max_sl = int(float(get_setting("engine.intraday_max_stoploss_per_symbol", 2) or 2))
+            sl_n = intraday_stoploss_count(symbol, _today_kst())
+            if sl_n >= max(max_sl, 1):
+                return f"intraday_reentry_block (오늘 {sl_n}회 손절 — 당일 재진입 차단)"
+    except Exception as exc:
+        logger.warning("WARN: [S6] 장중 재진입 churn 가드 조회 실패 — %s", exc)
 
     return ""
 
