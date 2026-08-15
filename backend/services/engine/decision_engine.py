@@ -1675,6 +1675,8 @@ class DecisionEngine:
 
             today = _today_kst()
             market_context = self._build_market_context(today)
+            # 엣지 발굴 계측 — 진입 미시구조 피처(체결강도·VWAP거리·고점거리 등)를 태그에 첨부.
+            market_context["entry_features"] = self._entry_feature_snapshot(symbol, candidate)
             payload = build_exploration_tag_payload(
                 order_id="",
                 symbol=symbol,
@@ -1686,6 +1688,41 @@ class DecisionEngine:
             record_entry_tag(**payload)
         except Exception as exc:
             logger.warning("WARN: [S6/탐색] 태깅 실패 symbol=%s reason=%s", symbol, exc)
+
+    def _entry_feature_snapshot(self, symbol: str, candidate: dict[str, Any]) -> dict[str, Any]:
+        """진입 시점 미시구조 피처 스냅샷(엣지 발굴 계측).
+
+        bar_engine(체결강도·VWAP·일중고가·틱볼륨)에서 추가 KIS 호출 없이 스냅샷을 뜬다.
+        trade_entry_tags.market_context_json.entry_features 로 저장돼, EOD outcome과
+        조인하면 '무엇이 승패를 가르는가'를 데이터로 발굴할 수 있다(눌림목·체결강도·고점거리 등).
+        """
+        try:
+            be = self._bar_engine
+            price = _first_float(
+                candidate.get("price"), candidate.get("current_price"),
+                candidate.get("trigger_price"), candidate.get("last_price"),
+            )
+            vwap = be.get_vwap(symbol)
+            day_high = be.get_day_high(symbol) or None
+            gangdo = be.get_chegyeol_gangdo(symbol)
+            tickvol = be.get_tick_vol_mult(symbol)
+
+            def _pct(a: float | None, b: float | None) -> float | None:
+                return round((a / b - 1.0) * 100.0, 2) if (a and b and b > 0) else None
+
+            return {
+                "chegyeol_gangdo": round(float(gangdo), 3) if gangdo is not None else None,
+                "vwap_dist_pct": _pct(price, vwap),      # >0 VWAP위 · <0 아래(눌림 후보)
+                "high_dist_pct": _pct(price, day_high),  # ~0 일중고가 추격 · <0 되돌림
+                "tick_vol_mult": round(float(tickvol), 2) if tickvol else None,
+                "change_rate": _first_float(candidate.get("change_rate")),
+                "volume_ratio": _first_float(candidate.get("volume_ratio")),
+                "confidence": _first_float(candidate.get("confidence")),
+                "entry_hm": _now_kst().strftime("%H:%M"),
+            }
+        except Exception as exc:
+            logger.warning("WARN: [S6] 진입 피처 스냅샷 실패 symbol=%s reason=%s", symbol, exc)
+            return {}
 
     def _build_market_context(self, today: str) -> dict[str, Any]:
         """태깅용 시장맥락 dict 를 daily_context_snapshot / market_tone_results 에서 조립한다.
