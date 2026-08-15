@@ -2037,6 +2037,27 @@ class DecisionEngine:
         except Exception as exc:
             logger.warning("WARN: [S6] 눌림목 게이트 실패(fail-open) symbol=%s reason=%s", symbol, exc)
 
+        # 9시 조기진입 shadow 실험 — entry_start_time을 09:00으로 열되 실제 매수는
+        # entry_execute_start_time(기본 09:30)부터. 그 이전(모든 게이트 통과한 후보)은 로그만
+        # 남겨 "상승장 조기진입" 가설을 무매매로 검증한다. fail-safe: exec_start 전엔 항상 차단.
+        exec_start = "09:30"
+        try:
+            exec_start = _get_setting_str("engine.entry_execute_start_time", "09:30")
+        except Exception:
+            pass
+        now_hm = _now_kst().strftime("%H:%M")
+        if now_hm < exec_start:
+            try:
+                _vw = self._bar_engine.get_vwap(symbol)
+                _vd = round((price / _vw - 1) * 100, 2) if (_vw and price) else None
+                logger.info(
+                    "SHADOW_EARLY: [S6] 9시조기진입 후보(로그만·무매매) symbol=%s time=%s price=%.0f vwap_dist=%s",
+                    symbol, now_hm, price, _vd,
+                )
+            except Exception:
+                logger.info("SHADOW_EARLY: [S6] 9시조기진입 후보 symbol=%s time=%s", symbol, now_hm)
+            return  # exec_start(09:30) 전에는 실제 매수 차단(shadow만)
+
         today = _today_kst()
         signal_id = str(uuid.uuid4())
         profile_assigned = (get_rule(symbol) or {}).get("profile_assigned", "MID_VOL")
