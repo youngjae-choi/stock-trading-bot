@@ -488,6 +488,24 @@ def _first_float(*values: Any) -> float | None:
     return None
 
 
+def _vwap_pullback_gate(vwap: float | None, price: float | None, max_dist_pct: float) -> float | None:
+    """VWAP 위 이격 진입(추격) 판정 — 눌림목 게이트.
+
+    진입가가 VWAP보다 max_dist_pct(%) 넘게 위면 vwap_dist(%)를 반환(=차단대상),
+    아니면 None(통과). VWAP·가격 미가용 시 None(fail-open, 차단 안 함).
+    데이터 확증 엣지(2026-08-14 백테스트): VWAP 아래 진입 승률 51→61%·흑자.
+
+    Args:
+        vwap: 진입 시점 누적 VWAP(bar_engine). None이면 fail-open.
+        price: 진입가.
+        max_dist_pct: 허용 이격 상한(%). 이보다 위면 차단.
+    """
+    if not vwap or vwap <= 0 or not price or price <= 0:
+        return None
+    vwap_dist = (price / vwap - 1.0) * 100.0
+    return round(vwap_dist, 2) if vwap_dist > max_dist_pct else None
+
+
 def _first_positive_float(*values: Any) -> float | None:
     """여러 후보 값 중 0보다 큰 첫 번째 숫자를 반환한다.
 
@@ -1996,6 +2014,28 @@ class DecisionEngine:
         if gate_reason:
             logger.info("INFO: [S6] SKIP 진입 게이트 차단 symbol=%s reason=%s", symbol, gate_reason)
             return
+
+        # 눌림목 게이트(P-EDGE) — 데이터 확증 엣지(17일 백테스트: VWAP 아래 진입 승률 51→61%·흑자,
+        # 꼭지추격 39%). 진입가가 VWAP보다 임계%(기본 0) 넘게 위(=추격)면 차단해 "VWAP 지지 부근/아래"
+        # 진입으로 유도. mode=shadow는 로그만(무매매), off는 비활성. VWAP 미가용 시 fail-open.
+        try:
+            vwap_mode = _get_setting_str("engine.entry_vwap_pullback_mode", "enforce")
+            if vwap_mode != "off":
+                max_dist = _get_setting_float("engine.entry_max_vwap_dist_pct", 0.0)
+                vwap_dist = _vwap_pullback_gate(self._bar_engine.get_vwap(symbol), price, max_dist)
+                if vwap_dist is not None and vwap_mode == "shadow":
+                    logger.info(
+                        "SHADOW: [S6] 눌림목게이트 차단대상(로그만) symbol=%s vwap_dist=%.2f > %.2f",
+                        symbol, vwap_dist, max_dist,
+                    )
+                elif vwap_dist is not None:
+                    logger.info(
+                        "INFO: [S6] SKIP 눌림목게이트 — VWAP 위 이격(추격) symbol=%s vwap_dist=%.2f > %.2f",
+                        symbol, vwap_dist, max_dist,
+                    )
+                    return
+        except Exception as exc:
+            logger.warning("WARN: [S6] 눌림목 게이트 실패(fail-open) symbol=%s reason=%s", symbol, exc)
 
         today = _today_kst()
         signal_id = str(uuid.uuid4())
