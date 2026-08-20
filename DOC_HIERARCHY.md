@@ -15,8 +15,11 @@
 ## 2. 세션 시작 시 읽기 순서
 
 1. `DOC_HIERARCHY.md` — 문서 우선순위와 읽기 순서 확인
-2. `ONBOARDING.md` — 공통 작업 흐름과 세션 체크리스트 확인
-3. `AGENTS.md` — 프로젝트 헌법, 역할 경계, 필수 프로세스 확인
+2. `STRATEGY_SPEC.md` — **전략 동작 SSOT.** 이 시스템이 지금 어떻게 동작해야 하는가(의도)와
+   실제로 어떻게 도는가(실측)·드리프트를 한 곳에서 확인한다. C(드리프트)에 경고가 있으면
+   실측이 의도를 벗어난 것이니 되돌리거나(버그) 의도를 갱신한다. 전략을 바꾸면 여기부터 고친다.
+3. `ONBOARDING.md` — 공통 작업 흐름과 세션 체크리스트 확인
+4. `AGENTS.md` — 프로젝트 헌법, 역할 경계, 필수 프로세스 확인
 4. 역할별 문서
    - `CLAUDE.md` — Sisyphus / Planner / Orchestrator 기준
    - `CODEX.md` — Executor / Integrator 기준
@@ -42,12 +45,13 @@
 
 1. 현재 세션에서 PM이 명시적으로 승인한 지시
 2. `DOC_HIERARCHY.md`
-3. `AGENTS.md`
-4. `ONBOARDING.md`
-5. 역할별 문서: `CLAUDE.md`, `CODEX.md`, `GEMINI.md`
-6. 작업 성격별 기준 문서: `FEATURE_TEMPLATE.md`, `IMPLEMENTATION_RULES.md`, `TEST_RULES.md`, `UI_BASELINE.md`, `ERROR_HANDLING.md`
-7. 참조 문서: API, 데이터 모델, 컴포넌트, 디자인, 용어, 결정 기록
-8. 과거 `docs/agent-comm/INBOX_*`, `OUTBOX_*`, 세션 인계 문서
+3. `STRATEGY_SPEC.md` (전략 동작 SSOT — 매매 전략/레짐/게이트의 의도·실측 기준)
+4. `AGENTS.md`
+5. `ONBOARDING.md`
+6. 역할별 문서: `CLAUDE.md`, `CODEX.md`, `GEMINI.md`
+7. 작업 성격별 기준 문서: `FEATURE_TEMPLATE.md`, `IMPLEMENTATION_RULES.md`, `TEST_RULES.md`, `UI_BASELINE.md`, `ERROR_HANDLING.md`
+8. 참조 문서: API, 데이터 모델, 컴포넌트, 디자인, 용어, 결정 기록
+9. 과거 `docs/agent-comm/INBOX_*`, `OUTBOX_*`, 세션 인계 문서
 
 보안 규칙, 승인 전 구현 금지, 허위 완료 보고 금지, 기존 기능 파괴 금지는 어떤 문서보다 우선한다.
 

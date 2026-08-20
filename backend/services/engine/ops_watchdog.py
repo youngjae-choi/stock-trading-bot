@@ -292,6 +292,23 @@ def run_ops_watchdog(now: datetime | None = None) -> dict:
         except Exception as exc:
             logger.warning("WARN: [OpsWatchdog] alert 생성 실패 title=%s — %s", title, exc)
 
+    # 전략 사양 드리프트 감지 — 실측(라이브 설정/레짐 SET)이 STRATEGY_SPEC.md의 의도를
+    # 벗어났나. 파일은 수정하지 않는다(작업트리 청결) — 벗어났으면 Alert만 남긴다.
+    # "이렇게 동작해야 하는데 안 그러면 고쳐라"를 사람 없이 잡는 장치. LLM/자동수정 없음.
+    try:
+        from .strategy_spec import check_drift
+
+        drift = check_drift()
+        if drift:
+            title = "전략 사양 드리프트 — 실측이 의도와 다름"
+            if not _alert_exists(td, title):
+                detail = f"드리프트 {len(drift)}건: " + " / ".join(drift[:5])
+                create_alert("ops_watch", title, "WARNING", detail, trade_date=td)
+                created += 1
+                logger.warning("OPS-DRIFT: [전략] 드리프트 %d건 — %s", len(drift), detail[:160])
+    except Exception as exc:
+        logger.warning("WARN: [OpsWatchdog] 전략 드리프트 체크 실패 — %s", exc)
+
     logger.info(
         "SUCCESS: [OpsWatchdog] td=%s checks=%d anomalies=%d created=%d",
         td, checks_run, len(anomalies), created,
