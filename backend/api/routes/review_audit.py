@@ -15,6 +15,7 @@ from ...services.settings_store import get_settings_changes_for_date
 
 # docs/ 디렉토리 기준 경로 (backend/api/routes/ → 프로젝트 루트/docs/)
 _DOCS_DIR = Path(__file__).resolve().parents[3] / "docs"
+_AUDIT_DIR = _DOCS_DIR / "system_audit"  # S10 일일 복기 MD 저장 폴더(이전됨)
 
 router = APIRouter(prefix="/api/v1/review-audit", tags=["review-audit"])
 logger = logging.getLogger("ReviewAuditAPI")
@@ -28,7 +29,7 @@ def _today_kst() -> str:
 def _read_audit_md(date: str) -> str | None:
     """docs/SYSTEM_AUDIT_YYYYMMDD.md 파일을 읽어 반환한다. 없으면 None."""
     compact = date.replace("-", "")
-    md_path = _DOCS_DIR / f"SYSTEM_AUDIT_{compact}.md"
+    md_path = _AUDIT_DIR / f"SYSTEM_AUDIT_{compact}.md"
     if md_path.exists():
         try:
             return md_path.read_text(encoding="utf-8")
@@ -106,7 +107,7 @@ def get_today() -> dict[str, Any]:
     if md_content:
         compact = trade_date.replace("-", "")
         payload["md_content"] = md_content
-        payload["md_path"] = str(_DOCS_DIR / f"SYSTEM_AUDIT_{compact}.md")
+        payload["md_path"] = str(_AUDIT_DIR / f"SYSTEM_AUDIT_{compact}.md")
         payload["md_backup_exists"] = True
     payload["settings_changes"] = get_settings_changes_for_date(trade_date)
     logger.info("SUCCESS: GET /api/v1/review-audit/today trade_date=%s md=%s", trade_date, bool(md_content))
@@ -130,7 +131,7 @@ def get_by_date(date: str) -> dict[str, Any]:
     if md_content:
         compact = date.replace("-", "")
         payload["md_content"] = md_content
-        payload["md_path"] = str(_DOCS_DIR / f"SYSTEM_AUDIT_{compact}.md")
+        payload["md_path"] = str(_AUDIT_DIR / f"SYSTEM_AUDIT_{compact}.md")
         payload["md_backup_exists"] = True
     payload["settings_changes"] = get_settings_changes_for_date(date)
     logger.info("SUCCESS: GET /api/v1/review-audit/%s md=%s", date, bool(md_content))

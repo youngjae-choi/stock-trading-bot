@@ -18,6 +18,9 @@ from .symbol_norm import norm_symbol, symbol_variants
 
 logger = logging.getLogger("ReviewAudit")
 _DOCS_DIR = Path(__file__).resolve().parents[3] / "docs"
+# S10 일일 복기 MD는 docs/ 최상위를 어지럽히지 않도록 하위 폴더에 모은다
+# (데이터 원본은 daily_review_reports 테이블 — MD는 사람이 읽는 백업본).
+_AUDIT_DIR = _DOCS_DIR / "system_audit"
 
 
 def _now_kst_iso() -> str:
@@ -259,14 +262,14 @@ def _build_review_markdown(result: dict[str, Any]) -> str:
 
 def _review_markdown_path(trade_date: str) -> Path:
     """Return the deterministic markdown backup path for one S10 review date."""
-    return _DOCS_DIR / f"SYSTEM_AUDIT_{trade_date.replace('-', '')}.md"
+    return _AUDIT_DIR / f"SYSTEM_AUDIT_{trade_date.replace('-', '')}.md"
 
 
 def _write_review_markdown(result: dict[str, Any]) -> str:
-    """Persist the S10 review report as a markdown file in docs/."""
-    _DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    """Persist the S10 review report as a markdown file in docs/system_audit/."""
     trade_date = str(result.get("trade_date") or _now_kst_iso()[:10])
     md_path = _review_markdown_path(trade_date)
+    md_path.parent.mkdir(parents=True, exist_ok=True)
     md_path.write_text(_build_review_markdown(result), encoding="utf-8")
     logger.info("SUCCESS: [S10] review markdown saved path=%s", md_path)
     return str(md_path)
@@ -1482,7 +1485,7 @@ def get_review_report(trade_date: str) -> dict[str, Any] | None:
     payload["md_path"] = str(md_path)
     payload["md_backup_exists"] = md_path.exists()
     payload["review_source"] = "daily_review_reports"
-    payload["md_backup_source"] = "docs/SYSTEM_AUDIT_YYYYMMDD.md"
+    payload["md_backup_source"] = "docs/system_audit/SYSTEM_AUDIT_YYYYMMDD.md"
     payload["realized_pnl"] = _safe_float(daily_summary.get("realized_pnl") or payload.get("total_pnl"))
     payload["realized_pnl_pct"] = _safe_float(daily_summary.get("realized_pnl_pct"))
     payload["pnl_status"] = daily_summary.get("pnl_status") or payload.get("pnl_status") or "unverified"
