@@ -93,7 +93,6 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "regime.intraday_kis_kospi_enabled": True,      # 장중 KOSPI KIS 직접조회
     "regime.intraday_live_driver_enabled": True,    # 장중 실시간 레짐 드라이버
     "exploration.weight_floor": 0.2,                # 탐색 비중 하한
-    "sizing.model_active": False,                   # 예수금비중 신모델 활성 토글(롤백스위치)
     # ── 사이징 모델(결정4, Phase1) — 예수금비중: 종목당 5~15%, 종목수 6~19 ──
     "sizing.per_position_rate_min": 0.05,           # 종목당 최소 비중 5%
     "sizing.positions_min": 6,                      # 최소 종목수
@@ -101,6 +100,7 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     # ── 확신도 모델(레짐×눌림 결합, 전부 설정화 = 언제든 수정) ──
     "conviction.regime_weight": 0.5,                # 장세 vs 눌림 비중(1=장세만·0=눌림만)
     "conviction.pullback_full_dist_pct": -3.0,      # 이만큼 눌리면 눌림점수 만점
+    "sizing.model_active": True,                    # 예수금비중 신모델 활성(2026-08-21 검증후 on)
 }
 # 레짐 SET별 매도 파라미터 의도 (regime SET applied_settings 와 대조)
 INTENT_REGIME_SETS: dict[str, dict[str, float]] = {
