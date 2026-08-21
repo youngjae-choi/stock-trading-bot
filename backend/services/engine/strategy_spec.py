@@ -93,6 +93,7 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "regime.intraday_kis_kospi_enabled": True,      # 장중 KOSPI KIS 직접조회
     "regime.intraday_live_driver_enabled": True,    # 장중 실시간 레짐 드라이버
     "exploration.weight_floor": 0.2,                # 탐색 비중 하한
+    "sizing.model_active": False,                   # 예수금비중 신모델 활성 토글(롤백스위치)
     # ── 사이징 모델(결정4, Phase1) — 예수금비중: 종목당 5~15%, 종목수 6~19 ──
     "sizing.per_position_rate_min": 0.05,           # 종목당 최소 비중 5%
     "sizing.positions_min": 6,                      # 최소 종목수
@@ -224,6 +225,7 @@ CONFORMANCE: list[tuple[str, str | None, str | None]] = [
     ("예수금비중 사이징", "resolve_position_sizing", "sizing.per_position_rate_min"),
     ("확신도 모델", "resolve_conviction", "conviction.regime_weight"),
     ("사이징 shadow 배선", "_shadow_new_sizing", None),
+    ("예수금비중 사이징 활성 토글", "_compute_new_model_sizing", "sizing.model_active"),
     ("max_positions 단일 출처", "resolve_max_positions", "sizing.positions_max"),
     ("레짐별 플레이북 조립", "build_playbook", None),
     ("레짐 판정(30분)", "_judge_regime", None),

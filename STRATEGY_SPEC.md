@@ -77,7 +77,7 @@
 
 ### A-4b. 사이징·배포 — 예수금비중 모델 (결정4, Phase1 구현중)
 **종목수가 아니라 예수금 투입비중이 기준.** 확신↑ → 종목당 비중↑ → 집중, 확신↓ → 분산.
-종목수는 파생 결과. 구현: `strategy_playbook.resolve_position_sizing`. **order_executor에 shadow 배선됨**(`_shadow_new_sizing` — 매수 시 "신모델이라면 얼마"를 로그만, **실주문 불변**). 며칠 로그 비교 → 활성.
+종목수는 파생 결과. 구현: `strategy_playbook.resolve_position_sizing` + `order_executor._compute_new_model_sizing`(가용현금 캡). **활성 토글 `sizing.model_active`**(off=현재 사이징 유지=롤백, on=신모델 적용). 검증: 8/21 실매수 종목당 투입비 5~12% = 신모델 5~15% 범위 내(과투입 아님).
 
 | 레버 | 설정키 | 값 | 의미 |
 |---|---|---|---|
@@ -136,9 +136,9 @@
 ## B. 실측 — 지금 실제로 이렇게 돈다 (자동 생성, 손대지 마라)
 
 <!-- AUTO:LIVE START -->
-_자동 생성: 2026-08-21 01:14:05 · `scripts/strategy_spec_sync.py` · 손대지 마라._
+_자동 생성: 2026-08-21 02:42:48 · `scripts/strategy_spec_sync.py` · 손대지 마라._
 
-**현재 활성 레짐:** `neutral` (trigger=intraday, at=2026-08-21T10:00:05)
+**현재 활성 레짐:** `risk_off` (trigger=morning, at=2026-08-21T11:05:24)
 
 **전략 게이트/설정 (system_settings 실측 · 출처):**
 
@@ -198,6 +198,7 @@ _자동 생성: 2026-08-21 01:14:05 · `scripts/strategy_spec_sync.py` · 손대
 | `regime.intraday_kis_kospi_enabled` | `True` | 코드기본 |
 | `regime.intraday_live_driver_enabled` | `True` | 코드기본 |
 | `exploration.weight_floor` | `0.2` | 코드기본 |
+| `sizing.model_active` | `False` | 코드기본 |
 | `sizing.per_position_rate_min` | `0.05` | 코드기본 |
 | `sizing.positions_min` | `6` | 코드기본 |
 | `sizing.positions_max` | `19` | 코드기본 |
@@ -220,7 +221,7 @@ _드리프트 0건 (아래 C절 참조)_
 ## C. 드리프트 체크 — 실측이 의도를 벗어났나 (자동 생성, 손대지 마라)
 
 <!-- AUTO:DRIFT START -->
-_자동 생성: 2026-08-21 01:14:05_
+_자동 생성: 2026-08-21 02:42:48_
 
 ✅ **드리프트 없음** — 실측이 의도와 일치한다. 시스템이 사양대로 동작 중.
 <!-- AUTO:DRIFT END -->

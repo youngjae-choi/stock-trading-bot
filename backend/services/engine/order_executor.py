@@ -328,8 +328,17 @@ class OrderExecutor:
                 name=str(signal.get("name") or ""), qty=qty, price=price,
                 balance=balance, today=today,
             )
-            # [SHADOW] 예수금비중 신모델 사이징을 로그만 남긴다(실주문 불변). inc2 검증용.
-            self._shadow_new_sizing(symbol, price, balance, qty)
+            # 예수금비중 신모델 사이징: 계산 → shadow 로그 → (sizing.model_active면) 실제 적용.
+            _nm = self._compute_new_model_sizing(symbol, price, balance)
+            if _nm:
+                self._log_shadow_sizing(symbol, price, qty, _nm)
+                from ..settings_store import get_setting as _gs_sz
+                if bool(_gs_sz("sizing.model_active", False)) and _nm["new_qty"] > 0:
+                    logger.info(
+                        "SIZING-ACTIVE: symbol=%s 신모델 적용 qty %d→%d (비중%.1f%%·확신%.2f)",
+                        symbol, qty, _nm["new_qty"], _nm["rate"] * 100, _nm["conv"],
+                    )
+                    qty = _nm["new_qty"]
             if qty <= 0:
                 logger.info("INFO: [S7] 배포 여력 없음 — 매수 스킵 symbol=%s", symbol)
                 self._update_signal_status(signal_id, "skipped_no_room")
@@ -937,14 +946,16 @@ class OrderExecutor:
             pass
         return "neutral"
 
-    def _shadow_new_sizing(self, symbol: str, price: float, balance: dict, actual_qty: int) -> None:
-        """[SHADOW] 예수금비중 신모델(strategy_playbook)이라면 얼마 살지 계산·로그.
+    def _compute_new_model_sizing(self, symbol: str, price: float, balance: dict) -> dict | None:
+        """예수금비중 신모델(strategy_playbook) 사이징 계산. 가용현금(95% 배포)으로 캡.
 
-        실주문은 절대 안 바꾼다(로그만). 며칠 로그로 '신모델 vs 현재' 비교 →
-        안전 확인 후 활성. 어떤 예외도 매수 경로를 막지 않도록 전부 삼킨다.
+        확신도=레짐×VWAP눌림. 실패/비정상이면 None(호출부가 기존 사이징 유지).
         """
         try:
+            from ..settings_store import get_setting
             from .strategy_playbook import resolve_conviction, resolve_position_sizing
+            if price <= 0:
+                return None
             regime = self._current_regime_label()
             vwap = None
             try:  # bar_engine은 decision_engine 소유 인스턴스 — best-effort
@@ -959,17 +970,43 @@ class OrderExecutor:
             total_eval = self._extract_total_eval(balance)
             base = total_eval if total_eval and total_eval > 0 else deposit
             sz = resolve_position_sizing(base, conv)
-            new_qty = int(sz.per_position_krw // price) if price > 0 else 0
-            logger.info(
-                "SHADOW-SIZING symbol=%s regime=%s vwap_dist=%s conv=%.2f | "
-                "현재 qty=%d(%.0f원) → 신모델 qty=%d(비중%.1f%%·%.0f원·목표%d종목)",
-                symbol, regime,
-                ("%.2f" % vwap_dist) if vwap_dist is not None else "NA",
-                conv, actual_qty, actual_qty * price, new_qty,
-                sz.per_position_rate * 100, sz.per_position_krw, sz.target_positions,
-            )
+            # 가용현금(95% 배포 한도 내) 캡 — 절대 과배포 안 함
+            deploy_target = float(get_setting("exploration.deploy_target_rate", 0.95) or 0.95)
+            buffer = total_eval * (1.0 - deploy_target) if total_eval > 0 else 0.0
+            try:
+                deployable = self._effective_deployable(deposit, buffer)
+            except Exception:
+                deployable = max(0.0, deposit - buffer)
+            if deployable <= 0:
+                new_qty = 0                       # 배포 여력 없음 = 신모델도 0(무여력)
+            else:
+                spend = min(sz.per_position_krw, deployable)
+                new_qty = int(spend // price)
+            return {
+                "new_qty": new_qty, "conv": conv, "regime": regime, "vwap_dist": vwap_dist,
+                "rate": sz.per_position_rate, "per_krw": sz.per_position_krw,
+                "target_pos": sz.target_positions,
+            }
         except Exception as exc:
-            logger.debug("shadow sizing skip symbol=%s: %s", symbol, exc)
+            logger.debug("new-model sizing skip symbol=%s: %s", symbol, exc)
+            return None
+
+    def _log_shadow_sizing(self, symbol: str, price: float, actual_qty: int, info: dict) -> None:
+        """SHADOW-SIZING 비교 로그(신모델 vs 현재)."""
+        logger.info(
+            "SHADOW-SIZING symbol=%s regime=%s vwap_dist=%s conv=%.2f | "
+            "현재 qty=%d(%.0f원) → 신모델 qty=%d(비중%.1f%%·%.0f원·목표%d종목)",
+            symbol, info["regime"],
+            ("%.2f" % info["vwap_dist"]) if info["vwap_dist"] is not None else "NA",
+            info["conv"], actual_qty, actual_qty * price, info["new_qty"],
+            info["rate"] * 100, info["per_krw"], info["target_pos"],
+        )
+
+    def _shadow_new_sizing(self, symbol: str, price: float, balance: dict, actual_qty: int) -> None:
+        """[SHADOW] 신모델이라면 얼마 살지 로그(실주문 불변). 예외는 전부 삼킨다."""
+        info = self._compute_new_model_sizing(symbol, price, balance)
+        if info:
+            self._log_shadow_sizing(symbol, price, actual_qty, info)
 
     def _extract_deposit(self, data: dict[str, Any]) -> float:
         """Extract available cash from a KIS balance response.

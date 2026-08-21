@@ -136,6 +136,24 @@ def test_shadow_sizing_swallows_bad_balance():
     oe._shadow_new_sizing("005930", 70000.0, {}, actual_qty=0)  # raise 안 하면 통과
 
 
+def test_compute_new_model_sizing_caps_by_deployable():
+    # 신모델 수량은 가용현금(95% 배포)으로 캡 — 과배포 안 함
+    from backend.services.engine.order_executor import OrderExecutor
+    oe = OrderExecutor.__new__(OrderExecutor)
+    # 총자산 1억(버퍼 5백만) · 가용현금 1천만 → deployable 5백만으로 신모델(중립 1천만) 캡
+    balance = {"output2": [{"ord_psbl_cash": "10000000", "tot_evlu_amt": "100000000"}]}
+    info = oe._compute_new_model_sizing("005930", 70000.0, balance)
+    assert info is not None
+    assert info["new_qty"] <= 5_000_000 // 70000 + 1   # deployable(5백만) 캡 이내
+    assert info["new_qty"] >= 0
+
+
+def test_compute_new_model_sizing_bad_price_returns_none():
+    from backend.services.engine.order_executor import OrderExecutor
+    oe = OrderExecutor.__new__(OrderExecutor)
+    assert oe._compute_new_model_sizing("005930", 0.0, {"output2": [{}]}) is None
+
+
 def test_build_playbook_assembles_sell_and_sizing():
     regime_set = {"stop_loss_rate": -0.035, "take_profit_rate": 0.08,
                   "trailing_activate_profit": 0.04, "trailing_stop_rate": 0.02}
