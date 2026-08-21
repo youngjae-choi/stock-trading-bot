@@ -227,7 +227,28 @@ _자동 생성: 2026-08-21 01:14:05_
 
 ---
 
-## 갱신 규칙
-1. **전략을 바꿀 때:** 위 A절(의도) 서술 + `scripts/strategy_spec_sync.py`의 `INTENT_SETTINGS`/`INTENT_REGIME_SETS`를 **함께** 수정한다.
-2. **실측 반영:** 설정을 바꾸거나 배포한 뒤 `python scripts/strategy_spec_sync.py` 실행 → B·C 갱신.
-3. **드리프트 발견 시:** C절 각 항목은 "실측이 의도와 다르다"는 뜻. **버그면 실측을 의도대로 되돌리고, 의도가 바뀐 것이면 1번을 수행**한다. 드리프트 0을 유지한다.
+## 개발 사이클 — SSOT ↔ 구현 완전 맞물림 (PM 원칙)
+
+> **SSOT부터 수정 → 개발 → 완료 후 SSOT대로 됐는지 검증.** 이 폐루프가 완성이다.
+> 나중에 뭔가 잘못되면 **A절(의도)부터 고치고** 그다음 구현을 바꾼다. 코드가 SSOT를 앞서지 않는다.
+
+```
+① SSOT 수정(A절 의도 + INTENT + CONFORMANCE)
+      ↓
+② 개발(구현 + 유닛테스트, TDD)
+      ↓
+③ 검증: python scripts/strategy_spec_sync.py --check
+      - 드리프트(설정 값)  = 실측 == 의도 ?
+      - conformance(맞물림) = SSOT가 말하는 구현·설정이 실제 존재하나 ?
+      둘 다 ✅ 라야 "SSOT대로 됨" 확정. (라이브 워치독도 5분마다 같은 검사)
+```
+
+**두 층위 검증:**
+- **드리프트** = 설정 *값* 일치 (`INTENT_SETTINGS`/`CODE_DEFAULTS`/레짐SET vs 라이브 DB).
+- **conformance** = SSOT 주장의 *구현* 존재 (`CONFORMANCE` 매핑의 코드심볼·설정키). 코드가 사라지거나 이름 바뀌면 여기서 깨진다.
+
+**규칙:**
+1. **전략/구현을 바꿀 때:** A절 서술 + `strategy_spec.py`의 `INTENT_*` + (새 구현이면) `CONFORMANCE` 매핑을 **함께** 갱신.
+2. **개발 완료 후:** `--check`로 드리프트 0 **그리고** conformance 0 확인. 하나라도 깨지면 미완료.
+3. **실측 반영:** `python scripts/strategy_spec_sync.py` 실행 → B·C 갱신(멱등).
+4. **어긋남 발견 시:** 버그면 구현을 SSOT대로 되돌리고, 의도가 바뀐 것이면 1번(SSOT부터 수정). **드리프트·conformance 0을 항상 유지.**

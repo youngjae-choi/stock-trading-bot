@@ -5,7 +5,12 @@ STRATEGY_SPEC.md의 SSOT를 지탱하는 compute_drift가 (a)일치 시 무경�
 """
 from __future__ import annotations
 
-from backend.services.engine.strategy_spec import compute_drift
+from backend.services.engine import strategy_spec
+from backend.services.engine.strategy_spec import (
+    CONFORMANCE,
+    check_conformance,
+    compute_drift,
+)
 
 
 def test_no_drift_when_live_matches_intent():
@@ -67,3 +72,24 @@ def test_code_default_matching_db_is_ok():
     # 코드기본과 같은 값이 DB에 명시돼 있으면 정상
     drift = compute_drift({}, {"engine.churn": 2}, {}, {}, intent_code_defaults={"engine.churn": 2})
     assert drift == []
+
+
+def test_conformance_current_implementation_matches_ssot():
+    # 지금 구현이 SSOT 주장(코드심볼·설정)과 맞물려 있어야 한다
+    assert check_conformance() == []
+
+
+def test_conformance_catches_missing_symbol(monkeypatch):
+    # SSOT가 없는 구현을 주장하면 conformance가 잡아야 한다("SSOT부터 고쳐" 신호)
+    fake = list(CONFORMANCE) + [("가짜 주장", "함수가_존재하지_않음_xyz", None)]
+    monkeypatch.setattr(strategy_spec, "CONFORMANCE", fake)
+    issues = check_conformance()
+    assert any("함수가_존재하지_않음_xyz" in i for i in issues)
+
+
+def test_conformance_catches_untracked_setting(monkeypatch):
+    # SSOT가 감시 안 되는 설정을 주장하면 잡아야 한다
+    fake = list(CONFORMANCE) + [("가짜", "resolve_conviction", "engine.존재안함_xyz")]
+    monkeypatch.setattr(strategy_spec, "CONFORMANCE", fake)
+    issues = check_conformance()
+    assert any("존재안함_xyz" in i for i in issues)

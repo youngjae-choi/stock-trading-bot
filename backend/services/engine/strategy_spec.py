@@ -212,6 +212,54 @@ def check_drift() -> list[str]:
                          INTENT_CODE_DEFAULTS)
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# Conformance — SSOT 주장 ↔ 구현(코드·설정)이 실제로 맞물리는지 검증.
+# 드리프트(설정 '값')와 별개로, SSOT가 말하는 구현이 **존재하는지**를 본다.
+# 개발할 때마다 여기 (주장, 구현심볼, 설정키)를 등록 → 구현↔SSOT 자동 맞물림.
+# 심볼이 사라지거나 이름 바뀌면 여기서 잡혀 "SSOT부터 고치고 개발" 사이클을 강제.
+# ─────────────────────────────────────────────────────────────────────────
+CONFORMANCE: list[tuple[str, str | None, str | None]] = [
+    # (SSOT 주장, 구현 코드 심볼(def/class/모듈), 대표 설정키)
+    ("눌림목 게이트", "_vwap_pullback_gate", "engine.entry_vwap_pullback_mode"),
+    ("예수금비중 사이징", "resolve_position_sizing", "sizing.per_position_rate_min"),
+    ("확신도 모델", "resolve_conviction", "conviction.regime_weight"),
+    ("레짐별 플레이북 조립", "build_playbook", None),
+    ("레짐 판정(30분)", "_judge_regime", None),
+    ("폭락 방어", "is_flash_crash_defense_active", "risk.flash_crash_threshold_pct"),
+    ("churn 재진입 가드", "intraday_stoploss_count", "engine.intraday_max_stoploss_per_symbol"),
+    ("EOD 강제청산", "run_eod_liquidation", "risk.force_exit_time"),
+    ("전략설정 엔진(플레이북)", "strategy_playbook", None),
+]
+
+
+def _code_symbols() -> set[str]:
+    """backend/services/engine의 def/class 이름 + 모듈명 집합(구현 심볼 존재 확인용)."""
+    syms: set[str] = set()
+    eng = ROOT / "backend" / "services" / "engine"
+    for p in eng.glob("*.py"):
+        syms.add(p.stem)
+        try:
+            for m in re.finditer(r"^\s*(?:async\s+)?(?:def|class)\s+([A-Za-z_][A-Za-z0-9_]*)",
+                                 p.read_text(encoding="utf-8"), re.M):
+                syms.add(m.group(1))
+        except OSError:
+            continue
+    return syms
+
+
+def check_conformance() -> list[str]:
+    """SSOT 주장의 구현 심볼·설정키가 실제 존재하는지 검증. 값이 아닌 '맞물림'."""
+    issues: list[str] = []
+    syms = _code_symbols()
+    known = set(INTENT_SETTINGS) | set(INTENT_CODE_DEFAULTS)
+    for claim, sym, key in CONFORMANCE:
+        if sym and sym not in syms:
+            issues.append(f"🔴 '{claim}' 구현 `{sym}` 미존재 — SSOT↔코드 불일치(개발 필요/이름변경)")
+        if key and key not in known:
+            issues.append(f"⚠ '{claim}' 설정 `{key}` INTENT 미등록 — 감시 누락")
+    return issues
+
+
 def _fmt_live_block(live_settings, live_sets, current, drift_count) -> str:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     L = [f"_자동 생성: {ts} · `scripts/strategy_spec_sync.py` · 손대지 마라._", ""]

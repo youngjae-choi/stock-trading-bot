@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.services.engine.strategy_spec import (  # noqa: E402
+    check_conformance,
     check_drift,
     compute_drift,
     sync_strategy_spec,
@@ -52,13 +53,23 @@ def main() -> int:
 
     if args.check:
         drift = check_drift()
+        conf = check_conformance()
+        rc = 0
         if drift:
-            print(f"🔴 드리프트 {len(drift)}건:")
+            print(f"🔴 드리프트(설정값) {len(drift)}건:")
             for d in drift:
                 print("  " + d)
-            return 1
-        print("✅ 드리프트 없음 — 실측이 의도와 일치")
-        return 0
+            rc = 1
+        else:
+            print("✅ 드리프트 없음 — 설정 실측이 의도와 일치")
+        if conf:
+            print(f"🔴 conformance(구현 맞물림) {len(conf)}건:")
+            for c in conf:
+                print("  " + c)
+            rc = 1
+        else:
+            print("✅ conformance 일치 — SSOT 주장의 구현·설정이 실제 존재")
+        return rc
 
     res = sync_strategy_spec(write=True)
     status = "✅ 드리프트 없음" if not res["drift"] else f"🔴 드리프트 {res['drift']}건"

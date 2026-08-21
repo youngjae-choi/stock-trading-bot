@@ -296,7 +296,7 @@ def run_ops_watchdog(now: datetime | None = None) -> dict:
     # 벗어났나. 파일은 수정하지 않는다(작업트리 청결) — 벗어났으면 Alert만 남긴다.
     # "이렇게 동작해야 하는데 안 그러면 고쳐라"를 사람 없이 잡는 장치. LLM/자동수정 없음.
     try:
-        from .strategy_spec import check_drift
+        from .strategy_spec import check_conformance, check_drift
 
         drift = check_drift()
         if drift:
@@ -306,8 +306,17 @@ def run_ops_watchdog(now: datetime | None = None) -> dict:
                 create_alert("ops_watch", title, "WARNING", detail, trade_date=td)
                 created += 1
                 logger.warning("OPS-DRIFT: [전략] 드리프트 %d건 — %s", len(drift), detail[:160])
+        # conformance: SSOT 주장의 구현(코드·설정)이 실제 존재하나 (값 아닌 맞물림)
+        conf = check_conformance()
+        if conf:
+            title = "전략 사양 불일치 — SSOT↔구현 맞물림 깨짐"
+            if not _alert_exists(td, title):
+                detail = f"conformance {len(conf)}건: " + " / ".join(conf[:5])
+                create_alert("ops_watch", title, "CRITICAL", detail, trade_date=td)
+                created += 1
+                logger.warning("OPS-CONFORM: [전략] 불일치 %d건 — %s", len(conf), detail[:160])
     except Exception as exc:
-        logger.warning("WARN: [OpsWatchdog] 전략 드리프트 체크 실패 — %s", exc)
+        logger.warning("WARN: [OpsWatchdog] 전략 사양 체크 실패 — %s", exc)
 
     logger.info(
         "SUCCESS: [OpsWatchdog] td=%s checks=%d anomalies=%d created=%d",
