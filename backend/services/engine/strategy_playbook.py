@@ -30,6 +30,47 @@ _SIZING_KEYS = {
 }
 
 
+# ── 확신도(conviction) 모델 설정키 (결정: 레짐×눌림 결합, 전부 설정화 = 언제든 수정) ──
+#   conviction = regime_weight×레짐점수 + (1-regime_weight)×눌림점수
+#   관리자가 regime_weight로 "장세 vs 눌림" 비중을, regime_scores로 장세별 점수를,
+#   pullback_full_dist_pct로 "얼마나 눌려야 만점"을 코드 없이 조절한다.
+_DEFAULT_REGIME_SCORES = {
+    "risk_on": 1.0, "neutral": 0.5, "risk_off": 0.2, "volatile": 0.3, "flash_crash": 0.0,
+}
+
+
+def _clamp01(x: float) -> float:
+    return max(0.0, min(1.0, x))
+
+
+def resolve_conviction(
+    regime: str, vwap_dist_pct: float | None, getter: Callable = get_setting
+) -> float:
+    """확신도 ∈ [0,1] = 레짐×눌림 결합 (모든 파라미터 설정화 — 언제든 수정 가능).
+
+    - 레짐점수: `conviction.regime_scores`(JSON) — risk_on 높음, risk_off 낮음.
+    - 눌림점수: VWAP 아래로 깊을수록↑. `conviction.pullback_full_dist_pct`(기본 -3%)서 만점.
+      VWAP 위(추격)=0, 미상=0.5(중립).
+    - 결합가중: `conviction.regime_weight`(기본 0.5) — 1.0=레짐만, 0.0=눌림만.
+    """
+    w = _clamp01(_f(getter, "conviction.regime_weight", 0.5))
+    scores = getter("conviction.regime_scores", _DEFAULT_REGIME_SCORES) or _DEFAULT_REGIME_SCORES
+    try:
+        regime_score = _clamp01(float(scores.get(regime, 0.5)))
+    except (TypeError, ValueError, AttributeError):
+        regime_score = 0.5
+    full = _f(getter, "conviction.pullback_full_dist_pct", -3.0)
+    if vwap_dist_pct is None:
+        pullback_score = 0.5
+    elif vwap_dist_pct >= 0:
+        pullback_score = 0.0            # VWAP 위 = 추격 = 눌림 확신 없음
+    elif full < 0:
+        pullback_score = _clamp01(vwap_dist_pct / full)   # -1.5/-3=0.5, -3↓=1.0
+    else:
+        pullback_score = 0.5
+    return _clamp01(w * regime_score + (1.0 - w) * pullback_score)
+
+
 @dataclass
 class SizingResult:
     """한 종목 진입 시 예수금비중 사이징 결과."""

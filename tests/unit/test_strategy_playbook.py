@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from backend.services.engine.strategy_playbook import (
     build_playbook,
+    resolve_conviction,
     resolve_position_sizing,
 )
 
@@ -66,6 +67,49 @@ def test_zero_deposit_safe():
     r = resolve_position_sizing(0, conviction=1.0, getter=_getter)
     assert r.per_position_krw == 0.0
     assert r.target_positions == 6
+
+
+_CONV = {
+    "conviction.regime_weight": 0.5,
+    "conviction.pullback_full_dist_pct": -3.0,
+    "conviction.regime_scores": {"risk_on": 1.0, "neutral": 0.5, "risk_off": 0.2},
+}
+
+
+def _cgetter(key, default=None):
+    return _CONV.get(key, default)
+
+
+def test_conviction_best_case_uptrend_deep_pullback():
+    # risk_on(1.0) + 깊은 눌림(-3%→1.0) → 0.5*1 + 0.5*1 = 1.0 (최고 집중)
+    assert resolve_conviction("risk_on", -3.0, getter=_cgetter) == 1.0
+
+
+def test_conviction_worst_case_defensive_chase():
+    # risk_off(0.2) + VWAP위 추격(0.0) → 0.5*0.2 + 0.5*0 = 0.1 (분산)
+    assert abs(resolve_conviction("risk_off", 1.5, getter=_cgetter) - 0.1) < 1e-9
+
+
+def test_conviction_regime_weight_shifts_emphasis():
+    # regime_weight=1.0 → 눌림 무시, 레짐만. risk_on이면 눌림 없어도 1.0
+    cfg = dict(_CONV, **{"conviction.regime_weight": 1.0})
+    assert resolve_conviction("risk_on", 5.0, getter=lambda k, d=None: cfg.get(k, d)) == 1.0
+    # regime_weight=0.0 → 레짐 무시, 눌림만. 깊은 눌림이면 risk_off여도 1.0
+    cfg0 = dict(_CONV, **{"conviction.regime_weight": 0.0})
+    assert resolve_conviction("risk_off", -3.0, getter=lambda k, d=None: cfg0.get(k, d)) == 1.0
+
+
+def test_conviction_unknown_vwap_neutral():
+    # 눌림 미상 → 0.5. risk_on(1.0): 0.5*1 + 0.5*0.5 = 0.75
+    assert resolve_conviction("risk_on", None, getter=_cgetter) == 0.75
+
+
+def test_conviction_feeds_sizing_end_to_end():
+    # 결합: 최고 확신 → 15%×6, 최저 확신 → 5%×19 근처
+    hi = resolve_conviction("risk_on", -3.0, getter=_cgetter)
+    lo = resolve_conviction("risk_off", 2.0, getter=_cgetter)
+    assert resolve_position_sizing(100_000_000, hi, getter=_getter).target_positions == 6
+    assert resolve_position_sizing(100_000_000, lo, getter=_getter).per_position_rate <= 0.06
 
 
 def test_build_playbook_assembles_sell_and_sizing():

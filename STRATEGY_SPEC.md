@@ -125,7 +125,7 @@
 ## B. 실측 — 지금 실제로 이렇게 돈다 (자동 생성, 손대지 마라)
 
 <!-- AUTO:LIVE START -->
-_자동 생성: 2026-08-21 01:02:04 · `scripts/strategy_spec_sync.py` · 손대지 마라._
+_자동 생성: 2026-08-21 01:14:05 · `scripts/strategy_spec_sync.py` · 손대지 마라._
 
 **현재 활성 레짐:** `neutral` (trigger=intraday, at=2026-08-21T10:00:05)
 
@@ -190,6 +190,8 @@ _자동 생성: 2026-08-21 01:02:04 · `scripts/strategy_spec_sync.py` · 손대
 | `sizing.per_position_rate_min` | `0.05` | 코드기본 |
 | `sizing.positions_min` | `6` | 코드기본 |
 | `sizing.positions_max` | `19` | 코드기본 |
+| `conviction.regime_weight` | `0.5` | 코드기본 |
+| `conviction.pullback_full_dist_pct` | `-3.0` | 코드기본 |
 
 **레짐 SET별 매도 파라미터 (실측):**
 
@@ -207,7 +209,7 @@ _드리프트 0건 (아래 C절 참조)_
 ## C. 드리프트 체크 — 실측이 의도를 벗어났나 (자동 생성, 손대지 마라)
 
 <!-- AUTO:DRIFT START -->
-_자동 생성: 2026-08-21 01:02:04_
+_자동 생성: 2026-08-21 01:14:05_
 
 ✅ **드리프트 없음** — 실측이 의도와 일치한다. 시스템이 사양대로 동작 중.
 <!-- AUTO:DRIFT END -->

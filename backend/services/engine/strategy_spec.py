@@ -97,6 +97,9 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "sizing.per_position_rate_min": 0.05,           # 종목당 최소 비중 5%
     "sizing.positions_min": 6,                      # 최소 종목수
     "sizing.positions_max": 19,                     # 최대 종목수
+    # ── 확신도 모델(레짐×눌림 결합, 전부 설정화 = 언제든 수정) ──
+    "conviction.regime_weight": 0.5,                # 장세 vs 눌림 비중(1=장세만·0=눌림만)
+    "conviction.pullback_full_dist_pct": -3.0,      # 이만큼 눌리면 눌림점수 만점
 }
 # 레짐 SET별 매도 파라미터 의도 (regime SET applied_settings 와 대조)
 INTENT_REGIME_SETS: dict[str, dict[str, float]] = {
