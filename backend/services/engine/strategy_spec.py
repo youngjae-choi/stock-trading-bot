@@ -224,6 +224,7 @@ CONFORMANCE: list[tuple[str, str | None, str | None]] = [
     ("예수금비중 사이징", "resolve_position_sizing", "sizing.per_position_rate_min"),
     ("확신도 모델", "resolve_conviction", "conviction.regime_weight"),
     ("사이징 shadow 배선", "_shadow_new_sizing", None),
+    ("max_positions 단일 출처", "resolve_max_positions", "sizing.positions_max"),
     ("레짐별 플레이북 조립", "build_playbook", None),
     ("레짐 판정(30분)", "_judge_regime", None),
     ("폭락 방어", "is_flash_crash_defense_active", "risk.flash_crash_threshold_pct"),

@@ -7,6 +7,7 @@ from __future__ import annotations
 from backend.services.engine.strategy_playbook import (
     build_playbook,
     resolve_conviction,
+    resolve_max_positions,
     resolve_position_sizing,
 )
 
@@ -110,6 +111,11 @@ def test_conviction_feeds_sizing_end_to_end():
     lo = resolve_conviction("risk_off", 2.0, getter=_cgetter)
     assert resolve_position_sizing(100_000_000, hi, getter=_getter).target_positions == 6
     assert resolve_position_sizing(100_000_000, lo, getter=_getter).per_position_rate <= 0.06
+
+
+def test_resolve_max_positions_returns_model_ceiling():
+    # [6,19] 모델의 상한 = positions_max
+    assert resolve_max_positions(getter=_getter) == 19
 
 
 def test_shadow_sizing_never_raises_and_logs(caplog):

@@ -119,6 +119,15 @@ def resolve_position_sizing(
     return SizingResult(round(rate, 4), cnt, round(deposit * rate, 2), round(deploy, 4))
 
 
+def resolve_max_positions(getter: Callable = get_setting) -> int:
+    """[6,19] 모델의 종목수 상한(하드 ceiling) — max_positions 단일 출처(결정4).
+
+    실제 종목수는 예수금비중 사이징으로 6~19 사이 파생. 이건 fallback/백스톱용 상한.
+    (주력 제약은 이미 95% 배포 캡 — order_preflight 배포 게이트.)
+    """
+    return _i(getter, *(_SIZING_KEYS["pos_max"]))
+
+
 @dataclass
 class Playbook:
     """한 레짐의 전략 한 벌. 소비 엔진이 읽는 단일 계약."""
