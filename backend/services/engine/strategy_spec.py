@@ -93,6 +93,10 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "regime.intraday_kis_kospi_enabled": True,      # 장중 KOSPI KIS 직접조회
     "regime.intraday_live_driver_enabled": True,    # 장중 실시간 레짐 드라이버
     "exploration.weight_floor": 0.2,                # 탐색 비중 하한
+    # ── 사이징 모델(결정4, Phase1) — 예수금비중: 종목당 5~15%, 종목수 6~19 ──
+    "sizing.per_position_rate_min": 0.05,           # 종목당 최소 비중 5%
+    "sizing.positions_min": 6,                      # 최소 종목수
+    "sizing.positions_max": 19,                     # 최대 종목수
 }
 # 레짐 SET별 매도 파라미터 의도 (regime SET applied_settings 와 대조)
 INTENT_REGIME_SETS: dict[str, dict[str, float]] = {

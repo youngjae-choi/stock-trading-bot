@@ -75,13 +75,18 @@
 - **공통:** EOD 강제청산(`force_exit_time` 15:20 / `force_exit_ceiling` 15:12) · 폭락 방어모드(검증 8/19) · 무틱 손절 REST 백업(`stop_loss_backup_*`).
 - **하락전환(예정):** 트레일링 즉시 조임.
 
-### A-4b. 사이징·배포 (매매 금액 결정 — 이전엔 문서에서 누락)
-| 레버 | 설정키 | 현재값 | 의미 |
+### A-4b. 사이징·배포 — 예수금비중 모델 (결정4, Phase1 구현중)
+**종목수가 아니라 예수금 투입비중이 기준.** 확신↑ → 종목당 비중↑ → 집중, 확신↓ → 분산.
+종목수는 파생 결과. 구현: `strategy_playbook.resolve_position_sizing` (소비자 배선은 shadow 검증 후).
+
+| 레버 | 설정키 | 값 | 의미 |
 |---|---|---|---|
-| 예수금 배포 | `exploration.deploy_target_rate` | 0.95 | 예수금 95%까지 배포 |
-| 종목당 비중 | `risk.max_position_rate_per_stock` | 0.15 | 종목당 최대 15% |
-| 최대 종목수 | `risk.max_positions` / 레짐SET / RulePack | **5 / 12 / ~10** | ⚠ **다출처 충돌 — §A-7** |
-| 탐색 사이징 | `engine.exploration_mode`·`exploration.weight_floor` | on·0.2 | ⚠ 졸업 의도 확인(§A-7) |
+| 종목당 비중 | `sizing.per_position_rate_min` ~ `risk.max_position_rate_per_stock` | **5% ~ 15%** | 확신도로 보간 |
+| 종목수(파생) | `sizing.positions_min` ~ `sizing.positions_max` | **6 ~ 19** | 배포/비중, 클램프 |
+| 총배포 상한 | `exploration.deploy_target_rate` | 0.95 | 예수금 95% |
+
+> 예: 확신 1.0 → 15%×6종목 집중 / 확신 0.0 → 5%×19종목 분산. (구 `risk.max_positions=5`·레짐SET 12·RulePack 10 **3출처 충돌은 이 [6,19] 범위 모델로 대체** — §A-7 #1 해소 예정)
+> ⚠ `engine.exploration_mode`=on(졸업 의도 확인, §A-7 #2)
 
 ### A-4c. 리스크 할트·안전벨트
 | 레버 | 설정키 | 현재값 |
@@ -120,9 +125,9 @@
 ## B. 실측 — 지금 실제로 이렇게 돈다 (자동 생성, 손대지 마라)
 
 <!-- AUTO:LIVE START -->
-_자동 생성: 2026-08-21 00:18:09 · `scripts/strategy_spec_sync.py` · 손대지 마라._
+_자동 생성: 2026-08-21 01:02:04 · `scripts/strategy_spec_sync.py` · 손대지 마라._
 
-**현재 활성 레짐:** `risk_off` (trigger=morning, at=2026-08-21T09:06:00)
+**현재 활성 레짐:** `neutral` (trigger=intraday, at=2026-08-21T10:00:05)
 
 **전략 게이트/설정 (system_settings 실측 · 출처):**
 
@@ -182,6 +187,9 @@ _자동 생성: 2026-08-21 00:18:09 · `scripts/strategy_spec_sync.py` · 손대
 | `regime.intraday_kis_kospi_enabled` | `True` | 코드기본 |
 | `regime.intraday_live_driver_enabled` | `True` | 코드기본 |
 | `exploration.weight_floor` | `0.2` | 코드기본 |
+| `sizing.per_position_rate_min` | `0.05` | 코드기본 |
+| `sizing.positions_min` | `6` | 코드기본 |
+| `sizing.positions_max` | `19` | 코드기본 |
 
 **레짐 SET별 매도 파라미터 (실측):**
 
@@ -199,7 +207,7 @@ _드리프트 0건 (아래 C절 참조)_
 ## C. 드리프트 체크 — 실측이 의도를 벗어났나 (자동 생성, 손대지 마라)
 
 <!-- AUTO:DRIFT START -->
-_자동 생성: 2026-08-21 00:18:09_
+_자동 생성: 2026-08-21 01:02:04_
 
 ✅ **드리프트 없음** — 실측이 의도와 일치한다. 시스템이 사양대로 동작 중.
 <!-- AUTO:DRIFT END -->
