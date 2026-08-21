@@ -88,6 +88,17 @@
 > 예: 확신 1.0 → 15%×6종목 집중 / 확신 0.0 → 5%×19종목 분산. (구 `risk.max_positions=5`·레짐SET 12·RulePack 10 **3출처 충돌은 이 [6,19] 범위 모델로 대체** — §A-7 #1 해소 예정)
 > ⚠ `engine.exploration_mode`=on(졸업 의도 확인, §A-7 #2)
 
+**확신도(conviction) 모델** — 위 사이징의 "확신"을 정하는 법. 구현: `strategy_playbook.resolve_conviction`.
+`확신 = regime_weight × 레짐점수 + (1−regime_weight) × 눌림점수` (전부 설정 = 언제든 수정).
+
+| 설정키 | 값 | 의미 |
+|---|---|---|
+| `conviction.regime_weight` | 0.5 | 장세 vs 눌림 비중 (1=장세만·0=눌림만) |
+| `conviction.regime_scores` | risk_on 1.0 … risk_off 0.2 | 장세별 점수(JSON) |
+| `conviction.pullback_full_dist_pct` | -3.0 | VWAP 아래 이만큼 눌리면 눌림점수 만점(위=추격=0) |
+
+> risk_on+깊은눌림=1.0(집중) / risk_off+추격=0.1(분산). **배선 상태:** 순수함수+유닛 완료, **order_executor 배선은 shadow 검증 후**(현재 미배선=동작불변).
+
 ### A-4c. 리스크 할트·안전벨트
 | 레버 | 설정키 | 현재값 |
 |---|---|---|
