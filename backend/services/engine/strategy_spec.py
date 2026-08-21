@@ -93,6 +93,14 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "regime.intraday_kis_kospi_enabled": True,      # 장중 KOSPI KIS 직접조회
     "regime.intraday_live_driver_enabled": True,    # 장중 실시간 레짐 드라이버
     "exploration.weight_floor": 0.2,                # 탐색 비중 하한
+    # ── 시장감지 엔진② 5장세·전환 임계(설정화, A-7#5 해소) ──
+    "regime.down_pct": -1.5,                        # 하락 임계
+    "regime.up_pct": 0.5,                           # 상승 임계
+    "regime.surge_pct": 2.5,                        # 폭등 임계
+    "regime.vix_volatile": 28.0,                    # volatile VIX 임계
+    "regime.down_transition_pp": -1.0,              # 하락전환: window 내 -1.0%p
+    "regime.up_transition_pp": 1.0,                 # 상승전환: window 내 +1.0%p
+    "regime.li_lean_weight": 0.25,                  # 선행지표 lean 바이어스 가중
     # ── 사이징 모델(결정4, Phase1) — 예수금비중: 종목당 5~15%, 종목수 6~19 ──
     "sizing.per_position_rate_min": 0.05,           # 종목당 최소 비중 5%
     "sizing.positions_min": 6,                      # 최소 종목수
@@ -229,6 +237,8 @@ CONFORMANCE: list[tuple[str, str | None, str | None]] = [
     ("max_positions 단일 출처", "resolve_max_positions", "sizing.positions_max"),
     ("레짐별 플레이북 조립", "build_playbook", None),
     ("레짐 판정(30분)", "_judge_regime", None),
+    ("시장감지 5장세 판정", "classify_regime_5tier", "regime.surge_pct"),
+    ("전환(방향) 감지", "detect_transition", "regime.down_transition_pp"),
     ("폭락 방어", "is_flash_crash_defense_active", "risk.flash_crash_threshold_pct"),
     ("churn 재진입 가드", "intraday_stoploss_count", "engine.intraday_max_stoploss_per_symbol"),
     ("EOD 강제청산", "run_eod_liquidation", "risk.force_exit_time"),

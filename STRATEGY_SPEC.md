@@ -108,9 +108,13 @@
 | 수동 긴급정지 | `risk.emergency_halt_enabled` | off(평시) |
 | 부분체결 재주문 | `risk.partial_fill_reorder_enabled` | on |
 
-### A-5. 전환(하락/상승) 대응 — 개발 예정 (백테스트 선행)
-현 레짐(레벨)에 **"최근 30~60분 KOSPI 기울기" 축**을 추가. 레벨이 아직 +면서도 급히 꺾이면 하락전환 판정 → 신규매수 중단 + 트레일 조임. 반대(바닥 반등)는 상승전환 → 진입 재개.
-**착수 전 검증:** "8/18에 -1.0%p/30분 하락 시 매수중단했으면 손실이 얼마나 줄었나"를 `scripts/edge_backtest.py` 계열로 실증 후 구현.
+### A-5. 시장감지 엔진② — 5장세 판정 + 전환(방향) 감지 (모듈 구축, 배선 예정)
+**레벨(5장세) + 방향(전환)** 두 축 결정론 판단. 구현: `market_sensing.py`(순수함수+유닛10, **전부 설정 임계**).
+- **`classify_regime_5tier`**: KOSPI(+VIX·선행지표 lean)로 폭락/하락/보합/상승/폭등. 임계 `regime.{crash(=flash),down,up,surge}_pct`·`vix_volatile`.
+- **`detect_transition`**: 최근 window KOSPI 기울기로 하락전환(`regime.down_transition_pp` -1.0%p)/상승전환(+1.0%p). **레벨 무관** — 8/18(+2.77→+1.25=-1.52%p) 하락전환 검증됨.
+- 코스 백테스트: 8/18 하락전환 11:00 발화 → 전환後 매수 2건 차단 + 전환前 8건 매도조임 대상.
+
+**배선 상태:** 모듈·설정·유닛 완료. **미배선**(현재 라이브는 여전히 `_judge_regime` 4장세). 다음: 장중 KOSPI 시계열 저장(현재 미저장) + shadow(would-be 레짐/전환 로그) → 검증 → 활성(전환시 매수중단·트레일조임, 폭등시 §A-4b 사이징확대).
 
 ### A-6. 검증 상태 요약
 | 검증됨 ✅ | 미검증 ✗ |
@@ -126,7 +130,7 @@
 | 2 | **exploration_mode=on** | 탐색 사이징 활성. 메모리상 7/4 "졸업" 의도였으나 플래그는 아직 on. | 졸업 여부 PM 확인 → off면 의도 갱신 |
 | 3 | min_ai_confidence 타입 | DB에 문자열 `"0.60"` 저장(코드가 float coerce라 동작은 정상) | 숫자로 정규화(선택) |
 | 4 | flash_crash 상태플래그 | `flash_crash_defense_active=true`(date 8/19). 날짜스코프라 다음 거래일 자동해제(동작 정상) | 상태값이라 INTENT 제외 |
-| 5 | 레짐 임계 하드코딩 | `_judge_regime` 임계가 설정 아님 → 드리프트 감시 불가 | 설정화(후속) |
+| 5 | 레짐 임계 하드코딩 | 라이브 `_judge_regime` 임계는 아직 하드코딩. 단 `market_sensing`(엔진②)이 **설정화된 5장세 임계로 대체 예정**(배선 후 #5 해소) | market_sensing 배선 → _judge_regime 대체 |
 | 6 | buy_condition_framework 휴면 | 돌파/눌림/모멘텀 그룹·체결강도 55% 코드 존재하나 **메인 진입경로가 우회**(등락률+거래량만) | 엣지 게이트화 시 정리(②③ 이후) |
 
 > **감시 범위:** INTENT 명시설정(~40)+코드기본(14)+레짐SET(3)은 드리프트 자동감시. 위 6개(특히 1·5·6)는 **구조적이라 수동 관리** — 전략 변경 시 반드시 재확인.
@@ -136,7 +140,7 @@
 ## B. 실측 — 지금 실제로 이렇게 돈다 (자동 생성, 손대지 마라)
 
 <!-- AUTO:LIVE START -->
-_자동 생성: 2026-08-21 02:51:02 · `scripts/strategy_spec_sync.py` · 손대지 마라._
+_자동 생성: 2026-08-21 03:10:30 · `scripts/strategy_spec_sync.py` · 손대지 마라._
 
 **현재 활성 레짐:** `risk_off` (trigger=morning, at=2026-08-21T11:50:28)
 
@@ -198,6 +202,13 @@ _자동 생성: 2026-08-21 02:51:02 · `scripts/strategy_spec_sync.py` · 손대
 | `regime.intraday_kis_kospi_enabled` | `True` | 코드기본 |
 | `regime.intraday_live_driver_enabled` | `True` | 코드기본 |
 | `exploration.weight_floor` | `0.2` | 코드기본 |
+| `regime.down_pct` | `-1.5` | 코드기본 |
+| `regime.up_pct` | `0.5` | 코드기본 |
+| `regime.surge_pct` | `2.5` | 코드기본 |
+| `regime.vix_volatile` | `28.0` | 코드기본 |
+| `regime.down_transition_pp` | `-1.0` | 코드기본 |
+| `regime.up_transition_pp` | `1.0` | 코드기본 |
+| `regime.li_lean_weight` | `0.25` | 코드기본 |
 | `sizing.per_position_rate_min` | `0.05` | 코드기본 |
 | `sizing.positions_min` | `6` | 코드기본 |
 | `sizing.positions_max` | `19` | 코드기본 |
@@ -221,7 +232,7 @@ _드리프트 0건 (아래 C절 참조)_
 ## C. 드리프트 체크 — 실측이 의도를 벗어났나 (자동 생성, 손대지 마라)
 
 <!-- AUTO:DRIFT START -->
-_자동 생성: 2026-08-21 02:51:02_
+_자동 생성: 2026-08-21 03:10:30_
 
 ✅ **드리프트 없음** — 실측이 의도와 일치한다. 시스템이 사양대로 동작 중.
 <!-- AUTO:DRIFT END -->
