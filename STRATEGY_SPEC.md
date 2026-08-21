@@ -39,6 +39,8 @@
 > 레짐은 레벨만 봐서 11:30(이미 마이너스)에야 neutral로 바뀜 → 그 사이 봇은 risk_on(공격)으로 꼭지 매수 → -2.16M.
 > **레벨은 아직 +1.25%여도 방향은 하락전환.** 이걸 잡는 게 §A-5.
 
+> ⚠ **레짐 임계는 코드 하드코딩**(`_judge_regime`: vix>28/22, kospi ±1.5/0.5) — **설정이 아니라 드리프트 감시 불가.** 바꾸려면 코드 수정 + 이 문서 갱신. 설정화는 후속 과제.
+
 ### A-2. 종목 선정
 | 장세 | 선정 의도 | 현재 |
 |---|---|---|
@@ -46,16 +48,49 @@
 | 폭락 | 인버스1x + 급락반등주 트랙 허용 | △ 구현(효과 미검증) |
 | 하락·보합 | 방어적 선정(상대강도·저변동) | ✗ 미구현 |
 
-### A-3. 매수
-- **공통 게이트(전 레짐):** VWAP 눌림목(enforce) · 고점추격 상한(시가대비 +4%) · churn 재진입 가드(당일 N회 손절 종목 당일 차단) · 3연패 하드블록 · 09:30 이후 실행(이전 shadow).
-- **폭락:** 신규진입 차단(인버스 예외).
-- **폭등(예정):** 눌림 깊이 완화(주도주 얕은 눌림 허용) + 사이징 확대.
-- **하락전환(예정):** 신규매수 즉시 중단.
+### A-3. 매수 — 진입 게이트 (전 레짐 공통, 값은 B절 실측)
+진입은 아래 게이트를 **모두** 통과해야 한다. (레버=설정키, 현재값)
 
-### A-4. 매도 — 레짐 SET별 차등 (실측은 B절)
-- 레짐 SET이 손절/익절/트레일링/최대종목수를 레짐별로 차등 적용(risk_on 넓게 / risk_off 타이트).
-- **공통:** EOD 강제청산(15:12) · 폭락 방어모드(검증 8/19) · +2% 스케일아웃 수확(60% 확정 + 잔량 러너).
+| 게이트 | 설정키 | 현재 의도값 | 의미 |
+|---|---|---|---|
+| **눌림목** | `entry_vwap_pullback_mode` / `entry_max_vwap_dist_pct` | enforce / 0.0 | VWAP 위 이격 매수(추격) 차단 ★핵심엣지 |
+| 고점추격 상한 | `max_price_change_pct` | 4.0 | 시가대비 +4% 초과 매수 차단 |
+| 등락률 하한 | `min_price_change_pct` | 1.5 | +1.5% 미만 진입 안 함 |
+| 거래량 | `min_volume_ratio` | 1.5 | 평균 대비 1.5배 미만 제외 |
+| 유동성 | `min_liquidity_krw` | 1억 | 거래대금 미달 제외 |
+| confidence | `confidence_gate_mode`·`min_ai_confidence`·`min_confidence_floor` | regime_defensive·0.60·0.5 | 방어레짐만 강화 |
+| 캘리브레이션 | `calibration_gate_*` | on·gap0.15·n30 | 표본부족·과신 차단 |
+| churn 재진입 | `intraday_max_stoploss_per_symbol`·`intraday_reentry_block_enabled` | 2·on | 당일 2회 손절 종목 당일 차단 |
+| 3연패 | `loss_streak_hard_block_enabled` | on | 3연패 종목 하드블록 |
+| 진입실패 쿨다운 | `entry_fail_cooldown_*` | on·3일·2회 | 반복 실패 종목 냉각 |
+| 레버리지 | `leverage_restriction_mode` | exclude | 레버리지·인버스2x 차단 |
+| 밴드역전 가드 | `band_inversion_guard_enabled` | on | 진입밴드 역전 마비 방지 |
+| 실행 시간창 | `entry_execute_start_time`·`entry_end_time`·`new_entry_cutoff_time` | 09:30·15:00·15:10 | 이전은 shadow |
+
+- **폭락:** 신규진입 차단(인버스1x 예외). **폭등(예정):** 눌림깊이 완화 + 사이징 확대(§A-4b). **하락전환(예정, §A-5):** 신규매수 즉시 중단.
+
+### A-4. 매도 — 레짐 SET별 차등 + 공통 수확 (값은 B절 실측)
+- **레짐 SET**이 손절/익절/트레일링/최대종목수를 레짐별 차등(risk_on 넓게 -3.5%/+8% / risk_off 타이트 -1.2%/+2.5%).
+- **스케일아웃 수확**(`harvest_mode`=on): `scaleout_target_rate`(+1%)서 `scaleout_ratio`(60%) 확정 + 잔량 러너, 목표후 `scaleout_ratio_after_target`(80%). 하루 목표 `daily_target_rate`(계좌 +2%).
+- **공통:** EOD 강제청산(`force_exit_time` 15:20 / `force_exit_ceiling` 15:12) · 폭락 방어모드(검증 8/19) · 무틱 손절 REST 백업(`stop_loss_backup_*`).
 - **하락전환(예정):** 트레일링 즉시 조임.
+
+### A-4b. 사이징·배포 (매매 금액 결정 — 이전엔 문서에서 누락)
+| 레버 | 설정키 | 현재값 | 의미 |
+|---|---|---|---|
+| 예수금 배포 | `exploration.deploy_target_rate` | 0.95 | 예수금 95%까지 배포 |
+| 종목당 비중 | `risk.max_position_rate_per_stock` | 0.15 | 종목당 최대 15% |
+| 최대 종목수 | `risk.max_positions` / 레짐SET / RulePack | **5 / 12 / ~10** | ⚠ **다출처 충돌 — §A-7** |
+| 탐색 사이징 | `engine.exploration_mode`·`exploration.weight_floor` | on·0.2 | ⚠ 졸업 의도 확인(§A-7) |
+
+### A-4c. 리스크 할트·안전벨트
+| 레버 | 설정키 | 현재값 |
+|---|---|---|
+| 일일 손실한도 | `risk.daily_loss_limit_percent` | -2% |
+| 자동 정지선 | `risk.auto_halt_loss_percent` | -5% |
+| 폭락 방어 발동 | `risk.flash_crash_threshold_pct`·`flash_crash_defense_enabled` | -2%·on |
+| 수동 긴급정지 | `risk.emergency_halt_enabled` | off(평시) |
+| 부분체결 재주문 | `risk.partial_fill_reorder_enabled` | on |
 
 ### A-5. 전환(하락/상승) 대응 — 개발 예정 (백테스트 선행)
 현 레짐(레벨)에 **"최근 30~60분 KOSPI 기울기" 축**을 추가. 레벨이 아직 +면서도 급히 꺾이면 하락전환 판정 → 신규매수 중단 + 트레일 조임. 반대(바닥 반등)는 상승전환 → 진입 재개.
@@ -66,26 +101,87 @@
 |---|---|
 | VWAP 눌림목 엣지(17일 백테스트+실전) · flash_crash 폭락 방어(8/19) · 30분 레짐 재판정 · churn 가드 | 전환(방향) 감지 · 폭등 티어 · 레짐별 종목선정 · 레짐 SET 값 최적성 |
 
+### A-7. 관리 주의 — 다출처 충돌·이상 (반드시 인지, 미해결)
+전략이 "새는" 지점들. 드리프트 자동감시로 못 잡는 구조적 문제이므로 여기 명시한다.
+
+| # | 이슈 | 실태 | 해결 방향 |
+|---|---|---|---|
+| 1 | **max_positions 3출처 충돌** | `risk.max_positions=5` · 레짐SET(risk_on)=12 · RulePack `final_rule`≈10. **실제 주문차단은 RulePack final_rule**(order_preflight). | **Phase 2 단일출처화**. PM이 목표 종목수 확정 필요 |
+| 2 | **exploration_mode=on** | 탐색 사이징 활성. 메모리상 7/4 "졸업" 의도였으나 플래그는 아직 on. | 졸업 여부 PM 확인 → off면 의도 갱신 |
+| 3 | min_ai_confidence 타입 | DB에 문자열 `"0.60"` 저장(코드가 float coerce라 동작은 정상) | 숫자로 정규화(선택) |
+| 4 | flash_crash 상태플래그 | `flash_crash_defense_active=true`(date 8/19). 날짜스코프라 다음 거래일 자동해제(동작 정상) | 상태값이라 INTENT 제외 |
+| 5 | 레짐 임계 하드코딩 | `_judge_regime` 임계가 설정 아님 → 드리프트 감시 불가 | 설정화(후속) |
+| 6 | buy_condition_framework 휴면 | 돌파/눌림/모멘텀 그룹·체결강도 55% 코드 존재하나 **메인 진입경로가 우회**(등락률+거래량만) | 엣지 게이트화 시 정리(②③ 이후) |
+
+> **감시 범위:** INTENT 명시설정(~40)+코드기본(14)+레짐SET(3)은 드리프트 자동감시. 위 6개(특히 1·5·6)는 **구조적이라 수동 관리** — 전략 변경 시 반드시 재확인.
+
 ---
 
 ## B. 실측 — 지금 실제로 이렇게 돈다 (자동 생성, 손대지 마라)
 
 <!-- AUTO:LIVE START -->
-_자동 생성: 2026-08-20 03:19:31 · `scripts/strategy_spec_sync.py` · 손대지 마라._
+_자동 생성: 2026-08-21 00:18:09 · `scripts/strategy_spec_sync.py` · 손대지 마라._
 
-**현재 활성 레짐:** `risk_on` (trigger=morning, at=2026-08-20T11:15:02)
+**현재 활성 레짐:** `risk_off` (trigger=morning, at=2026-08-21T09:06:00)
 
-**전략 게이트/설정 (system_settings 실측):**
+**전략 게이트/설정 (system_settings 실측 · 출처):**
 
-| 설정 | 실측값 |
-|---|---|
-| `engine.entry_vwap_pullback_mode` | `enforce` |
-| `engine.max_price_change_pct` | `4.0` |
-| `engine.min_price_change_pct` | `1.5` |
-| `engine.entry_execute_start_time` | `09:30` |
-| `risk.flash_crash_threshold_pct` | `-2.0` |
-| `engine.s10_llm_review_enabled` | `False` |
-| `engine.loss_autotune_apply_enabled` | `False` |
+| 설정 | 실측값 | 출처 |
+|---|---|---|
+| `engine.entry_vwap_pullback_mode` | `enforce` | DB |
+| `engine.max_price_change_pct` | `4.0` | DB |
+| `engine.min_price_change_pct` | `1.5` | DB |
+| `engine.min_volume_ratio` | `1.5` | DB |
+| `engine.confidence_gate_mode` | `regime_defensive` | DB |
+| `engine.min_ai_confidence` | `0.60` | DB |
+| `engine.min_confidence_floor` | `0.5` | DB |
+| `engine.calibration_gate_enabled` | `True` | DB |
+| `engine.calibration_gate_gap` | `0.15` | DB |
+| `engine.calibration_gate_min_samples` | `30` | DB |
+| `engine.band_inversion_guard_enabled` | `True` | DB |
+| `engine.exclude_etf_enabled` | `True` | DB |
+| `engine.enforce_new_entry_allowed` | `True` | DB |
+| `engine.entry_fail_cooldown_enabled` | `True` | DB |
+| `engine.entry_fail_cooldown_days` | `3` | DB |
+| `engine.entry_fail_cooldown_min_count` | `2` | DB |
+| `engine.regime_confidence_bonus_risk_off` | `0.05` | DB |
+| `engine.regime_confidence_bonus_volatile` | `0.1` | DB |
+| `engine.entry_execute_start_time` | `09:30` | DB |
+| `engine.entry_start_time` | `09:00` | DB |
+| `engine.entry_end_time` | `15:00` | DB |
+| `risk.new_entry_cutoff_time` | `15:10` | DB |
+| `engine.harvest_mode` | `True` | DB |
+| `engine.scaleout_ratio` | `0.6` | DB |
+| `engine.scaleout_target_rate` | `0.01` | DB |
+| `engine.scaleout_ratio_after_target` | `0.8` | DB |
+| `engine.daily_target_rate` | `0.02` | DB |
+| `exploration.deploy_target_rate` | `0.95` | DB |
+| `risk.max_positions` | `5` | DB |
+| `risk.max_position_rate_per_stock` | `0.15` | DB |
+| `engine.exploration_mode` | `True` | DB |
+| `engine.crash_playbook_enabled` | `True` | DB |
+| `regime.evening_confidence_enabled` | `True` | DB |
+| `risk.daily_loss_limit_percent` | `-2` | DB |
+| `risk.force_exit_time` | `15:20` | DB |
+| `risk.flash_crash_threshold_pct` | `-2.0` | DB |
+| `risk.flash_crash_defense_enabled` | `True` | DB |
+| `risk.emergency_halt_enabled` | `False` | DB |
+| `engine.s10_llm_review_enabled` | `False` | DB |
+| `engine.loss_autotune_apply_enabled` | `False` | DB |
+| `engine.entry_max_vwap_dist_pct` | `0.0` | 코드기본 |
+| `engine.intraday_max_stoploss_per_symbol` | `2` | 코드기본 |
+| `engine.intraday_reentry_block_enabled` | `True` | 코드기본 |
+| `engine.leverage_restriction_mode` | `exclude` | 코드기본 |
+| `engine.loss_streak_hard_block_enabled` | `True` | 코드기본 |
+| `engine.min_liquidity_krw` | `100000000` | 코드기본 |
+| `risk.auto_halt_loss_percent` | `-5.0` | 코드기본 |
+| `risk.force_exit_ceiling` | `15:12:00` | 코드기본 |
+| `risk.partial_fill_reorder_enabled` | `True` | 코드기본 |
+| `risk.stop_loss_backup_enabled` | `True` | 코드기본 |
+| `risk.stop_loss_backup_stale_sec` | `45` | 코드기본 |
+| `regime.intraday_kis_kospi_enabled` | `True` | 코드기본 |
+| `regime.intraday_live_driver_enabled` | `True` | 코드기본 |
+| `exploration.weight_floor` | `0.2` | 코드기본 |
 
 **레짐 SET별 매도 파라미터 (실측):**
 
@@ -103,7 +199,7 @@ _드리프트 0건 (아래 C절 참조)_
 ## C. 드리프트 체크 — 실측이 의도를 벗어났나 (자동 생성, 손대지 마라)
 
 <!-- AUTO:DRIFT START -->
-_자동 생성: 2026-08-20 03:19:31_
+_자동 생성: 2026-08-21 00:18:09_
 
 ✅ **드리프트 없음** — 실측이 의도와 일치한다. 시스템이 사양대로 동작 중.
 <!-- AUTO:DRIFT END -->

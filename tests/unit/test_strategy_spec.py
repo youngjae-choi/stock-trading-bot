@@ -48,3 +48,22 @@ def test_float_tolerance_no_false_positive():
     # 부동소수 미세오차는 드리프트 아님
     drift = compute_drift({"x": -0.035}, {"x": -0.03500000001}, {}, {})
     assert drift == []
+
+
+def test_code_default_absent_is_ok():
+    # 코드기본 레버가 DB에 없음 = 정상(코드기본대로 동작), 드리프트 아님
+    drift = compute_drift({}, {}, {}, {}, intent_code_defaults={"engine.churn": 2})
+    assert drift == []
+
+
+def test_code_default_override_flagged():
+    # 코드기본 레버가 DB에 '다른 값'으로 오버라이드되면 의도이탈 = 드리프트
+    drift = compute_drift({}, {"engine.churn": 5}, {}, {}, intent_code_defaults={"engine.churn": 2})
+    assert len(drift) == 1
+    assert "오버라이드" in drift[0] and "engine.churn" in drift[0]
+
+
+def test_code_default_matching_db_is_ok():
+    # 코드기본과 같은 값이 DB에 명시돼 있으면 정상
+    drift = compute_drift({}, {"engine.churn": 2}, {}, {}, intent_code_defaults={"engine.churn": 2})
+    assert drift == []

@@ -28,13 +28,71 @@ SPEC = ROOT / "STRATEGY_SPEC.md"
 # 전략을 바꾸면 여기와 STRATEGY_SPEC.md A절을 함께 수정한다.
 # ─────────────────────────────────────────────────────────────────────────
 INTENT_SETTINGS: dict[str, object] = {
+    # ── 매수: 진입 게이트/선별 ──
     "engine.entry_vwap_pullback_mode": "enforce",   # 눌림목 게이트 활성(고점추격 차단)
     "engine.max_price_change_pct": 4.0,             # 고점추격 상한(시가대비 +4% 초과 매수 차단)
     "engine.min_price_change_pct": 1.5,             # 진입 최소 등락률
+    "engine.min_volume_ratio": 1.5,                 # 진입 최소 거래량 배수
+    "engine.confidence_gate_mode": "regime_defensive",  # 컨피던스 게이트(방어레짐만 강화)
+    "engine.min_ai_confidence": "0.60",             # 최소 confidence(문자열 저장·float coerce)
+    "engine.min_confidence_floor": 0.5,             # confidence 하한
+    "engine.calibration_gate_enabled": True,        # 캘리브레이션 게이트
+    "engine.calibration_gate_gap": 0.15,
+    "engine.calibration_gate_min_samples": 30,
+    "engine.band_inversion_guard_enabled": True,    # 밴드역전 마비 가드
+    "engine.exclude_etf_enabled": True,             # ETF 제외
+    "engine.enforce_new_entry_allowed": True,       # 신규진입 플래그 강제
+    "engine.entry_fail_cooldown_enabled": True,     # 진입실패 쿨다운
+    "engine.entry_fail_cooldown_days": 3,
+    "engine.entry_fail_cooldown_min_count": 2,
+    "engine.regime_confidence_bonus_risk_off": 0.05,
+    "engine.regime_confidence_bonus_volatile": 0.1,
+    # ── 매수: 실행 시간창 ──
     "engine.entry_execute_start_time": "09:30",     # 실매매 시작(이전은 shadow)
+    "engine.entry_start_time": "09:00",             # 후보 로깅 시작
+    "engine.entry_end_time": "15:00",               # 진입 종료
+    "risk.new_entry_cutoff_time": "15:10",          # 신규진입 컷오프
+    # ── 매도: 스케일아웃/수확 ──
+    "engine.harvest_mode": True,                    # +2% 스케일아웃 수확 모드
+    "engine.scaleout_ratio": 0.6,                   # 1차 확정 비율
+    "engine.scaleout_target_rate": 0.01,            # 스케일아웃 발동 수익률
+    "engine.scaleout_ratio_after_target": 0.8,
+    "engine.daily_target_rate": 0.02,               # 하루 목표(계좌 대비)
+    # ── 사이징/배포 ──
+    "exploration.deploy_target_rate": 0.95,         # 예수금 배포 목표(95%)
+    "risk.max_positions": 5,                        # ⚠ 다출처 충돌 — §A-관리주의 참조
+    "risk.max_position_rate_per_stock": 0.15,       # 종목당 비중 상한(15%)
+    "engine.exploration_mode": True,                # ⚠ 탐색 사이징(졸업 의도 확인 필요)
+    # ── 레짐/시황 ──
+    "engine.crash_playbook_enabled": True,
+    "regime.evening_confidence_enabled": True,
+    # ── 리스크 할트/방어 ──
+    "risk.daily_loss_limit_percent": -2,            # 일일 손실 한도
+    "risk.force_exit_time": "15:20",                # 강제청산 시각
     "risk.flash_crash_threshold_pct": -2.0,         # 폭락 방어모드 발동선
-    "engine.s10_llm_review_enabled": False,         # LLM 복기 제거(수동통제)
+    "risk.flash_crash_defense_enabled": True,
+    "risk.emergency_halt_enabled": False,           # 수동 긴급정지(평시 off)
+    # ── AI/자동화 제거(수동통제) ──
+    "engine.s10_llm_review_enabled": False,         # LLM 복기 제거
     "engine.loss_autotune_apply_enabled": False,    # 손실 auto-tuner 관찰전용
+}
+# 코드기본값에 숨은 전략 레버 — DB에 없어도 코드가 이 값으로 돈다(의도=코드기본).
+# DB에 다른 값으로 오버라이드되면 그때만 드리프트(의도 이탈)로 잡는다. 가시화용.
+INTENT_CODE_DEFAULTS: dict[str, object] = {
+    "engine.entry_max_vwap_dist_pct": 0.0,          # ★핵심 엣지: 눌림목 게이트 임계(코드기본)
+    "engine.intraday_max_stoploss_per_symbol": 2,   # churn 가드 N회
+    "engine.intraday_reentry_block_enabled": True,
+    "engine.leverage_restriction_mode": "exclude",  # 레버리지/인버스2x 진입 차단
+    "engine.loss_streak_hard_block_enabled": True,  # 3연패 하드블록
+    "engine.min_liquidity_krw": 100_000_000,        # 최소 유동성 1억
+    "risk.auto_halt_loss_percent": -5.0,            # 자동 정지 손실선
+    "risk.force_exit_ceiling": "15:12:00",          # 강제청산 상한 시각
+    "risk.partial_fill_reorder_enabled": True,
+    "risk.stop_loss_backup_enabled": True,          # 무틱 종목 손절 REST 백업
+    "risk.stop_loss_backup_stale_sec": 45,
+    "regime.intraday_kis_kospi_enabled": True,      # 장중 KOSPI KIS 직접조회
+    "regime.intraday_live_driver_enabled": True,    # 장중 실시간 레짐 드라이버
+    "exploration.weight_floor": 0.2,                # 탐색 비중 하한
 }
 # 레짐 SET별 매도 파라미터 의도 (regime SET applied_settings 와 대조)
 INTENT_REGIME_SETS: dict[str, dict[str, float]] = {
@@ -55,12 +113,13 @@ def _conn() -> sqlite3.Connection:
 
 
 def read_live_settings(conn) -> dict[str, object]:
-    """system_settings에서 의도 대상 키의 실측값(파싱)을 읽는다. 없으면 미포함."""
+    """system_settings에서 의도 대상 키(명시+코드기본)의 실측값(파싱)을 읽는다. 없으면 미포함."""
+    keys = list(INTENT_SETTINGS) + list(INTENT_CODE_DEFAULTS)
     out: dict[str, object] = {}
     rows = conn.execute(
         "SELECT key, value_json FROM system_settings WHERE key IN (%s)"
-        % ",".join("?" * len(INTENT_SETTINGS)),
-        tuple(INTENT_SETTINGS),
+        % ",".join("?" * len(keys)),
+        tuple(keys),
     ).fetchall()
     for r in rows:
         try:
@@ -101,17 +160,30 @@ def _num_eq(a, b) -> bool:
         return a == b
 
 
-def compute_drift(intent_settings, live_settings, intent_sets, live_sets) -> list[str]:
-    """의도 ≠ 실측 불일치 목록(사람이 읽는 문장). 대조 로직의 단일 소스."""
+def _eq(want, got) -> bool:
+    if isinstance(want, (int, float)) and not isinstance(want, bool):
+        return _num_eq(got, want)
+    return got == want
+
+
+def compute_drift(intent_settings, live_settings, intent_sets, live_sets,
+                  intent_code_defaults=None) -> list[str]:
+    """의도 ≠ 실측 불일치 목록(사람이 읽는 문장). 대조 로직의 단일 소스.
+
+    - intent_settings: DB에 명시돼야 하고 그 값이어야 하는 레버(미설정=⚠, 값다름=🔴).
+    - intent_code_defaults: 코드기본으로 도는 레버. DB 미설정=정상(코드기본과 일치),
+      DB에 다른 값으로 오버라이드=🔴(의도이탈).
+    """
     drift: list[str] = []
     for key, want in intent_settings.items():
         if key not in live_settings:
-            drift.append(f"⚠ `{key}` 미설정 — 의도 `{want}` (코드기본 의존, DB 명시 권장)")
-            continue
-        got = live_settings[key]
-        same = _num_eq(got, want) if isinstance(want, (int, float)) and not isinstance(want, bool) else got == want
-        if not same:
-            drift.append(f"🔴 `{key}` 불일치 — 의도 `{want}` vs 실측 `{got}`")
+            drift.append(f"⚠ `{key}` 미설정 — 의도 `{want}` (DB 명시 권장)")
+        elif not _eq(want, live_settings[key]):
+            drift.append(f"🔴 `{key}` 불일치 — 의도 `{want}` vs 실측 `{live_settings[key]}`")
+    for key, default in (intent_code_defaults or {}).items():
+        if key in live_settings and not _eq(default, live_settings[key]):
+            drift.append(
+                f"🔴 `{key}` 코드기본 오버라이드 — 의도(코드기본) `{default}` vs DB `{live_settings[key]}`")
     for label, want in intent_sets.items():
         got = live_sets.get(label)
         if got is None:
@@ -129,7 +201,8 @@ def check_drift() -> list[str]:
     with _conn() as conn:
         live_settings = read_live_settings(conn)
         live_sets = read_live_regime_sets(conn)
-    return compute_drift(INTENT_SETTINGS, live_settings, INTENT_REGIME_SETS, live_sets)
+    return compute_drift(INTENT_SETTINGS, live_settings, INTENT_REGIME_SETS, live_sets,
+                         INTENT_CODE_DEFAULTS)
 
 
 def _fmt_live_block(live_settings, live_sets, current, drift_count) -> str:
@@ -139,11 +212,18 @@ def _fmt_live_block(live_settings, live_sets, current, drift_count) -> str:
     at = str(current.get("applied_at", ""))[:19]
     trg = current.get("trigger", "")
     L += [f"**현재 활성 레짐:** `{cur}` (trigger={trg}, at={at})", "",
-          "**전략 게이트/설정 (system_settings 실측):**", "",
-          "| 설정 | 실측값 |", "|---|---|"]
+          "**전략 게이트/설정 (system_settings 실측 · 출처):**", "",
+          "| 설정 | 실측값 | 출처 |", "|---|---|---|"]
     for key in INTENT_SETTINGS:
-        v = live_settings.get(key, "_(미설정·코드기본)_")
-        L.append(f"| `{key}` | `{v}` |")
+        if key in live_settings:
+            L.append(f"| `{key}` | `{live_settings[key]}` | DB |")
+        else:
+            L.append(f"| `{key}` | `(미설정)` | ⚠ 미설정 |")
+    for key, default in INTENT_CODE_DEFAULTS.items():
+        if key in live_settings:
+            L.append(f"| `{key}` | `{live_settings[key]}` | DB(오버라이드) |")
+        else:
+            L.append(f"| `{key}` | `{default}` | 코드기본 |")
     L += ["", "**레짐 SET별 매도 파라미터 (실측):**", "",
           "| 레짐 | max종목 | 손절 | 익절 | 트레일발동 | 트레일폭 |", "|---|---|---|---|---|---|"]
     for label in ("risk_on", "neutral", "risk_off", "volatile"):
@@ -189,7 +269,8 @@ def sync_strategy_spec(write: bool = True) -> dict:
         live_settings = read_live_settings(conn)
         live_sets = read_live_regime_sets(conn)
         current = read_current_regime(conn)
-    drift = compute_drift(INTENT_SETTINGS, live_settings, INTENT_REGIME_SETS, live_sets)
+    drift = compute_drift(INTENT_SETTINGS, live_settings, INTENT_REGIME_SETS, live_sets,
+                          INTENT_CODE_DEFAULTS)
     old = SPEC.read_text(encoding="utf-8")
     new = _replace_block(old, "LIVE", _fmt_live_block(live_settings, live_sets, current, len(drift)))
     new = _replace_block(new, "DRIFT", _fmt_drift_block(drift))
