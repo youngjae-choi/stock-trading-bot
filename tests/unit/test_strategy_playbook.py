@@ -112,6 +112,24 @@ def test_conviction_feeds_sizing_end_to_end():
     assert resolve_position_sizing(100_000_000, lo, getter=_getter).per_position_rate <= 0.06
 
 
+def test_shadow_sizing_never_raises_and_logs(caplog):
+    # shadow는 매수 경로를 절대 막으면 안 됨 — 최소 balance로도 예외 없이 로그만
+    import logging
+    from backend.services.engine.order_executor import OrderExecutor
+    oe = OrderExecutor.__new__(OrderExecutor)
+    balance = {"output2": [{"ord_psbl_cash": "100000000", "tot_evlu_amt": "100000000"}]}
+    with caplog.at_level(logging.INFO):
+        oe._shadow_new_sizing("005930", 70000.0, balance, actual_qty=10)  # 예외 없어야
+    assert any("SHADOW-SIZING" in r.message for r in caplog.records)
+
+
+def test_shadow_sizing_swallows_bad_balance():
+    # 잘못된 balance여도 매수 경로 안 막음(예외 삼킴)
+    from backend.services.engine.order_executor import OrderExecutor
+    oe = OrderExecutor.__new__(OrderExecutor)
+    oe._shadow_new_sizing("005930", 70000.0, {}, actual_qty=0)  # raise 안 하면 통과
+
+
 def test_build_playbook_assembles_sell_and_sizing():
     regime_set = {"stop_loss_rate": -0.035, "take_profit_rate": 0.08,
                   "trailing_activate_profit": 0.04, "trailing_stop_rate": 0.02}

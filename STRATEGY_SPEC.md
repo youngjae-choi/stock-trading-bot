@@ -77,7 +77,7 @@
 
 ### A-4b. 사이징·배포 — 예수금비중 모델 (결정4, Phase1 구현중)
 **종목수가 아니라 예수금 투입비중이 기준.** 확신↑ → 종목당 비중↑ → 집중, 확신↓ → 분산.
-종목수는 파생 결과. 구현: `strategy_playbook.resolve_position_sizing` (소비자 배선은 shadow 검증 후).
+종목수는 파생 결과. 구현: `strategy_playbook.resolve_position_sizing`. **order_executor에 shadow 배선됨**(`_shadow_new_sizing` — 매수 시 "신모델이라면 얼마"를 로그만, **실주문 불변**). 며칠 로그 비교 → 활성.
 
 | 레버 | 설정키 | 값 | 의미 |
 |---|---|---|---|
@@ -97,7 +97,7 @@
 | `conviction.regime_scores` | risk_on 1.0 … risk_off 0.2 | 장세별 점수(JSON) |
 | `conviction.pullback_full_dist_pct` | -3.0 | VWAP 아래 이만큼 눌리면 눌림점수 만점(위=추격=0) |
 
-> risk_on+깊은눌림=1.0(집중) / risk_off+추격=0.1(분산). **배선 상태:** 순수함수+유닛 완료, **order_executor 배선은 shadow 검증 후**(현재 미배선=동작불변).
+> risk_on+깊은눌림=1.0(집중) / risk_off+추격=0.1(분산). **배선 상태:** shadow 배선됨(매수 시 확신도·신모델 사이징을 로그만, 실주문 불변). 활성은 로그 검증 후.
 
 ### A-4c. 리스크 할트·안전벨트
 | 레버 | 설정키 | 현재값 |
