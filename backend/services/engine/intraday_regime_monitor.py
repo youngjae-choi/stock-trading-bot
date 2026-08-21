@@ -236,6 +236,48 @@ def _judge_regime(vix: float | None, kospi_change: float | None) -> str:
     return "neutral"
 
 
+def _persist_and_shadow_sensing(kospi_change: float | None, vix: float | None,
+                                current_regime: str) -> None:
+    """[SHADOW] 장중 KOSPI 시계열 저장 + market_sensing(5장세·전환) would-be 로그.
+
+    라이브 레짐 판정(_judge_regime)은 안 바꾼다 — 비교 로그만(엔진② inc2 검증).
+    KOSPI 시계열이 지금까지 미저장이라 여기서 저장부터 시작한다. 예외는 전부 삼킨다.
+    """
+    if kospi_change is None:
+        return
+    try:
+        import uuid as _uuid
+        from datetime import timedelta
+
+        from ..settings_store import get_setting
+        from .market_sensing import classify_regime_5tier, detect_transition
+        now = datetime.now(ZoneInfo("Asia/Seoul"))
+        win = int(get_setting("regime.transition_window_min", 60) or 60)
+        cutoff = (now - timedelta(minutes=win)).isoformat()
+        with get_connection() as conn:
+            conn.execute(
+                "INSERT INTO market_snapshots (id,symbol,price,volume,change_rate,source,captured_at,raw_json) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (str(_uuid.uuid4()), "KOSPI", 0.0, 0.0, float(kospi_change),
+                 "regime_monitor", now.isoformat(), "{}"),
+            )
+            conn.commit()
+            rows = conn.execute(
+                "SELECT change_rate FROM market_snapshots WHERE symbol='KOSPI' "
+                "AND captured_at >= ? ORDER BY captured_at",
+                (cutoff,),
+            ).fetchall()
+        series = [float(r["change_rate"]) for r in rows if r["change_rate"] is not None]
+        regime5 = classify_regime_5tier(kospi_change, vix)
+        transition = detect_transition(series)
+        logger.info(
+            "SHADOW-REGIME kospi=%.2f vix=%s | 현재(_judge)=%s → 5장세=%s 전환=%s (window%dpt)",
+            kospi_change, vix, current_regime, regime5, transition or "-", len(series),
+        )
+    except Exception as exc:
+        logger.debug("shadow sensing skip: %s", exc)
+
+
 def _should_skip_transition(trade_date: str) -> bool:
     """Return true when the most recent transition is inside the debounce window."""
     transitions = get_today_transitions(trade_date)
@@ -414,6 +456,8 @@ async def check_intraday_regime(slot: str = "") -> dict[str, Any]:
         "INFO: IntradayRegimeMonitor regime=%s source=%s vix=%s kospi=%s",
         new_regime, regime_source, vix, kospi_change,
     )
+    # [SHADOW] 엔진② 시장감지: KOSPI 시계열 저장 + would-be 5장세/전환 로그(라이브 불변).
+    _persist_and_shadow_sensing(kospi_change, vix, new_regime)
     new_match = get_match_preview(new_regime, vix, kospi_change, trade_date)
     if not new_match.get("set_id"):
         logger.warning("WARN: IntradayRegimeMonitor preview has no SET; creating auto SET regime=%s", new_regime)

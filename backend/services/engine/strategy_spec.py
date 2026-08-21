@@ -101,6 +101,7 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "regime.down_transition_pp": -1.0,              # 하락전환: window 내 -1.0%p
     "regime.up_transition_pp": 1.0,                 # 상승전환: window 내 +1.0%p
     "regime.li_lean_weight": 0.25,                  # 선행지표 lean 바이어스 가중
+    "regime.transition_window_min": 60,             # 전환 판단 window(분)
     # ── 사이징 모델(결정4, Phase1) — 예수금비중: 종목당 5~15%, 종목수 6~19 ──
     "sizing.per_position_rate_min": 0.05,           # 종목당 최소 비중 5%
     "sizing.positions_min": 6,                      # 최소 종목수
@@ -239,6 +240,7 @@ CONFORMANCE: list[tuple[str, str | None, str | None]] = [
     ("레짐 판정(30분)", "_judge_regime", None),
     ("시장감지 5장세 판정", "classify_regime_5tier", "regime.surge_pct"),
     ("전환(방향) 감지", "detect_transition", "regime.down_transition_pp"),
+    ("시장감지 shadow 배선", "_persist_and_shadow_sensing", "regime.transition_window_min"),
     ("폭락 방어", "is_flash_crash_defense_active", "risk.flash_crash_threshold_pct"),
     ("churn 재진입 가드", "intraday_stoploss_count", "engine.intraday_max_stoploss_per_symbol"),
     ("EOD 강제청산", "run_eod_liquidation", "risk.force_exit_time"),

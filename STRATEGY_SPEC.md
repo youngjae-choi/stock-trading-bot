@@ -114,7 +114,7 @@
 - **`detect_transition`**: 최근 window KOSPI 기울기로 하락전환(`regime.down_transition_pp` -1.0%p)/상승전환(+1.0%p). **레벨 무관** — 8/18(+2.77→+1.25=-1.52%p) 하락전환 검증됨.
 - 코스 백테스트: 8/18 하락전환 11:00 발화 → 전환後 매수 2건 차단 + 전환前 8건 매도조임 대상.
 
-**배선 상태:** 모듈·설정·유닛 완료. **미배선**(현재 라이브는 여전히 `_judge_regime` 4장세). 다음: 장중 KOSPI 시계열 저장(현재 미저장) + shadow(would-be 레짐/전환 로그) → 검증 → 활성(전환시 매수중단·트레일조임, 폭등시 §A-4b 사이징확대).
+**배선 상태:** **shadow 배선됨**(`_persist_and_shadow_sensing` — 레짐 틱마다 KOSPI 시계열 저장 + would-be 5장세/전환을 `SHADOW-REGIME` 로그, 라이브 `_judge_regime` 불변). 며칠 로그 검증 → **활성**(전환시 신규매수 중단·트레일 조임, 폭등시 §A-4b 사이징 확대, _judge_regime 대체).
 
 ### A-6. 검증 상태 요약
 | 검증됨 ✅ | 미검증 ✗ |
@@ -140,9 +140,9 @@
 ## B. 실측 — 지금 실제로 이렇게 돈다 (자동 생성, 손대지 마라)
 
 <!-- AUTO:LIVE START -->
-_자동 생성: 2026-08-21 03:10:30 · `scripts/strategy_spec_sync.py` · 손대지 마라._
+_자동 생성: 2026-08-21 05:06:45 · `scripts/strategy_spec_sync.py` · 손대지 마라._
 
-**현재 활성 레짐:** `risk_off` (trigger=morning, at=2026-08-21T11:50:28)
+**현재 활성 레짐:** `risk_on` (trigger=intraday, at=2026-08-21T14:00:08)
 
 **전략 게이트/설정 (system_settings 실측 · 출처):**
 
@@ -209,6 +209,7 @@ _자동 생성: 2026-08-21 03:10:30 · `scripts/strategy_spec_sync.py` · 손대
 | `regime.down_transition_pp` | `-1.0` | 코드기본 |
 | `regime.up_transition_pp` | `1.0` | 코드기본 |
 | `regime.li_lean_weight` | `0.25` | 코드기본 |
+| `regime.transition_window_min` | `60` | 코드기본 |
 | `sizing.per_position_rate_min` | `0.05` | 코드기본 |
 | `sizing.positions_min` | `6` | 코드기본 |
 | `sizing.positions_max` | `19` | 코드기본 |
@@ -232,7 +233,7 @@ _드리프트 0건 (아래 C절 참조)_
 ## C. 드리프트 체크 — 실측이 의도를 벗어났나 (자동 생성, 손대지 마라)
 
 <!-- AUTO:DRIFT START -->
-_자동 생성: 2026-08-21 03:10:30_
+_자동 생성: 2026-08-21 05:06:45_
 
 ✅ **드리프트 없음** — 실측이 의도와 일치한다. 시스템이 사양대로 동작 중.
 <!-- AUTO:DRIFT END -->
