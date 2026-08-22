@@ -78,6 +78,10 @@
 - **공통:** EOD 강제청산(`force_exit_time` 15:20 / `force_exit_ceiling` 15:12) · 폭락 방어모드(검증 8/19) · 무틱 손절 REST 백업(`stop_loss_backup_*`).
 - **하락전환(예정):** 트레일링 즉시 조임.
 
+### A-4a. 전략설정 엔진① — 레짐→플레이북 권위 (`get_playbook`)
+**시장분위기(5장세)를 판단하면 그 장세의 전략 한 벌을 통째로 꺼낸다.** 구현: `strategy_playbook.get_playbook(regime5)` → `Playbook{선정·매수게이트(9)·매도(레짐SET)·사이징}`. 폭등=상승SET+사이징확대. 레짐 틱마다 `[E1] SHADOW-PLAYBOOK` 로그.
+- **배선 상태:** 권위 조립+shadow 로그 완료. **소비자 미전환**(각 엔진이 아직 흩어진 소스를 읽음) → 설정 4중구조(RulePack·레짐SET·settings·코드기본) **단일화는 후속 inc**(소비자를 get_playbook으로 전환). 현재 동작 불변.
+
 ### A-4b. 사이징·배포 — 예수금비중 모델 (결정4, Phase1 구현중)
 **종목수가 아니라 예수금 투입비중이 기준.** 확신↑ → 종목당 비중↑ → 집중, 확신↓ → 분산.
 종목수는 파생 결과. 구현: `strategy_playbook.resolve_position_sizing` + `order_executor._compute_new_model_sizing`(가용현금 캡). **`sizing.model_active`=on (2026-08-21 활성)** — 매수 사이징이 확신도→예수금비중으로 결정. 롤백=off. 검증: 8/21 실매수 종목당 투입비 5~12% = 신모델 5~15% 범위 내(과투입 아님).

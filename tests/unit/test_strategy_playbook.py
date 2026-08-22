@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from backend.services.engine.strategy_playbook import (
     build_playbook,
+    get_playbook,
     resolve_conviction,
     resolve_max_positions,
     resolve_position_sizing,
@@ -132,6 +133,46 @@ def test_conviction_feeds_sizing_end_to_end():
 def test_resolve_max_positions_returns_model_ceiling():
     # [6,19] 모델의 상한 = positions_max
     assert resolve_max_positions(getter=_getter) == 19
+
+
+# ── 전략설정 엔진① — get_playbook 권위 ──
+_PB = {
+    "selection.change_weight": 0.5, "selection.surge_weight": 0.5,
+    "engine.entry_vwap_pullback_mode": "enforce", "engine.max_price_change_pct": 4.0,
+    "engine.min_price_change_pct": 1.5, "engine.min_volume_ratio": 1.5,
+    "sizing.per_position_rate_min": 0.05, "risk.max_position_rate_per_stock": 0.15,
+    "sizing.positions_min": 6, "sizing.positions_max": 19,
+    "exploration.deploy_target_rate": 0.95, "sizing.surge_per_position_rate_max": 0.20,
+}
+
+
+def _pb(k, d=None):
+    return _PB.get(k, d)
+
+
+def test_get_playbook_full_strategy_all_axes():
+    # 레짐→전략 한 벌: 선정+매수게이트+매도+사이징 전부 채워짐
+    rset = {"stop_loss_rate": -0.035, "take_profit_rate": 0.08}
+    pb = get_playbook("up", regime_set=rset, getter=_pb)
+    assert pb.regime == "up" and pb.set_label == "risk_on"
+    assert pb.selection["change_weight"] == 0.5
+    assert pb.gates["vwap_pullback_mode"] == "enforce"
+    assert pb.sell["stop_loss_rate"] == -0.035
+    assert pb.sizing["per_position_rate_max"] == 0.15  # 비폭등
+
+
+def test_get_playbook_surge_expands_sizing():
+    # 폭등 5장세 → 사이징 상한이 surge 값으로
+    pb = get_playbook("surge", regime_set={}, getter=_pb)
+    assert pb.set_label == "risk_on"          # 상승 SET 재사용
+    assert pb.sizing["per_position_rate_max"] == 0.20  # 확대
+    assert pb.sizing["surge_tier"] is True
+
+
+def test_get_playbook_regime5_to_set_mapping():
+    assert get_playbook("crash", getter=_pb).set_label == "risk_off"
+    assert get_playbook("down", getter=_pb).set_label == "risk_off"
+    assert get_playbook("flat", getter=_pb).set_label == "neutral"
 
 
 def test_shadow_sizing_never_raises_and_logs(caplog):

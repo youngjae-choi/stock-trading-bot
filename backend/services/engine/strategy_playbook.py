@@ -131,19 +131,48 @@ def resolve_max_positions(getter: Callable = get_setting) -> int:
     return _i(getter, *(_SIZING_KEYS["pos_max"]))
 
 
+# 5장세 → 레짐 SET 매핑(하위호환: SET은 4종). 폭등=상승SET+사이징확대.
+_REGIME5_TO_SET = {
+    "crash": "risk_off", "down": "risk_off", "flat": "neutral",
+    "up": "risk_on", "surge": "risk_on", "volatile": "volatile",
+}
+
+
 @dataclass
 class Playbook:
-    """한 레짐의 전략 한 벌. 소비 엔진이 읽는 단일 계약."""
-    regime: str
-    sell: dict = field(default_factory=dict)      # 손절·익절·트레일·수확 (레짐SET)
-    sizing: dict = field(default_factory=dict)    # 예수금비중 모델 파라미터
-    gates: dict = field(default_factory=dict)     # 매수 게이트 (다음 Increment 확장)
+    """한 레짐의 전략 한 벌(선정+매수+매도+사이징). 소비 엔진이 읽는 단일 계약(전략설정 엔진①)."""
+    regime: str                                   # 5장세 라벨
+    set_label: str = "neutral"                    # 매핑된 레짐 SET
+    selection: dict = field(default_factory=dict)  # 종목선정 가중치(엔진③)
+    gates: dict = field(default_factory=dict)     # 매수 게이트(엔진④)
+    sell: dict = field(default_factory=dict)      # 손절·익절·트레일·수확(엔진⑤, 레짐SET)
+    sizing: dict = field(default_factory=dict)    # 예수금비중 모델(엔진⑥ 사이징)
 
 
 def build_playbook(regime: str, regime_settings: dict | None = None,
                    getter: Callable = get_setting) -> Playbook:
-    """레짐 라벨 → 플레이북 조립(라이브 읽기). regime_settings=레짐SET applied_settings."""
+    """레짐(5장세 또는 SET) → 전략 한 벌 조립(라이브 읽기). regime_settings=레짐SET applied_settings.
+
+    전 축을 한 곳에서: 선정 가중치·매수 게이트·매도 파라미터·예수금비중 사이징.
+    이게 "레짐→플레이북" 권위의 핵심 — 나머지 엔진이 여기서 전략을 꺼내 쓴다.
+    """
     rs = regime_settings or {}
+    is_surge = regime == "surge"
+    selection = {
+        "change_weight": _f(getter, "selection.change_weight", 0.5),
+        "surge_weight": _f(getter, "selection.surge_weight", 0.5),
+    }
+    gates = {  # 매수 게이트(엔진④) — 전 레짐 공통 값(레짐별 차등은 후속)
+        "vwap_pullback_mode": getter("engine.entry_vwap_pullback_mode", "enforce"),
+        "entry_max_vwap_dist_pct": _f(getter, "engine.entry_max_vwap_dist_pct", 0.0),
+        "max_price_change_pct": _f(getter, "engine.max_price_change_pct", 4.0),
+        "min_price_change_pct": _f(getter, "engine.min_price_change_pct", 1.5),
+        "min_volume_ratio": _f(getter, "engine.min_volume_ratio", 1.5),
+        "confidence_gate_mode": getter("engine.confidence_gate_mode", "regime_defensive"),
+        "min_ai_confidence": _f(getter, "engine.min_ai_confidence", 0.6),
+        "intraday_max_stoploss": _i(getter, "engine.intraday_max_stoploss_per_symbol", 2),
+        "leverage_restriction": getter("engine.leverage_restriction_mode", "exclude"),
+    }
     sell = {
         "stop_loss_rate": rs.get("stop_loss_rate"),
         "take_profit_rate": rs.get("take_profit_rate"),
@@ -153,11 +182,25 @@ def build_playbook(regime: str, regime_settings: dict | None = None,
         "scaleout_ratio": _f(getter, "engine.scaleout_ratio", 0.6),
         "scaleout_target_rate": _f(getter, "engine.scaleout_target_rate", 0.01),
     }
+    per_rate_max = (_f(getter, "sizing.surge_per_position_rate_max", 0.15) if is_surge
+                    else _f(getter, *(_SIZING_KEYS["per_rate_max"])))
     sizing = {
         "per_position_rate_min": _f(getter, *(_SIZING_KEYS["per_rate_min"])),
-        "per_position_rate_max": _f(getter, *(_SIZING_KEYS["per_rate_max"])),
+        "per_position_rate_max": per_rate_max,
         "positions_min": _i(getter, *(_SIZING_KEYS["pos_min"])),
         "positions_max": _i(getter, *(_SIZING_KEYS["pos_max"])),
         "deploy_target_rate": _f(getter, *(_SIZING_KEYS["deploy_target"])),
+        "surge_tier": is_surge,
     }
-    return Playbook(regime=regime, sell=sell, sizing=sizing)
+    return Playbook(regime=regime, set_label=_REGIME5_TO_SET.get(regime, regime),
+                    selection=selection, gates=gates, sell=sell, sizing=sizing)
+
+
+def get_playbook(regime5: str, regime_set: dict | None = None,
+                 getter: Callable = get_setting) -> Playbook:
+    """★ 레짐→플레이북 권위(전략설정 엔진①). 5장세 라벨 → 그 장세의 전략 한 벌.
+
+    regime_set: 매핑된 레짐 SET의 applied_settings(매도 파라미터). 호출부가 조회해 전달.
+    나머지 엔진(선정·매수·매도·매매)은 이 결과에서 전략을 읽는다(설정 4중구조 단일화의 시작).
+    """
+    return build_playbook(regime5, regime_settings=regime_set, getter=getter)

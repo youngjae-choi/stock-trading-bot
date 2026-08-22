@@ -283,6 +283,20 @@ def _persist_and_shadow_sensing(kospi_change: float | None, vix: float | None,
             "(현재_judge=%s, window%dpt)",
             kospi_change, vix, regime5, transition or "-", current_regime, len(series),
         )
+        # [E1] 전략설정 엔진: 이 레짐의 플레이북(전략 한 벌)을 꺼내 로그(shadow, 동작불변).
+        try:
+            from .strategy_playbook import get_playbook
+            pb = get_playbook(regime5)
+            logger.info(
+                "[E1] SHADOW-PLAYBOOK regime=%s→SET=%s | 사이징 %.0f~%.0f%% 종목%d~%d · "
+                "선정 등락%.1f/거래%.1f · 폭등티어=%s",
+                regime5, pb.set_label, pb.sizing["per_position_rate_min"] * 100,
+                pb.sizing["per_position_rate_max"] * 100, pb.sizing["positions_min"],
+                pb.sizing["positions_max"], pb.selection["change_weight"],
+                pb.selection["surge_weight"], pb.sizing["surge_tier"],
+            )
+        except Exception:
+            pass
     except Exception as exc:
         logger.debug("shadow sensing skip: %s", exc)
 

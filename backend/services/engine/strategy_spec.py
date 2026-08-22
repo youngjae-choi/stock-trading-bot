@@ -254,6 +254,7 @@ CONFORMANCE: list[tuple[str, str | None, str | None]] = [
     ("churn 재진입 가드", "intraday_stoploss_count", "engine.intraday_max_stoploss_per_symbol"),
     ("EOD 강제청산", "run_eod_liquidation", "risk.force_exit_time"),
     ("전략설정 엔진(플레이북)", "strategy_playbook", None),
+    ("레짐→플레이북 권위", "get_playbook", None),
     ("종목선정 점수", "selection_score", "selection.change_weight"),
 ]
 
