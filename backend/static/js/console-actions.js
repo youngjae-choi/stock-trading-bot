@@ -61,7 +61,6 @@
       engineTestRun: function() { return engineTestRun(element.dataset.step); },
       engineTestClearLog: function() { return engineTestClearLog(); },
       saveRiskSettings: function() { return saveRiskSettings(); },
-      saveExplorationSettings: function() { return saveExplorationSettings(); },
       saveRiskProfilePack: function() { return saveRiskProfilePack(); },
       saveTradingCostSettings: function() { return saveTradingCostSettings(); },
       saveMissedThresholdSettings: function() { return saveMissedThresholdSettings(); },
@@ -77,10 +76,7 @@
       saveExitOverrideSetting: function() { return saveExitOverrideSetting(element.dataset.key); },
       loadDailyResults: function() { return loadDailyResults(); },
       openDayReview: function() { return openDayReview(element.dataset.date); },
-      backToDailyResults: function() { return showScreen('daily-results'); },
-      loadConditionEditor: function() { return loadConditionEditor(); },
-      createConditionGroup: function() { return createConditionGroup(); },
-      loadGroupStatsScaffold: function() { return loadGroupStatsScaffold(); }
+      backToDailyResults: function() { return showScreen('daily-results'); }
     };
     if (actionMap[action]) return actionMap[action]();
     return undefined;
@@ -91,7 +87,6 @@
     var action = element.dataset.action;
     if (action === 'loadReviewByDate') return loadReviewByDate(element.value);
     if (action === 'loadStatisticsDetail') return loadStatisticsDetail(element.value);
-    if (action === 'toggleExplorationMode') return toggleExplorationMode(element.checked);
     if (action === 'updateSettingsProfileField') {
       return updateSettingsProfileField(
         element.dataset.profile,
@@ -101,11 +96,6 @@
         Number(element.dataset.scale || '1')
       );
     }
-    if (action === 'saveConditionParams') return saveConditionParams(element.dataset.cid, element.value);
-    if (action === 'toggleCondition') return toggleCondition(element.dataset.cid, element.checked);
-    if (action === 'toggleGroup') return toggleGroup(element.dataset.gid, element.checked);
-    if (action === 'saveGroupWeight') return saveGroupWeight(element.dataset.gid, element.value);
-    if (action === 'assignGroup') return assignGroup(element.dataset.gid, element.value);
     return undefined;
   }
 

@@ -62,7 +62,7 @@ INTENT_SETTINGS: dict[str, object] = {
     "exploration.deploy_target_rate": 0.95,         # 예수금 배포 목표(95%)
     "risk.max_positions": 5,                        # ⚠ 다출처 충돌 — §A-관리주의 참조
     "risk.max_position_rate_per_stock": 0.15,       # 종목당 비중 상한(15%)
-    "engine.exploration_mode": True,                # ⚠ 탐색 사이징(졸업 의도 확인 필요)
+    # 탐색모드 제거(2026-08-22) — engine.exploration_mode 死키. is_exploration_allowed 하드 False.
     # ── 레짐/시황 ──
     "engine.crash_playbook_enabled": True,
     "regime.evening_confidence_enabled": True,
