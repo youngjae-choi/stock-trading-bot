@@ -279,8 +279,9 @@ def _persist_and_shadow_sensing(kospi_change: float | None, vix: float | None,
         upsert_setting("regime.current_5tier", regime5, "string",
                        "장중 5장세 판정(엔진② shadow)", "regime_monitor")
         logger.info(
-            "SHADOW-REGIME kospi=%.2f vix=%s | 현재(_judge)=%s → 5장세=%s 전환=%s (window%dpt)",
-            kospi_change, vix, current_regime, regime5, transition or "-", len(series),
+            "[E2] SHADOW-REGIME 입력 kospi=%.2f vix=%s → 출력 5장세=%s 전환=%s "
+            "(현재_judge=%s, window%dpt)",
+            kospi_change, vix, regime5, transition or "-", current_regime, len(series),
         )
     except Exception as exc:
         logger.debug("shadow sensing skip: %s", exc)
@@ -486,8 +487,8 @@ async def check_intraday_regime(slot: str = "") -> dict[str, Any]:
         new_regime = ib_regime or _judge_regime(vix, kospi_change)
         regime_source = "index-board" if ib_regime else "judge_fallback"
     logger.info(
-        "INFO: IntradayRegimeMonitor regime=%s source=%s vix=%s kospi=%s",
-        new_regime, regime_source, vix, kospi_change,
+        "[E2] REGIME 입력 vix=%s kospi=%s → 출력 regime=%s (source=%s)",
+        vix, kospi_change, new_regime, regime_source,
     )
     # [SHADOW] 엔진② 시장감지: KOSPI 시계열 저장 + would-be 5장세/전환 로그(라이브 불변).
     _persist_and_shadow_sensing(kospi_change, vix, new_regime)

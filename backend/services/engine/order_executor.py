@@ -335,7 +335,7 @@ class OrderExecutor:
                 from ..settings_store import get_setting as _gs_sz
                 if bool(_gs_sz("sizing.model_active", False)) and _nm["new_qty"] > 0:
                     logger.info(
-                        "SIZING-ACTIVE: symbol=%s 신모델 적용 qty %d→%d (비중%.1f%%·확신%.2f)",
+                        "[E1] SIZING-ACTIVE symbol=%s 신모델 적용 qty %d→%d (비중%.1f%%·확신%.2f)",
                         symbol, qty, _nm["new_qty"], _nm["rate"] * 100, _nm["conv"],
                     )
                     qty = _nm["new_qty"]
@@ -1002,7 +1002,7 @@ class OrderExecutor:
     def _log_shadow_sizing(self, symbol: str, price: float, actual_qty: int, info: dict) -> None:
         """SHADOW-SIZING 비교 로그(신모델 vs 현재)."""
         logger.info(
-            "SHADOW-SIZING symbol=%s regime=%s vwap_dist=%s conv=%.2f | "
+            "[E1] SHADOW-SIZING symbol=%s regime=%s vwap_dist=%s conv=%.2f | "
             "현재 qty=%d(%.0f원) → 신모델 qty=%d(비중%.1f%%·%.0f원·목표%d종목)",
             symbol, info["regime"],
             ("%.2f" % info["vwap_dist"]) if info["vwap_dist"] is not None else "NA",
