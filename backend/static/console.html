@@ -160,20 +160,15 @@
               <div class="metric" id="tc-kosdaq-price">-</div>
               <div class="muted" id="tc-kosdaq-change">-</div>
             </div>
+            <div class="card compact" id="tc-engine-consistency-card" data-action="showScreen" data-screen="engine-monitor" style="cursor:pointer;">
+              <div class="card-title">6엔진 정합 <span>ssot</span></div>
+              <div class="metric" id="tcs-engine">-</div>
+              <div class="muted">→ Engine Monitor</div>
+            </div>
             <div class="card compact">
               <div class="card-title">다음 작업 <span>schedule</span></div>
               <div class="metric" id="nextJobMetric">11:30</div>
               <div class="muted" id="nextJobText">중간 리포트</div>
-            </div>
-            <div class="card compact">
-              <div class="card-title">Base RulePack <span>version</span></div>
-              <div class="metric sm" id="tc-base-rulepack-ver">-</div>
-              <div class="muted" id="tc-base-rulepack-desc">고정 룰팩</div>
-            </div>
-            <div class="card compact">
-              <div class="card-title">Risk Profile Pack <span>version</span></div>
-              <div class="metric sm" id="tc-profile-pack-ver">-</div>
-              <div class="muted" id="tc-profile-pack-desc">4종 프로필</div>
             </div>
             <div class="card compact">
               <div class="card-title">Daily Plan <span>today</span></div>
@@ -213,6 +208,11 @@
                   <div class="mb-ib-head">🌐 index-board 시황 <span id="mbIbSource"></span></div>
                   <div id="mbIbText" class="mb-ib-text"></div>
                 </div>
+                <div style="margin-top:10px; padding:10px 14px; background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius);">
+                  <div style="font-size:11px; color:var(--muted); margin-bottom:2px;">📊 현재 장세 (실시간)</div>
+                  <div style="font-size:20px; font-weight:700;" id="tcs-regime">-</div>
+                  <div style="font-size:12px; margin-top:2px;" id="tcs-transition"></div>
+                </div>
               </div>
               <!-- 우: 장전 시장 지표 (morning_context DB — 아침 S2가 1회 저장한 전일·야간 스냅샷. 실시간 아님) -->
               <div class="mb-col-indicators">
@@ -234,23 +234,6 @@
 
           <!-- 레짐 전환 타임라인 -->
           <div id="tc-regime-timeline-card" class="card" style="margin-bottom:16px;">
-            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
-            <div style="flex:2; min-width:200px; background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px 16px;">
-              <div style="font-size:11px; color:var(--muted); margin-bottom:2px;">현재 장세 (실시간)</div>
-              <div style="font-size:20px; font-weight:700;" id="tcs-regime">-</div>
-              <div style="font-size:12px; margin-top:2px;" id="tcs-transition"></div>
-            </div>
-            <div style="flex:1; min-width:130px; background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px 16px; cursor:pointer;" data-action="showScreen" data-screen="engine-monitor">
-              <div style="font-size:11px; color:var(--muted); margin-bottom:2px;">6엔진 정합</div>
-              <div style="font-size:16px; font-weight:600;" id="tcs-engine">-</div>
-              <div style="font-size:11px; color:var(--muted);">→ Engine Monitor</div>
-            </div>
-            <div style="flex:1; min-width:130px; background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px 16px; cursor:pointer;" data-action="showScreen" data-screen="alerts">
-              <div style="font-size:11px; color:var(--muted); margin-bottom:2px;">경고</div>
-              <div style="font-size:16px; font-weight:600;" id="tcs-alerts">-</div>
-              <div style="font-size:11px; color:var(--muted);">→ Alert Center</div>
-            </div>
-          </div>
             <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
               <div class="card-title" style="margin-bottom:0;">레짐 SET 타임라인 <span>오늘</span></div>
               <span id="tc-regime-current-badge" style="font-size:11px; background:var(--accent); color:#fff; border-radius:4px; padding:2px 8px;"></span>
