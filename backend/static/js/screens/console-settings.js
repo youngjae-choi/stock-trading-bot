@@ -209,9 +209,8 @@
       _applyExplorationState(isOn);
 
       var rate = document.getElementById("exploration-budget-rate");
-      var maxPos = document.getElementById("exploration-max-positions");
       if (rate) rate.value = settingsMap["exploration.budget_rate"] ?? "0.95";
-      if (maxPos) maxPos.value = settingsMap["exploration.max_positions"] ?? "40";
+      // max_positions는 전략엔진⑥(sizing.positions_min/max) 단일 출처로 이동 — 死키 제거
     } catch (e) {
       console.error("Failed to load exploration settings", e);
     }
@@ -236,19 +235,14 @@
   /* Persist exploration sizing keys (budget_rate, max_positions). */
   async function saveExplorationSettings() {
     var rate = Number(document.getElementById("exploration-budget-rate")?.value);
-    var maxPos = Number(document.getElementById("exploration-max-positions")?.value);
 
     if (!Number.isFinite(rate) || rate <= 0 || rate > 1) {
       alert("풀예수금 사이징 비율은 0 초과 1 이하 숫자로 입력하세요 (예: 0.95).");
       return;
     }
-    if (!Number.isInteger(maxPos) || maxPos < 1) {
-      alert("최대 보유 종목 수는 1 이상의 정수로 입력하세요 (예: 40).");
-      return;
-    }
+    // max_positions는 전략엔진⑥(sizing.positions_min/max) 단일 출처로 이동 — 死키 제거
     var items = [
-      { key: "exploration.budget_rate", value: rate, value_type: "number" },
-      { key: "exploration.max_positions", value: maxPos, value_type: "number" }
+      { key: "exploration.budget_rate", value: rate, value_type: "number" }
     ];
     try {
       await Promise.all(items.map(function(item) {
@@ -270,14 +264,13 @@
     try {
       var settingsMap = await loadSettingsMap();
       var dailyLoss = document.getElementById("risk-daily-loss");
-      var maxPositions = document.getElementById("risk-max-positions");
       var positionSize = document.getElementById("risk-position-size");
       var riskMode = document.getElementById("risk-mode");
       var cutoffTime = document.getElementById("setting-cutoff-time");
       var forceExitTime = document.getElementById("setting-force-exit-time");
 
       if (dailyLoss) dailyLoss.value = settingsMap["risk.daily_loss_limit_percent"] ?? "-2.0";
-      if (maxPositions) maxPositions.value = settingsMap["risk.max_positions"] ?? "5";
+      // 최대 종목수는 전략엔진⑥(sizing.positions_min/max) 단일 출처로 이동 — risk.max_positions(구값) 편집 제거
       if (positionSize) positionSize.value = ((Number(settingsMap["risk.max_position_rate_per_stock"] ?? 0.10) || 0.10) * 100).toFixed(1).replace(/\.0$/, "");
       if (riskMode) riskMode.value = settingsMap["engine.mode"] || "MONITOR";
       if (cutoffTime) cutoffTime.value = settingsMap["risk.new_entry_cutoff_time"] || "15:10";
@@ -285,7 +278,6 @@
 
       var fm = await loadSettingsMapFull();
       _insertSettingTs('risk-daily-loss', 'risk.daily_loss_limit_percent', fm);
-      _insertSettingTs('risk-max-positions', 'risk.max_positions', fm);
       _insertSettingTs('risk-position-size', 'risk.max_position_rate_per_stock', fm);
       _insertSettingTs('risk-mode', 'engine.mode', fm);
       _insertSettingTs('setting-cutoff-time', 'risk.new_entry_cutoff_time', fm);
@@ -298,24 +290,18 @@
   /* Persist editable global risk settings through system_settings. */
   async function saveRiskSettings() {
     var dailyLoss = document.getElementById("risk-daily-loss");
-    var maxPositions = document.getElementById("risk-max-positions");
     var positionSize = document.getElementById("risk-position-size");
     var riskMode = document.getElementById("risk-mode");
     var cutoffTime = document.getElementById("setting-cutoff-time");
     var forceExitTime = document.getElementById("setting-force-exit-time");
 
     var dailyLossValue = Number(dailyLoss && dailyLoss.value);
-    var maxPositionsValue = Number(maxPositions && maxPositions.value);
     var positionSizeValue = Number(positionSize && positionSize.value);
     var cutoffValue = cutoffTime ? cutoffTime.value.trim() : "";
     var forceExitValue = forceExitTime ? forceExitTime.value.trim() : "";
 
     if (!Number.isFinite(dailyLossValue) || dailyLossValue >= 0) {
       alert("일일 손실 한도는 음수 숫자로 입력하세요.");
-      return;
-    }
-    if (!Number.isInteger(maxPositionsValue) || maxPositionsValue < 1) {
-      alert("최대 보유 종목은 1 이상의 정수로 입력하세요.");
       return;
     }
     if (!Number.isFinite(positionSizeValue) || positionSizeValue <= 0 || positionSizeValue > 100) {
@@ -329,7 +315,6 @@
 
     var items = [
       { key: "risk.daily_loss_limit_percent", value: dailyLossValue, value_type: "number" },
-      { key: "risk.max_positions", value: maxPositionsValue, value_type: "number" },
       { key: "risk.max_position_rate_per_stock", value: positionSizeValue / 100, value_type: "number" },
       { key: "engine.mode", value: riskMode ? riskMode.value : "MONITOR", value_type: "string" },
       { key: "risk.new_entry_cutoff_time", value: cutoffValue, value_type: "string" },

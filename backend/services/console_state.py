@@ -139,7 +139,7 @@ _CONSOLE_STATE: dict[str, Any] = {
         "pnl_percent": 0.12,
         "daily_loss_limit_percent": -2.0,
         "open_positions": 1,
-        "max_positions": 5,
+        "max_positions": 19,
         "rulepack_ready": True,
         "rulepack_id": "RP-20260430-SCALP-001",
         "timeline": [
@@ -753,11 +753,13 @@ def get_console_overview() -> dict[str, Any]:
 
     # 11. Risk limits — max_positions는 Settings(risk.max_positions) 단일출처 (2026-06-11:
     # RulePack 기본 5가 표시돼 PM 설정 20과 어긋나던 문제). 손실한도는 RulePack 우선 유지.
-    max_positions = 5
+    max_positions = 19
     daily_loss_limit_pct = -2.0
     try:
-        from .settings_store import get_setting as _gs_risk
-        max_positions = int(float(_gs_risk("risk.max_positions", 5) or 5))
+        # 최대 종목수 단일 출처 — resolve_max_positions([6,19] 모델). risk.max_positions(구값 5)는
+        # daily_capital/order_preflight가 이미 이걸로 통일. 화면 '/N' 분모도 여기서(0/5 오표시 수정).
+        from .engine.strategy_playbook import resolve_max_positions
+        max_positions = int(resolve_max_positions())
     except Exception as exc:
         logger.warning("WARN: console_state max_positions setting read failed - %s", exc)
     try:
