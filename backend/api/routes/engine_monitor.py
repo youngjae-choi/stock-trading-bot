@@ -66,6 +66,7 @@ _SETTING_META = {
     "engine.scaleout_target_rate": ("1차 수확 목표", "이 수익률에서 부분 확정 (0.01=+1%)", "num", "비율(0.01=1%)"),
     "engine.scaleout_ratio_after_target": ("잔량 재확정 비율", "목표 후 잔량에서 추가 확정 비율", "num", "비율 0~1"),
     "engine.daily_target_rate": ("일일 목표 수익률", "계좌 대비 하루 목표(복리, 0.02=2%)", "num", "비율(0.02=2%)"),
+    "engine.stop_source": ("손절/트레일 출처", "profile=종목 변동성별 프로필 · regime=시장국면 레짐SET 단일. Phase3 통합 스위치(기본 profile=현행)", "enum", ["profile", "regime"]),
     # ⑥ 매매(사이징)
     "sizing.model_active": ("사이징 모델 활성", "예수금 비중 기반 신모델 사용", "bool", None),
     "sizing.per_position_rate_min": ("종목당 최소 비중", "확신도 낮을 때 예수금 대비 종목당 하한 (0.05=5%)", "num", "비율(0.05=5%)"),

@@ -204,6 +204,28 @@ def resolve_symbol_rule(
     final.update({k: v for k, v in base_rulepack.items() if k not in ("id", "version", "created_at", "is_active", "order_execution")})
     final.update(rulepack_entry)
     final.update(profile_rule)
+
+    # Phase 3(2026-08-22, PM): engine.stop_source == "regime" 면 종목별 프로필 대신 당일 레짐SET의
+    # 손절/트레일을 단일 출처로 적용한다. 기본 "profile" = 현행(라이브 무변화). 롤백 스위치.
+    # 필드명 매핑: 레짐SET applied_settings.stop_loss_rate → final.initial_stop_loss(프로필 필드명).
+    from ..settings_store import get_setting as _gs
+    if str(_gs("engine.stop_source", "profile") or "profile").lower() == "regime" and trade_date:
+        try:
+            from ..regime_set_service import get_today_application
+            _app = get_today_application(trade_date)
+            _aps = (_app or {}).get("applied_settings") or {}
+            if isinstance(_aps, str):
+                _aps = json.loads(_aps)
+            if _aps.get("stop_loss_rate") is not None:
+                final["initial_stop_loss"] = float(_aps["stop_loss_rate"])
+            if _aps.get("trailing_activate_profit") is not None:
+                final["trailing_activate_profit"] = float(_aps["trailing_activate_profit"])
+            if _aps.get("trailing_stop_rate") is not None:
+                final["trailing_stop_rate"] = float(_aps["trailing_stop_rate"])
+            final["stop_source"] = "regime"
+        except Exception as _exc:
+            logger.warning("WARN: [RuleResolver] regime stop_source 적용 실패(프로필 유지) — %s", _exc)
+
     final.update(symbol_overrides.get(symbol_code, {}))
 
     # 3. Global Risk Guard 강제 (절대 완화 불가)

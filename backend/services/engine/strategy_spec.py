@@ -58,6 +58,7 @@ INTENT_SETTINGS: dict[str, object] = {
     "engine.scaleout_target_rate": 0.01,            # 스케일아웃 발동 수익률
     "engine.scaleout_ratio_after_target": 0.8,
     "engine.daily_target_rate": 0.02,               # 하루 목표(계좌 대비)
+    "engine.stop_source": "profile",                # 손절/트레일 출처: profile(종목변동성)|regime(국면SET). Phase3 롤백스위치
     # ── 사이징/배포 ──
     "exploration.deploy_target_rate": 0.95,         # 예수금 배포 목표(95%)
     "risk.max_positions": 5,                        # ⚠ 다출처 충돌 — §A-관리주의 참조

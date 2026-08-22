@@ -28,4 +28,5 @@ def resolve_sell_params(regime5: str = "flat", regime_set: dict | None = None,
 SELL_SETTING_KEYS = [
     "engine.harvest_mode", "engine.scaleout_ratio", "engine.scaleout_target_rate",
     "engine.scaleout_ratio_after_target", "engine.daily_target_rate",
+    "engine.stop_source",  # 손절/트레일 출처(profile|regime) — Phase3 통합 스위치
 ]
