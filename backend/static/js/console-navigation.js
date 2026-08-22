@@ -113,6 +113,7 @@
     }
 
     if (name === "today") {
+      loadTodaySummary();
       _checkTodayTradingDay().then(function() {
         var td = window._tcTradeDate || null;
         _safeLoadConsoleData();

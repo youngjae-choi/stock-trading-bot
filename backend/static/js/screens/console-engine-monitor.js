@@ -51,6 +51,30 @@
     } catch (e) { console.warn('loadEngineMonitor error', e); }
   }
 
+  // Today Control 최상단 핵심 요약 바 — 현재 장세·엔진 정합·경고를 한눈에
+  async function loadTodaySummary() {
+    try {
+      const res = await fetch('/api/v1/engine-monitor/status');
+      if (!res.ok) return;
+      const p = ((await res.json()).payload) || {};
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerHTML = v; };
+      const e2 = p.engine2_regime || {};
+      const r5 = e2.current_5tier || '-';
+      const tr = e2.current_transition;
+      const label = { crash: '폭락', down: '하락', flat: '보합', up: '상승', surge: '폭등', volatile: '변동성', '-': '-' }[r5] || r5;
+      set('tcs-regime', `${label} <span class="muted" style="font-size:0.7em">${r5}</span>`);
+      set('tcs-transition', (tr && tr !== 'none' && tr !== '-')
+        ? (tr === 'down_transition' ? '<span class="status warn">↓ 하락전환</span>' : '<span class="status ok">↑ 상승전환</span>')
+        : '<span class="muted">방향 안정</span>');
+      const ssot = p.ssot || {};
+      set('tcs-engine', ssot.ok ? '<span class="status ok">✅ 정합</span>' : `<span class="status fail">🔴 ${ssot.drift + ssot.conformance}건</span>`);
+      const al = p.alerts || {};
+      const crit = al.critical || 0, un = al.unacked || 0;
+      set('tcs-alerts', crit > 0 ? `<span class="status fail">🔴 ${crit}</span> <span class="muted">/${un}</span>`
+        : un > 0 ? `<span class="status warn">⚠ ${un}</span>` : '<span class="status ok">없음</span>');
+    } catch (e) { console.warn('loadTodaySummary error', e); }
+  }
+
   // 전략 엔진 설정 (SSOT 추적) — Settings 화면 섹션. 엔진이 읽는 설정을 그대로 편집.
   async function loadEngineSettings() {
     try {

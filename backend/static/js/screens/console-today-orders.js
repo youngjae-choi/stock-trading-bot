@@ -1,6 +1,7 @@
   async function refreshTodayControl() {
     window._lastConsoleDataTs = Date.now();  // 수동 새로고침은 debounce 무시
     await Promise.allSettled([
+      loadTodaySummary(),
       loadConsoleData(),
       loadTodayAlertSummary(),
       loadTodayOrders(5),
