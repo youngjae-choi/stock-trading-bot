@@ -99,7 +99,7 @@
     } catch (e) { console.warn('loadTodaySummary error', e); }
   }
 
-  // 전략 엔진 설정 (SSOT 추적) — Settings 화면 섹션. 엔진이 읽는 설정을 그대로 편집.
+  // 전략 엔진 설정 (SSOT 추적) — Settings 화면 섹션. 사람이 읽는 라벨·설명·드롭다운으로 편집.
   async function loadEngineSettings() {
     try {
       const res = await fetch('/api/v1/engine-monitor/settings');
@@ -107,19 +107,50 @@
       const groups = ((await res.json()).payload || {}).groups || [];
       const body = document.getElementById('engine-settings-body');
       if (!body) return;
-      body.innerHTML = groups.map(g => {
+      const esc = (s) => String(s == null ? '' : s).replace(/"/g, '&quot;');
+
+      function inputHtml(it) {
+        const v = it.value != null ? String(it.value) : '';
+        const style = 'padding:4px 8px;background:var(--panel-2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;';
+        if (it.kind === 'bool') {
+          const on = (v === 'true' || v === 'True');
+          return `<select class="es-input" data-key="${it.key}" style="${style}width:90px;">
+            <option value="true"${on ? ' selected' : ''}>ON</option>
+            <option value="false"${!on ? ' selected' : ''}>OFF</option></select>`;
+        }
+        if (it.kind === 'enum' && Array.isArray(it.options)) {
+          const opts = it.options.map(o => `<option value="${esc(o)}"${String(o) === v ? ' selected' : ''}>${o}</option>`).join('');
+          return `<select class="es-input" data-key="${it.key}" style="${style}width:150px;">${opts}</select>`;
+        }
+        return `<input class="es-input" type="number" step="any" data-key="${it.key}" value="${esc(v)}" style="${style}width:110px;text-align:right;">`;
+      }
+
+      body.innerHTML = groups.map((g, gi) => {
         const rows = g.items.map(it => {
+          const label = it.label || it.key;
           const drift = (it.intent != null && String(it.value) !== String(it.intent))
-            ? ` <span class="status warn" style="font-size:0.8em">의도 ${it.intent}</span>` : '';
-          const src = it.in_db ? '' : ' <span class="muted" style="font-size:0.8em">(코드기본)</span>';
-          return `<tr>
-            <td style="padding:4px 8px;font-size:12px;">${it.key}${src}${drift}</td>
-            <td style="padding:4px 8px;"><input class="es-input" data-key="${it.key}" value="${it.value != null ? it.value : ''}" style="width:120px;padding:3px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;"></td>
-            <td style="padding:4px 8px;"><button class="btn small" data-action="saveEngineSetting" data-key="${it.key}">저장</button></td>
-          </tr>`;
+            ? ` <span class="status warn" style="font-size:0.75em;">의도값 ${it.intent}</span>` : '';
+          const src = it.in_db
+            ? ''
+            : ' <span class="muted" style="font-size:0.72em;">· 기본값(DB 미설정)</span>';
+          return `<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:9px 4px;border-bottom:1px solid var(--line);">
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;font-weight:600;">${label}${drift}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.5;">${it.desc || ''}</div>
+              <div style="font-size:10px;color:var(--muted);opacity:0.6;margin-top:2px;font-family:monospace;">${it.key}${src}</div>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;flex-shrink:0;">
+              ${inputHtml(it)}
+              <button class="btn small" data-action="saveEngineSetting" data-key="${it.key}">저장</button>
+            </div>
+          </div>`;
         }).join('');
-        return `<div style="margin-bottom:10px;"><div style="font-weight:600;font-size:12px;color:var(--muted);margin:8px 0 4px;">${g.title}</div>
-          <table style="width:100%;border-collapse:collapse;">${rows}</table></div>`;
+        // 첫 그룹만 펼침, 나머지는 접힘(스크롤 부담 완화)
+        const open = gi === 0 ? ' open' : '';
+        return `<details${open} style="margin-bottom:8px;border:1px solid var(--line);border-radius:6px;padding:4px 10px;">
+          <summary style="cursor:pointer;font-weight:600;font-size:12.5px;padding:6px 2px;">${g.title} <span class="muted" style="font-weight:400;">· ${g.items.length}개</span></summary>
+          <div style="margin-top:2px;">${rows}</div>
+        </details>`;
       }).join('');
     } catch (e) { console.warn('loadEngineSettings error', e); }
   }
