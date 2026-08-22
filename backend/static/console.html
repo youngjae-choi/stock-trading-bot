@@ -95,9 +95,9 @@
         <nav class="nav" id="nav">
             <button type="button" class="active" data-screen="today">Today Control <small>main</small></button>
           <button type="button" data-screen="trading">Trading Monitor <small>live</small></button>
+          <button type="button" data-screen="engine-monitor">Engine Monitor <small>6엔진</small></button>
           <button type="button" data-screen="statistics">Trade History <small>trades</small></button>
           <button type="button" data-screen="plan-funnel">Plan & Funnel <small>plan+funnel</small></button>
-          <button type="button" data-screen="expert-knowledge">Knowledge <small>knowledge</small></button>
           <button type="button" data-screen="alerts">Alert Center <small>alerts</small></button>
           <button type="button" data-screen="approval" style="display:none">Approval Queue <small>approval</small></button>
 
@@ -722,57 +722,33 @@
 
         </section>
 
-        <section class="screen" id="screen-expert-knowledge">
+        <section class="screen" id="screen-engine-monitor">
           <div class="page-head">
             <div>
-              <h1 class="page-title">Knowledge</h1>
-              <p class="page-desc">PDF 전략 문서를 업로드하면 AI가 매매 조건을 추출합니다. 안전한 Settings만 자동 반영하고, 위험값은 PM 승인, 미매핑 항목은 개발필요로 분리합니다.</p>
+              <h1 class="page-title">Engine Monitor</h1>
+              <p class="page-desc">6엔진(①사이징 ②시장감지 ③종목선정 ④매수 ⑤매도 ⑥매매)의 상태·라이브 값·SSOT 정합을 한 화면에. 로그 상세는 `[E1]`/`[E2]` 태그로 추적.</p>
             </div>
           </div>
-
-          <div class="card" style="margin-bottom:16px;">
-            <div class="card-title">PDF 전략 문서 업로드</div>
-            <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:8px;">
-              <input type="file" id="ek-pdf-input" accept=".pdf" style="flex:1; padding:8px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; color:var(--text);">
-              <button type="button" class="btn primary" id="ek-upload-btn" data-action="ekUploadPdf">업로드 및 분석</button>
-            </div>
-            <div id="ek-upload-status" style="margin-top:8px; font-size:12px; color:var(--muted);"></div>
+          <div class="card" style="margin-bottom:12px;">
+            <div class="card-title">SSOT 폐루프 (의도 ↔ 구현)</div>
+            <div id="em-ssot" style="font-size:13px; margin-top:6px;">로딩중…</div>
           </div>
-
-          <div class="card" id="ek-result-card" style="display:none; margin-bottom:16px;">
-            <div class="card-title">AI 분석 결과</div>
-            <div id="ek-summary" style="font-size:13px; color:var(--muted); margin-bottom:12px;"></div>
-            <div class="table-wrap">
-              <table style="width:100%; border-collapse:collapse; font-size:13px;">
-                <thead>
-                  <tr style="border-bottom:1px solid var(--border);">
-                    <th style="padding:6px 8px; text-align:left;">적용</th>
-                    <th style="padding:6px 8px; text-align:left;">항목</th>
-                    <th style="padding:6px 8px; text-align:left;">추출값</th>
-                    <th style="padding:6px 8px; text-align:left;">Settings 키</th>
-                    <th style="padding:6px 8px; text-align:left;">적용 경계</th>
-                    <th style="padding:6px 8px; text-align:left;">근거</th>
-                  </tr>
-                </thead>
-                <tbody id="ek-candidates-tbody"></tbody>
-              </table>
-            </div>
-
-            <div id="ek-unmappable" style="margin-top:12px; display:none;">
-              <div style="font-size:12px; color:var(--muted); margin-bottom:4px;">아래 항목은 현재 Settings에 키가 없어 개발필요 Knowledge로 저장됨:</div>
-              <div id="ek-unmappable-list" style="font-size:12px; color:var(--yellow);"></div>
-            </div>
-
-            <div style="margin-top:16px; display:flex; gap:8px;">
-              <button type="button" class="btn primary" id="ek-apply-btn" data-action="ekApplyStrategy">안전 Settings만 적용</button>
-              <button type="button" class="btn" data-action="ekReset">취소</button>
-            </div>
-            <div id="ek-apply-result" style="margin-top:8px; font-size:12px;"></div>
+          <div class="card" style="margin-bottom:12px;">
+            <div class="card-title">엔진① 사이징 <span class="muted">(활성 · 실매매 반영)</span></div>
+            <div id="em-e1" style="font-size:13px; margin-top:6px;">로딩중…</div>
           </div>
-
+          <div class="card" style="margin-bottom:12px;">
+            <div class="card-title">엔진② 시장감지 + 대응 <span class="muted">(감지 shadow · 대응 gated)</span></div>
+            <div id="em-e2" style="font-size:13px; margin-top:6px;">로딩중…</div>
+            <div style="margin-top:8px; font-size:12px;"><span class="muted">KOSPI 시계열(최근일):</span> <span id="em-kospi">-</span></div>
+          </div>
+          <div class="card" style="margin-bottom:12px;">
+            <div class="card-title">엔진③ 종목선정 <span class="muted">(모듈 구축)</span></div>
+            <div id="em-e3" style="font-size:13px; margin-top:6px;">로딩중…</div>
+          </div>
           <div class="card">
-            <div class="card-title">분석 이력</div>
-            <div id="ek-history-list" style="font-size:13px; color:var(--muted);">로딩중...</div>
+            <div class="card-title">엔진④⑤⑥</div>
+            <div id="em-todo" class="muted" style="font-size:13px; margin-top:6px;">-</div>
           </div>
         </section>
 
@@ -2502,6 +2478,7 @@
   <script src="/static/js/screens/console-intraday-v2.js"></script>
   <script src="/static/js/screens/console-execution-risk.js"></script>
   <script src="/static/js/screens/console-alerts.js"></script>
+  <script src="/static/js/screens/console-engine-monitor.js"></script>
   <script src="/static/js/screens/console-approval.js"></script>
   <script src="/static/js/screens/console-missed-tracking.js?v=3"></script>
   <script src="/static/js/screens/console-false-positive.js?v=2"></script>
@@ -2513,7 +2490,6 @@
   <script src="/static/js/screens/console-regime-analytics.js?v=7"></script>
   <script src="/static/js/screens/console-daily-plan.js?v=12"></script>
   <script src="/static/js/screens/console-plan-funnel.js?v=6"></script>
-  <script src="/static/js/screens/console-expert-knowledge.js"></script>
   <script src="/static/js/screens/console-dividends.js"></script>
   <script src="/static/js/screens/console-dividend-stats.js"></script>
   <script src="/static/js/screens/console-daily-results.js?v=13"></script>

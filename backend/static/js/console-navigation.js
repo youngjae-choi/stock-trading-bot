@@ -106,6 +106,10 @@
       loadAlerts();
     }
 
+    if (name === "engine-monitor") {
+      loadEngineMonitor();
+    }
+
     if (name === "approval") {
       loadApprovalQueue();
     }

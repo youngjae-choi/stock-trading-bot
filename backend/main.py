@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .api.routes.alerts import router as alerts_router
+from .api.routes.engine_monitor import router as engine_monitor_router
 from .api.routes.account import router as account_router
 from .api.routes.auth import router as auth_router
 from .api.routes.backtest import router as backtest_router
@@ -161,6 +162,7 @@ app.include_router(backtest_router)
 app.include_router(assistant_router)
 app.include_router(account_router)
 app.include_router(alerts_router)
+app.include_router(engine_monitor_router)
 app.include_router(meta_router)
 app.include_router(kis_router)
 app.include_router(universe_router)
