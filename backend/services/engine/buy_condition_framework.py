@@ -169,7 +169,7 @@ _DEFAULT_CONDITIONS = [
     ("cond_gangdo", "체결강도 55%+", "chegyeol_gangdo_min", {"min": 0.55}),
     ("cond_tickvol", "틱거래량 2배+", "tick_volume_mult_min", {"min": 2.0}),
     ("cond_vwap", "VWAP 상단", "vwap_above", {"margin_pct": 0}),
-    ("cond_crband", "등락률 1.5~5%", "change_rate_band", {"min": 1.5, "max": 5.0}),
+    ("cond_crband", "등락률 1.5~4%", "change_rate_band", {"min": 1.5, "max": 4.0}),  # SPEC 정본 고점추격상한 4.0과 통일(③)
     ("cond_tsi", "일봉 TSI>0", "tsi_positive", {"min": 0}),
     ("cond_time", "시간창 09:30~15:00", "time_window", {"start": "09:30", "end": "15:00"}),
 ]
