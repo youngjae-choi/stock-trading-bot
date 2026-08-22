@@ -11,38 +11,18 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from ..settings_store import get_setting
-
 logger = logging.getLogger("ExplorationGate")
 
 
-def _is_virtual() -> bool:
-    """KIS 클라이언트가 모의투자(openapivts) 환경인지 반환한다.
-
-    별도 함수로 분리해 단위테스트에서 패치 가능하게 한다.
-    """
-    from ..kis.common.client import kis_client
-
-    return kis_client._is_virtual_trading()
-
-
-def _coerce_bool(value: Any) -> bool:
-    """system_settings 값(bool/str/int)을 불리언으로 강제한다."""
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return value != 0
-    return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
-
-
 def is_exploration_allowed() -> bool:
-    """탐색모드 허용 여부 = engine.exploration_mode 켜짐 AND KIS 모의계좌.
+    """탐색모드 제거(2026-08-22, PM 결정) — 항상 False.
 
-    실계좌면 무조건 False(하드 차단).
+    과거: engine.exploration_mode + 모의계좌면 OR폭증·풀예수금 매매(데이터 축적용). 탐색 졸업으로
+    완전 제거한다. 이제 매수는 baseline S4/S5 경로만, 사이징은 예수금비중 신모델(sizing.model_active)
+    이 담당한다. 호출부(order_executor·decision_engine·momentum_scanner)는 모두 else/early-return
+    분기를 타 baseline 동작만 남는다.
     """
-    if not _is_virtual():
-        return False
-    return _coerce_bool(get_setting("engine.exploration_mode", False))
+    return False
 
 
 def select_sizing_params(final_rule: dict[str, Any]) -> tuple[None, int]:
