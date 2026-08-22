@@ -127,28 +127,7 @@
             <button type="button" class="btn" data-action="refreshTodayControl">새로고침</button>
           </div>
 
-          <div id="tc-non-trading-banner" style="display:none; background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:10px 16px; margin-bottom:12px; font-size:13px; color:var(--muted);">
-            오늘은 비거래일입니다 — <strong id="tc-non-trading-date">-</strong> 기준 데이터를 표시합니다.
-          </div>
 
-          <!-- 핵심 상태 요약 바 — 스크롤 없이 한눈에 (현재 장세·엔진·경고) -->
-          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
-            <div style="flex:2; min-width:200px; background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px 16px;">
-              <div style="font-size:11px; color:var(--muted); margin-bottom:2px;">현재 장세 (실시간)</div>
-              <div style="font-size:20px; font-weight:700;" id="tcs-regime">-</div>
-              <div style="font-size:12px; margin-top:2px;" id="tcs-transition"></div>
-            </div>
-            <div style="flex:1; min-width:130px; background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px 16px; cursor:pointer;" data-action="showScreen" data-screen="engine-monitor">
-              <div style="font-size:11px; color:var(--muted); margin-bottom:2px;">6엔진 정합</div>
-              <div style="font-size:16px; font-weight:600;" id="tcs-engine">-</div>
-              <div style="font-size:11px; color:var(--muted);">→ Engine Monitor</div>
-            </div>
-            <div style="flex:1; min-width:130px; background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px 16px; cursor:pointer;" data-action="showScreen" data-screen="alerts">
-              <div style="font-size:11px; color:var(--muted); margin-bottom:2px;">경고</div>
-              <div style="font-size:16px; font-weight:600;" id="tcs-alerts">-</div>
-              <div style="font-size:11px; color:var(--muted);">→ Alert Center</div>
-            </div>
-          </div>
 
           <div class="grid cols-6">
             <div class="card compact">
@@ -254,6 +233,23 @@
 
           <!-- 레짐 전환 타임라인 -->
           <div id="tc-regime-timeline-card" class="card" style="margin-bottom:16px;">
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+            <div style="flex:2; min-width:200px; background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px 16px;">
+              <div style="font-size:11px; color:var(--muted); margin-bottom:2px;">현재 장세 (실시간)</div>
+              <div style="font-size:20px; font-weight:700;" id="tcs-regime">-</div>
+              <div style="font-size:12px; margin-top:2px;" id="tcs-transition"></div>
+            </div>
+            <div style="flex:1; min-width:130px; background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px 16px; cursor:pointer;" data-action="showScreen" data-screen="engine-monitor">
+              <div style="font-size:11px; color:var(--muted); margin-bottom:2px;">6엔진 정합</div>
+              <div style="font-size:16px; font-weight:600;" id="tcs-engine">-</div>
+              <div style="font-size:11px; color:var(--muted);">→ Engine Monitor</div>
+            </div>
+            <div style="flex:1; min-width:130px; background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px 16px; cursor:pointer;" data-action="showScreen" data-screen="alerts">
+              <div style="font-size:11px; color:var(--muted); margin-bottom:2px;">경고</div>
+              <div style="font-size:16px; font-weight:600;" id="tcs-alerts">-</div>
+              <div style="font-size:11px; color:var(--muted);">→ Alert Center</div>
+            </div>
+          </div>
             <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
               <div class="card-title" style="margin-bottom:0;">레짐 SET 타임라인 <span>오늘</span></div>
               <span id="tc-regime-current-badge" style="font-size:11px; background:var(--accent); color:#fff; border-radius:4px; padding:2px 8px;"></span>
