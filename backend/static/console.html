@@ -904,24 +904,6 @@
 
           <div class="section-gap"></div>
 
-          <!-- 탐색엔진 — 그룹/조건 EV 스캐폴드 (Phase 3 채움) -->
-          <div class="card">
-            <div class="settings-card-hd">
-              <div class="settings-card-meta">
-                <span class="settings-tag">탐색엔진</span>
-                <div class="settings-card-title-txt">매수 그룹·조건 성과 (EV)</div>
-                <div class="settings-card-desc">그룹/조건별 표본·승률·기대값(EV). EV 집계는 Phase 3에서 채워집니다.</div>
-              </div>
-              <button type="button" class="btn" data-action="loadGroupStatsScaffold">새로고침</button>
-            </div>
-            <table class="settings-table">
-              <thead><tr><th>구분</th><th>이름</th><th>활성</th><th>가중치</th><th>표본</th><th>승률</th><th>EV</th></tr></thead>
-              <tbody id="group-stats-tbody">
-                <tr><td colspan="7" class="muted" style="text-align:center;">새로고침을 눌러 로드</td></tr>
-              </tbody>
-            </table>
-          </div>
-
           <!-- Markdown 자세히 보기 모달 -->
           <div id="ra-detail-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:1000;overflow:auto;padding:20px;">
             <div style="max-width:860px;margin:0 auto;background:var(--bg);border-radius:12px;padding:28px;position:relative;">
@@ -1008,48 +990,6 @@
           <div class="card" style="margin-bottom:16px;">
             <div class="card-title">전략 엔진 설정 <span class="muted" style="font-size:0.85em">SSOT · 엔진이 읽는 값 (의도와 다르면 표시)</span></div>
             <div id="engine-settings-body" style="margin-top:8px;">로딩중…</div>
-          </div>
-
-          <div class="section-gap"></div>
-
-          <!-- ①-2 탐색엔진 원자 조건 / 그룹 / 할당 -->
-          <div class="card">
-            <div class="settings-card-hd">
-              <div class="settings-card-meta">
-                <span class="settings-tag">탐색엔진</span>
-                <div class="settings-card-title-txt">원자 매수 조건</div>
-                <div class="settings-card-desc">조건별 임계치(params)와 활성 여부를 편집합니다. 변경 즉시 저장됩니다.</div>
-              </div>
-              <button type="button" class="btn" data-action="loadConditionEditor">새로고침</button>
-            </div>
-            <table class="settings-table">
-              <thead><tr><th>조건명</th><th>타입</th><th>파라미터(JSON)</th><th>활성</th></tr></thead>
-              <tbody id="atomic-condition-tbody">
-                <tr><td colspan="4" class="muted" style="text-align:center;">로딩중...</td></tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div class="section-gap"></div>
-
-          <div class="card">
-            <div class="settings-card-hd">
-              <div class="settings-card-meta">
-                <span class="settings-tag">탐색엔진</span>
-                <div class="settings-card-title-txt">조건 그룹 (AND 전략) · 할당</div>
-                <div class="settings-card-desc">조건들을 AND로 묶은 전략. 활성/가중치/레짐·프로파일 할당을 편집합니다.</div>
-              </div>
-            </div>
-            <div id="condition-group-list" style="display:flex; flex-direction:column; gap:10px;">
-              <div class="muted">로딩중...</div>
-            </div>
-            <div style="margin-top:12px; border-top:1px solid var(--line); padding-top:12px;">
-              <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">새 그룹 만들기 (AND)</div>
-              <input id="new-group-name" type="text" placeholder="그룹명 (예: 돌파전략2)"
-                     style="padding:6px; border-radius:4px; background:var(--panel-2); color:var(--text); border:1px solid var(--border); margin-right:6px;">
-              <div id="new-group-conditions" style="margin:8px 0; display:flex; flex-wrap:wrap; gap:8px;"></div>
-              <button type="button" class="btn primary" data-action="createConditionGroup">그룹 생성</button>
-            </div>
           </div>
 
           <div class="section-gap"></div>
@@ -1181,44 +1121,6 @@
                 <span>⚠️ 끄면 즉시 반영됨 (재시작 불필요)</span>
                 <span id="intraday-settings-last-updated">-</span>
               </div>
-            </div>
-          </div>
-
-          <div class="section-gap"></div>
-
-          <!-- ②-B 탐색모드 (Exploration) -->
-          <div class="card">
-            <div class="settings-card-hd">
-              <div class="settings-card-meta">
-                <span class="settings-tag">system_settings</span>
-                <div class="settings-card-title-txt">탐색모드 (Exploration)
-                  <span id="exploration-status-badge" class="settings-badge-off" style="margin-left:8px;">OFF</span>
-                </div>
-                <div class="settings-card-desc">🔒 모의계좌에서만 발동. ON이면 매수는 OR 폭증·풀예수금(95%)·최대 40종목으로 동작하며 아래 기존 리스크 설정의 종목수/비중은 무시됩니다.</div>
-              </div>
-            </div>
-
-            <div class="settings-policy-grid">
-              <div class="settings-policy-row">
-                <label style="font-size:12px; display:flex; align-items:center; gap:8px; cursor:pointer;">
-                  <input type="checkbox" id="exploration-mode-toggle" data-action="toggleExplorationMode">
-                  탐색모드 활성화 (engine.exploration_mode)
-                </label>
-              </div>
-            </div>
-
-            <div class="settings-divider"></div>
-
-            <div class="form-grid">
-              <div class="field">
-                <label>풀예수금 사이징 비율 (budget_rate)</label>
-                <input id="exploration-budget-rate" type="number" step="0.01" min="0" max="1" value="0.95">
-                <small class="muted">매수에 사용할 예수금 비율 (예: 0.95 = 95%)</small>
-              </div>
-            </div>
-
-            <div class="settings-card-ft">
-              <button type="button" class="btn primary" data-action="saveExplorationSettings">저장</button>
             </div>
           </div>
 

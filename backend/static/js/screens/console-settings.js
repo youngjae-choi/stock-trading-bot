@@ -804,8 +804,7 @@
 
 
   function initSettingsUI() {
-    loadConditionEditor();
-    loadExplorationSettings();
+    // 탐색모드 제거(2026-08-22) — loadConditionEditor·loadExplorationSettings 섹션 삭제됨
     loadRiskSettings();
     loadSchedulerSettings();
     loadExitOverrideSettings();
