@@ -185,19 +185,16 @@
   async function loadRiskSettings() {
     try {
       var settingsMap = await loadSettingsMap();
-      var dailyLoss = document.getElementById("risk-daily-loss");
       var riskMode = document.getElementById("risk-mode");
       var cutoffTime = document.getElementById("setting-cutoff-time");
       var forceExitTime = document.getElementById("setting-force-exit-time");
 
-      if (dailyLoss) dailyLoss.value = settingsMap["risk.daily_loss_limit_percent"] ?? "-2.0";
-      // 최대 종목수·종목당 비중은 전략엔진⑥(sizing.*/risk.max_position_rate_per_stock) 단일 출처로 이동
+      // 손실한도(일일/긴급정지/급락방어)·종목수·종목당비중은 전략엔진 설정 단일 편집으로 이동
       if (riskMode) riskMode.value = settingsMap["engine.mode"] || "MONITOR";
       if (cutoffTime) cutoffTime.value = settingsMap["risk.new_entry_cutoff_time"] || "15:10";
       if (forceExitTime) forceExitTime.value = settingsMap["risk.force_exit_time"] || "15:20";
 
       var fm = await loadSettingsMapFull();
-      _insertSettingTs('risk-daily-loss', 'risk.daily_loss_limit_percent', fm);
       _insertSettingTs('risk-mode', 'engine.mode', fm);
       _insertSettingTs('setting-cutoff-time', 'risk.new_entry_cutoff_time', fm);
       _insertSettingTs('setting-force-exit-time', 'risk.force_exit_time', fm);
@@ -208,26 +205,19 @@
 
   /* Persist editable global risk settings through system_settings. */
   async function saveRiskSettings() {
-    var dailyLoss = document.getElementById("risk-daily-loss");
     var riskMode = document.getElementById("risk-mode");
     var cutoffTime = document.getElementById("setting-cutoff-time");
     var forceExitTime = document.getElementById("setting-force-exit-time");
 
-    var dailyLossValue = Number(dailyLoss && dailyLoss.value);
     var cutoffValue = cutoffTime ? cutoffTime.value.trim() : "";
     var forceExitValue = forceExitTime ? forceExitTime.value.trim() : "";
 
-    if (!Number.isFinite(dailyLossValue) || dailyLossValue >= 0) {
-      alert("일일 손실 한도는 음수 숫자로 입력하세요.");
-      return;
-    }
     if (!isClockTime(cutoffValue) || !isClockTime(forceExitValue)) {
       alert("시간 형식이 올바르지 않습니다 (HH:MM).");
       return;
     }
 
     var items = [
-      { key: "risk.daily_loss_limit_percent", value: dailyLossValue, value_type: "number" },
       { key: "engine.mode", value: riskMode ? riskMode.value : "MONITOR", value_type: "string" },
       { key: "risk.new_entry_cutoff_time", value: cutoffValue, value_type: "string" },
       { key: "risk.force_exit_time", value: forceExitValue, value_type: "string" }

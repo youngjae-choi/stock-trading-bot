@@ -97,8 +97,9 @@ def _engine_setting_groups():
         ("④ 매수(게이트)", GATE_SETTING_KEYS),
         ("⑤ 매도(수확)", SELL_SETTING_KEYS),
         ("⑥ 매매(사이징)", EXEC_SETTING_KEYS),
-        # 일일손실한도(risk.daily_loss_limit_percent)는 '리스크 & 운용 설정' 섹션 단일 편집(중복 제거 ②).
-        ("리스크(공통 안전벨트)", ["risk.auto_halt_loss_percent",
+        # 포트폴리오 손실 안전벨트 단일화(2026-08-22) — 흩어진 손절/손실 설정을 전략엔진 한 곳으로.
+        ("리스크(공통 안전벨트)", ["risk.daily_loss_limit_percent",
+                          "risk.auto_halt_loss_percent",
                           "risk.flash_crash_threshold_pct"]),
     ]
 
