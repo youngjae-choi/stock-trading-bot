@@ -29,6 +29,7 @@
       toggleDpJson: function() { return toggleDpJson(); },
       loadFunnelData: function() { return loadFunnelData(); },
       loadAlerts: function() { return loadAlerts(); },
+      saveEngineSetting: function() { return saveEngineSetting(element.dataset.key); },
       loadMissedTracking: function() { return loadMissedTracking(); },
       filterMissedTracking: function() { return filterMissedTracking(element.dataset.filter); },
       setMissedRange: function() { return setMissedRange(element.dataset.filter); },

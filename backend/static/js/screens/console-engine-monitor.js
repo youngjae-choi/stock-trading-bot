@@ -50,3 +50,48 @@
       set('em-todo', (p.engines_todo || []).join(' · ') + ' — 미착수');
     } catch (e) { console.warn('loadEngineMonitor error', e); }
   }
+
+  // 전략 엔진 설정 (SSOT 추적) — Settings 화면 섹션. 엔진이 읽는 설정을 그대로 편집.
+  async function loadEngineSettings() {
+    try {
+      const res = await fetch('/api/v1/engine-monitor/settings');
+      if (!res.ok) return;
+      const groups = ((await res.json()).payload || {}).groups || [];
+      const body = document.getElementById('engine-settings-body');
+      if (!body) return;
+      body.innerHTML = groups.map(g => {
+        const rows = g.items.map(it => {
+          const drift = (it.intent != null && String(it.value) !== String(it.intent))
+            ? ` <span class="status warn" style="font-size:0.8em">의도 ${it.intent}</span>` : '';
+          const src = it.in_db ? '' : ' <span class="muted" style="font-size:0.8em">(코드기본)</span>';
+          return `<tr>
+            <td style="padding:4px 8px;font-size:12px;">${it.key}${src}${drift}</td>
+            <td style="padding:4px 8px;"><input class="es-input" data-key="${it.key}" value="${it.value != null ? it.value : ''}" style="width:120px;padding:3px 6px;background:var(--panel-2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;"></td>
+            <td style="padding:4px 8px;"><button class="btn small" data-action="saveEngineSetting" data-key="${it.key}">저장</button></td>
+          </tr>`;
+        }).join('');
+        return `<div style="margin-bottom:10px;"><div style="font-weight:600;font-size:12px;color:var(--muted);margin:8px 0 4px;">${g.title}</div>
+          <table style="width:100%;border-collapse:collapse;">${rows}</table></div>`;
+      }).join('');
+    } catch (e) { console.warn('loadEngineSettings error', e); }
+  }
+
+  async function saveEngineSetting(key) {
+    try {
+      const input = document.querySelector('.es-input[data-key="' + key + '"]');
+      if (!input) return;
+      let raw = input.value.trim();
+      let value = raw, vtype = 'string';
+      if (raw === 'true' || raw === 'false' || raw === 'True' || raw === 'False') {
+        value = (raw.toLowerCase() === 'true'); vtype = 'bool';
+      } else if (raw !== '' && !isNaN(Number(raw))) {
+        value = Number(raw); vtype = 'number';
+      }
+      const res = await fetch('/api/v1/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: key, value: value, value_type: vtype }),
+      });
+      if (res.ok) { showToast('저장: ' + key); await loadEngineSettings(); }
+      else showToast('저장 실패: ' + key, 'error');
+    } catch (e) { showToast('오류: ' + e.message, 'error'); }
+  }

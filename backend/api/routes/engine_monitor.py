@@ -32,6 +32,44 @@ def _get(conn, key, default=None):
     return default
 
 
+_SETTING_GROUPS = [
+    ("① 사이징", ["sizing.per_position_rate_min", "risk.max_position_rate_per_stock",
+                 "sizing.positions_min", "sizing.positions_max", "exploration.deploy_target_rate",
+                 "sizing.surge_per_position_rate_max", "sizing.model_active",
+                 "conviction.regime_weight", "conviction.pullback_full_dist_pct"]),
+    ("② 시장감지·전환", ["regime.down_pct", "regime.up_pct", "regime.surge_pct", "regime.vix_volatile",
+                    "regime.down_transition_pp", "regime.up_transition_pp", "regime.transition_window_min",
+                    "regime.transition_response_active", "regime.transition_trail_tighten_factor"]),
+    ("③ 종목선정", ["selection.change_weight", "selection.surge_weight"]),
+    ("매수 게이트", ["engine.entry_vwap_pullback_mode", "engine.max_price_change_pct",
+                "engine.min_price_change_pct", "engine.min_volume_ratio", "engine.confidence_gate_mode",
+                "engine.min_ai_confidence", "engine.intraday_max_stoploss_per_symbol",
+                "engine.leverage_restriction_mode"]),
+    ("매도·수확", ["engine.harvest_mode", "engine.scaleout_ratio", "engine.scaleout_target_rate"]),
+    ("리스크", ["risk.daily_loss_limit_percent", "risk.auto_halt_loss_percent",
+             "risk.flash_crash_threshold_pct"]),
+]
+
+
+@router.get("/settings")
+async def engine_settings() -> dict:
+    """전략 엔진 설정(SSOT 추적) — Settings 화면 '전략 엔진 설정' 섹션용. 값+의도+그룹."""
+    from ...services.engine.strategy_spec import INTENT_CODE_DEFAULTS, INTENT_SETTINGS
+    intent = {**INTENT_CODE_DEFAULTS, **INTENT_SETTINGS}
+    with get_connection() as conn:
+        groups = []
+        for title, keys in _SETTING_GROUPS:
+            items = []
+            for k in keys:
+                cur = _get(conn, k, None)
+                items.append({
+                    "key": k, "value": cur, "intent": intent.get(k),
+                    "in_db": conn.execute("SELECT 1 FROM system_settings WHERE key=?", (k,)).fetchone() is not None,
+                })
+            groups.append({"title": title, "items": items})
+    return {"ok": True, "payload": {"groups": groups}}
+
+
 @router.get("/status")
 async def engine_status() -> dict:
     """6엔진 상태 + SSOT 정합 스냅샷."""

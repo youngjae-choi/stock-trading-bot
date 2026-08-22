@@ -85,6 +85,7 @@
       initSettingsUI();
       loadBuyConditions();
       loadRegimeSets();
+      loadEngineSettings();
     }
 
     if (name === "alerts") {
