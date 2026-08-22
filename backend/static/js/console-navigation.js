@@ -131,10 +131,6 @@
       // 데이터품질은 System Diagnostics, 킬스위치 토글은 Settings로 일원화. 관련 로더 호출 제거.
     }
 
-    if (name === "expert-knowledge") {
-      ekLoadHistory();
-    }
-
     if (name === "trading") {
       loadTradingMonitor();
       startTradingMonitorStream();
