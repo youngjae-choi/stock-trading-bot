@@ -97,6 +97,32 @@ async def engine_status() -> dict:
             "(SELECT MAX(substr(captured_at,1,10)) FROM market_snapshots WHERE symbol='KOSPI') "
             "ORDER BY captured_at"
         ).fetchall()
+        # 엔진④매수·⑤매도 — 현재 레짐으로 라이브 파라미터 해석(실매 소비 경로와 동일 권위)
+        _r5 = str(_get(conn, "regime.current_5tier", "flat") or "flat")
+        try:
+            from ...services.engine.buy_engine import resolve_buy_gates
+            from ...services.engine.sell_engine import resolve_sell_params
+            _g, _s = resolve_buy_gates(_r5), resolve_sell_params(_r5)
+        except Exception:
+            _g, _s = {}, {}
+        _e4 = {
+            "regime": _r5,
+            "vwap_mode": _g.get("vwap_pullback_mode"),
+            "max_vwap_dist": _g.get("entry_max_vwap_dist_pct"),
+            "band_min": _g.get("min_price_change_pct"),
+            "band_max": _g.get("max_price_change_pct"),
+            "min_vol": _g.get("min_volume_ratio"),
+            "leverage": _g.get("leverage_restriction"),
+            "wired": True,  # decision_engine VWAP게이트 + _entry_gate_block 경유
+        }
+        _e5 = {
+            "harvest": _s.get("harvest_mode"),
+            "scaleout_target": _s.get("scaleout_target_rate"),
+            "scaleout_ratio": _s.get("scaleout_ratio"),
+            "stop_loss": _s.get("stop_loss_rate"),
+            "trail": _s.get("trailing_stop_rate"),
+            "wired": True,  # position_manager 스케일아웃 + 트레일 경유
+        }
         payload = {
             "ssot": {"drift": len(drift), "conformance": len(conf),
                      "ok": not drift and not conf,
@@ -129,6 +155,13 @@ async def engine_status() -> dict:
                 "surge_weight": _get(conn, "selection.surge_weight", 0.5),
                 "wired": False,
             },
-            "engines_todo": ["④매수", "⑤매도", "⑥매매", "UI"],
+            "engine4_buy": _e4,
+            "engine5_sell": _e5,
+            "engine6_execution": {
+                "model_active": _get(conn, "sizing.model_active", False),
+                "conviction": "레짐×눌림 결합",
+                "wired": True,  # order_executor._compute_new_model_sizing 경유
+            },
+            "engines_todo": ["엔진③ 종목선정 배선(감지검증 후)", "decision_engine 분해(점진적)"],
         }
     return {"ok": True, "payload": payload}

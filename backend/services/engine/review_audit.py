@@ -1280,6 +1280,27 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
             _kospi_chg = _idx.get("change_rate")
         except Exception as _kx:
             logger.warning("WARN: [S10] KOSPI 지수 조회 실패 reason=%s", _kx)
+        # 라이브(현재지수) 실패 자가치유 — KIS 일봉 지수차트로 당일 OHLC 폴백.
+        # EOD(장마감 후) S10 시점엔 당일 봉이 완성돼 있어 open/close/등락%를 정확히 받는다.
+        # (2026-08-22: 8/20·21처럼 KIS EOD 실패로 시초/종가가 NULL="-" 되던 재발 방지 — 수동 backfill 불요)
+        if _kospi_open is None or _kospi_close is None:
+            try:
+                from ..kis.domestic.universe_service import get_index_daily_ohlc
+                from datetime import timedelta as _td_sh
+                _fs = (datetime.fromisoformat(trade_date) - _td_sh(days=10)).strftime("%Y-%m-%d")
+                _bars = await get_index_daily_ohlc("0001", _fs, trade_date)
+                _today_bar = next((b for b in _bars if b.get("date") == trade_date), None)
+                if _today_bar:
+                    _kospi_open = _kospi_open or _today_bar.get("open")
+                    _kospi_close = _kospi_close or _today_bar.get("close")
+                    if _kospi_chg is None:
+                        _kospi_chg = _today_bar.get("change_rate")
+                    logger.warning(
+                        "WARN: [S10] KOSPI 라이브 실패 → 일봉 폴백 open=%s close=%s chg=%s",
+                        _kospi_open, _kospi_close, _kospi_chg,
+                    )
+            except Exception as _dx:
+                logger.warning("WARN: [S10] KOSPI 일봉 폴백 실패 reason=%s", _dx)
     else:
         # 과거 재실행 — 기존 백필값 보존
         try:

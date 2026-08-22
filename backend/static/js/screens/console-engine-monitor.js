@@ -46,8 +46,32 @@
       set('em-e3', `선정 가중치 등락률 <b>${e3.change_weight}</b> · 거래량 <b>${e3.surge_weight}</b> `
         + `<span class="muted">(점수 모듈 구축, 미배선)</span>`);
 
-      // ④⑤⑥
-      set('em-todo', (p.engines_todo || []).join(' · ') + ' — 미착수');
+      // 엔진④ 매수 게이트 (현재 레짐 기준 라이브)
+      const e4 = p.engine4_buy || {};
+      const e4on = e4.wired === true;
+      const pct = (v) => (v == null ? '-' : v);
+      set('em-e4', `<span class="status ${e4on ? 'ok' : 'warn'}">${e4on ? '소비중' : '미배선'}</span> `
+        + `레짐 <b>${e4.regime || '-'}</b> · VWAP눌림 <b>${e4.vwap_mode || '-'}</b> (≤${pct(e4.max_vwap_dist)}%) · `
+        + `진입밴드 <b>${pct(e4.band_min)}~${pct(e4.band_max)}%</b> · 거래량 ≥${pct(e4.min_vol)} · 레버리지 ${e4.leverage || '-'}`
+        + `<br><span class="muted" style="font-size:0.85em">decision_engine VWAP게이트 + 진입차단 경유</span>`);
+
+      // 엔진⑤ 매도 (스케일아웃·트레일 — 현재 레짐 기준)
+      const e5 = p.engine5_sell || {};
+      const e5on = e5.wired === true;
+      set('em-e5', `<span class="status ${e5on ? 'ok' : 'warn'}">${e5on ? '소비중' : '미배선'}</span> `
+        + `수확 <b>${e5.harvest || '-'}</b> · +<b>${pct(e5.scaleout_target)}%</b>서 <b>${pct(e5.scaleout_ratio)}</b> 확정 · `
+        + `손절 ${pct(e5.stop_loss)}% · 트레일 ${pct(e5.trail)}%`
+        + `<br><span class="muted" style="font-size:0.85em">position_manager 스케일아웃 + 트레일 경유</span>`);
+
+      // 엔진⑥ 매매·실행 사이징
+      const e6 = p.engine6_execution || {};
+      const e6on = String(e6.model_active) === 'true' || e6.model_active === true;
+      set('em-e6', `<span class="status ${e6on ? 'ok' : 'warn'}">${e6on ? '활성' : 'off'}</span> `
+        + `확신도=<b>${e6.conviction || '-'}</b> → 예수금 비중배분(엔진① 사이징)`
+        + `<br><span class="muted" style="font-size:0.85em">order_executor._compute_new_model_sizing 경유</span>`);
+
+      // 잔여 과제
+      set('em-todo', (p.engines_todo || []).join(' · ') || '없음');
     } catch (e) { console.warn('loadEngineMonitor error', e); }
   }
 
