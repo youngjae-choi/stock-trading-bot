@@ -91,7 +91,6 @@
     var action = element.dataset.action;
     if (action === 'loadReviewByDate') return loadReviewByDate(element.value);
     if (action === 'loadStatisticsDetail') return loadStatisticsDetail(element.value);
-    if (action === 'saveGuardrail') return saveGuardrail(element.dataset.key, element.value);
     if (action === 'toggleExplorationMode') return toggleExplorationMode(element.checked);
     if (action === 'updateSettingsProfileField') {
       return updateSettingsProfileField(

@@ -264,21 +264,18 @@
     try {
       var settingsMap = await loadSettingsMap();
       var dailyLoss = document.getElementById("risk-daily-loss");
-      var positionSize = document.getElementById("risk-position-size");
       var riskMode = document.getElementById("risk-mode");
       var cutoffTime = document.getElementById("setting-cutoff-time");
       var forceExitTime = document.getElementById("setting-force-exit-time");
 
       if (dailyLoss) dailyLoss.value = settingsMap["risk.daily_loss_limit_percent"] ?? "-2.0";
-      // 최대 종목수는 전략엔진⑥(sizing.positions_min/max) 단일 출처로 이동 — risk.max_positions(구값) 편집 제거
-      if (positionSize) positionSize.value = ((Number(settingsMap["risk.max_position_rate_per_stock"] ?? 0.10) || 0.10) * 100).toFixed(1).replace(/\.0$/, "");
+      // 최대 종목수·종목당 비중은 전략엔진⑥(sizing.*/risk.max_position_rate_per_stock) 단일 출처로 이동
       if (riskMode) riskMode.value = settingsMap["engine.mode"] || "MONITOR";
       if (cutoffTime) cutoffTime.value = settingsMap["risk.new_entry_cutoff_time"] || "15:10";
       if (forceExitTime) forceExitTime.value = settingsMap["risk.force_exit_time"] || "15:20";
 
       var fm = await loadSettingsMapFull();
       _insertSettingTs('risk-daily-loss', 'risk.daily_loss_limit_percent', fm);
-      _insertSettingTs('risk-position-size', 'risk.max_position_rate_per_stock', fm);
       _insertSettingTs('risk-mode', 'engine.mode', fm);
       _insertSettingTs('setting-cutoff-time', 'risk.new_entry_cutoff_time', fm);
       _insertSettingTs('setting-force-exit-time', 'risk.force_exit_time', fm);
@@ -290,22 +287,16 @@
   /* Persist editable global risk settings through system_settings. */
   async function saveRiskSettings() {
     var dailyLoss = document.getElementById("risk-daily-loss");
-    var positionSize = document.getElementById("risk-position-size");
     var riskMode = document.getElementById("risk-mode");
     var cutoffTime = document.getElementById("setting-cutoff-time");
     var forceExitTime = document.getElementById("setting-force-exit-time");
 
     var dailyLossValue = Number(dailyLoss && dailyLoss.value);
-    var positionSizeValue = Number(positionSize && positionSize.value);
     var cutoffValue = cutoffTime ? cutoffTime.value.trim() : "";
     var forceExitValue = forceExitTime ? forceExitTime.value.trim() : "";
 
     if (!Number.isFinite(dailyLossValue) || dailyLossValue >= 0) {
       alert("일일 손실 한도는 음수 숫자로 입력하세요.");
-      return;
-    }
-    if (!Number.isFinite(positionSizeValue) || positionSizeValue <= 0 || positionSizeValue > 100) {
-      alert("종목당 최대 비중은 0보다 크고 100 이하인 숫자로 입력하세요.");
       return;
     }
     if (!isClockTime(cutoffValue) || !isClockTime(forceExitValue)) {
@@ -315,7 +306,6 @@
 
     var items = [
       { key: "risk.daily_loss_limit_percent", value: dailyLossValue, value_type: "number" },
-      { key: "risk.max_position_rate_per_stock", value: positionSizeValue / 100, value_type: "number" },
       { key: "engine.mode", value: riskMode ? riskMode.value : "MONITOR", value_type: "string" },
       { key: "risk.new_entry_cutoff_time", value: cutoffValue, value_type: "string" },
       { key: "risk.force_exit_time", value: forceExitValue, value_type: "string" }
@@ -456,71 +446,6 @@
       loadExitOverrideSettings();
     } catch (e) {
       showToast('저장 실패: ' + e.message, 'err');
-    }
-  }
-
-  async function loadBuyConditions() {
-    try {
-      var [settingsData, screeningData] = await Promise.all([
-        fetchJson('/api/v1/settings').catch(() => null),
-        fetchJson('/api/v1/screening/today').catch(() => null)
-      ]);
-
-      var settingsMeta = {};
-      (settingsData?.payload?.items || []).forEach(function(s) {
-        settingsMeta[s.key] = { value: s.value, updated_at: s.updated_at, updated_by: s.updated_by };
-      });
-      var aiEntryRules = screeningData?.payload?.screening?.entry_rules || screeningData?.payload?.entry_rules || {};
-      
-      // AI 신뢰도(min_ai_confidence/min_confidence_floor)는 매수 게이트에서 제외됨 (2026-06-01).
-      // LLM 점수는 관찰·랭킹·메모리 생성용으로만 유지. 정량 지표만 입력 노출.
-      var rows = [
-        {
-          label: '최소 등락률 %',
-          aiValue: aiEntryRules.min_price_change_pct ?? '-',
-          guardKey: 'engine.min_price_change_pct',
-          desc: '이 등락률 미만 종목은 매수 신호 발생 안 함'
-        },
-        {
-          label: '최대 등락률 %',
-          aiValue: aiEntryRules.max_price_change_pct ?? '-',
-          guardKey: 'engine.max_price_change_pct',
-          desc: '이 등락률 초과 종목은 과열로 판단해 제외'
-        },
-      ];
-      
-      var html = rows.map(function(row) {
-        var guardMeta = settingsMeta[row.guardKey] || {};
-        var guardVal = guardMeta.value ?? '-';
-        var tsHtml = _fmtSettingTs(guardMeta.updated_at, guardMeta.updated_by);
-        return '<tr style="border-bottom:1px solid var(--border);">'
-          + '<td style="padding:8px 0;">' + escapeHtml(row.label) + '</td>'
-          + '<td style="padding:8px 4px; font-weight:600; color:var(--blue);">' + row.aiValue + '</td>'
-          + '<td style="padding:8px 4px;">'
-          + '<input type="number" step="0.01" value="' + guardVal + '" '
-          + 'data-action="saveGuardrail" data-key="' + escapeHtml(row.guardKey) + '" '
-          + 'style="width:70px; padding:4px; border-radius:4px; background:var(--panel-2); color:var(--text); border:1px solid var(--border);">'
-          + (tsHtml ? '<div style="font-size:10px;margin-top:2px;">' + tsHtml + '</div>' : '')
-          + '</td>'
-          + '<td style="padding:8px 4px; font-size:11px; color:var(--muted);">' + escapeHtml(row.desc) + '</td>'
-          + '</tr>';
-      }).join('');
-      document.getElementById('buy-condition-tbody').innerHTML = html;
-    } catch(e) {
-      document.getElementById('buy-condition-tbody').innerHTML =
-        '<tr><td colspan="4" class="muted">로드 실패: ' + escapeHtml(e.message) + '</td></tr>';
-    }
-  }
-
-  async function saveGuardrail(key, value) {
-    try {
-      await fetchJson('/api/v1/settings', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({key: key, value: parseFloat(value), value_type: 'number'})
-      });
-    } catch(e) {
-      alert('저장 실패: ' + e.message);
     }
   }
 
@@ -879,7 +804,6 @@
 
 
   function initSettingsUI() {
-    loadBuyConditions();
     loadConditionEditor();
     loadExplorationSettings();
     loadRiskSettings();

@@ -1010,30 +1010,6 @@
             <div id="engine-settings-body" style="margin-top:8px;">로딩중…</div>
           </div>
 
-          <!-- ① 매수 조건 가드레일 -->
-          <div class="card">
-            <div class="settings-card-hd">
-              <div class="settings-card-meta">
-                <span class="settings-tag">AI 자동설정</span>
-                <div class="settings-card-title-txt">매수 조건 가드레일</div>
-                <div class="settings-card-desc">AI가 매일 판단하는 권장값 / 수동 가드레일은 절대 하한선·상한선입니다. 값 변경 시 자동 저장됩니다.</div>
-              </div>
-            </div>
-            <table class="settings-table">
-              <thead>
-                <tr>
-                  <th>항목</th>
-                  <th>현재 AI 설정</th>
-                  <th>가드레일 (수동)</th>
-                  <th>설명</th>
-                </tr>
-              </thead>
-              <tbody id="buy-condition-tbody">
-                <tr><td colspan="4" class="muted" style="text-align:center;">로딩중...</td></tr>
-              </tbody>
-            </table>
-          </div>
-
           <div class="section-gap"></div>
 
           <!-- ①-2 탐색엔진 원자 조건 / 그룹 / 할당 -->
@@ -1273,10 +1249,6 @@
               <div class="field">
                 <label>월간 손실 한도</label>
                 <input id="risk-monthly-loss" value="-8.0%" readonly>
-              </div>
-              <div class="field">
-                <label>종목당 최대 비중 (%)</label>
-                <input id="risk-position-size" type="number" step="0.1" min="0" value="10">
               </div>
               <div class="field">
                 <label>기본 운용 모드</label>

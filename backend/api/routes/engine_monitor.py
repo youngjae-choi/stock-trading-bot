@@ -96,7 +96,8 @@ def _engine_setting_groups():
         ("④ 매수(게이트)", GATE_SETTING_KEYS),
         ("⑤ 매도(수확)", SELL_SETTING_KEYS),
         ("⑥ 매매(사이징)", EXEC_SETTING_KEYS),
-        ("리스크(공통 안전벨트)", ["risk.daily_loss_limit_percent", "risk.auto_halt_loss_percent",
+        # 일일손실한도(risk.daily_loss_limit_percent)는 '리스크 & 운용 설정' 섹션 단일 편집(중복 제거 ②).
+        ("리스크(공통 안전벨트)", ["risk.auto_halt_loss_percent",
                           "risk.flash_crash_threshold_pct"]),
     ]
 

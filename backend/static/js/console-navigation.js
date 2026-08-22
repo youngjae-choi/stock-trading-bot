@@ -83,7 +83,6 @@
 
     if (name === "settings") {
       initSettingsUI();
-      loadBuyConditions();
       loadRegimeSets();
       loadEngineSettings();
     }
