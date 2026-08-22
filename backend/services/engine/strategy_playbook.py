@@ -95,7 +95,8 @@ def _i(getter, key, default):
 
 
 def resolve_position_sizing(
-    deposit: float, conviction: float, getter: Callable = get_setting
+    deposit: float, conviction: float, getter: Callable = get_setting,
+    per_rate_max: float | None = None,
 ) -> SizingResult:
     """예수금비중 사이징 (결정4). conviction∈[0,1]: 높을수록 집중(비중↑·종목수↓).
 
@@ -103,9 +104,11 @@ def resolve_position_sizing(
     - target_positions  = clamp(deploy_target / rate, [pos_min, pos_max])  (파생)
     - per_position_krw  = deposit × per_position_rate
     종목수는 결과일 뿐 사이징의 divisor가 아니다.
+    per_rate_max: 상한 override(폭등 티어 등). None이면 기본 설정 사용.
     """
     lo = _f(getter, *(_SIZING_KEYS["per_rate_min"][0], _SIZING_KEYS["per_rate_min"][1]))
-    hi = _f(getter, *(_SIZING_KEYS["per_rate_max"][0], _SIZING_KEYS["per_rate_max"][1]))
+    hi = (float(per_rate_max) if per_rate_max is not None
+          else _f(getter, *(_SIZING_KEYS["per_rate_max"][0], _SIZING_KEYS["per_rate_max"][1])))
     pmin = _i(getter, *(_SIZING_KEYS["pos_min"][0], _SIZING_KEYS["pos_min"][1]))
     pmax = _i(getter, *(_SIZING_KEYS["pos_max"][0], _SIZING_KEYS["pos_max"][1]))
     deploy = _f(getter, *(_SIZING_KEYS["deploy_target"][0], _SIZING_KEYS["deploy_target"][1]))

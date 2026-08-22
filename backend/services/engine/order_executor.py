@@ -969,7 +969,15 @@ class OrderExecutor:
             deposit = self._extract_deposit(balance)
             total_eval = self._extract_total_eval(balance)
             base = total_eval if total_eval and total_eval > 0 else deposit
-            sz = resolve_position_sizing(base, conv)
+            # 폭등(5장세=surge) 티어: 종목당 비중 상한↑(설정화, 기본=현재값이라 동작불변)
+            per_rate_max = None
+            try:
+                from ..settings_store import get_setting as _gs
+                if str(_gs("regime.current_5tier", "")) == "surge":
+                    per_rate_max = float(_gs("sizing.surge_per_position_rate_max", 0.15) or 0.15)
+            except Exception:
+                per_rate_max = None
+            sz = resolve_position_sizing(base, conv, per_rate_max=per_rate_max)
             # 가용현금(95% 배포 한도 내) 캡 — 절대 과배포 안 함
             deploy_target = float(get_setting("exploration.deploy_target_rate", 0.95) or 0.95)
             buffer = total_eval * (1.0 - deploy_target) if total_eval > 0 else 0.0

@@ -116,8 +116,11 @@
 
 **배선 상태:**
 - **감지(shadow)**: `_persist_and_shadow_sensing` — 레짐 틱마다 KOSPI 시계열 저장 + 전환/5장세 상태 영속화 + `SHADOW-REGIME` 로그. 라이브 `_judge_regime` 불변. 검증도구 `scripts/analyze_shadow_regime.py`.
-- **대응(하락전환 매수중단)**: `_entry_gate_block_reason`에 게이트 배선 + `get_current_transition`(신선도 체크). **flag-gated `regime.transition_response_active`(기본 off)** — 감지 검증 후 on. 8/18 방어.
-- **미구현**: 상승전환 진입재개·하락전환 트레일조임·폭등 사이징확대(§A-4b) — 대응 후속 inc.
+- **대응(구축, flag/설정 gated — 감지 검증 후 활성)**:
+  - **하락전환 매수중단**: `_entry_gate_block_reason` + `get_current_transition`(신선도). `regime.transition_response_active`(off).
+  - **하락전환 트레일조임**: `_update_trailing`이 트레일폭 축소(빨리청산). `regime.transition_trail_tighten_factor`(1.0=무변, <1=조임).
+  - **폭등 사이징확대**: 5장세=surge면 종목당 상한↑. `sizing.surge_per_position_rate_max`(기본 0.15=무변, ↑로 확대).
+- **미구현**: 상승전환 진입재개 · market_sensing으로 _judge_regime 대체(감지 활성).
 
 ### A-6. 검증 상태 요약
 | 검증됨 ✅ | 미검증 ✗ |
@@ -143,7 +146,7 @@
 ## B. 실측 — 지금 실제로 이렇게 돈다 (자동 생성, 손대지 마라)
 
 <!-- AUTO:LIVE START -->
-_자동 생성: 2026-08-22 02:19:08 · `scripts/strategy_spec_sync.py` · 손대지 마라._
+_자동 생성: 2026-08-22 02:32:08 · `scripts/strategy_spec_sync.py` · 손대지 마라._
 
 **현재 활성 레짐:** `risk_on` (trigger=intraday, at=2026-08-21T15:00:04)
 
@@ -214,9 +217,11 @@ _자동 생성: 2026-08-22 02:19:08 · `scripts/strategy_spec_sync.py` · 손대
 | `regime.li_lean_weight` | `0.25` | 코드기본 |
 | `regime.transition_window_min` | `60` | 코드기본 |
 | `regime.transition_response_active` | `False` | 코드기본 |
+| `regime.transition_trail_tighten_factor` | `1.0` | 코드기본 |
 | `sizing.per_position_rate_min` | `0.05` | 코드기본 |
 | `sizing.positions_min` | `6` | 코드기본 |
 | `sizing.positions_max` | `19` | 코드기본 |
+| `sizing.surge_per_position_rate_max` | `0.15` | 코드기본 |
 | `conviction.regime_weight` | `0.5` | 코드기본 |
 | `conviction.pullback_full_dist_pct` | `-3.0` | 코드기본 |
 | `sizing.model_active` | `True` | DB(오버라이드) |
@@ -237,7 +242,7 @@ _드리프트 0건 (아래 C절 참조)_
 ## C. 드리프트 체크 — 실측이 의도를 벗어났나 (자동 생성, 손대지 마라)
 
 <!-- AUTO:DRIFT START -->
-_자동 생성: 2026-08-22 02:19:08_
+_자동 생성: 2026-08-22 02:32:08_
 
 ✅ **드리프트 없음** — 실측이 의도와 일치한다. 시스템이 사양대로 동작 중.
 <!-- AUTO:DRIFT END -->

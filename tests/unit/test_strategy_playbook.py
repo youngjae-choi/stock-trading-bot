@@ -105,6 +105,22 @@ def test_conviction_unknown_vwap_neutral():
     assert resolve_conviction("risk_on", None, getter=_cgetter) == 0.75
 
 
+def test_surge_tier_raises_ceiling():
+    # 폭등 티어: per_rate_max override로 종목당 상한↑ (확신 1.0에서 15%→20%)
+    normal = resolve_position_sizing(100_000_000, 1.0, getter=_getter)
+    surge = resolve_position_sizing(100_000_000, 1.0, getter=_getter, per_rate_max=0.20)
+    assert normal.per_position_rate == 0.15
+    assert surge.per_position_rate == 0.20
+    assert surge.per_position_krw == 20_000_000
+
+
+def test_surge_default_no_change():
+    # override 없으면(=기본) 동작 불변
+    a = resolve_position_sizing(100_000_000, 0.5, getter=_getter)
+    b = resolve_position_sizing(100_000_000, 0.5, getter=_getter, per_rate_max=None)
+    assert a.per_position_rate == b.per_position_rate
+
+
 def test_conviction_feeds_sizing_end_to_end():
     # 결합: 최고 확신 → 15%×6, 최저 확신 → 5%×19 근처
     hi = resolve_conviction("risk_on", -3.0, getter=_cgetter)

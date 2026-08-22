@@ -102,11 +102,13 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "regime.up_transition_pp": 1.0,                 # 상승전환: window 내 +1.0%p
     "regime.li_lean_weight": 0.25,                  # 선행지표 lean 바이어스 가중
     "regime.transition_window_min": 60,             # 전환 판단 window(분)
-    "regime.transition_response_active": False,     # 전환 대응(하락전환 매수중단) 활성 토글
+    "regime.transition_response_active": False,     # 전환 대응(하락전환 매수중단/트레일조임) 활성 토글
+    "regime.transition_trail_tighten_factor": 1.0,  # 하락전환시 트레일폭 배수(1.0=무변, <1=조임)
     # ── 사이징 모델(결정4, Phase1) — 예수금비중: 종목당 5~15%, 종목수 6~19 ──
     "sizing.per_position_rate_min": 0.05,           # 종목당 최소 비중 5%
     "sizing.positions_min": 6,                      # 최소 종목수
     "sizing.positions_max": 19,                     # 최대 종목수
+    "sizing.surge_per_position_rate_max": 0.15,     # 폭등 티어 종목당 상한(기본=일반, ↑로 확대)
     # ── 확신도 모델(레짐×눌림 결합, 전부 설정화 = 언제든 수정) ──
     "conviction.regime_weight": 0.5,                # 장세 vs 눌림 비중(1=장세만·0=눌림만)
     "conviction.pullback_full_dist_pct": -3.0,      # 이만큼 눌리면 눌림점수 만점
@@ -243,6 +245,8 @@ CONFORMANCE: list[tuple[str, str | None, str | None]] = [
     ("전환(방향) 감지", "detect_transition", "regime.down_transition_pp"),
     ("시장감지 shadow 배선", "_persist_and_shadow_sensing", "regime.transition_window_min"),
     ("하락전환 매수중단 대응", "get_current_transition", "regime.transition_response_active"),
+    ("하락전환 트레일조임", "_update_trailing", "regime.transition_trail_tighten_factor"),
+    ("폭등 사이징 확대 티어", "resolve_position_sizing", "sizing.surge_per_position_rate_max"),
     ("폭락 방어", "is_flash_crash_defense_active", "risk.flash_crash_threshold_pct"),
     ("churn 재진입 가드", "intraday_stoploss_count", "engine.intraday_max_stoploss_per_symbol"),
     ("EOD 강제청산", "run_eod_liquidation", "risk.force_exit_time"),

@@ -816,6 +816,18 @@ class PositionManager:
         trailing_activate = _to_float(position["trailing_activate_profit"])
         trailing_rate = _to_float(position["trailing_stop_rate"])
 
+        # 하락전환 트레일 조임(엔진② inc3, flag-gated) — 흐름 꺾이면 트레일 폭 축소(빨리 청산).
+        #   factor<1이면 trailing_rate↓ → 손절선이 고점에 더 가까움 → 반전에 빨리 빠짐. 8/18 방어(매도측).
+        try:
+            from ..settings_store import get_setting
+            if bool(get_setting("regime.transition_response_active", False)):
+                from .intraday_regime_monitor import get_current_transition
+                if get_current_transition() == "down_transition":
+                    factor = float(get_setting("regime.transition_trail_tighten_factor", 1.0) or 1.0)
+                    trailing_rate = trailing_rate * max(0.1, min(1.0, factor))
+        except Exception:
+            pass
+
         was_trailing_active = bool(position["trailing_active"])
 
         # 트레일링 활성화 여부
