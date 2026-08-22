@@ -270,12 +270,45 @@ def _persist_and_shadow_sensing(kospi_change: float | None, vix: float | None,
         series = [float(r["change_rate"]) for r in rows if r["change_rate"] is not None]
         regime5 = classify_regime_5tier(kospi_change, vix)
         transition = detect_transition(series)
+        # 전환/5장세 상태 영속화(날짜스코프 상태값 — 대응 게이트가 읽음). INTENT 제외.
+        from ..settings_store import upsert_setting
+        upsert_setting("regime.current_transition", transition or "none", "string",
+                       "장중 전환 상태(엔진② — down/up_transition, 상태값)", "regime_monitor")
+        upsert_setting("regime.current_transition_at", now.isoformat(), "string",
+                       "전환 상태 갱신 시각", "regime_monitor")
+        upsert_setting("regime.current_5tier", regime5, "string",
+                       "장중 5장세 판정(엔진② shadow)", "regime_monitor")
         logger.info(
             "SHADOW-REGIME kospi=%.2f vix=%s | 현재(_judge)=%s → 5장세=%s 전환=%s (window%dpt)",
             kospi_change, vix, current_regime, regime5, transition or "-", len(series),
         )
     except Exception as exc:
         logger.debug("shadow sensing skip: %s", exc)
+
+
+def get_current_transition() -> str | None:
+    """현재 하락/상승 전환 상태(신선할 때만). 엔진② 대응 게이트용. 실패·미상=None.
+
+    레짐 틱이 오래 끊겼으면(window+15분 초과) 신선하지 않다고 보고 None(오작동 방지).
+    """
+    try:
+        from datetime import timedelta
+
+        from ..settings_store import get_setting
+        trans = get_setting("regime.current_transition", "none")
+        if not trans or str(trans) == "none":
+            return None
+        at_str = get_setting("regime.current_transition_at", "")
+        if at_str:
+            at = datetime.fromisoformat(str(at_str))
+            if at.tzinfo is None:
+                at = at.replace(tzinfo=ZoneInfo("Asia/Seoul"))
+            win = int(get_setting("regime.transition_window_min", 60) or 60)
+            if datetime.now(ZoneInfo("Asia/Seoul")) - at > timedelta(minutes=win + 15):
+                return None
+        return str(trans)
+    except Exception:
+        return None
 
 
 def _should_skip_transition(trade_date: str) -> bool:

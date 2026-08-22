@@ -777,6 +777,18 @@ def _entry_gate_block_reason(symbol: str, confidence: float, name: str = "") -> 
     except Exception as exc:
         logger.warning("WARN: [S6] 급락 방어 게이트 조회 실패 — %s", exc)
 
+    # 0.5) 하락전환 방어(엔진② inc3) — 최근 window KOSPI가 꺾이면(하락전환) 신규매수 중단.
+    #   레벨은 아직 +여도 방향이 꺾인 8/18 케이스 방어. flag-gated(regime.transition_
+    #   response_active, 기본 off — 감지 검증 후 활성). 감지 상태는 30분 틱마다 갱신.
+    try:
+        if bool(get_setting("regime.transition_response_active", False)):
+            from .intraday_regime_monitor import get_current_transition
+
+            if get_current_transition() == "down_transition":
+                return "down_transition (하락전환 — 흐름 꺾임, 신규매수 중단)"
+    except Exception as exc:
+        logger.warning("WARN: [S6] 하락전환 게이트 조회 실패 — %s", exc)
+
     # 1) new_entry_allowed 강제 (engine.enforce_new_entry_allowed, 기본 ON)
     try:
         if bool(get_setting("engine.enforce_new_entry_allowed", True)):
