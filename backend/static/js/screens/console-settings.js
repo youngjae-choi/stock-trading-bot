@@ -594,6 +594,22 @@
     loadRegimeSets();
     loadIntradaySettings();
     loadMissedThresholdSettings();
+    _wireSettingsCollapse();
+  }
+
+  /* 설정 섹션 접이식 통일(2026-08-22) — 헤더 클릭으로 접기/펴기. HTML/ID 무변경 add-on. */
+  function _wireSettingsCollapse() {
+    var scope = document.getElementById('screen-settings');
+    if (!scope) return;
+    scope.querySelectorAll('.settings-card-hd').forEach(function(hd) {
+      if (hd.dataset.collapseWired) return;
+      hd.dataset.collapseWired = '1';
+      hd.addEventListener('click', function(e) {
+        if (e.target.closest('button, input, select, a, textarea, label')) return; // 인터랙션은 토글 제외
+        var card = hd.closest('.card');
+        if (card) card.classList.toggle('settings-collapsed');
+      });
+    });
   }
 
   async function loadIntradaySettings() {

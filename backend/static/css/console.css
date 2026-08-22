@@ -1752,6 +1752,21 @@ body.light .kairos-toast {
 }
 .settings-card-meta { flex: 1; min-width: 0; }
 
+/* 접이식 설정 섹션 (2026-08-22 통일) — 헤더 클릭으로 접기/펴기 */
+.settings-card-hd { cursor: pointer; user-select: none; position: relative; }
+.settings-card-hd::after {
+  content: '⌄';
+  font-size: 15px;
+  line-height: 1;
+  color: var(--muted);
+  margin-left: 8px;
+  transition: transform 0.15s ease;
+  align-self: center;
+}
+.card.settings-collapsed .settings-card-hd::after { transform: rotate(-90deg); }
+.card.settings-collapsed .settings-card-hd { margin-bottom: 0; }
+.card.settings-collapsed > *:not(.settings-card-hd) { display: none; }
+
 /* Section tag (small label above title) */
 .settings-tag {
   display: inline-block;
