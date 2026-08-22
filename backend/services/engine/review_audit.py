@@ -817,19 +817,29 @@ async def _compute_equity_snapshot(trade_date: str) -> dict[str, Any]:
         "equity_pnl_pct": None,
     }
     try:
-        total_eval = await _fetch_eod_total_eval()
-        if total_eval is None:
-            logger.warning("WARN: [S10] equity 산출 불가 — KIS total_eval 미확보 trade_date=%s", trade_date)
-            return snapshot
-        snapshot["equity_eod_total_eval"] = total_eval
-
         # baseline은 장시작 '총평가(total_eval)'여야 한다. deposit(예수금)을 쓰면 eod−예수금이 되어
         # 보유주식가치만큼 부풀려진 쓰레기값(+30~72M)이 된다 — 2026-06-19 수정.
         from .daily_capital import get_total_eval_baseline
 
         baseline = get_total_eval_baseline(trade_date)
+        total_eval = await _fetch_eod_total_eval()
+        if total_eval is None:
+            # KIS EOD 잔고조회 실패(rate-limit·지연 등) — baseline(장시작 총평가)로 폴백해
+            # equity NULL("-" 표시) 방지(2026-08-22, 8/20·21 결과 유실 대응). 장중 변화 미반영.
+            if baseline and baseline > 0:
+                snapshot["equity_eod_total_eval"] = baseline
+                snapshot["equity_pnl"] = 0.0
+                snapshot["equity_pnl_pct"] = 0.0
+                snapshot["equity_source"] = "baseline_fallback"
+                logger.warning(
+                    "WARN: [S10] KIS total_eval 미확보 → baseline 폴백 trade_date=%s eq=%.0f",
+                    trade_date, baseline)
+            else:
+                logger.warning("WARN: [S10] equity 산출 불가 — KIS·baseline 모두 미확보 trade_date=%s", trade_date)
+            return snapshot
+        snapshot["equity_eod_total_eval"] = total_eval
         if baseline is None or baseline <= 0:
-            logger.warning("WARN: [S10] equity 산출 불가 — total_eval baseline 미캡처 trade_date=%s", trade_date)
+            logger.warning("WARN: [S10] equity_pnl 미산출 — baseline 미캡처(eod는 확보) trade_date=%s", trade_date)
             return snapshot
         snapshot["equity_pnl"] = total_eval - baseline
         snapshot["equity_pnl_pct"] = (total_eval - baseline) / baseline * 100.0
@@ -1280,6 +1290,22 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
                 ).fetchone()
             if _prev:
                 _kospi_open, _kospi_close, _kospi_chg = _prev["kospi_open"], _prev["kospi_close"], _prev["kospi_change_pct"]
+        except Exception:
+            pass
+
+    if _kospi_chg is None:
+        # KIS KOSPI 미확보 폴백 — 레짐 모니터가 저장한 market_snapshots 시계열의 마지막 등락률
+        # (2026-08-22, KIS EOD 실패로 KOSPI "-" 되던 것 대응). 종가(price)는 미저장이라 등락%만.
+        try:
+            with get_connection() as _mc:
+                _row = _mc.execute(
+                    "SELECT change_rate FROM market_snapshots WHERE symbol='KOSPI' "
+                    "AND substr(captured_at,1,10)=? ORDER BY captured_at DESC LIMIT 1",
+                    (trade_date,),
+                ).fetchone()
+            if _row and _row["change_rate"] is not None:
+                _kospi_chg = float(_row["change_rate"])
+                logger.warning("WARN: [S10] KOSPI KIS 미확보 → market_snapshots 폴백 chg=%.2f%%", _kospi_chg)
         except Exception:
             pass
 
