@@ -230,60 +230,6 @@ def _default_regime_sets() -> list[dict[str, Any]]:
             },
             "priority": 10,
         },
-        {
-            "id": "SET-PRE-0526-RECOVERY",
-            "name": "2026-05-26 반등 예측형",
-            "description": "주말 긍정 뉴스로 반등 시나리오 (VIX 하락, KOSPI +0.5% 이상)",
-            "trigger_conditions": {"regime_label": "risk_on", "vix_max": 20, "kospi_change_min": 0.5},
-            "settings": {
-                "max_positions": 12,
-                "stop_loss_rate": -0.035,
-                "take_profit_rate": 0.08,
-                "new_entry_allowed": True,
-                "trailing_activate_profit": 0.04,
-                "trailing_stop_rate": 0.02,
-                "daily_budget_rate": 0.90,        # risk_on 계열
-            },
-            "is_prebuilt": True,
-            "prebuilt_target_date": "2026-05-26",
-            "priority": 20,
-        },
-        {
-            "id": "SET-PRE-0526-SIDEWAYS",
-            "name": "2026-05-26 횡보 예측형",
-            "description": "관망 심리 — KOSPI ±0.5% 범위 횡보 예상",
-            "trigger_conditions": {"regime_label": "neutral", "kospi_change_min": -0.5, "kospi_change_max": 0.5},
-            "settings": {
-                "max_positions": 6,
-                "stop_loss_rate": -0.018,
-                "take_profit_rate": 0.04,
-                "new_entry_allowed": True,
-                "trailing_activate_profit": 0.022,
-                "trailing_stop_rate": 0.011,
-                "daily_budget_rate": 0.80,        # neutral 계열
-            },
-            "is_prebuilt": True,
-            "prebuilt_target_date": "2026-05-26",
-            "priority": 20,
-        },
-        {
-            "id": "SET-PRE-0526-SELLOFF",
-            "name": "2026-05-26 하락 대비형",
-            "description": "지정학적 리스크 or 美증시 급락 반영 — 방어 모드",
-            "trigger_conditions": {"regime_label": "risk_off", "vix_min": 22, "kospi_change_max": -0.5},
-            "settings": {
-                "max_positions": 4,
-                "stop_loss_rate": -0.012,
-                "take_profit_rate": 0.025,
-                "new_entry_allowed": True,
-                "trailing_activate_profit": 0.015,
-                "trailing_stop_rate": 0.008,
-                "daily_budget_rate": 0.50,        # risk_off 계열
-            },
-            "is_prebuilt": True,
-            "prebuilt_target_date": "2026-05-26",
-            "priority": 20,
-        },
     ]
 
 
