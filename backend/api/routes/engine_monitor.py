@@ -32,23 +32,24 @@ def _get(conn, key, default=None):
     return default
 
 
-_SETTING_GROUPS = [
-    ("① 사이징", ["sizing.per_position_rate_min", "risk.max_position_rate_per_stock",
-                 "sizing.positions_min", "sizing.positions_max", "exploration.deploy_target_rate",
-                 "sizing.surge_per_position_rate_max", "sizing.model_active",
-                 "conviction.regime_weight", "conviction.pullback_full_dist_pct"]),
-    ("② 시장감지·전환", ["regime.down_pct", "regime.up_pct", "regime.surge_pct", "regime.vix_volatile",
-                    "regime.down_transition_pp", "regime.up_transition_pp", "regime.transition_window_min",
-                    "regime.transition_response_active", "regime.transition_trail_tighten_factor"]),
-    ("③ 종목선정", ["selection.change_weight", "selection.surge_weight"]),
-    ("매수 게이트", ["engine.entry_vwap_pullback_mode", "engine.max_price_change_pct",
-                "engine.min_price_change_pct", "engine.min_volume_ratio", "engine.confidence_gate_mode",
-                "engine.min_ai_confidence", "engine.intraday_max_stoploss_per_symbol",
-                "engine.leverage_restriction_mode"]),
-    ("매도·수확", ["engine.harvest_mode", "engine.scaleout_ratio", "engine.scaleout_target_rate"]),
-    ("리스크", ["risk.daily_loss_limit_percent", "risk.auto_halt_loss_percent",
-             "risk.flash_crash_threshold_pct"]),
-]
+def _engine_setting_groups():
+    """설정 그룹을 6엔진과 일치 — 각 엔진 모듈의 SETTING_KEYS를 단일 출처로."""
+    from ...services.engine.buy_engine import GATE_SETTING_KEYS
+    from ...services.engine.execution_engine import EXEC_SETTING_KEYS
+    from ...services.engine.sell_engine import SELL_SETTING_KEYS
+    return [
+        ("① 전략설정(확신도)", ["conviction.regime_weight", "conviction.pullback_full_dist_pct"]),
+        ("② 시장감지·전환", ["regime.down_pct", "regime.up_pct", "regime.surge_pct", "regime.vix_volatile",
+                        "regime.down_transition_pp", "regime.up_transition_pp",
+                        "regime.transition_window_min", "regime.transition_response_active",
+                        "regime.transition_trail_tighten_factor"]),
+        ("③ 종목선정", ["selection.change_weight", "selection.surge_weight"]),
+        ("④ 매수(게이트)", GATE_SETTING_KEYS),
+        ("⑤ 매도(수확)", SELL_SETTING_KEYS),
+        ("⑥ 매매(사이징)", EXEC_SETTING_KEYS),
+        ("리스크(공통 안전벨트)", ["risk.daily_loss_limit_percent", "risk.auto_halt_loss_percent",
+                          "risk.flash_crash_threshold_pct"]),
+    ]
 
 
 @router.get("/settings")
@@ -58,7 +59,7 @@ async def engine_settings() -> dict:
     intent = {**INTENT_CODE_DEFAULTS, **INTENT_SETTINGS}
     with get_connection() as conn:
         groups = []
-        for title, keys in _SETTING_GROUPS:
+        for title, keys in _engine_setting_groups():
             items = []
             for k in keys:
                 cur = _get(conn, k, None)

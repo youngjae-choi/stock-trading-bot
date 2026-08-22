@@ -953,7 +953,7 @@ class OrderExecutor:
         """
         try:
             from ..settings_store import get_setting
-            from .strategy_playbook import resolve_conviction, resolve_position_sizing
+            from .strategy_playbook import resolve_conviction
             if price <= 0:
                 return None
             regime = self._current_regime_label()
@@ -965,19 +965,14 @@ class OrderExecutor:
             except Exception:
                 vwap = None
             vwap_dist = (price / vwap - 1.0) * 100.0 if (vwap and price > 0) else None
-            conv = resolve_conviction(regime, vwap_dist)
+            conv = resolve_conviction(regime, vwap_dist)  # 로그/정보용(엔진⑥과 동일 입력)
             deposit = self._extract_deposit(balance)
             total_eval = self._extract_total_eval(balance)
             base = total_eval if total_eval and total_eval > 0 else deposit
-            # 폭등(5장세=surge) 티어: 종목당 비중 상한↑(설정화, 기본=현재값이라 동작불변)
-            per_rate_max = None
-            try:
-                from ..settings_store import get_setting as _gs
-                if str(_gs("regime.current_5tier", "")) == "surge":
-                    per_rate_max = float(_gs("sizing.surge_per_position_rate_max", 0.15) or 0.15)
-            except Exception:
-                per_rate_max = None
-            sz = resolve_position_sizing(base, conv, per_rate_max=per_rate_max)
+            # ⑥ 매매 엔진이 사이징 산출(5장세→확신도→예수금비중, 폭등 티어 상한 포함).
+            regime5 = str(get_setting("regime.current_5tier", "") or regime)
+            from .execution_engine import resolve_execution_sizing
+            sz = resolve_execution_sizing(base, regime5, vwap_dist)
             # 가용현금(95% 배포 한도 내) 캡 — 절대 과배포 안 함
             deploy_target = float(get_setting("exploration.deploy_target_rate", 0.95) or 0.95)
             buffer = total_eval * (1.0 - deploy_target) if total_eval > 0 else 0.0
