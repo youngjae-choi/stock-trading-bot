@@ -131,15 +131,15 @@ def get_active_budget_rate(trade_date: str | None = None) -> float:
 
 
 def get_active_max_positions(trade_date: str | None = None) -> int:
-    d = trade_date or _today_kst()
+    """최대 종목수 — 단일 출처(strategy_playbook.resolve_max_positions, [6,19] 모델).
+
+    구 레짐SET·final_rule·risk.max_positions 다출처(5/12/10) 충돌을 이 하나로 통일(A-7#1).
+    """
     try:
-        app = get_today_application(d)
-        if app:
-            mp = app.get("applied_settings", {}).get("max_positions")
-            if mp:
-                return int(mp)
+        from .strategy_playbook import resolve_max_positions
+        return resolve_max_positions()
     except Exception as exc:
-        logger.warning("WARN: max_positions 조회 실패 trade_date=%s reason=%s", d, exc)
+        logger.warning("WARN: max_positions 조회 실패 reason=%s", exc)
     return _DEFAULT_MAX_POSITIONS
 
 

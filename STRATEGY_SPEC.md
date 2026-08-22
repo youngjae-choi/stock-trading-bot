@@ -139,7 +139,7 @@
 
 | # | 이슈 | 실태 | 해결 방향 |
 |---|---|---|---|
-| 1 | **max_positions 다출처(대부분 fallback)** | 정정: 주력 제약은 **95% 배포 캡**(order_preflight 배포 게이트)이고 종목수 count(5/12/10)는 **fallback**(deploy_target=0일 때만). 즉 이미 예수금비중이 주 제약(결정4 부분충족). | 단일 출처 `strategy_playbook.resolve_max_positions`([6,19] ceiling) **shadow 배선됨**(inc3). fallback도 이걸로 통일 후 count 소스 정리 |
+| 1 | ~~max_positions 다출처~~ **해소(2026-08-22)** | order_preflight fallback + daily_capital이 이제 **단일 출처 `strategy_playbook.resolve_max_positions`([6,19])** 사용. 구 5/12/10 다출처 통일. 주력 제약은 여전히 95% 배포캡(총노출 고정). | ✅ 완료 |
 | 2 | **exploration_mode=on** | 탐색 사이징 활성. 메모리상 7/4 "졸업" 의도였으나 플래그는 아직 on. | 졸업 여부 PM 확인 → off면 의도 갱신 |
 | 3 | min_ai_confidence 타입 | DB에 문자열 `"0.60"` 저장(코드가 float coerce라 동작은 정상) | 숫자로 정규화(선택) |
 | 4 | flash_crash 상태플래그 | `flash_crash_defense_active=true`(date 8/19). 날짜스코프라 다음 거래일 자동해제(동작 정상) | 상태값이라 INTENT 제외 |

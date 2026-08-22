@@ -603,25 +603,15 @@ def run_preflight(
         else:
             checks["max_positions"] = PREFLIGHT_OK
     else:
-        max_positions = int(_to_float(final_rule.get("max_positions"), 10.0) or 10)
+        # max_positions 단일 출처([6,19] 모델, A-7#1 해소) — 흩어진 5/12/10 대신 이 하나.
+        # 주력 제약은 위 95% 배포캡. 이 count는 배포캡 미설정 시 fallback(총노출은 배포캡이 고정).
+        from .strategy_playbook import resolve_max_positions
+        max_positions = resolve_max_positions()
         if current_positions_count >= max_positions:
             checks["max_positions"] = PREFLIGHT_BLOCK
             block_reasons.append(f"최대 보유 종목 도달 ({current_positions_count}/{max_positions})")
         else:
             checks["max_positions"] = PREFLIGHT_OK
-
-    # [SHADOW] max_positions 단일화([6,19] 모델) 비교 — 게이트 불변, 로그만(inc3 검증).
-    try:
-        from .strategy_playbook import resolve_max_positions
-        _model_cap = resolve_max_positions()
-        _cur = "deploy95%캡" if (deploy_target_rate > 0 and total_eval > 0) \
-            else f"count<{int(_to_float(final_rule.get('max_positions'), 10.0) or 10)}"
-        logger.info(
-            "SHADOW-MAXPOS symbol=%s 현재제약=%s 보유=%d | 신모델 ceiling=%d([6,19])",
-            signal.get("symbol"), _cur, current_positions_count, _model_cap,
-        )
-    except Exception:
-        pass
 
     # 5. 트리거 가격 유효성
     trigger_price = _to_float(signal.get("trigger_price"))
