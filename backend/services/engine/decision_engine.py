@@ -2031,9 +2031,11 @@ class DecisionEngine:
         # 꼭지추격 39%). 진입가가 VWAP보다 임계%(기본 0) 넘게 위(=추격)면 차단해 "VWAP 지지 부근/아래"
         # 진입으로 유도. mode=shadow는 로그만(무매매), off는 비활성. VWAP 미가용 시 fail-open.
         try:
-            vwap_mode = _get_setting_str("engine.entry_vwap_pullback_mode", "enforce")
+            from .buy_engine import resolve_buy_gates
+            _gates = resolve_buy_gates()  # ④ 매수 엔진에서 게이트 파라미터(get_playbook 경유)
+            vwap_mode = str(_gates.get("vwap_pullback_mode", "enforce"))
             if vwap_mode != "off":
-                max_dist = _get_setting_float("engine.entry_max_vwap_dist_pct", 0.0)
+                max_dist = float(_gates.get("entry_max_vwap_dist_pct", 0.0))
                 vwap_dist = _vwap_pullback_gate(self._bar_engine.get_vwap(symbol), price, max_dist)
                 if vwap_dist is not None and vwap_mode == "shadow":
                     logger.info(

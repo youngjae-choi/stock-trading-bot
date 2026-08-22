@@ -505,9 +505,10 @@ class PositionManager:
         return reason
 
     def _scaleout_enabled(self) -> bool:
-        """수확(스케일아웃) 모드 on/off. 기본 ON. OFF면 기존 탐색모드 동작(익절 없음) 보존."""
+        """수확(스케일아웃) 모드 on/off. 기본 ON. ⑤ 매도 엔진에서 읽음(get_playbook 경유)."""
         try:
-            return _as_bool(get_setting("engine.harvest_mode", True), True)
+            from .sell_engine import resolve_sell_params
+            return _as_bool(resolve_sell_params().get("harvest_mode", True), True)
         except Exception:
             return True
 
@@ -575,8 +576,10 @@ class PositionManager:
         entry_price = _to_float(position.get("entry_price"))
         if entry_price <= 0:
             return ""
-        target_rate = _to_float(get_setting("engine.scaleout_target_rate", 0.02), 0.02)
-        ratio_setting = _to_float(get_setting("engine.scaleout_ratio", 0.6), 0.6)
+        from .sell_engine import resolve_sell_params  # ⑤ 매도 엔진에서 수확 파라미터
+        _sell = resolve_sell_params()
+        target_rate = _to_float(_sell.get("scaleout_target_rate", 0.02), 0.02)
+        ratio_setting = _to_float(_sell.get("scaleout_ratio", 0.6), 0.6)
         # P3-4: 방어 레짐(risk_off/volatile)에서는 레짐 SET 오버라이드로
         # 더 낮은 목표(빨리)·더 큰 비중(많이) 수확한다.
         regime_override = _regime_scaleout_overrides()
