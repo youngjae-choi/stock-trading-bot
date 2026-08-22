@@ -42,6 +42,15 @@ async def engine_status() -> dict:
         drift, conf = [f"체크 실패: {exc}"], []
 
     with get_connection() as conn:
+        # Alert Center 요약(미확인 경고 — PM이 Alert 화면 안 봐도 여기서 감지)
+        try:
+            arow = conn.execute(
+                "SELECT COUNT(*) n, SUM(CASE WHEN severity='CRITICAL' THEN 1 ELSE 0 END) crit "
+                "FROM system_alerts WHERE acknowledged=0"
+            ).fetchone()
+            alerts = {"unacked": arow["n"] or 0, "critical": arow["crit"] or 0}
+        except Exception:
+            alerts = {"unacked": 0, "critical": 0}
         # 엔진② KOSPI 시계열(최근 거래일)
         series = conn.execute(
             "SELECT substr(captured_at,12,5) t, change_rate v FROM market_snapshots "
@@ -53,6 +62,7 @@ async def engine_status() -> dict:
             "ssot": {"drift": len(drift), "conformance": len(conf),
                      "ok": not drift and not conf,
                      "items": (drift + conf)[:8]},
+            "alerts": alerts,
             "engine1_sizing": {
                 "active": _get(conn, "sizing.model_active", False),
                 "per_rate_min": _get(conn, "sizing.per_position_rate_min", 0.05),

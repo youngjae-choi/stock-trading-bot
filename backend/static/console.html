@@ -82,7 +82,7 @@
           <option value="dividends">Dividend Entry</option>
           <option value="dividend-stats">Statistics</option>
           <option value="statistics">Trade History</option>
-          <option value="plan-funnel">Plan &amp; Funnel</option>
+          <option value="engine-monitor">Engine Monitor</option>
           <option value="settings">Settings</option>
         </select>
         <span class="mobile-date-label">기준일<strong id="mobileDateLabel">--</strong></span>
@@ -97,17 +97,13 @@
           <button type="button" data-screen="trading">Trading Monitor <small>live</small></button>
           <button type="button" data-screen="engine-monitor">Engine Monitor <small>6엔진</small></button>
           <button type="button" data-screen="statistics">Trade History <small>trades</small></button>
-          <button type="button" data-screen="plan-funnel">Plan & Funnel <small>plan+funnel</small></button>
           <button type="button" data-screen="alerts">Alert Center <small>alerts</small></button>
-          <button type="button" data-screen="approval" style="display:none">Approval Queue <small>approval</small></button>
 
           <div class="menu-label">Analysis</div>
           <button type="button" data-screen="shadow-trading">Missed Entries <small>missed</small></button>
           <button type="button" data-screen="false-positive">False Positive <small>fp</small></button>
           <button type="button" data-screen="confidence-cal" style="display:none">CALIBRATION <small>cal</small></button>
           <button type="button" data-screen="daily-results">Daily Results <small>daily</small></button>
-
-          <button type="button" data-screen="engine-test">System Diagnostics <small>diag</small></button>
           <button type="button" data-screen="settings">Settings <small>admin</small></button>
 
           <div class="menu-label">Dividend</div>
@@ -278,9 +274,6 @@
               <div class="funnel-step"><strong id="fp-positions">-</strong><span>보유중</span></div>
             </div>
             <div style="text-align:right; margin-top:8px;">
-              <button type="button" class="btn" style="font-size:11px;" data-action="showScreen" data-screen="plan-funnel">
-                자세히보기 (Plan &amp; Funnel) →
-              </button>
             </div>
           </div>
 
@@ -290,9 +283,6 @@
             <div class="card-title">오늘 운영 현황</div>
             <div id="today-ops-feed" style="display:flex; gap:8px; overflow-x:auto; padding-bottom:8px;"></div>
             <div style="text-align:right; margin-top:8px;">
-              <button type="button" class="btn" style="font-size:11px;" data-action="showScreen" data-screen="engine-test">
-                자세히보기 (System Diagnostics) →
-              </button>
             </div>
           </div>
 
@@ -441,286 +431,6 @@
         </section>
 
         <!-- ── P4: Plan & Funnel 통합 화면 ── -->
-        <section class="screen" id="screen-plan-funnel">
-          <div class="page-head">
-            <div>
-              <h1 class="page-title">Plan & Funnel</h1>
-              <p class="page-desc">오늘은 <strong>어떤 시장(환경)</strong>에서 → <strong>어떤 전략</strong>을 세우고 → <strong>어떤 종목</strong>을 골랐는지 한 흐름으로 봅니다. 기준일 <strong id="pf-trade-date">-</strong></p>
-            </div>
-            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-              <button type="button" class="btn" data-action="loadPlanFunnel">새로고침</button>
-            </div>
-          </div>
-
-          <!-- ① 환경 — 시장상황 변화를 잘 캐치하는가 -->
-          <div class="card" style="margin-bottom:4px; border-left:3px solid #6cb6ff;">
-            <div class="card-title"><span style="color:#6cb6ff;">① 오늘 시장은?</span> <span>환경 변화를 잘 캐치하는가</span></div>
-            <div class="grid cols-2" style="gap:16px; margin-top:6px;">
-              <div>
-                <div style="display:flex; gap:8px; align-items:baseline; flex-wrap:wrap;">
-                  <span class="muted" style="font-size:12px;">레짐</span>
-                  <span class="metric" id="pf-regime" style="font-size:18px;">-</span>
-                  <span class="muted" id="pf-regime-set" style="font-size:12px;">Regime Set 확인 전</span>
-                </div>
-                <div class="muted" id="pf-regime-reason" style="font-size:12px; margin-top:2px;"></div>
-                <div style="display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; margin-top:10px;">
-                  <span class="muted" style="font-size:12px;">시장 톤</span>
-                  <span class="metric" id="pf-market-tone" style="font-size:18px;">-</span>
-                  <span class="muted" id="pf-tone-confidence" style="font-size:12px;"></span>
-                </div>
-                <div id="pf-tone-trend" style="font-size:12px; margin-top:2px;"></div>
-              </div>
-              <div>
-                <div class="muted" style="font-size:12px; margin-bottom:4px;">전일 대비 (해외지표·변동성)</div>
-                <div id="pf-index-changes" style="display:flex; flex-wrap:wrap; gap:6px 14px; font-size:12px;">
-                  <span class="muted">로딩중...</span>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div style="text-align:center; color:var(--muted); font-size:11px; margin:2px 0;">↓ 그래서</div>
-
-          <!-- ② 전략 — 환경에 따라 매매전략이 알맞게 변하는가 -->
-          <div class="card" style="margin-bottom:4px; border-left:3px solid #3fb950;">
-            <div class="card-title"><span style="color:#3fb950;">② 그래서 전략은?</span> <span>전략이 알맞게 변하는가</span></div>
-            <div class="grid cols-3" style="gap:16px; margin-top:6px;">
-              <div>
-                <div class="muted" style="font-size:12px;">매매 강도</div>
-                <div class="metric" id="pf-intensity" style="font-size:18px;">-</div>
-              </div>
-              <div>
-                <div class="muted" style="font-size:12px;">신규매수</div>
-                <div class="metric" id="pf-new-entry" style="font-size:18px;">-</div>
-                <div class="muted" id="pf-plan-status" style="font-size:11px;">Plan 상태: -</div>
-              </div>
-              <div>
-                <div class="muted" style="font-size:12px;">배정 프로파일 분포 <span id="pf-assignments-count" class="badge">-</span></div>
-                <div id="pf-profile-dist" style="font-size:12px; margin-top:4px; line-height:1.8;">-</div>
-              </div>
-            </div>
-            <div class="muted" style="font-size:11px; margin-top:10px; line-height:1.6;">
-              청산: 고정 익절 미사용 · 프로파일별 초기손절 + 트레일링 스탑(손절선 상향만) · 15:20 강제청산
-            </div>
-          </div>
-          <div style="text-align:center; color:var(--muted); font-size:11px; margin:2px 0;">↓ 그래서</div>
-
-          <!-- ②.5 장중 전략 변화 — 시장 재분석으로 전략이 어떻게 바뀌었나(인과 타임라인) -->
-          <div class="card" style="margin-bottom:4px; border-left:3px solid #3fb950;">
-            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
-              <span><span style="color:#3fb950;">장중 전략 변화</span> <span>시장이 바뀌면 전략도 바뀐다 · 시각순 인과</span></span>
-              <span class="badge" id="pf-strat-tl-current">현재 SET: -</span>
-            </div>
-            <div id="pf-strat-tl-summary" style="font-size:12px; margin:6px 0 8px;"></div>
-            <div id="pf-strat-timeline" style="display:flex; flex-direction:column; gap:8px;">
-              <div class="muted" style="padding:8px;">로딩중...</div>
-            </div>
-          </div>
-          <div style="text-align:center; color:var(--muted); font-size:11px; margin:2px 0;">↓ 그래서</div>
-
-          <!-- ③ 선별 — 전략에 따라 종목을 잘 선택하는가 -->
-          <div class="card" style="border-left:3px solid #d29922;">
-            <div class="card-title"><span style="color:#d29922;">③ 그래서 고른 종목은?</span> <span>전략대로 선별하는가</span></div>
-            <!-- Funnel 압축 가로 흐름 -->
-            <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:6px;">
-              <div class="card compact"><div class="card-title">기준 universe</div><div class="metric" id="pf-funnel-total">-</div></div>
-              <div class="card compact"><div class="card-title">Layer 1 통과</div><div class="metric" id="pf-funnel-layer1">-</div></div>
-              <div class="card compact"><div class="card-title">Layer 2 통과</div><div class="metric" id="pf-funnel-layer2">-</div></div>
-              <div class="card compact"><div class="card-title">BUY 신호 (원본)</div><div class="metric" id="pf-funnel-signals">-</div></div>
-            </div>
-            <div id="pf-select-summary" style="font-size:13px; margin-top:10px;"></div>
-            <div class="muted" id="pf-funnel-note" style="font-size:12px; margin-top:6px;"></div>
-
-            <!-- 종목 리스트 — 기본 접힘(PM: 궁금하면 펼쳐본다) -->
-            <details class="pf-details-section" style="margin-top:12px;">
-              <summary class="pf-details-summary" style="font-size:13px; cursor:pointer;">
-                <span>종목 리스트 보기</span>
-                <span style="font-size:11px; color:var(--muted);">모멘텀 스캔 · 장중 재선별 (클릭해서 펼치기)</span>
-              </summary>
-              <div style="margin-top:10px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                  <span style="font-size:12px; font-weight:600;">모멘텀 스캔 유입 <span class="muted" style="font-weight:400;">최초 유입 시각순</span></span>
-                  <span class="badge" id="pf-intraday-count">-</span>
-                </div>
-                <div style="display:flex; gap:6px; margin-bottom:8px; flex-wrap:wrap;">
-                  <button type="button" id="pf-scanf-ALL" class="btn primary" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('ALL')">전체</button>
-                  <button type="button" id="pf-scanf-L" class="btn" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('L')">저변동 L</button>
-                  <button type="button" id="pf-scanf-M" class="btn" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('M')">중변동 M</button>
-                  <button type="button" id="pf-scanf-H" class="btn" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('H')">고변동 H</button>
-                  <button type="button" id="pf-scanf-T" class="btn" style="font-size:11px; padding:3px 9px;" onclick="pfFilterScan('T')">테마급등 T</button>
-                </div>
-                <div id="pf-intraday-timeline" style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px;">
-                  <div class="muted" style="padding:8px;">로딩중...</div>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; margin:12px 0 6px;">
-                  <span style="font-size:12px; font-weight:600;">장중 재선별 <span class="muted" style="font-weight:400;">intraday_refresh 유입</span></span>
-                  <span class="badge" id="pf-reselect-count">-</span>
-                </div>
-                <div id="pf-reselect-list" style="display:flex; flex-direction:column; gap:6px;">
-                  <div class="muted" style="padding:8px;">로딩중...</div>
-                </div>
-              </div>
-            </details>
-          </div>
-
-          <!-- ── 접을 수 있는 상세: Daily Plan ── -->
-          <details class="card pf-details-section" style="margin-top:16px;">
-            <summary class="card-title pf-details-summary">
-              <span>Daily Plan 상세</span>
-              <span style="font-size:11px; color:var(--muted);">클릭해서 펼치기/접기</span>
-            </summary>
-
-            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px; margin-top:10px;">
-              <button type="button" class="btn" data-action="loadDailyPlanScreen">새로고침</button>
-              <button type="button" class="btn" data-action="showDpContext">Context 보기</button>
-              <div style="position:relative; display:inline-block;">
-                <button type="button" class="btn" data-action="toggleDpAdvanced">고급 작업 ▾</button>
-                <div id="dp-advanced-menu" style="display:none; position:absolute; right:0; top:100%; background:var(--bg2); border:1px solid var(--border); border-radius:6px; min-width:180px; z-index:100; padding:4px 0;">
-                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:var(--fg); font-size:12px; cursor:pointer;" data-action="runDailyPlanDryRun">Daily Plan Dry Run</button>
-                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:var(--fg); font-size:12px; cursor:pointer;" data-action="manualRerunS5">S5 수동 재실행</button>
-                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:var(--fg); font-size:12px; cursor:pointer;" data-action="revalidateDailyPlan">Daily Plan 재검증</button>
-                  <hr style="margin:4px 0; border-color:var(--border);">
-                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:#f85149; font-size:12px; cursor:pointer;" data-action="deactivateDailyPlan">Daily Plan 비활성화</button>
-                  <button type="button" style="width:100%; text-align:left; padding:8px 12px; background:none; border:none; color:#f85149; font-size:12px; cursor:pointer;" data-action="rollbackDailyPlan">이전 Plan으로 롤백</button>
-                </div>
-              </div>
-            </div>
-
-            <!-- ── 오늘의 Regime Set ── -->
-            <div id="dp-regime-set-card" class="card" style="margin-bottom:16px; border-left:3px solid var(--accent);">
-              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
-                <div>
-                  <span class="card-title" style="font-size:13px;">오늘의 Regime Set</span>
-                  <span id="dp-set-prebuilt-badge" style="display:none; margin-left:8px; font-size:10px; background:#d29922; color:#000; border-radius:3px; padding:2px 6px;">예측 Set</span>
-                </div>
-                <span id="dp-set-score" style="font-size:11px; color:var(--muted);"></span>
-              </div>
-              <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start;">
-                <div>
-                  <div id="dp-set-name" style="font-size:18px; font-weight:700; color:var(--fg);">-</div>
-                  <div id="dp-set-regime" style="font-size:12px; color:var(--muted); margin-top:2px;"></div>
-                </div>
-                <div style="flex:1; min-width:200px;">
-                  <div id="dp-set-reason" style="font-size:12px; color:var(--muted); line-height:1.6;"></div>
-                </div>
-                <div id="dp-set-settings" style="font-size:11px; color:var(--fg); background:var(--bg2); border-radius:6px; padding:8px 12px; white-space:pre;"></div>
-              </div>
-
-              <!-- 추론 체인 -->
-              <div id="dp-set-chain" style="display:flex; gap:0; align-items:stretch; margin-top:12px; flex-wrap:wrap;">
-                <!-- JS가 채움: 아침 브리핑 → 레짐 판단 → SET 선택 → 적용 설정 -->
-              </div>
-            </div>
-
-            <!-- 오늘 요약 카드 4개 -->
-            <div class="grid cols-4">
-              <div class="card compact">
-                <div class="card-title">시장 톤 <span>market tone</span></div>
-                <div class="metric" id="dp-market-tone">-</div>
-                <div class="muted" id="dp-trading-intensity">매매 강도: -</div>
-              </div>
-              <div class="card compact">
-                <div class="card-title">신규매수 <span>new entry</span></div>
-                <div class="metric" id="dp-new-entry">-</div>
-                <div class="muted" id="dp-plan-status">Plan 상태: -</div>
-              </div>
-              <div class="card compact">
-                <div class="card-title">종목 배정 <span>assignments</span></div>
-                <div class="metric" id="dp-assignments-count">-</div>
-                <div class="muted" id="dp-excluded-count">제외: -종목</div>
-              </div>
-              <div class="card compact">
-                <div class="card-title">LLM Provider <span>source</span></div>
-                <div class="metric" id="dp-provider" style="font-size:14px;">-</div>
-                <div class="muted" id="dp-created-at">-</div>
-              </div>
-            </div>
-
-            <div class="section-gap"></div>
-
-            <!-- 청산 정책 안내 -->
-            <div class="card" style="border-left:3px solid #3fb950;">
-              <div class="card-title">청산 조건</div>
-              <ul style="margin:0; padding-left:16px; font-size:12px; color:var(--muted); line-height:1.8;">
-                <li>고정 익절은 사용하지 않습니다.</li>
-                <li>각 종목은 배정된 Risk Profile에 따라 초기 손절선을 설정합니다.</li>
-                <li>수익이 기준 이상 발생하면 트레일링 스탑이 활성화됩니다.</li>
-                <li>고점 갱신 시 손절선은 상향되며, 손절선은 절대 하향되지 않습니다.</li>
-                <li>모든 포지션은 장마감(15:20) 전 강제 청산됩니다.</li>
-              </ul>
-            </div>
-
-            <div class="section-gap"></div>
-
-            <!-- Risk Profile 4종 요약 -->
-            <div class="card">
-              <div class="card-title">Risk Profile Pack <span id="dp-profile-pack-id">-</span></div>
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Profile</th><th>초기손절</th><th>트레일링 활성</th><th>트레일링 손절</th>
-                      <th>최대비중</th><th>재진입</th>
-                    </tr>
-                  </thead>
-                  <tbody id="dp-profiles-tbody">
-                    <tr><td colspan="7" class="muted" style="text-align:center;">로딩중</td></tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div class="section-gap"></div>
-
-            <!-- 종목별 Profile 배정 -->
-            <div class="card">
-              <div class="card-title">종목별 Profile 배정 <span id="dp-plan-id-badge">-</span></div>
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr><th>종목코드</th><th>종목명</th><th>배정 Profile</th><th>배정 사유</th></tr>
-                  </thead>
-                  <tbody id="dp-assignments-tbody">
-                    <tr><td colspan="4" class="muted" style="text-align:center;">데이터 없음</td></tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div class="section-gap"></div>
-
-            <!-- 검증 결과 -->
-            <div class="card">
-              <div class="card-title">검증 결과</div>
-              <div id="dp-validation-list" style="display:flex; flex-direction:column; gap:4px;"></div>
-            </div>
-
-            <div class="section-gap"></div>
-
-            <!-- 제외 종목 + LLM 요약 -->
-            <div style="display:flex; gap:16px; flex-wrap:wrap;">
-              <div class="card" style="flex:1; min-width:200px;">
-                <div class="card-title">제외 종목</div>
-                <div id="dp-excluded-list" style="font-size:12px; color:var(--muted);">없음</div>
-              </div>
-              <div class="card" style="flex:2; min-width:280px;">
-                <div class="card-title">LLM 분석 요약</div>
-                <div id="dp-llm-summary" style="font-size:12px; color:var(--muted); line-height:1.6;">-</div>
-              </div>
-            </div>
-
-            <div class="section-gap"></div>
-
-            <!-- JSON 원본 보기 -->
-            <div class="card">
-              <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-                <span>원본 Daily Trading Plan JSON</span>
-                <button type="button" class="btn" style="font-size:11px;" data-action="toggleDpJson">펼치기/접기</button>
-              </div>
-              <pre id="dp-raw-json" style="display:none; font-size:11px; overflow:auto; max-height:300px; background:var(--bg2); padding:10px; border-radius:6px;"></pre>
-            </div>
-          </details>
-
-        </section>
 
         <section class="screen" id="screen-engine-monitor">
           <div class="page-head">
@@ -728,6 +438,10 @@
               <h1 class="page-title">Engine Monitor</h1>
               <p class="page-desc">6엔진(①사이징 ②시장감지 ③종목선정 ④매수 ⑤매도 ⑥매매)의 상태·라이브 값·SSOT 정합을 한 화면에. 로그 상세는 `[E1]`/`[E2]` 태그로 추적.</p>
             </div>
+          </div>
+          <div class="card" style="margin-bottom:12px;">
+            <div class="card-title">경고 (Alert Center 요약)</div>
+            <div id="em-alerts" style="font-size:13px; margin-top:6px;">로딩중…</div>
           </div>
           <div class="card" style="margin-bottom:12px;">
             <div class="card-title">SSOT 폐루프 (의도 ↔ 구현)</div>
@@ -779,30 +493,6 @@
                 </thead>
                 <tbody id="al-list-tbody">
                   <tr><td colspan="7" class="muted" style="text-align:center">새로고침을 눌러 불러오기</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </section>
-
-        <section class="screen" id="screen-approval">
-          <div class="page-head">
-            <div>
-              <h1 class="page-title">Approval Queue</h1>
-              <p class="page-desc">위험 변경사항에 대한 승인 요청을 관리합니다.</p>
-            </div>
-            <button type="button" class="btn" data-action="loadApprovalQueue">새로고침</button>
-          </div>
-
-          <div class="card">
-            <div class="card-title">승인 대기 목록</div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr><th>유형</th><th>제목</th><th>설명</th><th>상태</th><th>등록일</th><th>액션</th></tr>
-                </thead>
-                <tbody id="aq-list-tbody">
-                  <tr><td colspan="6" class="muted" style="text-align:center">새로고침을 눌러 불러오기</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1353,366 +1043,6 @@
             </div>
             <div id="st-pagination"></div>
           </div>
-
-        </section>
-
-        <section class="screen" id="screen-regime-analytics" style="display:none;">
-          <!-- console-regime-analytics.js 가 렌더링 -->
-        </section>
-
-        <section class="screen" id="screen-engine-test">
-          <div class="page-head">
-            <div>
-              <h1 class="page-title">System Diagnostics</h1>
-              <p class="page-sub">S1~S10의 실제 실행 결과와 audit를 확인합니다. S1~S5-A는 거래준비, S9~S10은 후처리 프로세스 하위 단계입니다.</p>
-            </div>
-            <div class="page-actions">
-              <button type="button" class="btn" data-action="engineTestClearAll">전체 결과 지우기</button>
-              <button type="button" class="btn" data-action="engineTestLoadLogs" data-value="">전체 로그 보기</button>
-            </div>
-          </div>
-
-          <!-- 단계별 카드 그리드 -->
-          <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap:16px; margin-bottom:24px;">
-
-            <!-- S1 -->
-            <div class="card" id="et-card-s1">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                <div>
-                  <strong id="et-title-s1">S1 토큰 갱신</strong>
-                  <div id="et-detail-s1" style="font-size:12px; color:var(--muted); margin-top:2px;">09:01 KST · 거래준비 프로세스 하위 단계 · KIS token-refresh</div>
-                </div>
-                <span class="badge" id="et-badge-s1">대기</span>
-              </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s1">▶ 실행</button>
-              <pre class="et-result" id="et-result-s1" style="display:none;"></pre>
-            </div>
-
-            <!-- S2 -->
-            <div class="card" id="et-card-s2">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                <div>
-                  <strong id="et-title-s2">S2 시장톤 분석</strong>
-                  <div id="et-detail-s2" style="font-size:12px; color:var(--muted); margin-top:2px;">09:01 KST · 거래준비 프로세스 하위 단계 · LLM → market_tone_results</div>
-                </div>
-                <span class="badge" id="et-badge-s2">대기</span>
-              </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s2">▶ 실행</button>
-              <pre class="et-result" id="et-result-s2" style="display:none;"></pre>
-            </div>
-
-            <!-- S3 -->
-            <div class="card" id="et-card-s3">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                <div>
-                  <strong id="et-title-s3">S3 유니버스 필터</strong>
-                  <div id="et-detail-s3" style="font-size:12px; color:var(--muted); margin-top:2px;">09:01 KST · 거래준비 프로세스 하위 단계 · KIS → universe_filter_results</div>
-                </div>
-                <span class="badge" id="et-badge-s3">대기</span>
-              </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s3">▶ 실행</button>
-              <pre class="et-result" id="et-result-s3" style="display:none;"></pre>
-            </div>
-
-            <!-- S4 -->
-            <div class="card" id="et-card-s4">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                <div>
-                  <strong id="et-title-s4">S4 하이브리드 스크리닝</strong>
-                  <div id="et-detail-s4" style="font-size:12px; color:var(--muted); margin-top:2px;">09:01 KST · 거래준비 프로세스 하위 단계 · LLM 정성 평가 → hybrid_screening_results</div>
-                </div>
-                <span class="badge" id="et-badge-s4">대기</span>
-              </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s4">▶ 실행</button>
-              <pre class="et-result" id="et-result-s4" style="display:none;"></pre>
-            </div>
-
-            <!-- S5 -->
-            <div class="card" id="et-card-s5">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                <div>
-                  <strong id="et-title-s5">S5 Daily Plan 생성</strong>
-                  <div id="et-detail-s5" style="font-size:12px; color:var(--muted); margin-top:2px;">
-                    09:01 KST · 거래준비 프로세스 하위 단계 · Scheduler → daily_trading_plans
-                  </div>
-                </div>
-                <span class="badge" id="et-badge-s5">대기</span>
-              </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s5">▶ 실행</button>
-              <pre class="et-result" id="et-result-s5" style="display:none;"></pre>
-            </div>
-
-            <!-- S5-V -->
-            <div class="card" id="et-card-s5v">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                <div>
-                  <strong id="et-title-s5v">S5-V Daily Plan 검증</strong>
-                  <div id="et-detail-s5v" style="font-size:12px; color:var(--muted); margin-top:2px;">
-                    09:01 KST · 거래준비 프로세스 하위 단계 · Schema/Risk Guard 검증
-                  </div>
-                </div>
-                <span class="badge" id="et-badge-s5v">대기</span>
-              </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s5v">▶ 실행</button>
-              <pre class="et-result" id="et-result-s5v" style="display:none;"></pre>
-            </div>
-
-            <!-- S5-A -->
-            <div class="card" id="et-card-s5a">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                <div>
-                  <strong id="et-title-s5a">S5-A Daily Plan 활성화 확인</strong>
-                  <div id="et-detail-s5a" style="font-size:12px; color:var(--muted); margin-top:2px;">
-                    09:01 KST · 거래준비 프로세스 하위 단계 · active plan 상태 확인
-                  </div>
-                </div>
-                <span class="badge" id="et-badge-s5a">대기</span>
-              </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s5a">▶ 활성화 확인</button>
-              <pre class="et-result" id="et-result-s5a" style="display:none;"></pre>
-            </div>
-
-            <!-- S6 -->
-            <div class="card" id="et-card-s6">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                <div>
-                  <strong id="et-title-s6">S6 Decision Engine 활성화</strong>
-                  <div id="et-detail-s6" style="font-size:12px; color:var(--muted); margin-top:2px;">09:10 KST · WS 연결 + RulePack + Risk Profile + Daily Plan 조건 감시</div>
-                </div>
-                <span class="badge" id="et-badge-s6">대기</span>
-              </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s6">▶ 활성화</button>
-              <pre class="et-result" id="et-result-s6" style="display:none;"></pre>
-            </div>
-
-            <!-- S7 -->
-            <div class="card" id="et-card-s7">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                <div>
-                  <strong id="et-title-s7">S7 주문 실행</strong>
-                  <div id="et-detail-s7" style="font-size:12px; color:var(--muted); margin-top:2px;">실시간 · 오늘 발행된 주문 내역 조회</div>
-                </div>
-                <span class="badge" id="et-badge-s7">대기</span>
-              </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s7">▶ 오늘 주문 현황</button>
-              <pre class="et-result" id="et-result-s7" style="display:none;"></pre>
-            </div>
-
-            <!-- S8 -->
-            <div class="card" id="et-card-s8">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                <div>
-                  <strong id="et-title-s8">S8 Position Manager</strong>
-                  <div id="et-detail-s8" style="font-size:12px; color:var(--muted); margin-top:2px;">실시간 · WS tick → 손절/트레일링/강제청산 감시</div>
-                </div>
-                <span class="badge" id="et-badge-s8">대기</span>
-              </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s8">▶ 포지션 조회</button>
-              <pre class="et-result" id="et-result-s8" style="display:none;"></pre>
-            </div>
-
-            <!-- S9 -->
-            <div class="card" id="et-card-s9">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                <div>
-                  <strong id="et-title-s9">S9 당일 청산</strong>
-                  <div id="et-detail-s9" style="font-size:12px; color:var(--muted); margin-top:2px;">15:20 KST · 후처리 프로세스 하위 단계 · 전량 시장가 청산</div>
-                </div>
-                <span class="badge" id="et-badge-s9">대기</span>
-              </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s9">▶ 즉시 전량 청산(일괄매도)</button>
-              <pre class="et-result" id="et-result-s9" style="display:none;"></pre>
-            </div>
-
-            <!-- S10 -->
-            <div class="card" id="et-card-s10">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                <div>
-                  <strong id="et-title-s10">S10 Review & Audit</strong>
-                  <div id="et-detail-s10" style="font-size:12px; color:var(--muted); margin-top:2px;">15:20 KST · 후처리 프로세스 하위 단계 · 매매 결과 분석 → daily_review_reports</div>
-                </div>
-                <span class="badge" id="et-badge-s10">대기</span>
-              </div>
-              <button type="button" class="btn" style="width:100%; margin-bottom:10px;" data-action="engineTestRun" data-step="s10">▶ Review Audit 실행</button>
-              <pre class="et-result" id="et-result-s10" style="display:none;"></pre>
-            </div>
-
-
-          </div>
-
-          <!-- 서버 로그 패널 -->
-          <div class="card">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-              <strong>서버 로그</strong>
-              <div style="display:flex; gap:8px; align-items:center;">
-                <input type="text" id="etLogFilter" placeholder="필터 키워드 (예: UniverseFilter)" 
-                       style="padding:4px 8px; border-radius:4px; border:1px solid var(--border); background:var(--input-bg); color:var(--text); font-size:12px; width:220px;">
-                <button type="button" class="btn" data-action="engineTestLoadLogs" data-value-source="etLogFilter">불러오기</button>
-                <button type="button" class="btn" data-action="engineTestClearLog">지우기</button>
-              </div>
-            </div>
-            <pre id="et-server-log" style="font-size:11px; max-height:400px; overflow-y:auto; white-space:pre-wrap; word-break:break-all; background:var(--code-bg, #111); padding:12px; border-radius:4px; color:var(--code-text, #ccc);">로그를 불러오려면 위 [불러오기] 버튼을 클릭하세요.</pre>
-          </div>
-
-          <hr style="border:none; border-top:1px solid var(--line); margin:28px 0 20px;">
-          <div class="page-head">
-            <div>
-              <h2 class="card-title" style="font-size:18px; margin:0;">시스템 상태</h2>
-              <p class="page-desc">연결 상태 · 시스템 구성 · LLM 공급자를 확인합니다.</p>
-            </div>
-            <button type="button" class="btn" data-action="loadDataAndApi">새로고침</button>
-          </div>
-
-          <!-- 연결 상태 — 5개 연결을 한눈에 -->
-          <div class="card" style="margin-bottom:16px;">
-            <div class="card-title" style="margin-bottom:12px;">연결 상태</div>
-            <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:12px;">
-              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
-                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">KIS REST</div>
-                <div style="font-size:20px; font-weight:700;" id="dh-kisRest">-</div>
-                <div style="font-size:11px; color:var(--muted);" id="dh-kisRestDetail">확인중</div>
-              </div>
-              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
-                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">KIS WebSocket</div>
-                <div style="font-size:20px; font-weight:700;" id="dh-kisWs">-</div>
-                <div style="font-size:11px; color:var(--muted);" id="dh-kisWsDetail">확인중</div>
-              </div>
-              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
-                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">LLM Router</div>
-                <div style="font-size:20px; font-weight:700;" id="dh-llm">-</div>
-                <div style="font-size:11px; color:var(--muted);" id="dh-llmDetail">provider 확인중</div>
-              </div>
-              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
-                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">SQLite DB</div>
-                <div style="font-size:20px; font-weight:700; color:var(--green);" id="dh-db">로컬</div>
-                <div style="font-size:11px; color:var(--muted);" id="dh-dbDetail">data/ 디렉토리</div>
-              </div>
-              <div style="display:flex; flex-direction:column; gap:4px; padding:12px; background:var(--panel-2); border-radius:8px; min-width:0;">
-                <div style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.5px; text-transform:uppercase;">Telegram</div>
-                <div style="font-size:20px; font-weight:700;" id="da-telegram-status">-</div>
-                <div style="font-size:11px; color:var(--muted);" id="da-telegram-detail">상태 확인 중</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 시스템 구성 — 엔진 상태 + 룰 구성 2열 -->
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
-            <!-- 엔진 상태 -->
-            <div class="card">
-              <div class="card-title" style="margin-bottom:12px;">엔진 상태</div>
-              <div style="display:flex; flex-direction:column; gap:10px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px;">Auto Engine</span>
-                  <div style="text-align:right;">
-                    <span class="status ok" id="kisTokenStatus">확인중</span>
-                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="kisTokenDetail">Auto Engine 상태</div>
-                  </div>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px;">Rule Composition</span>
-                  <div style="text-align:right;">
-                    <span class="status ok" id="rulepackStatus">확인중</span>
-                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="rulepackDetail">오늘 활성 룰</div>
-                  </div>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px;">WebSocket 구독</span>
-                  <div style="text-align:right;">
-                    <span class="status ok" id="websocketStatus">확인중</span>
-                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="websocketDetail">S4 완료 후 자동 구독</div>
-                  </div>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px;">Risk Guard</span>
-                  <div style="text-align:right;">
-                    <span class="status ok" id="riskStatus">확인중</span>
-                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="riskDetail">긴급정지 상태</div>
-                  </div>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px;">Schedule Skip</span>
-                  <div style="text-align:right;">
-                    <span class="status ok" id="scheduleSkipStatus">확인중</span>
-                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="scheduleSkipDetail">S2~S6 자동 스킵 여부</div>
-                  </div>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px;">Data Quality</span>
-                  <div style="text-align:right;">
-                    <span class="status ok" id="dq-overall-status">NORMAL</span>
-                    <div style="font-size:10px; color:var(--muted); margin-top:2px;" id="dq-overall-detail">데이터 이상 없음</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- 룰 구성 -->
-            <div class="card">
-              <div class="card-title" style="margin-bottom:12px;">룰 구성</div>
-              <div style="display:flex; flex-direction:column; gap:10px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px; color:var(--muted);">Base RulePack</span>
-                  <span style="font-size:12px; font-weight:600; color:var(--text);" id="da-base-id">-</span>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px; color:var(--muted);">Risk Profile Pack</span>
-                  <span style="font-size:12px; font-weight:600; color:var(--text);" id="da-profile-id">-</span>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px; color:var(--muted);">Daily Plan</span>
-                  <span style="font-size:12px; font-weight:600; color:var(--text);" id="da-plan-id">미수집</span>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px; color:var(--muted);">배정 종목 수</span>
-                  <span style="font-size:18px; font-weight:700; color:var(--text);" id="da-assignments-n">-개</span>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
-                  <span style="font-size:13px; color:var(--muted);">고정 익절 / 트레일링</span>
-                  <span style="font-size:12px;"><span style="color:#f85149;">OFF</span> / <span style="color:#3fb950;">ON</span></span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- LLM 공급자 -->
-          <div class="card" style="margin-bottom:16px;">
-            <div class="card-title">LLM 공급자 <span style="font-weight:400; color:var(--muted);">llm_router 우선순위</span></div>
-            <div class="table-wrap" style="margin-top:10px;">
-              <table>
-                <thead>
-                  <tr><th>Provider</th><th>역할</th><th>모델</th><th>상태</th></tr>
-                </thead>
-                <tbody id="llmProvidersTableBody">
-                  <tr><td colspan="4" class="muted">불러오는 중...</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <!-- API 호출 로그 -->
-          <div class="card">
-            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-              <span>API 호출 로그 <span style="font-size:10px; font-weight:400; color:var(--muted);">당일</span></span>
-              <button type="button" class="btn" style="font-size:11px;" data-action="loadDataApiLogs">새로고침</button>
-            </div>
-            <div class="table-wrap" style="max-height:300px; overflow-y:auto; margin-top:10px;">
-              <table>
-                <thead>
-                  <tr><th>시간</th><th>메서드</th><th>경로</th><th>상태</th><th>응답시간</th></tr>
-                </thead>
-                <tbody id="da-api-logs-tbody">
-                  <tr><td colspan="5" class="muted" style="text-align:center;">로딩중</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <!-- 사용되지 않는 hidden IDs — JS 호환성 유지 -->
-          <span id="telegram-status" style="display:none;"></span>
-          <span id="dq-event-count" style="display:none;">0</span>
-          <span id="dq-event-detail" style="display:none;"></span>
-          <span id="dq-event-breakdown" style="display:none;"></span>
-          <div id="da-rule-system" style="display:none;"></div>
 
         </section>
 
@@ -2409,13 +1739,6 @@
       </svg>
       <span class="tab-label">모니터</span>
     </button>
-    <button class="tab-item" data-screen="plan-funnel" aria-label="Plan &amp; Funnel">
-      <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/>
-        <line x1="9" y1="4" x2="9" y2="9"/>
-      </svg>
-      <span class="tab-label">Plan & Funnel</span>
-    </button>
     <button class="tab-item" data-screen="shadow-trading" aria-label="Missed Entries">
       <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12"/>
@@ -2441,7 +1764,6 @@
       <button class="more-drawer-item" data-screen="dividends">Dividend Entry</button>
       <button class="more-drawer-item" data-screen="dividend-stats">Statistics</button>
       <button class="more-drawer-item" data-screen="statistics">Trade History</button>
-      <button class="more-drawer-item" data-screen="plan-funnel">Plan & Funnel</button>
       <button class="more-drawer-item" data-screen="settings">Settings</button>
     </div>
   </div>
@@ -2479,7 +1801,6 @@
   <script src="/static/js/screens/console-execution-risk.js"></script>
   <script src="/static/js/screens/console-alerts.js"></script>
   <script src="/static/js/screens/console-engine-monitor.js"></script>
-  <script src="/static/js/screens/console-approval.js"></script>
   <script src="/static/js/screens/console-missed-tracking.js?v=3"></script>
   <script src="/static/js/screens/console-false-positive.js?v=2"></script>
   <script src="/static/js/screens/console-confidence-calibration.js"></script>
@@ -2487,9 +1808,7 @@
   <script src="/static/js/screens/console-funnel-data-health.js?v=3"></script>
   <script src="/static/js/screens/console-review.js?v=11"></script>
   <script src="/static/js/screens/console-statistics.js?v=2"></script>
-  <script src="/static/js/screens/console-regime-analytics.js?v=7"></script>
   <script src="/static/js/screens/console-daily-plan.js?v=12"></script>
-  <script src="/static/js/screens/console-plan-funnel.js?v=6"></script>
   <script src="/static/js/screens/console-dividends.js"></script>
   <script src="/static/js/screens/console-dividend-stats.js"></script>
   <script src="/static/js/screens/console-daily-results.js?v=13"></script>

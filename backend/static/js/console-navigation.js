@@ -44,15 +44,6 @@
     if (name === "missed-opportunity") {
       name = "shadow-trading";
     }
-    if (name === "data") {
-      name = "engine-test";
-    }
-    if (name === "rulepack") {
-      name = "plan-funnel";
-    }
-    if (name === "funnel") {
-      name = "plan-funnel";
-    }
     sessionStorage.setItem('currentScreen', name);
 
     if (!opts.skipHistory) {
@@ -96,12 +87,6 @@
       loadRegimeSets();
     }
 
-    if (name === "engine-test") {
-      engineTestLoadTodayResults();
-      loadDataAndApi();
-      loadDQStatus();
-    }
-
     if (name === "alerts") {
       loadAlerts();
     }
@@ -110,9 +95,6 @@
       loadEngineMonitor();
     }
 
-    if (name === "approval") {
-      loadApprovalQueue();
-    }
 
     if (name === "shadow-trading") {
       loadMissedTracking();
@@ -122,13 +104,6 @@
     }
     if (name === "confidence-cal") {
       loadConfidenceCalibration();
-    }
-
-    if (name === "plan-funnel") {
-      loadPlanFunnel();          // ①환경 ②전략 ②.5장중변화 ③선별 + 종목리스트
-      loadDailyPlanScreen();     // DAILY PLAN 상세(운영 컨트롤 포함)
-      // 'Funnel Monitor 상세' 섹션 삭제(2026-06-23) — 퍼널 숫자는 ③선별, 재선별/교체는 ②.5,
-      // 데이터품질은 System Diagnostics, 킬스위치 토글은 Settings로 일원화. 관련 로더 호출 제거.
     }
 
     if (name === "trading") {
@@ -178,9 +153,6 @@
       loadDailyResults();
     }
 
-    if (name === "regime-analytics") {
-      loadRegimeAnalyticsScreen();
-    }
 
     if (name === "statistics") {
       loadStatistics();
@@ -216,7 +188,7 @@
   }
 
   /* ── Bottom Tab Bar ── */
-  var _bottomTabDirectScreens = ['today', 'trading', 'plan-funnel', 'shadow-trading'];
+  var _bottomTabDirectScreens = ['today', 'trading', 'engine-monitor', 'shadow-trading'];
 
   function setActiveTab(screenName) {
     var tabBar = document.getElementById('bottomTabBar');

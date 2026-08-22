@@ -7,6 +7,15 @@
       const p = j.payload || {};
       const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerHTML = v; };
 
+      // Alert Center 요약(미확인 경고) — Alert 화면 안 봐도 여기서 감지
+      const al = p.alerts || {};
+      const crit = al.critical || 0, un = al.unacked || 0;
+      set('em-alerts', (crit > 0)
+        ? `<span class="status fail">🔴 CRITICAL ${crit}건</span> · 미확인 ${un}건 <a href="#alerts" style="font-size:0.85em">→ Alert Center</a>`
+        : (un > 0)
+          ? `<span class="status warn">⚠ 미확인 ${un}건</span> <a href="#alerts" style="font-size:0.85em">→ Alert Center</a>`
+          : '<span class="status ok">✅ 미확인 경고 없음</span>');
+
       // SSOT 폐루프
       const ssot = p.ssot || {};
       set('em-ssot', ssot.ok
