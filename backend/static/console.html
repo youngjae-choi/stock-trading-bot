@@ -6,7 +6,7 @@
   <title>Kairos Control Console</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/console.css?v=14">
+  <link rel="stylesheet" href="/static/css/console.css?v=15">
 </head>
 
 <body class="auth-required">
@@ -1196,20 +1196,6 @@
               </div>
             </div>
 
-            <div class="settings-divider"></div>
-
-            <div class="settings-sublabel">포지션별 수동 오버라이드 <span style="font-size:10px; font-weight:400; text-transform:none; letter-spacing:0;">비워두면 Risk Profile 값 사용</span></div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr><th>항목</th><th>현재값</th><th>새 값 (blur 시 자동저장)</th><th>예시</th><th>최종 수정</th></tr>
-                </thead>
-                <tbody id="exitOverrideSettingsTableBody">
-                  <tr><td colspan="5" class="muted">설정을 불러오는 중입니다...</td></tr>
-                </tbody>
-              </table>
-            </div>
-
             <div class="settings-card-ft">
               <button type="button" class="btn primary" data-action="saveRiskSettings">저장</button>
             </div>
@@ -1223,7 +1209,7 @@
               <div class="settings-card-meta">
                 <span class="settings-tag">버전 관리</span>
                 <div class="settings-card-title-txt">Risk Profile Pack <span id="settings-profile-ver" style="font-size:11px; color:var(--muted); font-weight:400;"></span></div>
-                <div class="settings-card-desc">저장 시 새 버전이 자동 생성됩니다. 기존 버전 이력은 보존됩니다.</div>
+                <div class="settings-card-desc">⚠️ 손절/트레일은 이제 <b>Regime SET(레짐)이 단일 관리</b>합니다(전략엔진⑤ 손절출처=regime). 아래 초기손절·트레일 값은 stop_source=profile로 되돌릴 때만 쓰는 폴백이며, <b>최대비중·재진입</b>만 상시 적용됩니다. 저장 시 새 버전 자동 생성.</div>
               </div>
             </div>
             <div class="table-wrap">
@@ -1260,9 +1246,9 @@
               </div>
             </div>
             <div class="table-wrap">
-              <table>
+              <table class="sched-table">
                 <thead>
-                  <tr><th>단계</th><th>설명</th><th>현재 시간</th><th>최종 수정</th><th>새 시간 (blur 시 자동저장)</th></tr>
+                  <tr><th>단계</th><th>설명</th><th>현재</th><th>최종 수정</th><th>새 시간</th></tr>
                 </thead>
                 <tbody id="schedulerSettingsTableBody">
                   <tr><td colspan="5" class="muted">설정을 불러오는 중입니다...</td></tr>

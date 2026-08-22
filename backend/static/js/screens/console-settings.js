@@ -39,12 +39,6 @@
     },
   ];
 
-  var exitOverrideKeys = [
-    { key: "override_stop_loss_rate", label: "손절률 (stop_loss)", placeholder: "-0.015", example: "예: -0.015 = -1.5%" },
-    { key: "override_take_profit_rate", label: "익절률 (take_profit) (사용 안 함)", placeholder: "OFF", example: "고정 익절 사용 안 함", disabled: true },
-    { key: "override_trailing_activate_rate", label: "트레일링 활성기준", placeholder: "0.02", example: "예: 0.02 = +2% 도달 시 활성화" },
-    { key: "override_trailing_stop_rate", label: "트레일링 손절률", placeholder: "0.01", example: "예: 0.01 = 고점 -1% 시 청산" }
-  ];
 
   /* 거래 비용 합계 미리보기 업데이트 */
   function _updateCostSummary() {
@@ -316,72 +310,6 @@
     }
   }
 
-  /* Load manual exit-rule override values into the Settings table. */
-  async function loadExitOverrideSettings() {
-    try {
-      var res = await fetchJson("/api/v1/settings");
-      var settings = res.payload.items || [];
-      var settingsMap = {};
-      var settingsMetaMap = {};
-      settings.forEach(function(s) {
-        settingsMap[s.key] = s.value;
-        settingsMetaMap[s.key] = { updated_at: s.updated_at, updated_by: s.updated_by };
-      });
-
-      var html = exitOverrideKeys.map(function(k) {
-        var current = settingsMap[k.key] == null ? "" : String(settingsMap[k.key]);
-        var currentLabel = current === "" ? "-" : current;
-        var meta = settingsMetaMap[k.key] || {};
-        var tsHtml = _fmtSettingTs(meta.updated_at, meta.updated_by) || '<span class="muted">-</span>';
-        return ''
-          + '<tr>'
-          + '  <td>' + k.label + '</td>'
-          + '  <td>' + escapeHtml(currentLabel) + '</td>'
-          + '  <td><input type="text" id="input-' + k.key + '" value="' + escapeHtml(current)
-          + '" placeholder="' + escapeHtml(k.placeholder) + '"'
-          + ' data-key="' + escapeHtml(k.key) + '"'
-          + ' onblur="saveExitOverrideSetting(this.dataset.key)"'
-          + ' style="width: 120px; padding: 5px; border-radius: 5px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);"></td>'
-          + '  <td class="muted">' + k.example + '</td>'
-          + '  <td>' + tsHtml + '</td>'
-          + '</tr>';
-      }).join("");
-      var tbody = document.getElementById("exitOverrideSettingsTableBody");
-      if (tbody) tbody.innerHTML = html;
-    } catch (e) {
-      console.error("Failed to load exit override settings", e);
-      var tbody = document.getElementById("exitOverrideSettingsTableBody");
-      if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="muted">설정 로드 실패: ' + escapeHtml(e.message) + '</td></tr>';
-    }
-  }
-
-  /* POST /api/v1/settings saves one exit-rule override value. */
-  async function saveExitOverrideSetting(key) {
-    var input = document.getElementById("input-" + key);
-    if (!input) return;
-    var val = input.value.trim();
-    if (val !== "" && !/^-?\d+(\.\d+)?$/.test(val)) {
-      alert("숫자 형식으로 입력하거나 비워두세요. 예: -0.015");
-      return;
-    }
-    try {
-      await fetchJson("/api/v1/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: key, value: val })
-      });
-      showToast('저장됨', 'ok');
-      loadExitOverrideSettings();
-    } catch (e) {
-      showToast('저장 실패: ' + e.message, 'err');
-    }
-  }
-
-  /* ── 탐색엔진 조건/그룹 편집기 ── */
-  var _bcConditions = [];   // [{id,name,ctype,params,enabled}]
-  var _bcGroups = [];       // [{id,name,condition_ids,enabled,weight,assigned_to}]
-  var _bcAssignTargets = { regimes: [], profiles: [] };
-
   async function loadDataAndApi() {
     await loadDataHealth();
     try {
@@ -588,7 +516,6 @@
     // 탐색모드 제거(2026-08-22) — loadConditionEditor·loadExplorationSettings 섹션 삭제됨
     loadRiskSettings();
     loadSchedulerSettings();
-    loadExitOverrideSettings();
     loadSettingsProfiles();
     loadTradingCostSettings();
     loadRegimeSets();

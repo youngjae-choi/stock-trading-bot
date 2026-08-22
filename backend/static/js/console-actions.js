@@ -73,7 +73,6 @@
       approveKnowledge: function() { return approveKnowledge(element.dataset.id); },
       rejectKnowledge: function() { return rejectKnowledge(element.dataset.id); },
       saveSchedulerSetting: function() { return saveSchedulerSetting(element.dataset.key); },
-      saveExitOverrideSetting: function() { return saveExitOverrideSetting(element.dataset.key); },
       loadDailyResults: function() { return loadDailyResults(); },
       openDayReview: function() { return openDayReview(element.dataset.date); },
       backToDailyResults: function() { return showScreen('daily-results'); }
