@@ -150,65 +150,6 @@
             </div>
           </div>
 
-          <!-- 아침 브리핑 카드 -->          <div class="card morning-brief-card" id="morningBriefCard">
-            <div class="morning-brief-header">
-              <div class="morning-brief-title">
-                <span class="morning-brief-icon">🌏</span>
-                아침 시장 브리핑
-                <span class="morning-brief-date" id="mbDate"></span>
-              </div>
-              <div class="morning-brief-badges">
-                <span class="mb-badge regime" id="mbRegime">-</span>
-                <span class="mb-badge risk" id="mbRisk">-</span>
-              </div>
-            </div>
-            <div class="morning-brief-body">
-              <!-- 좌: index-board 시황 텍스트 + 분석 -->
-              <div class="mb-col-brief">
-                <div id="mbIndexBoardBrief" class="mb-ib-box" style="display:none;">
-                  <div class="mb-ib-head">🌐 index-board 시황 <span id="mbIbSource"></span></div>
-                  <div id="mbIbText" class="mb-ib-text"></div>
-                </div>
-                <div class="mb-analysis">
-                  <div class="mb-analysis-row">
-                    <span class="mb-label">주도 성격</span>
-                    <span class="mb-value" id="mbStockChar">-</span>
-                  </div>
-                  <div class="mb-analysis-row">
-                    <span class="mb-label">RulePack 힌트</span>
-                    <span class="mb-value" id="mbRulepackHint">-</span>
-                  </div>
-                </div>
-              </div>
-              <!-- 우: 장전 시장 지표 (morning_context DB — 아침 S2가 1회 저장한 전일·야간 스냅샷. 실시간 아님) -->
-              <div class="mb-col-indicators">
-                <div class="mb-col-title">장전 시장 지표 <span>아침 기준</span></div>
-                <div class="mb-market-grid" id="mbMarketGrid"></div>
-              </div>
-            </div>
-          </div>
-
-          <div class="card" id="eveningBriefCard" style="display:none; border-left:3px solid #6cb6ff; margin-top:12px;">
-            <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-              <span>전날 장후 시황 <span style="font-size:11px; color:var(--muted);">index-board · 미국장 기준</span></span>
-              <span id="eb-sentiment-badge" style="font-size:11px; padding:2px 8px; border-radius:10px;"></span>
-            </div>
-            <div id="eb-date" style="font-size:11px; color:var(--muted); margin-bottom:6px;"></div>
-            <div id="eb-text" style="font-size:13px; line-height:1.7; color:var(--fg);"></div>
-            <div id="eb-alignment" style="margin-top:10px; padding:8px 12px; background:var(--bg2); border-radius:6px; font-size:12px; display:none;"></div>
-          </div>
-
-          <!-- 레짐 전환 타임라인 -->
-          <div id="tc-regime-timeline-card" class="card" style="margin-bottom:16px;">
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
-              <div class="card-title" style="margin-bottom:0;">레짐 SET 타임라인 <span>오늘</span></div>
-              <span id="tc-regime-current-badge" style="font-size:11px; background:var(--accent); color:#fff; border-radius:4px; padding:2px 8px;"></span>
-            </div>
-            <div id="tc-regime-timeline" style="font-size:12px;">
-              <!-- JS가 채움 -->
-            </div>
-          </div>
-
           <div class="grid cols-6">
             <div class="card compact">
               <div class="card-title">운용 모드 <span>mode</span></div>
@@ -273,54 +214,56 @@
             </div>
           </div>
 
-          <div class="section-gap"></div>
-
-            <div class="card">
-              <div class="card-title">Funnel Progress <span>실시간 후보 흐름</span></div>
-            <div class="funnel" id="funnelProgress">
-              <div class="funnel-step"><strong id="fp-total">-</strong><span>전체 종목</span></div>
-              <div class="funnel-step"><strong id="fp-layer1">-</strong><span>Layer 1 Universe</span></div>
-              <div class="funnel-step"><strong id="fp-layer2">-</strong><span>Layer 2 후보</span></div>
-              <div class="funnel-step">
-                <strong id="fp-signals">-</strong><span>오늘 매수 신호</span>
-                <div style="display:flex; gap:8px; flex-wrap:wrap; font-size:10px; margin-top:6px; padding-top:6px; border-top:1px solid var(--line);">
-                  <span title="저변동"><span style="color:#6cb6ff;">L</span> <strong id="tc-low-vol-count">-</strong></span>
-                  <span title="중변동"><span style="color:#3fb950;">M</span> <strong id="tc-mid-vol-count">-</strong></span>
-                  <span title="고변동"><span style="color:#d29922;">H</span> <strong id="tc-high-vol-count">-</strong></span>
-                  <span title="테마급등"><span style="color:#f85149;">T</span> <strong id="tc-theme-spike-count">-</strong></span>
+          <!-- 아침 브리핑 카드 -->          <div class="card morning-brief-card" id="morningBriefCard">
+            <div class="morning-brief-header">
+              <div class="morning-brief-title">
+                <span class="morning-brief-icon">🌏</span>
+                아침 시장 브리핑
+                <span class="morning-brief-date" id="mbDate"></span>
+              </div>
+              <div class="morning-brief-badges">
+                <span class="mb-badge regime" id="mbRegime">-</span>
+                <span class="mb-badge risk" id="mbRisk">-</span>
+              </div>
+            </div>
+            <div class="morning-brief-body">
+              <!-- 좌: index-board 시황 텍스트 + 분석 -->
+              <div class="mb-col-brief">
+                <div id="mbIndexBoardBrief" class="mb-ib-box" style="display:none;">
+                  <div class="mb-ib-head">🌐 index-board 시황 <span id="mbIbSource"></span></div>
+                  <div id="mbIbText" class="mb-ib-text"></div>
                 </div>
               </div>
-              <div class="funnel-step"><strong id="fp-positions">-</strong><span>보유중</span></div>
+              <!-- 우: 장전 시장 지표 (morning_context DB — 아침 S2가 1회 저장한 전일·야간 스냅샷. 실시간 아님) -->
+              <div class="mb-col-indicators">
+                <div class="mb-col-title">장전 시장 지표 <span>아침 기준</span></div>
+                <div class="mb-market-grid" id="mbMarketGrid"></div>
+              </div>
             </div>
           </div>
 
-          <div class="section-gap"></div>
-
-          <div class="card">
-            <div class="card-title">오늘 운영 현황</div>
-            <div id="today-ops-feed" style="display:flex; gap:8px; overflow-x:auto; padding-bottom:8px;"></div>
-          </div>
-
-          <div class="section-gap"></div>
-          <div class="card" id="today-orders-card">
+          <div class="card" id="eveningBriefCard" style="display:none; border-left:3px solid #6cb6ff; margin-top:12px;">
             <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-              <span>최근 주문내역 (최신 5건)</span>
-              <button type="button" class="btn" style="font-size:11px;" data-action="showScreen" data-screen="statistics">자세히보기 →</button>
+              <span>전날 장후 시황 <span style="font-size:11px; color:var(--muted);">index-board · 미국장 기준</span></span>
+              <span id="eb-sentiment-badge" style="font-size:11px; padding:2px 8px; border-radius:10px;"></span>
             </div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr><th>시간</th><th>종목</th><th>구분</th><th>수량</th><th>가격</th><th>상태</th></tr>
-                </thead>
-                <tbody id="tm-orders-tbody">
-                  <tr><td colspan="6" class="muted" style="text-align:center;">주문내역 없음</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <!-- 모바일 주문 카드 — JS에서 채움 -->
-            <div class="today-order-cards" id="todayOrderCards" style="display:none"></div>
+            <div id="eb-date" style="font-size:11px; color:var(--muted); margin-bottom:6px;"></div>
+            <div id="eb-text" style="font-size:13px; line-height:1.7; color:var(--fg);"></div>
+            <div id="eb-alignment" style="margin-top:10px; padding:8px 12px; background:var(--bg2); border-radius:6px; font-size:12px; display:none;"></div>
           </div>
-        </section>
+
+          <!-- 레짐 전환 타임라인 -->
+          <div id="tc-regime-timeline-card" class="card" style="margin-bottom:16px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+              <div class="card-title" style="margin-bottom:0;">레짐 SET 타임라인 <span>오늘</span></div>
+              <span id="tc-regime-current-badge" style="font-size:11px; background:var(--accent); color:#fff; border-radius:4px; padding:2px 8px;"></span>
+            </div>
+            <div id="tc-regime-timeline" style="font-size:12px;">
+              <!-- JS가 채움 -->
+            </div>
+          </div>
+
+          </section>
 
         <section class="screen" id="screen-trading">
           <div class="page-head">
