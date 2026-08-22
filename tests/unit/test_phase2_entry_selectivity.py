@@ -16,6 +16,9 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from backend.config import settings
+# 진입게이트는 decision_engine 분해(Phase 4)로 decision_entry_gate로 이동 — get_setting은
+# 이 모듈 네임스페이스에서 해석되므로 게이트 테스트는 deg를 패치한다(de 재-export는 함수 참조만 보존).
+import backend.services.engine.decision_entry_gate as deg
 
 _KST = ZoneInfo("Asia/Seoul")
 
@@ -200,7 +203,7 @@ def _isolate_flash_defense(monkeypatch):
 def test_gate_blocks_when_new_entry_not_allowed(monkeypatch):
     import backend.services.engine.decision_engine as de
     import backend.services.regime_set_service as rss
-    monkeypatch.setattr(de, "get_setting", _gate_settings())
+    monkeypatch.setattr(deg, "get_setting", _gate_settings())
     _isolate_flash_defense(monkeypatch)
     monkeypatch.setattr(
         rss, "get_today_application",
@@ -216,7 +219,7 @@ def test_gate_respects_enforce_off(monkeypatch):
     import backend.services.engine.decision_engine as de
     import backend.services.engine.false_positive as fp
     import backend.services.regime_set_service as rss
-    monkeypatch.setattr(de, "get_setting", _gate_settings({"engine.enforce_new_entry_allowed": False}))
+    monkeypatch.setattr(deg, "get_setting", _gate_settings({"engine.enforce_new_entry_allowed": False}))
     _isolate_flash_defense(monkeypatch)
     monkeypatch.setattr(
         rss, "get_today_application",
@@ -231,7 +234,7 @@ def test_gate_blocks_calibration_bin(monkeypatch):
     import backend.services.engine.confidence_calibration as cc
     import backend.services.engine.decision_engine as de
     import backend.services.regime_set_service as rss
-    monkeypatch.setattr(de, "get_setting", _gate_settings())
+    monkeypatch.setattr(deg, "get_setting", _gate_settings())
     _isolate_flash_defense(monkeypatch)
     monkeypatch.setattr(rss, "get_today_application", lambda d: None)
     monkeypatch.setattr(cc, "is_confidence_blocked",
@@ -245,7 +248,7 @@ def test_gate_blocks_entry_fail_cooldown(monkeypatch):
     import backend.services.engine.decision_engine as de
     import backend.services.engine.false_positive as fp
     import backend.services.regime_set_service as rss
-    monkeypatch.setattr(de, "get_setting", _gate_settings())
+    monkeypatch.setattr(deg, "get_setting", _gate_settings())
     _isolate_flash_defense(monkeypatch)
     monkeypatch.setattr(rss, "get_today_application", lambda d: None)
     monkeypatch.setattr(cc, "is_confidence_blocked", lambda *a, **k: (False, ""))
@@ -259,7 +262,7 @@ def test_gate_passes_clean_symbol(monkeypatch):
     import backend.services.engine.decision_engine as de
     import backend.services.engine.false_positive as fp
     import backend.services.regime_set_service as rss
-    monkeypatch.setattr(de, "get_setting", _gate_settings())
+    monkeypatch.setattr(deg, "get_setting", _gate_settings())
     _isolate_flash_defense(monkeypatch)
     monkeypatch.setattr(
         rss, "get_today_application",
@@ -280,7 +283,7 @@ def test_gate_fail_open_on_errors(monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(de, "get_setting", _gate_settings())
+    monkeypatch.setattr(deg, "get_setting", _gate_settings())
     _isolate_flash_defense(monkeypatch)
     monkeypatch.setattr(rss, "get_today_application", _boom)
     monkeypatch.setattr(cc, "is_confidence_blocked", _boom)

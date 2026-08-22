@@ -13,6 +13,7 @@ import uuid
 import pytest
 
 import backend.services.engine.loss_streak_guard as lsg
+import backend.services.engine.decision_entry_gate as deg  # 진입게이트 Phase4 분해 — 패치 대상
 
 
 @pytest.fixture()
@@ -64,9 +65,9 @@ def test_gate_blocks_after_threshold(db, monkeypatch):
     import backend.services.engine.decision_engine as de
     import backend.services.settings_store as ss
 
-    monkeypatch.setattr(de, "_today_kst", lambda: "2026-08-13")
+    monkeypatch.setattr(deg, "_today_kst", lambda: "2026-08-13")
     monkeypatch.setattr(
-        ss, "get_setting",
+        deg, "get_setting",
         lambda key, default=None: {
             "engine.intraday_reentry_block_enabled": True,
             "engine.intraday_max_stoploss_per_symbol": 2,

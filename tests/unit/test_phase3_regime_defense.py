@@ -16,6 +16,8 @@ from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 from backend.config import settings
+# 진입게이트는 Phase 4 분해로 decision_entry_gate로 이동 — 게이트 테스트는 이 모듈의 get_setting을 패치.
+import backend.services.engine.decision_entry_gate as deg
 
 _KST = ZoneInfo("Asia/Seoul")
 
@@ -133,7 +135,7 @@ def test_gate_blocks_regular_symbol_in_defense_mode(monkeypatch):
     import backend.services.engine.false_positive as fp
     import backend.services.regime_set_service as rss
 
-    monkeypatch.setattr(de, "get_setting", lambda k, d=None: {
+    monkeypatch.setattr(deg, "get_setting", lambda k, d=None: {
         "engine.crash_playbook_enabled": True,
         "engine.enforce_new_entry_allowed": True,
         "engine.calibration_gate_enabled": False,
@@ -152,7 +154,7 @@ def test_gate_blocks_inverse_when_playbook_disabled(monkeypatch):
     """플레이북 OFF면 방어 모드에서 인버스 1x도 차단(전면 차단)."""
     import backend.services.engine.decision_engine as de
     import backend.services.engine.intraday_regime_monitor as irm
-    monkeypatch.setattr(de, "get_setting", lambda k, d=None: {
+    monkeypatch.setattr(deg, "get_setting", lambda k, d=None: {
         "engine.crash_playbook_enabled": False,
         "engine.enforce_new_entry_allowed": False,
         "engine.calibration_gate_enabled": False,
