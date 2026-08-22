@@ -146,7 +146,7 @@
 ## B. 실측 — 지금 실제로 이렇게 돈다 (자동 생성, 손대지 마라)
 
 <!-- AUTO:LIVE START -->
-_자동 생성: 2026-08-22 02:32:08 · `scripts/strategy_spec_sync.py` · 손대지 마라._
+_자동 생성: 2026-08-22 02:34:20 · `scripts/strategy_spec_sync.py` · 손대지 마라._
 
 **현재 활성 레짐:** `risk_on` (trigger=intraday, at=2026-08-21T15:00:04)
 
@@ -218,6 +218,8 @@ _자동 생성: 2026-08-22 02:32:08 · `scripts/strategy_spec_sync.py` · 손대
 | `regime.transition_window_min` | `60` | 코드기본 |
 | `regime.transition_response_active` | `False` | 코드기본 |
 | `regime.transition_trail_tighten_factor` | `1.0` | 코드기본 |
+| `selection.change_weight` | `0.5` | 코드기본 |
+| `selection.surge_weight` | `0.5` | 코드기본 |
 | `sizing.per_position_rate_min` | `0.05` | 코드기본 |
 | `sizing.positions_min` | `6` | 코드기본 |
 | `sizing.positions_max` | `19` | 코드기본 |
@@ -242,7 +244,7 @@ _드리프트 0건 (아래 C절 참조)_
 ## C. 드리프트 체크 — 실측이 의도를 벗어났나 (자동 생성, 손대지 마라)
 
 <!-- AUTO:DRIFT START -->
-_자동 생성: 2026-08-22 02:32:08_
+_자동 생성: 2026-08-22 02:34:20_
 
 ✅ **드리프트 없음** — 실측이 의도와 일치한다. 시스템이 사양대로 동작 중.
 <!-- AUTO:DRIFT END -->

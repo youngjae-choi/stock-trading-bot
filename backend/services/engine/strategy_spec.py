@@ -104,6 +104,9 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "regime.transition_window_min": 60,             # 전환 판단 window(분)
     "regime.transition_response_active": False,     # 전환 대응(하락전환 매수중단/트레일조임) 활성 토글
     "regime.transition_trail_tighten_factor": 1.0,  # 하락전환시 트레일폭 배수(1.0=무변, <1=조임)
+    # ── 종목선정 엔진③ 점수 가중치(설정화, 레짐별 선정 확장 토대) ──
+    "selection.change_weight": 0.5,                 # 등락률 가중
+    "selection.surge_weight": 0.5,                  # 거래량급증 가중
     # ── 사이징 모델(결정4, Phase1) — 예수금비중: 종목당 5~15%, 종목수 6~19 ──
     "sizing.per_position_rate_min": 0.05,           # 종목당 최소 비중 5%
     "sizing.positions_min": 6,                      # 최소 종목수
@@ -251,6 +254,7 @@ CONFORMANCE: list[tuple[str, str | None, str | None]] = [
     ("churn 재진입 가드", "intraday_stoploss_count", "engine.intraday_max_stoploss_per_symbol"),
     ("EOD 강제청산", "run_eod_liquidation", "risk.force_exit_time"),
     ("전략설정 엔진(플레이북)", "strategy_playbook", None),
+    ("종목선정 점수", "selection_score", "selection.change_weight"),
 ]
 
 
