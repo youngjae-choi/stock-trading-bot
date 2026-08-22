@@ -797,68 +797,10 @@ class DecisionEngine:
             await self._emit_signal(symbol, candidate, price, matched)
             return
 
-        # 탐색모드: 기존 게이트 미통과여도 OR 그룹이 발화하면 추가 매수 트리거(모의 전용)
-        await self._maybe_exploration_buy(symbol, candidate, price)
-
-    async def _maybe_exploration_buy(
-        self, symbol: str, candidate: dict[str, Any], price: float
-    ) -> None:
-        """탐색 허용 시 OR 그룹 발화를 평가해 매수 신호를 추가 발행한다.
-
-        가드(보유/중복/쿨다운/price>0)는 호출부 _on_tick 에서 이미 통과한 상태다.
-        실계좌·탐색 OFF면 즉시 반환(하드 차단).
-
-        Args:
-            symbol: 평가 대상 종목.
-            candidate: S4 후보 dict.
-            price: 트리거 가격.
-        """
-        from .exploration_gate import is_exploration_allowed
-
-        if not is_exploration_allowed():
-            return
-        try:
-            from .buy_condition_framework import load_conditions, load_groups
-            from .exploration_decision import evaluate_exploration_buy
-
-            groups = load_groups()
-            conditions = load_conditions()
-            if not groups or not conditions:
-                return
-            tsi = _first_float(candidate.get("tsi"), candidate.get("tsi_value"))
-            decision = evaluate_exploration_buy(
-                symbol=symbol,
-                bar_engine=self._bar_engine,
-                groups=groups,
-                conditions=conditions,
-                tsi=tsi,
-                regime=self._current_regime(),
-            )
-        except Exception as exc:
-            logger.warning("WARN: [S6/탐색] OR 평가 실패 symbol=%s reason=%s", symbol, exc)
-            return
-
-        if not decision.get("any"):
-            return
-
-        logger.info(
-            "SIGNAL: [S6/탐색] OR 발화 symbol=%s fired=%s", symbol, decision.get("fired")
-        )
-        await self._emit_signal(
-            symbol,
-            candidate,
-            price,
-            {
-                "exploration": True,
-                "fired_groups": decision["fired"],
-                "condition_states": decision.get("condition_states") or {},
-            },
-        )
-
     def _current_regime(self) -> str | None:
         """현재 레짐을 daily_context_snapshot 에서 조회한다(60초 TTL 인스턴스 캐시).
 
-        _maybe_exploration_buy 가 매 틱 호출하므로 DB 조회를 캐시로 막는다.
+        틱 처리에서 매 후보마다 호출될 수 있어 DB 조회를 캐시로 막는다.
         조회 실패/레코드 없음 → None 반환(레짐 필터 미적용 = fail-open).
         """
         now = time.monotonic()

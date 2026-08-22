@@ -301,28 +301,13 @@ class OrderExecutor:
             from .daily_capital import get_baseline, get_active_budget_rate
             from .exploration_gate import select_sizing_params
             baseline = get_baseline(today)
-            from .exploration_gate import is_exploration_allowed
-            from ..settings_store import get_setting as _get_setting
-            if is_exploration_allowed():
-                # 탐색: Profile 비중대로 + 95% 배포 한도 내 실시간 가용현금 기준
-                total_eval = self._extract_total_eval(balance)
-                profile_rate = self._position_size_pct(final_rule) / 100.0
-                deploy_target = float(_get_setting("exploration.deploy_target_rate", 0.95) or 0.95)
-                buffer = total_eval * (1.0 - deploy_target)
-                # 제출중(in-flight) 금액 차감 — 잔고 캐시/KIS 반영 지연 동안의 초과배포 방지
-                deployable = self._effective_deployable(deposit, buffer)
-                qty = self._calc_profile_qty(total_eval, profile_rate, deployable, price)
-                logger.info(
-                    "INFO: [S7] Profile비중 사이징 symbol=%s rate=%.2f total_eval=%.0f deployable=%.0f qty=%d",
-                    symbol, profile_rate, total_eval, deployable, qty,
-                )
-            else:
-                explore_budget_rate, max_positions = select_sizing_params(final_rule)
-                budget_rate = explore_budget_rate if explore_budget_rate is not None else get_active_budget_rate(today)
-                qty = self._calc_budget_qty(baseline, budget_rate, max_positions, price, deposit)
-                if qty <= 0:
-                    qty = self._calc_qty(deposit, self._position_size_pct(final_rule), price)
-                logger.info("INFO: [S7] 기존(보수) 사이징 symbol=%s qty=%d", symbol, qty)
+            # 탐색모드 제거(2026-08-22) — baseline 초기 사이징(예수금비중 신모델이 아래서 최종 override).
+            _, max_positions = select_sizing_params(final_rule)
+            budget_rate = get_active_budget_rate(today)
+            qty = self._calc_budget_qty(baseline, budget_rate, max_positions, price, deposit)
+            if qty <= 0:
+                qty = self._calc_qty(deposit, self._position_size_pct(final_rule), price)
+            logger.info("INFO: [S7] baseline 사이징 symbol=%s qty=%d", symbol, qty)
             # P3-5: 급락 방어 모드 인버스 1x 플레이북 — 계좌 대비 예산 상한(기본 30%) 강제
             qty = self._apply_crash_playbook_cap(
                 name=str(signal.get("name") or ""), qty=qty, price=price,
@@ -345,16 +330,8 @@ class OrderExecutor:
                 return {"ok": False, "reason": "no_deployable_room", "symbol": symbol}
 
             current_pos_count = len(position_manager.get_positions())
-            from .exploration_gate import is_exploration_allowed
-            from ..settings_store import get_setting as _get_setting
-            if is_exploration_allowed():
-                _total_eval = self._extract_total_eval(balance)
-                _deployed = self._effective_deployed(_total_eval, deposit)  # 배포액 + 제출중 금액
-                _target = float(_get_setting("exploration.deploy_target_rate", 0.95) or 0.95)
-                preflight = run_preflight(signal, final_rule, current_positions_count=current_pos_count,
-                                          deployed_value=_deployed, total_eval=_total_eval, deploy_target_rate=_target)
-            else:
-                preflight = run_preflight(signal, final_rule, current_positions_count=current_pos_count)
+            # 탐색모드 제거(2026-08-22) — deploy_target 배포한도 없이 baseline preflight.
+            preflight = run_preflight(signal, final_rule, current_positions_count=current_pos_count)
             if not preflight["ok"]:
                 logger.warning(
                     "BLOCK: [S7] Pre-Flight 차단 signal_id=%s symbol=%s reason=%s",
@@ -453,10 +430,6 @@ class OrderExecutor:
         now = time.monotonic()
         self._inflight_buys = [(ts, amt) for ts, amt in self._inflight_buys if now - ts < self._INFLIGHT_TTL]
         return sum(amt for _, amt in self._inflight_buys)
-
-    def _effective_deployed(self, total_eval: float, deposit: float) -> float:
-        """게이트용 배포액 = (총자산-가용현금) + 제출중 금액."""
-        return max(0.0, total_eval - deposit) + self._inflight_amount()
 
     def _effective_deployable(self, deposit: float, buffer: float) -> float:
         """사이징용 가용액 = 가용현금 - 버퍼 - 제출중 금액."""
@@ -899,24 +872,6 @@ class OrderExecutor:
             return 0
         per_slot = baseline * budget_rate / max_positions
         spend = min(per_slot, available_cash if available_cash > 0 else per_slot)
-        return int(spend // price)
-
-    def _calc_profile_qty(
-        self,
-        total_eval: float,
-        profile_rate: float,
-        deployable_cash: float,
-        price: float,
-    ) -> int:
-        """Profile 비중 사이징 수량 = floor(min(total_eval*profile_rate, deployable_cash) / price).
-
-        total_eval: 총자산(원), profile_rate: Risk Profile 비중(0~1),
-        deployable_cash: 95% 한도 내 추가 투입 가능 현금. 어느 하나라도 비정상이면 0.
-        """
-        if total_eval <= 0 or profile_rate <= 0 or deployable_cash <= 0 or price <= 0:
-            return 0
-        target = total_eval * profile_rate
-        spend = min(target, deployable_cash)
         return int(spend // price)
 
     def _calc_qty(self, deposit: float, position_size_pct: float, price: float) -> int:
