@@ -1,9 +1,10 @@
 # 정상 동작 기획서 (Operation Spec)
 
-> **목적**: 시스템의 기대 동작을 명문화해서 실제 동작과 대조할 수 있게 한다.
-> 학습 루프가 자율 동작하기 전까지는 PM과 Sisyphus가 매일 EOD에 이 문서를 기준으로 리뷰한다.
+> **목적**: 시스템의 **운영 흐름·헬스·진단**을 명문화한다(일일 사이클 시간표, 학습루프, 정합 가드).
 >
-> **변경 원칙**: 기획서는 살아있는 문서다. 기능 추가/수정 시 이 문서부터 갱신하고 코드를 맞춘다. 코드가 먼저 가면 기획서가 부정확해진다.
+> **범위 경계 (중복 방지):**
+> - **전략 값**(confidence·손절·익절·사이징·max_positions·진입 게이트·레짐 임계 등)은 여기 두지 않는다 → **[`STRATEGY_SPEC.md`](../../STRATEGY_SPEC.md)(SSOT)** 단일출처.
+> - ⚠ **아래 시간표의 S2/S4/S5 "LLM" 표기는 낡음** — LLM은 전면 제거되어 **결정론(deterministic)** 으로 동작한다(2026-08-05). "LLM 호출/실패" 문구는 무시하고 결정론 산출로 읽는다.
 
 ---
 
@@ -110,25 +111,17 @@
 
 ## 3. 거래 보수성 메트릭 (Exploration vs Strict)
 
-현재 시스템은 **과도하게 보수적**이다 (놓친 기회가 매수의 18배).
-헐렁한 거래로 데이터 축적 단계 → 점진 strict 전환.
-
-### 기준선 (현재 strict)
-- `min_ai_confidence`: 0.65 (시장톤별 0.45~0.72)
-- `min_confidence_floor`: 0.40
-- `max_price_change_pct`: 5.0 (S4 LLM이 설정)
-- `top_n`: 시장톤별 20~35
-- `max_positions`: 30
-- `position_size`: 5% (1억 시드 → 종목당 333만원)
+> ⚠ **전략 파라미터 값은 여기 두지 않는다.** confidence·손절·익절·사이징·max_positions·
+> 진입 게이트 등 **모든 전략 값은 [`STRATEGY_SPEC.md`](../../STRATEGY_SPEC.md)(SSOT) 단일출처**를 따른다.
+> (과거 이 절에 있던 min_ai_confidence 0.65·max_positions 30 등은 SSOT와 충돌해 제거 — SSOT 참조.)
+> 이 문서는 **운영 흐름·진단**만 다룬다.
 
 ### 탐색 엔진 (Exploration Mode — 구현됨, 모의계좌 전용)
 탐색모드가 켜지면 매수 = **OR 조건 그룹**(돌파/눌림/모멘텀/베이스라인)으로 바뀌고, S3 선정은 단타 모멘텀(상승폭+거래량급증)이다.
-- 켜기/끄기: Settings 탐색모드 카드 → `engine.exploration_mode` (기본 OFF)
-- 풀예수금 사이징: `exploration.budget_rate`=0.95, `exploration.max_positions`=40
+- 켜기/끄기: `engine.exploration_mode` (STRATEGY_SPEC §A-7 #2 — 졸업 의도 확인 대상)
 - 🔒 KIS 모의계좌일 때만 활성, 실계좌면 하드 차단
 - EOD EV(승률×손익비) 가지치기로 음수 그룹 weight 자동 하향(floor 0.1)
-- 유지: stop_loss -5%, daily_loss -10%, max_position_size 30% (안전 가드)
-- 상세: [`EXPLORATION_ENGINE.md`](EXPLORATION_ENGINE.md)
+- 값(사이징·손절·max_positions 등)은 STRATEGY_SPEC SSOT. 상세: [`EXPLORATION_ENGINE.md`](EXPLORATION_ENGINE.md)
 
 ### Exploration 종료 조건
 - 100거래 이상 누적

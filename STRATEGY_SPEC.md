@@ -10,6 +10,9 @@
 >
 > 갱신: `python scripts/strategy_spec_sync.py` (실측·드리프트 재작성) ·
 > `--check` (드리프트만 검사, 있으면 exit 1 → watchdog/CI용).
+>
+> **스코프 경계:** 이 문서 = **전략 값·엔진 동작**(SSOT). **운영 흐름·진단**(일일 사이클·학습루프·정합가드)은
+> [`docs/manual/OPERATION_SPEC.md`](docs/manual/OPERATION_SPEC.md). 전략 값 중복 금지 — 값은 여기만.
 
 ---
 
