@@ -43,6 +43,13 @@ def engine_env(monkeypatch):
     monkeypatch.setattr(oe_mod.order_executor, "execute_signal", _noop_exec)
     monkeypatch.setattr(ti_mod, "save_signal_indicators", lambda *a, **k: None)
 
+    # _emit_signal은 exec_start(09:30) 전이면 shadow만(무발행) — 테스트가 KST 00:00~09:30에
+    # 실행되면 발행 안 돼 flaky. 장중 시각으로 고정해 시간독립화.
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    monkeypatch.setattr(de_mod, "_now_kst",
+                        lambda: datetime(2026, 8, 20, 10, 0, tzinfo=ZoneInfo("Asia/Seoul")))
+
     eng = de_mod.DecisionEngine()
     monkeypatch.setattr(eng, "_record_exploration_tag", lambda *a, **k: None)
     return de_mod, eng
