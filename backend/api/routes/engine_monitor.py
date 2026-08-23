@@ -46,7 +46,7 @@ _SETTING_META = {
     "regime.up_transition_pp": ("상승전환 기준", "감지창 내 KOSPI가 이만큼 오르면 상승전환", "num", "%p"),
     "regime.transition_window_min": ("전환 감지 창", "최근 몇 분의 KOSPI 기울기로 전환 판단", "num", "분"),
     "regime.set_source": ("SET 선택 regime 출처", "judge=현행 하드코딩(_judge_regime) · 5tier=설정기반(classify_regime_5tier·regime.down_pct 등, 드리프트 감시). §A-7#5 통합", "enum", ["judge", "5tier"]),
-    "regime.transition_response_active": ("전환 대응 활성", "하락전환 시 신규매수 중단·트레일 조임 (감지 검증 후 ON)", "bool", None),
+    "regime.transition_response_active": ("전환 대응 활성", "하락전환 시 신규매수 중단·트레일 조임 (활성 2026-08-23, 신선도 75분 가드)", "bool", None),
     "regime.transition_trail_tighten_factor": ("전환 트레일 조임 배수", "하락전환 시 트레일 스탑 폭 × 이 값 (1=변화없음)", "num", "배수"),
     # ③ 종목선정 (미배선)
     "selection.change_weight": ("등락률 가중치", "종목 점수의 등락률 비중  ⚠️미배선(매매 미반영)", "num", "0~1"),
@@ -63,11 +63,11 @@ _SETTING_META = {
     "engine.leverage_restriction_mode": ("레버리지 제한", "exclude=레버리지/인버스2x 진입 차단·off=허용", "enum", ["exclude", "off"]),
     # ⑤ 매도(수확)
     "engine.harvest_mode": ("수확 모드", "목표 도달 시 부분 확정(하루 수익 실현)", "bool", None),
-    "engine.scaleout_ratio": ("1차 확정 비율", "목표 도달 시 이 비율만큼 매도 (0.6=60%)", "num", "비율 0~1"),
-    "engine.scaleout_target_rate": ("1차 수확 목표", "이 수익률에서 부분 확정 (0.01=+1%)", "num", "비율(0.01=1%)"),
+    "engine.scaleout_ratio": ("1차 확정 비율", "목표 도달 시 이 비율만큼 매도 (0.5=50%, 잔량은 트레일링 러너)", "num", "비율 0~1"),
+    "engine.scaleout_target_rate": ("1차 수확 목표", "이 수익률에서 부분 확정 (0.02=+2%, 노이즈 밖 수확)", "num", "비율(0.02=2%)"),
     "engine.scaleout_ratio_after_target": ("잔량 재확정 비율", "목표 후 잔량에서 추가 확정 비율", "num", "비율 0~1"),
     "engine.daily_target_rate": ("일일 목표 수익률", "계좌 대비 하루 목표(복리, 0.02=2%)", "num", "비율(0.02=2%)"),
-    "engine.stop_source": ("손절/트레일 출처", "profile=종목 변동성별 프로필 · regime=시장국면 레짐SET 단일. Phase3 통합 스위치(기본 profile=현행)", "enum", ["profile", "regime"]),
+    "engine.stop_source": ("손절/트레일 출처", "profile=종목 변동성별 프로필 · regime=시장국면 레짐SET 단일. regime 활성(현행) — 변동성 재보정값 단일출처", "enum", ["profile", "regime"]),
     # ⑥ 매매(사이징)
     "sizing.model_active": ("사이징 모델 활성", "예수금 비중 기반 신모델 사용", "bool", None),
     "sizing.per_position_rate_min": ("종목당 최소 비중", "확신도 낮을 때 예수금 대비 종목당 하한 (0.05=5%)", "num", "비율(0.05=5%)"),
