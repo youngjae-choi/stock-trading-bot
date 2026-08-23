@@ -58,7 +58,7 @@ INTENT_SETTINGS: dict[str, object] = {
     "engine.scaleout_target_rate": 0.01,            # 스케일아웃 발동 수익률
     "engine.scaleout_ratio_after_target": 0.8,
     "engine.daily_target_rate": 0.02,               # 하루 목표(계좌 대비)
-    "engine.stop_source": "profile",                # 손절/트레일 출처: profile(종목변동성)|regime(국면SET). Phase3 롤백스위치
+    "engine.stop_source": "regime",                 # 손절/트레일 출처: regime(국면SET·결정된 단일출처, 2026-08-22)|profile(폴백). 롤백스위치
     # ── 사이징/배포 ──
     "exploration.deploy_target_rate": 0.95,         # 예수금 배포 목표(95%)
     "risk.max_positions": 5,                        # ⚠ 다출처 충돌 — §A-관리주의 참조
@@ -105,6 +105,7 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "regime.transition_window_min": 60,             # 전환 판단 window(분)
     "regime.transition_response_active": False,     # 전환 대응(하락전환 매수중단/트레일조임) 활성 토글
     "regime.transition_trail_tighten_factor": 1.0,  # 하락전환시 트레일폭 배수(1.0=무변, <1=조임)
+    "regime.set_source": "judge",                   # SET 선택 regime 출처: judge(현행 하드코딩)|5tier(설정기반 classify_regime_5tier). §A-7#5 롤백스위치
     # ── 종목선정 엔진③ 점수 가중치(설정화, 레짐별 선정 확장 토대) ──
     "selection.change_weight": 0.5,                 # 등락률 가중
     "selection.surge_weight": 0.5,                  # 거래량급증 가중

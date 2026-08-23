@@ -40,7 +40,7 @@
 | 주기 | 단계 | 데이터 소스 | 판단·설정 | 반응 |
 |---|---|---|---|---|
 | 08~15시 매2분 | index-board 브리핑 폴링 (`job_intraday_briefing_poll`) | index-board(httpx) | 새 장중 브리핑 시 `check_intraday_regime` 트리거 | 브리핑 DB + 레짐 재평가 |
-| ↑트리거 | 장중 레짐 판정 (`intraday_regime_monitor`) | 실시간 KOSPI(KIS 직접조회) + VIX(index-board/아침) + li_lean | **SET 매칭용 regime = index-board regime OR `_judge_regime`(하드코딩 vix>28→volatile·vix>22&kospi<-1 또는 kospi<-1.5→risk_off·kospi>0.5&vix<22→risk_on)** | `match_set`→`record_application`(SET 재매칭) |
+| ↑트리거 | 장중 레짐 판정 (`intraday_regime_monitor`) | 실시간 KOSPI(KIS 직접조회) + VIX(index-board/아침) + li_lean | **SET 매칭 regime** = `regime.set_source` 스위치: judge(기본·하드코딩 `_judge_regime`) 또는 **5tier(설정기반 `classify_regime_5tier`→`regime_to_set`, §A-7#5 배선)** | `match_set`→`record_application`(SET 재매칭) |
 | ↑동시(shadow/부분live) | 5장세·전환 계산 (`market_sensing`) | 위와 동일 | `classify_regime_5tier`: KOSPI vs `regime.down_pct`(-1.5)/`up_pct`(0.5)/`surge_pct`(2.5)·VIX vs `regime.vix_volatile`(28)·+li_lean×`li_lean_weight`(0.25). `detect_transition`: `transition_window_min` 창 KOSPI **기울기** vs `down_transition_pp`(-1.0)/`up_transition_pp`(1.0) — 레벨무관·방향 | `regime.current_5tier`/`current_transition` 영속화 → **사이징⑥이 5tier 읽음(live)**, SET매칭엔 shadow, 전환 대응 gated |
 | 즉시 | 급락 방어 | KOSPI/VIX | `risk.flash_crash_threshold_pct`(-2)·VIX 임계 | 인버스1x 외 신규매수 차단 |
 
@@ -67,7 +67,7 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 | 15:20 | 후처리 S9~S10: 청산 백스톱→복기(`daily_review_reports`·day_score·exit성과·calibration)→`SYSTEM_AUDIT.md` |
 | 15:35 | 미진입 수익률 소급 · 23:00 장후 브리핑(evening sentiment, 다음날 신뢰도 보정) · 18:00 백업 |
 
-> ⚠ **레짐 판정 이중구조(정확히)**: (a) **레짐 SET 매칭**(전략 SET 선택)은 `index-board regime` 또는 `_judge_regime`(하드코딩 vix 28/22·kospi ±1.5/0.5) — §A-1/§A-7#5의 "설정화 미완"이 **여전히 맞음**. (b) `classify_regime_5tier`(설정 `regime.down_pct` 등)+`detect_transition`은 **구현·영속화**되어 `regime.current_5tier`를 **사이징⑥이 읽음(live)**, SET매칭엔 shadow. (c) 전환 대응(`regime.transition_response_active`) 기본 off(감지 검증 후 활성). → §A-1/§A-5의 "전환 미구현"은 갱신 필요(감지는 됨, SET반영·대응만 미완).
+> ⚠ **레짐 판정 이중구조(정확히)**: (a) **레짐 SET 매칭**(전략 SET 선택)은 `regime.set_source` 스위치 — **judge(기본)** = 하드코딩 `_judge_regime`/index-board(vix 28/22·kospi ±1.5/0.5), **5tier** = 설정기반 `classify_regime_5tier`→`regime_to_set`(§A-7#5 배선 완료, 활성은 PM). (b) `classify_regime_5tier`(설정 `regime.down_pct` 등)+`detect_transition`은 **구현·영속화**되어 `regime.current_5tier`를 **사이징⑥이 읽음(live)**, SET매칭엔 set_source=judge면 shadow. (c) 전환 대응(`regime.transition_response_active`) 기본 off(감지 검증 후 활성).
 
 ### A-1. 레짐(장세) 탐지 — 30분 틱 (09:30~15:00)
 탐지는 `intraday_regime_monitor._judge_regime`(KOSPI·VIX 레벨) + `risk.flash_crash_*`(즉시 방어).
@@ -87,7 +87,7 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 > 레짐은 레벨만 봐서 11:30(이미 마이너스)에야 neutral로 바뀜 → 그 사이 봇은 risk_on(공격)으로 꼭지 매수 → -2.16M.
 > **레벨은 아직 +1.25%여도 방향은 하락전환.** 이걸 잡는 게 §A-5.
 
-> ⚠ **레짐 임계는 코드 하드코딩**(`_judge_regime`: vix>28/22, kospi ±1.5/0.5) — **설정이 아니라 드리프트 감시 불가.** 바꾸려면 코드 수정 + 이 문서 갱신. 설정화는 후속 과제.
+> ⚠ **레짐 임계 이중경로**: 기본 SET매칭은 `_judge_regime`(하드코딩 vix>28/22·kospi ±1.5/0.5, 드리프트 감시 불가)이나, **`regime.set_source`=5tier 로 설정기반 `classify_regime_5tier`(regime.down_pct 등, 드리프트 감시됨) 전환 가능**(§A-7#5 배선 완료, 기본 judge). 활성은 감지 검증 후 PM.
 
 ### A-2. 종목 선정
 | 장세 | 선정 의도 | 현재 |
@@ -138,7 +138,7 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 | 총배포 상한 | `exploration.deploy_target_rate` | 0.95 | 예수금 95% |
 
 > 예: 확신 1.0 → 15%×6종목 집중 / 확신 0.0 → 5%×19종목 분산. (구 `risk.max_positions=5`·레짐SET 12·RulePack 10 **3출처 충돌은 이 [6,19] 범위 모델로 대체** — §A-7 #1 해소 예정)
-> ⚠ `engine.exploration_mode`=on(졸업 의도 확인, §A-7 #2)
+> ✅ `engine.exploration_mode` **완전 제거**(2026-08-22) — 매수=baseline S4/S5만. `exploration.deploy_target_rate`(95%)만 사이징 배포한도로 잔존(=⑥ 예수금투입목표). §A-7 #2 해소.
 
 **확신도(conviction) 모델** — 위 사이징의 "확신"을 정하는 법. 구현: `strategy_playbook.resolve_conviction`.
 `확신 = regime_weight × 레짐점수 + (1−regime_weight) × 눌림점수` (전부 설정 = 언제든 수정).
@@ -185,11 +185,11 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 | # | 이슈 | 실태 | 해결 방향 |
 |---|---|---|---|
 | 1 | ~~max_positions 다출처~~ **해소(2026-08-22)** | order_preflight fallback + daily_capital이 이제 **단일 출처 `strategy_playbook.resolve_max_positions`([6,19])** 사용. 구 5/12/10 다출처 통일. 주력 제약은 여전히 95% 배포캡(총노출 고정). | ✅ 완료 |
-| 2 | **exploration_mode=on** | 탐색 사이징 활성. 메모리상 7/4 "졸업" 의도였으나 플래그는 아직 on. | 졸업 여부 PM 확인 → off면 의도 갱신 |
+| 2 | ~~exploration_mode~~ **완전 제거(2026-08-22)** | `is_exploration_allowed`=하드False, 매수경로·UI·死설정 제거. 매수=baseline S4/S5만. | ✅ 완료 |
 | 3 | min_ai_confidence 타입 | DB에 문자열 `"0.60"` 저장(코드가 float coerce라 동작은 정상) | 숫자로 정규화(선택) |
 | 4 | flash_crash 상태플래그 | `flash_crash_defense_active=true`(date 8/19). 날짜스코프라 다음 거래일 자동해제(동작 정상) | 상태값이라 INTENT 제외 |
-| 5 | 레짐 임계 하드코딩 | 라이브 `_judge_regime` 임계는 아직 하드코딩. 단 `market_sensing`(엔진②)이 **설정화된 5장세 임계로 대체 예정**(배선 후 #5 해소) | market_sensing 배선 → _judge_regime 대체 |
-| 6 | buy_condition_framework 휴면 | 돌파/눌림/모멘텀 그룹·체결강도 55% 코드 존재하나 **메인 진입경로가 우회**(등락률+거래량만) | 엣지 게이트화 시 정리(②③ 이후) |
+| 5 | 레짐 임계 하드코딩 | ✅ **배선 완료** — `regime.set_source`=5tier 스위치로 설정기반 `classify_regime_5tier`→`regime_to_set`(SET매칭)로 전환 가능. 기본 judge(하드코딩 `_judge_regime`). **활성은 월요일 감지 검증 후 PM** | 스위치를 5tier로 flip |
+| 6 | buy_condition_framework 태깅잔존 | 탐색 OR **매수경로 제거**(2026-08-22). 프레임워크는 `_record_exploration_tag`(진입 조건발화 기록·계측)만 잔존. 원자조건/조건그룹 UI 삭제. | 계측 데이터 활용 시 게이트화 검토 |
 
 > **감시 범위:** INTENT 명시설정(~40)+코드기본(14)+레짐SET(3)은 드리프트 자동감시. 위 6개(특히 1·5·6)는 **구조적이라 수동 관리** — 전략 변경 시 반드시 재확인.
 
@@ -198,7 +198,7 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 ## B. 실측 — 지금 실제로 이렇게 돈다 (자동 생성, 손대지 마라)
 
 <!-- AUTO:LIVE START -->
-_자동 생성: 2026-08-22 02:34:20 · `scripts/strategy_spec_sync.py` · 손대지 마라._
+_자동 생성: 2026-08-23 07:22:43 · `scripts/strategy_spec_sync.py` · 손대지 마라._
 
 **현재 활성 레짐:** `risk_on` (trigger=intraday, at=2026-08-21T15:00:04)
 
@@ -233,15 +233,15 @@ _자동 생성: 2026-08-22 02:34:20 · `scripts/strategy_spec_sync.py` · 손대
 | `engine.scaleout_target_rate` | `0.01` | DB |
 | `engine.scaleout_ratio_after_target` | `0.8` | DB |
 | `engine.daily_target_rate` | `0.02` | DB |
+| `engine.stop_source` | `regime` | DB |
 | `exploration.deploy_target_rate` | `0.95` | DB |
 | `risk.max_positions` | `5` | DB |
 | `risk.max_position_rate_per_stock` | `0.15` | DB |
-| `engine.exploration_mode` | `True` | DB |
 | `engine.crash_playbook_enabled` | `True` | DB |
 | `regime.evening_confidence_enabled` | `True` | DB |
 | `risk.daily_loss_limit_percent` | `-2` | DB |
 | `risk.force_exit_time` | `15:20` | DB |
-| `risk.flash_crash_threshold_pct` | `-2.0` | DB |
+| `risk.flash_crash_threshold_pct` | `-5` | DB |
 | `risk.flash_crash_defense_enabled` | `True` | DB |
 | `risk.emergency_halt_enabled` | `False` | DB |
 | `engine.s10_llm_review_enabled` | `False` | DB |
@@ -270,6 +270,7 @@ _자동 생성: 2026-08-22 02:34:20 · `scripts/strategy_spec_sync.py` · 손대
 | `regime.transition_window_min` | `60` | 코드기본 |
 | `regime.transition_response_active` | `False` | 코드기본 |
 | `regime.transition_trail_tighten_factor` | `1.0` | 코드기본 |
+| `regime.set_source` | `judge` | 코드기본 |
 | `selection.change_weight` | `0.5` | 코드기본 |
 | `selection.surge_weight` | `0.5` | 코드기본 |
 | `sizing.per_position_rate_min` | `0.05` | 코드기본 |
@@ -288,7 +289,7 @@ _자동 생성: 2026-08-22 02:34:20 · `scripts/strategy_spec_sync.py` · 손대
 | neutral | 7 | -0.02 | 0.045 | 0.025 | 0.012 |
 | risk_off | 4 | -0.012 | 0.025 | 0.015 | 0.008 |
 
-_드리프트 0건 (아래 C절 참조)_
+_드리프트 1건 (아래 C절 참조)_
 <!-- AUTO:LIVE END -->
 
 ---
@@ -296,9 +297,11 @@ _드리프트 0건 (아래 C절 참조)_
 ## C. 드리프트 체크 — 실측이 의도를 벗어났나 (자동 생성, 손대지 마라)
 
 <!-- AUTO:DRIFT START -->
-_자동 생성: 2026-08-22 02:34:20_
+_자동 생성: 2026-08-23 07:22:43_
 
-✅ **드리프트 없음** — 실측이 의도와 일치한다. 시스템이 사양대로 동작 중.
+🔴 **드리프트 1건** — 실측이 의도를 벗어났다. 각 항목을 의도대로 되돌리거나, 의도가 바뀐 것이면 A절+INTENT를 갱신하라.
+
+- 🔴 `risk.flash_crash_threshold_pct` 불일치 — 의도 `-2.0` vs 실측 `-5`
 <!-- AUTO:DRIFT END -->
 
 ---

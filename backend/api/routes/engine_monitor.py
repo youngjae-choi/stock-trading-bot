@@ -45,6 +45,7 @@ _SETTING_META = {
     "regime.down_transition_pp": ("하락전환 기준", "감지창 내 KOSPI가 이만큼(%p) 꺾이면 하락전환", "num", "%p"),
     "regime.up_transition_pp": ("상승전환 기준", "감지창 내 KOSPI가 이만큼 오르면 상승전환", "num", "%p"),
     "regime.transition_window_min": ("전환 감지 창", "최근 몇 분의 KOSPI 기울기로 전환 판단", "num", "분"),
+    "regime.set_source": ("SET 선택 regime 출처", "judge=현행 하드코딩(_judge_regime) · 5tier=설정기반(classify_regime_5tier·regime.down_pct 등, 드리프트 감시). §A-7#5 통합", "enum", ["judge", "5tier"]),
     "regime.transition_response_active": ("전환 대응 활성", "하락전환 시 신규매수 중단·트레일 조임 (감지 검증 후 ON)", "bool", None),
     "regime.transition_trail_tighten_factor": ("전환 트레일 조임 배수", "하락전환 시 트레일 스탑 폭 × 이 값 (1=변화없음)", "num", "배수"),
     # ③ 종목선정 (미배선)
@@ -89,7 +90,7 @@ def _engine_setting_groups():
     from ...services.engine.sell_engine import SELL_SETTING_KEYS
     return [
         ("① 전략설정(확신도)", ["conviction.regime_weight", "conviction.pullback_full_dist_pct"]),
-        ("② 시장감지·전환", ["regime.down_pct", "regime.up_pct", "regime.surge_pct", "regime.vix_volatile",
+        ("② 시장감지·전환", ["regime.set_source", "regime.down_pct", "regime.up_pct", "regime.surge_pct", "regime.vix_volatile",
                         "regime.down_transition_pp", "regime.up_transition_pp",
                         "regime.transition_window_min", "regime.transition_response_active",
                         "regime.transition_trail_tighten_factor"]),
