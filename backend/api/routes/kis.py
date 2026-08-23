@@ -54,12 +54,12 @@ async def get_token_status():
 
 
 @router.get("/price/{symbol}")
-async def get_price(symbol: str):
+async def get_price(symbol: str, market: str = "J"):
     if not validate_config():
         return kis_config_error_response(f"/api/v1/kis/price/{symbol}")
     try:
-        logger.info("START: /api/v1/kis/price/%s", symbol)
-        data = await domestic_service.get_current_price(symbol)
+        logger.info("START: /api/v1/kis/price/%s market=%s", symbol, market)
+        data = await domestic_service.get_current_price(symbol, market_code=market)
         logger.info("SUCCESS: /api/v1/kis/price/%s", symbol)
         return data
     except Exception as exc:

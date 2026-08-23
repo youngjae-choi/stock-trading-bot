@@ -17,12 +17,16 @@ def _order_env() -> Literal["demo", "real"]:
     return "demo" if "openapivts" in kis_client.base_url.lower() else "real"
 
 
-async def get_current_price(symbol: str) -> Dict[str, Any]:
+async def get_current_price(symbol: str, market_code: str = "J") -> Dict[str, Any]:
+    """현재가 조회. market_code: J=KRX(기본) · NX=넥스트레이드 · UN=통합(KRX+NXT).
+
+    NXT 프리마켓(08:00~) 시가는 KRX(J)가 아닌 NX/UN으로 조회해야 한다(장전 KRX 미개장).
+    """
     return await kis_client.request(
         method="GET",
         path="/uapi/domestic-stock/v1/quotations/inquire-price",
         tr_id="FHKST01010100",
-        params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": symbol},
+        params={"fid_cond_mrkt_div_code": market_code, "fid_input_iscd": symbol},
     )
 
 
