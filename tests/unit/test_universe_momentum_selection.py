@@ -143,3 +143,53 @@ def test_volume_surge_keys_include_vol_inrt():
 def test_pick_float_parses_vol_inrt():
     row = {"vol_inrt": "72.63"}
     assert us._pick_float(row, us._VOLUME_SURGE_KEYS) == 72.63
+
+
+# ---------------------------------------------------------------------------
+# 엔진③ 배선 (2026-08-23) — selection.* 설정을 선정 가중치로 라이브 소비
+# ---------------------------------------------------------------------------
+
+def test_resolve_base_weights_from_settings(monkeypatch):
+    """weights_source=settings 이면 selection.change/surge_weight를 그대로 쓴다(배선)."""
+    s = {"selection.weights_source": "settings",
+         "selection.change_weight": 0.8, "selection.surge_weight": 0.2}
+    monkeypatch.setattr(uf, "get_setting", lambda k, d=None: s.get(k, d))
+    assert uf._resolve_base_weights("neutral") == {"change": 0.8, "volume_surge": 0.2}
+
+
+def test_resolve_base_weights_rollback_to_tone(monkeypatch):
+    """weights_source=tone 이면 구 _TONE_WEIGHTS(0.5/0.5)로 롤백."""
+    s = {"selection.weights_source": "tone"}
+    monkeypatch.setattr(uf, "get_setting", lambda k, d=None: s.get(k, d))
+    assert uf._resolve_base_weights("neutral") == {"change": 0.5, "volume_surge": 0.5}
+
+
+def test_resolve_base_weights_default_preserves_behavior(monkeypatch):
+    """설정 부재 시 기본=settings 소스 + 0.5/0.5 → 기존 동작 보존."""
+    monkeypatch.setattr(uf, "get_setting", lambda k, d=None: d)
+    assert uf._resolve_base_weights("neutral") == {"change": 0.5, "volume_surge": 0.5}
+
+
+def test_resolve_base_weights_invalid_falls_back(monkeypatch):
+    """음수/합0 등 이상값이면 tone 가중치로 안전 폴백."""
+    s = {"selection.weights_source": "settings",
+         "selection.change_weight": 0.0, "selection.surge_weight": 0.0}
+    monkeypatch.setattr(uf, "get_setting", lambda k, d=None: s.get(k, d))
+    assert uf._resolve_base_weights("neutral") == {"change": 0.5, "volume_surge": 0.5}
+
+
+def test_settings_weights_actually_change_ranking(monkeypatch):
+    """배선 실증: change_weight=1.0/surge=0.0 → 등락률 높은 종목이 급증 종목을 이긴다."""
+    s = {"selection.weights_source": "settings",
+         "selection.change_weight": 1.0, "selection.surge_weight": 0.0}
+    monkeypatch.setattr(uf, "get_setting", lambda k, d=None: s.get(k, d))
+    w = uf._resolve_base_weights("neutral")
+    items = [
+        {"symbol": "CHG", "change_rate": 20.0, "change_rate_rank": 1,
+         "volume_rank": 50, "volume_surge": 0.0},
+        {"symbol": "SRG", "change_rate": 1.0, "change_rate_rank": 40,
+         "volume_rank": 1, "volume_surge": 300.0},
+    ]
+    ranked = uf._score_and_rank(items, total=50, weights=w)
+    by = {r["symbol"]: r for r in ranked}
+    assert by["CHG"]["score"] > by["SRG"]["score"]

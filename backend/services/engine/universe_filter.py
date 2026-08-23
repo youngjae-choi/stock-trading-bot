@@ -350,13 +350,36 @@ _TONE_TOP_N: dict[str, int] = {
 }
 
 
-def _get_tone_weights(trade_date: str) -> tuple[dict[str, float], str]:
-    """오늘 시장 톤을 DB에서 조회해 가중치를 반환한다.
+def _resolve_base_weights(tone: str) -> dict[str, float]:
+    """선정 base 가중치 — 엔진③ 배선(2026-08-23).
 
-    Returns:
-        (weights_dict, tone_used)
-        조회 실패 시 neutral 기본값과 "fallback" 반환.
+    `selection.weights_source`=settings(기본) 이면 **설정 `selection.change_weight/surge_weight`**
+    를 라이브 소스로 쓴다(Engine Monitor ③에서 편집 → 선정에 즉시 반영). 기본값 0.5/0.5라
+    동작 보존. 롤백=tone 이면 구 `_TONE_WEIGHTS`(톤별, 현재 전부 0.5/0.5).
+    레짐별 선정(하락장=상대강도 등)은 이 설정을 레짐SET/플레이북이 조절하는 후속 inc의 토대.
     """
+    try:
+        src = str(get_setting("selection.weights_source", "settings") or "settings").lower()
+    except Exception:
+        src = "settings"
+    if src == "settings":
+        try:
+            cw = float(get_setting("selection.change_weight", 0.5))
+            sw = float(get_setting("selection.surge_weight", 0.5))
+            if cw >= 0.0 and sw >= 0.0 and (cw + sw) > 0.0:
+                return {"change": cw, "volume_surge": sw}
+        except (TypeError, ValueError):
+            pass
+    return dict(_TONE_WEIGHTS.get(tone, _DEFAULT_WEIGHTS))
+
+
+def _get_tone_weights(trade_date: str) -> tuple[dict[str, float], str]:
+    """오늘 시장 톤(top-N용) 조회 + base 선정 가중치 반환.
+
+    가중치는 `_resolve_base_weights`(설정 소스, 엔진③ 배선). tone은 `_TONE_TOP_N`(선정 종목수)용.
+    조회 실패 시 tone="fallback".
+    """
+    tone = "fallback"
     try:
         with get_connection() as conn:
             row = conn.execute(
@@ -364,15 +387,15 @@ def _get_tone_weights(trade_date: str) -> tuple[dict[str, float], str]:
                 (trade_date,),
             ).fetchone()
         if row is None:
-            logger.warning("WARN: UniverseFilter 시장 톤 미조회 — neutral 기본값 사용 trade_date=%s", trade_date)
-            return _DEFAULT_WEIGHTS, "fallback"
-        tone = str(row["tone"]).lower()
-        weights = _TONE_WEIGHTS.get(tone, _DEFAULT_WEIGHTS)
-        logger.info("INFO: UniverseFilter 시장 톤=%s weights=%s", tone, weights)
-        return weights, tone
+            logger.warning("WARN: UniverseFilter 시장 톤 미조회 — fallback trade_date=%s", trade_date)
+        else:
+            tone = str(row["tone"]).lower()
     except Exception as exc:
-        logger.warning("WARN: UniverseFilter 시장 톤 조회 실패 — %s neutral 기본값 사용", exc)
-        return _DEFAULT_WEIGHTS, "fallback"
+        logger.warning("WARN: UniverseFilter 시장 톤 조회 실패 — %s fallback", exc)
+        tone = "fallback"
+    weights = _resolve_base_weights(tone)
+    logger.info("INFO: UniverseFilter 톤=%s 선정가중치=%s", tone, weights)
+    return weights, tone
 
 
 def _apply_memory_adjustments(weights: dict[str, float], memories: list[dict[str, Any]]) -> dict[str, float]:

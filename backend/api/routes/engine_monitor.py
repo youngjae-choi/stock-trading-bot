@@ -48,9 +48,10 @@ _SETTING_META = {
     "regime.set_source": ("SET 선택 regime 출처", "judge=현행 하드코딩(_judge_regime) · 5tier=설정기반(classify_regime_5tier·regime.down_pct 등, 드리프트 감시). §A-7#5 통합", "enum", ["judge", "5tier"]),
     "regime.transition_response_active": ("전환 대응 활성", "하락전환 시 신규매수 중단·트레일 조임 (활성 2026-08-23, 신선도 75분 가드)", "bool", None),
     "regime.transition_trail_tighten_factor": ("전환 트레일 조임 배수", "하락전환 시 트레일 스탑 폭 × 이 값 (1=변화없음)", "num", "배수"),
-    # ③ 종목선정 (미배선)
-    "selection.change_weight": ("등락률 가중치", "종목 점수의 등락률 비중  ⚠️미배선(매매 미반영)", "num", "0~1"),
-    "selection.surge_weight": ("거래량 가중치", "종목 점수의 거래량 비중  ⚠️미배선(매매 미반영)", "num", "0~1"),
+    # ③ 종목선정 (배선 2026-08-23 — universe_filter 라이브 소비)
+    "selection.weights_source": ("선정 가중치 출처", "settings=아래 가중치 라이브 반영(배선) · tone=구 톤별 고정(0.5/0.5)", "enum", ["settings", "tone"]),
+    "selection.change_weight": ("등락률 가중치", "종목 점수의 등락률 비중 (라이브 — 선정에 반영)", "num", "0~1"),
+    "selection.surge_weight": ("거래량 가중치", "종목 점수의 거래량 비중 (라이브 — 선정에 반영)", "num", "0~1"),
     # ④ 매수(게이트)
     "engine.entry_vwap_pullback_mode": ("VWAP 눌림 게이트", "고점추격 차단. enforce=차단·shadow=로그만·off=해제", "enum", ["enforce", "shadow", "off"]),
     "engine.entry_max_vwap_dist_pct": ("진입 최대 VWAP 이격", "VWAP보다 이 % 넘게 위면 추격으로 보고 차단", "num", "%"),
@@ -94,7 +95,7 @@ def _engine_setting_groups():
                         "regime.down_transition_pp", "regime.up_transition_pp",
                         "regime.transition_window_min", "regime.transition_response_active",
                         "regime.transition_trail_tighten_factor"]),
-        ("③ 종목선정 (미배선·참고용)", ["selection.change_weight", "selection.surge_weight"]),
+        ("③ 종목선정 (배선 2026-08-23)", ["selection.weights_source", "selection.change_weight", "selection.surge_weight"]),
         ("④ 매수(게이트)", GATE_SETTING_KEYS),
         ("⑤ 매도(수확)", SELL_SETTING_KEYS),
         ("⑥ 매매(사이징)", EXEC_SETTING_KEYS),
@@ -207,9 +208,10 @@ async def engine_status() -> dict:
                 "kospi_series": [{"t": r["t"], "v": r["v"]} for r in series],
             },
             "engine3_selection": {
+                "weights_source": _get(conn, "selection.weights_source", "settings"),
                 "change_weight": _get(conn, "selection.change_weight", 0.5),
                 "surge_weight": _get(conn, "selection.surge_weight", 0.5),
-                "wired": False,
+                "wired": str(_get(conn, "selection.weights_source", "settings")).lower() == "settings",
             },
             "engine4_buy": _e4,
             "engine5_sell": _e5,

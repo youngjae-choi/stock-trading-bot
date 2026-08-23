@@ -101,12 +101,14 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 
 > ⚠ **레짐 임계 이중경로**: 기본 SET매칭은 `_judge_regime`(하드코딩 vix>28/22·kospi ±1.5/0.5, 드리프트 감시 불가)이나, **`regime.set_source`=5tier 로 설정기반 `classify_regime_5tier`(regime.down_pct 등, 드리프트 감시됨) 전환 가능**(§A-7#5 배선 완료, 기본 judge). 활성은 감지 검증 후 PM.
 
-### A-2. 종목 선정
+### A-2. 종목 선정 (엔진③)
+선정 점수 = `selection.change_weight`×등락률점수 + `selection.surge_weight`×거래량급증점수 (`universe_filter._score_and_rank`). **배선 완료(2026-08-23)**: `selection.weights_source`=settings(기본)면 이 설정을 **라이브 소비**(Engine Monitor ③에서 편집→선정 반영). 롤백=tone(구 `_TONE_WEIGHTS` 0.5/0.5).
+
 | 장세 | 선정 의도 | 현재 |
 |---|---|---|
-| 공통 | 거래량 순위(`quant_topup`) + VWAP 눌림목 게이트 | ✅ |
+| 공통 | 거래량 순위(`quant_topup`) + VWAP 눌림목 게이트 + 설정 가중치(라이브) | ✅ 배선 |
 | 폭락 | 인버스1x + 급락반등주 트랙 허용 | △ 구현(효과 미검증) |
-| 하락·보합 | 방어적 선정(상대강도·저변동) | ✗ 미구현 |
+| 하락·보합 | 방어적 선정(상대강도·저변동, 레짐별 가중치) | 🟡 토대 완료(설정 라이브) — 레짐별 값 차등은 get_playbook 통합(Phase4)서 |
 
 ### A-3. 매수 — 진입 게이트 (전 레짐 공통, 값은 B절 실측)
 진입은 아래 게이트를 **모두** 통과해야 한다. (레버=설정키, 현재값)
@@ -211,7 +213,7 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 ## B. 실측 — 지금 실제로 이렇게 돈다 (자동 생성, 손대지 마라)
 
 <!-- AUTO:LIVE START -->
-_자동 생성: 2026-08-23 09:02:15 · `scripts/strategy_spec_sync.py` · 손대지 마라._
+_자동 생성: 2026-08-23 15:43:02 · `scripts/strategy_spec_sync.py` · 손대지 마라._
 
 **현재 활성 레짐:** `risk_on` (trigger=intraday, at=2026-08-21T15:00:04)
 
@@ -284,6 +286,7 @@ _자동 생성: 2026-08-23 09:02:15 · `scripts/strategy_spec_sync.py` · 손대
 | `regime.transition_response_active` | `True` | DB(오버라이드) |
 | `regime.transition_trail_tighten_factor` | `0.5` | DB(오버라이드) |
 | `regime.set_source` | `judge` | 코드기본 |
+| `selection.weights_source` | `settings` | 코드기본 |
 | `selection.change_weight` | `0.5` | 코드기본 |
 | `selection.surge_weight` | `0.5` | 코드기본 |
 | `sizing.per_position_rate_min` | `0.05` | 코드기본 |
@@ -310,7 +313,7 @@ _드리프트 12건 (아래 C절 참조)_
 ## C. 드리프트 체크 — 실측이 의도를 벗어났나 (자동 생성, 손대지 마라)
 
 <!-- AUTO:DRIFT START -->
-_자동 생성: 2026-08-23 09:02:15_
+_자동 생성: 2026-08-23 15:43:02_
 
 🔴 **드리프트 12건** — 실측이 의도를 벗어났다. 각 항목을 의도대로 되돌리거나, 의도가 바뀐 것이면 A절+INTENT를 갱신하라.
 
