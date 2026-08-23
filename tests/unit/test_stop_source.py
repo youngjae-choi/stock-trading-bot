@@ -25,7 +25,7 @@ def _args(profile_stop=-0.018):
 
 def test_stop_source_profile_default(monkeypatch):
     """기본 profile — 프로필 손절 유지(현행)."""
-    monkeypatch.setattr(rr, "_get_active_rulepack_entry_rules", lambda d: {})
+    monkeypatch.setattr(rr, "_settings_gate_rules", lambda: {})
     monkeypatch.setattr("backend.services.settings_store.get_setting",
                         lambda k, d=None: "profile" if k == "engine.stop_source" else d)
     r = rr.resolve_symbol_rule(**_args(profile_stop=-0.018))
@@ -35,7 +35,7 @@ def test_stop_source_profile_default(monkeypatch):
 
 def test_stop_source_regime_overrides_with_set(monkeypatch):
     """regime — 당일 레짐SET stop_loss_rate로 대체(필드명 매핑)."""
-    monkeypatch.setattr(rr, "_get_active_rulepack_entry_rules", lambda d: {})
+    monkeypatch.setattr(rr, "_settings_gate_rules", lambda: {})
     monkeypatch.setattr("backend.services.settings_store.get_setting",
                         lambda k, d=None: "regime" if k == "engine.stop_source" else d)
     monkeypatch.setattr("backend.services.regime_set_service.get_today_application",
@@ -53,10 +53,43 @@ def test_stop_source_regime_overrides_with_set(monkeypatch):
 
 def test_stop_source_regime_falls_back_when_no_application(monkeypatch):
     """regime인데 당일 적용SET 없으면 프로필 유지(fail-safe)."""
-    monkeypatch.setattr(rr, "_get_active_rulepack_entry_rules", lambda d: {})
+    monkeypatch.setattr(rr, "_settings_gate_rules", lambda: {})
     monkeypatch.setattr("backend.services.settings_store.get_setting",
                         lambda k, d=None: "regime" if k == "engine.stop_source" else d)
     monkeypatch.setattr("backend.services.regime_set_service.get_today_application",
                         lambda d: None)
     r = rr.resolve_symbol_rule(**_args(profile_stop=-0.018))
     assert r["initial_stop_loss"] == -0.018      # 적용SET 없음 → 프로필 유지
+
+
+# ---------------------------------------------------------------------------
+# RulePack 제거(2026-08-23) — 매수 게이트가 rulepacks 테이블 아닌 settings에서 옴
+# ---------------------------------------------------------------------------
+
+def test_gate_rules_from_settings_not_rulepack(monkeypatch):
+    """final_rule의 밴드/확신도/거래량이 engine.* settings에서 주입된다(RulePack 무의존)."""
+    cfg = {
+        "engine.min_price_change_pct": 2.0,
+        "engine.max_price_change_pct": 6.0,
+        "engine.min_ai_confidence": 0.55,
+        "engine.min_volume_ratio": 1.8,
+        "engine.stop_source": "profile",
+    }
+    monkeypatch.setattr("backend.services.settings_store.get_setting",
+                        lambda k, d=None: cfg.get(k, d))
+    r = rr.resolve_symbol_rule(**_args())
+    assert r["min_price_change_pct"] == 2.0
+    assert r["max_price_change_pct"] == 6.0
+    assert r["min_ai_confidence"] == 0.55
+    assert r["volume_ratio_min"] == 1.8
+    # 손절은 여전히 프로필에서(게이트와 독립)
+    assert r["initial_stop_loss"] == -0.018
+
+
+def test_settings_gate_rules_defaults(monkeypatch):
+    """설정 부재 시 SSOT 기본값(1.5~4.0/0.60/1.5)."""
+    monkeypatch.setattr("backend.services.settings_store.get_setting",
+                        lambda k, d=None: d)
+    g = rr._settings_gate_rules()
+    assert g == {"min_price_change_pct": 1.5, "max_price_change_pct": 4.0,
+                 "min_ai_confidence": 0.60, "volume_ratio_min": 1.5}

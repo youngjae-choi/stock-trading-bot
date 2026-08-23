@@ -100,63 +100,28 @@ def get_symbol_overrides() -> dict[str, dict[str, Any]]:
     return result
 
 
-def _get_active_rulepack_entry_rules(trade_date: str) -> dict[str, Any]:
-    """활성 RulePack의 실행 룰을 하위 호환 방식으로 병합해 반환한다.
+def _settings_gate_rules() -> dict[str, Any]:
+    """매수 게이트값(밴드·확신도·거래량)을 settings 단일출처에서 주입. **RulePack 제거(2026-08-23 PM).**
 
-    Args:
-        trade_date: YYYY-MM-DD trade date used to select the active RulePack.
-
-    Returns:
-        `machine_rules.layer3_entry`, legacy `machine_rules.entry_rules`, and
-        `machine_rules.risk_limits`를 flat final_rule 레이어로 병합한 dict.
-        같은 키가 있으면 기존 S4 생성 경로 호환을 위해 `entry_rules`가
-        `layer3_entry`를 덮고, 안전 한도인 `risk_limits`가 마지막에 덮는다.
+    구 daily RulePack(rulepacks 테이블·매일 생성)은 `engine.*` settings의 복사본이라 중복·드리프트만
+    유발했다(예: RulePack conf 0.65 vs settings 0.60) → 매매를 RulePack에서 분리하고 여기서 직접 주입.
+    decision_rules는 final_rule에서 이 값을 읽으므로 구조 불변(밴드 미주입 시 0.0/999 무효화 방지).
+    손절/트레일은 이 뒤 단계(프로필/레짐SET)가 담당 — RulePack과 무관.
     """
-    try:
-        with get_connection() as conn:
-            row = conn.execute(
-                "SELECT machine_rules FROM rulepacks"
-                " WHERE trade_date = ? AND status = 'active'"
-                " ORDER BY created_at DESC LIMIT 1",
-                (trade_date,),
-            ).fetchone()
-        if not row or not row["machine_rules"]:
-            return {}
-        machine_rules = json.loads(row["machine_rules"])
-        if not isinstance(machine_rules, dict):
-            logger.warning("WARN: [RuleResolver] machine_rules 형식 오류 — dict 아님")
-            return {}
+    from ..settings_store import get_setting as _gs
 
-        layer3_entry = machine_rules.get("layer3_entry", {}) or {}
-        entry_rules = machine_rules.get("entry_rules", {}) or {}
-        risk_limits = machine_rules.get("risk_limits", {}) or {}
-        if not isinstance(layer3_entry, dict):
-            logger.warning("WARN: [RuleResolver] layer3_entry 형식 오류 — dict 아님")
-            layer3_entry = {}
-        if not isinstance(entry_rules, dict):
-            logger.warning("WARN: [RuleResolver] entry_rules 형식 오류 — dict 아님")
-            entry_rules = {}
-        if not isinstance(risk_limits, dict):
-            logger.warning("WARN: [RuleResolver] risk_limits 형식 오류 — dict 아님")
-            risk_limits = {}
+    def _f(key: str, default: float) -> float:
+        try:
+            return float(_gs(key, default))
+        except (TypeError, ValueError):
+            return default
 
-        # 기존 layer3_entry/entry_rules 동작을 유지한 뒤 risk_limits를 flat하게 얹어
-        # order_preflight/order_executor가 final_rule의 위험 한도 alias를 직접 읽게 한다.
-        merged = dict(layer3_entry)
-        merged.update(entry_rules)
-        merged.update(risk_limits)
-        if merged:
-            logger.info(
-                "SUCCESS: [RuleResolver] active RulePack rules merged trade_date=%s layer3_keys=%d entry_keys=%d risk_keys=%d",
-                trade_date,
-                len(layer3_entry),
-                len(entry_rules),
-                len(risk_limits),
-            )
-        return merged
-    except Exception as exc:
-        logger.warning("WARN: [RuleResolver] rulepack 진입 조건 조회 실패 — %s", exc)
-        return {}
+    return {
+        "min_price_change_pct": _f("engine.min_price_change_pct", 1.5),
+        "max_price_change_pct": _f("engine.max_price_change_pct", 4.0),
+        "min_ai_confidence": _f("engine.min_ai_confidence", 0.60),
+        "volume_ratio_min": _f("engine.min_volume_ratio", 1.5),
+    }
 
 
 def resolve_symbol_rule(
@@ -197,12 +162,13 @@ def resolve_symbol_rule(
 
     profiles = profile_pack.get("profiles", {})
     profile_rule = profiles.get(profile_name, {})
-    rulepack_entry = _get_active_rulepack_entry_rules(trade_date) if trade_date else {}
+    # RulePack 제거(2026-08-23 PM): 게이트값을 rulepacks 테이블 대신 settings 단일출처에서.
+    gate_rules = _settings_gate_rules()
 
-    # 2. 레이어 병합
+    # 2. 레이어 병합 (base_rulepack=정적 실행설정 유지 · gate=settings · profile=손절)
     final: dict[str, Any] = {}
     final.update({k: v for k, v in base_rulepack.items() if k not in ("id", "version", "created_at", "is_active", "order_execution")})
-    final.update(rulepack_entry)
+    final.update(gate_rules)
     final.update(profile_rule)
 
     # Phase 3(2026-08-22, PM): engine.stop_source == "regime" 면 종목별 프로필 대신 당일 레짐SET의

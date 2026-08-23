@@ -139,8 +139,8 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 
 ### A-4a. 전략설정 엔진① — 레짐→플레이북 권위 (`get_playbook`)
 **시장분위기(5장세)를 판단하면 그 장세의 전략 한 벌을 통째로 꺼낸다.** 구현: `strategy_playbook.get_playbook(regime5)` → `Playbook{선정·매수게이트(9)·매도(레짐SET)·사이징}`. 폭등=상승SET+사이징확대. 레짐 틱마다 `[E1] SHADOW-PLAYBOOK` 로그.
-- **소비자 배선 상태(2026-08-23):** ⑤매도(`resolve_sell_params`)·⑥사이징(`resolve_execution_sizing`)·VWAP게이트는 **get_playbook 경유(배선 완료)**. ④매수 게이트(밴드·확신도)는 `decision_rules`가 `final_rule`(RulePack) 우선으로 읽음 → **`reconcile_buy_gates`로 shadow 대조**(권위 get_playbook.gates=settings vs RulePack 발산 로그) + `engine.buy_gates_source` 스위치(legacy 기본|playbook 단일출처).
-- **⚠ 발견(2026-08-23): 라이브 게이트가 SSOT와 다름.** 활성 RulePack `RP-S4-20260723`(**LLM생성·8/5 LLM제거 후 동결**)이 `min_ai_confidence 0.65·min_price_change 1.0·max 5.0`으로 덮어 **실제 진입밴드는 1.0~5.0/확신0.65**(SSOT/settings 1.5~4.0/0.60 아님). PM 결정 필요: (a) `buy_gates_source=playbook`로 settings 단일화, (b) RulePack 재생성(LLM 없이 결정론) 복구.
+- **소비자 배선:** ⑤매도(`resolve_sell_params`)·⑥사이징(`resolve_execution_sizing`)·VWAP게이트는 get_playbook 경유. ④매수 게이트(밴드·확신도)는 `decision_rules`가 `final_rule`에서 읽되, **RulePack 제거(2026-08-23 PM) 후 `rule_resolver._settings_gate_rules`가 `engine.*` settings에서 직접 주입**(단일출처).
+- **★ RulePack 제거(2026-08-23 PM, Stage 1):** 구 daily RulePack(rulepacks 테이블·매일생성)은 `engine.*` settings의 **복사본**이라 중복·드리프트만 유발(LLM시절 종목별·Layer3 기능은 8/5 LLM제거 때 이미 소실). `rule_resolver`가 이제 rulepacks 테이블 대신 settings에서 게이트 주입 → **매매는 RulePack 완전 무의존**(밴드 1.5~4.0·확신 0.60·거래량 1.5 = settings). 손절/트레일은 프로필/레짐SET(RulePack과 별개). base_rulepack(정적 order/exit설정)은 유지. **Stage 2(후속):** 생성잡·rulepacks테이블·API 7·프론트 6·`reconcile_buy_gates` shadow 죽은코드 청소.
 
 ### A-4b. 사이징·배포 — 예수금비중 모델 (결정4, Phase1 구현중)
 **종목수가 아니라 예수금 투입비중이 기준.** 확신↑ → 종목당 비중↑ → 집중, 확신↓ → 분산.
