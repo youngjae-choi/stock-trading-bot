@@ -180,6 +180,12 @@ def test_run_skips_non_trading_day(tmp_path, monkeypatch):
 
 def test_run_time_gating_before_open(tmp_path, monkeypatch):
     _iso_db(tmp_path, monkeypatch, full=True)
+    # 전략 드리프트/conformance 체크는 strategy_spec.DB(실DB 하드코딩)를 읽어 격리 tmp DB를
+    # 우회한다 → 라이브 드리프트가 있으면 시각게이팅 무관하게 alert 생성(테스트 오염).
+    # 이 테스트는 시각게이팅만 검증하므로 두 체크를 비활성(운영 DB 미접촉 의도 복원).
+    import backend.services.engine.strategy_spec as _ss
+    monkeypatch.setattr(_ss, "check_drift", lambda: [])
+    monkeypatch.setattr(_ss, "check_conformance", lambda: [])
     with db_mod.get_connection() as conn:
         _ddl(conn)
     out = ow.run_ops_watchdog(now=_MON_0800)  # 08:00 — 어떤 체크도 적용 시각 전

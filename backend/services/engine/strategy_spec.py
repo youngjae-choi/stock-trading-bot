@@ -53,22 +53,22 @@ INTENT_SETTINGS: dict[str, object] = {
     "engine.entry_end_time": "15:00",               # 진입 종료
     "risk.new_entry_cutoff_time": "15:10",          # 신규진입 컷오프
     # ── 매도: 스케일아웃/수확 ──
-    "engine.harvest_mode": True,                    # +2% 스케일아웃 수확 모드
-    "engine.scaleout_ratio": 0.6,                   # 1차 확정 비율
-    "engine.scaleout_target_rate": 0.01,            # 스케일아웃 발동 수익률
+    "engine.harvest_mode": True,                    # 스케일아웃 수확 모드(부분익절+러너)
+    "engine.scaleout_ratio": 0.5,                   # 1차 확정 비율(2026-08-23: 0.6→0.5, 러너 절반 확보)
+    "engine.scaleout_target_rate": 0.02,            # 스케일아웃 발동 수익률(2026-08-23: +1%→+2%, 노이즈 밖 수확)
     "engine.scaleout_ratio_after_target": 0.8,
     "engine.daily_target_rate": 0.02,               # 하루 목표(계좌 대비)
     "engine.stop_source": "regime",                 # 손절/트레일 출처: regime(국면SET·결정된 단일출처, 2026-08-22)|profile(폴백). 롤백스위치
     # ── 사이징/배포 ──
     "exploration.deploy_target_rate": 0.95,         # 예수금 배포 목표(95%)
-    "risk.max_positions": 5,                        # ⚠ 다출처 충돌 — §A-관리주의 참조
+    "risk.max_positions": 5,                        # 死(사이징모델 sizing.positions_min/max 6~19가 단일출처, order_executor에서 override). 표시용 잔존
     "risk.max_position_rate_per_stock": 0.15,       # 종목당 비중 상한(15%)
     # 탐색모드 제거(2026-08-22) — engine.exploration_mode 死키. is_exploration_allowed 하드 False.
     # ── 레짐/시황 ──
     "engine.crash_playbook_enabled": True,
     "regime.evening_confidence_enabled": True,
     # ── 리스크 할트/방어 ──
-    "risk.daily_loss_limit_percent": -2,            # 일일 손실 한도
+    "risk.daily_loss_limit_percent": -5,            # 일일 손실 한도(변동성장 적응 -2→-5, admin 2026-08-23 — -2%면 10%출렁장 과조기 할트)
     "risk.force_exit_time": "15:20",                # 강제청산 시각
     "risk.flash_crash_threshold_pct": -5.0,         # 폭락 방어모드 발동선(변동성장 적응 — 2% 순간이동 오발 방지, PM 2026-08-23)
     "risk.flash_crash_defense_enabled": True,
@@ -103,8 +103,8 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "regime.up_transition_pp": 1.0,                 # 상승전환: window 내 +1.0%p
     "regime.li_lean_weight": 0.25,                  # 선행지표 lean 바이어스 가중
     "regime.transition_window_min": 60,             # 전환 판단 window(분)
-    "regime.transition_response_active": False,     # 전환 대응(하락전환 매수중단/트레일조임) 활성 토글
-    "regime.transition_trail_tighten_factor": 1.0,  # 하락전환시 트레일폭 배수(1.0=무변, <1=조임)
+    "regime.transition_response_active": True,      # 전환 대응 활성(2026-08-23 PM) — 하락전환 매수중단+트레일조임
+    "regime.transition_trail_tighten_factor": 0.5,  # 하락전환시 트레일폭 배수(0.5=절반조임, 러너 이익잠금)
     "regime.set_source": "judge",                   # SET 선택 regime 출처: judge(현행 하드코딩)|5tier(설정기반 classify_regime_5tier). §A-7#5 롤백스위치
     # ── 종목선정 엔진③ 점수 가중치(설정화, 레짐별 선정 확장 토대) ──
     "selection.change_weight": 0.5,                 # 등락률 가중
@@ -120,13 +120,19 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "sizing.model_active": True,                    # 예수금비중 신모델 활성(2026-08-21 검증후 on)
 }
 # 레짐 SET별 매도 파라미터 의도 (regime SET applied_settings 와 대조)
+# ★ 변동성 재보정(2026-08-23): 종목 장중 9.4% 출렁 실측 + 데이트레이더 관행(ATR·inverse-vol) →
+#   손절을 노이즈(편도 4.7%) 밖으로 넓히고, 트레일도 넓게(러너 극대화). 방어=포지션수↓(사이징모델).
+#   take_profit_rate는 표시용(rule_resolver가 take_profit_enabled=False 강제) — 실익절=트레일+scaleout.
+#   max_positions는 死(사이징모델 6~19가 order_executor에서 override) — 표시/드리프트 대조용만 유지.
 INTENT_REGIME_SETS: dict[str, dict[str, float]] = {
-    "risk_on":  {"max_positions": 12, "stop_loss_rate": -0.035, "take_profit_rate": 0.08,
-                 "trailing_activate_profit": 0.04, "trailing_stop_rate": 0.02},
-    "neutral":  {"max_positions": 7,  "stop_loss_rate": -0.02,  "take_profit_rate": 0.045,
-                 "trailing_activate_profit": 0.025, "trailing_stop_rate": 0.012},
-    "risk_off": {"max_positions": 4,  "stop_loss_rate": -0.012, "take_profit_rate": 0.025,
-                 "trailing_activate_profit": 0.015, "trailing_stop_rate": 0.008},
+    "risk_on":  {"max_positions": 12, "stop_loss_rate": -0.045, "take_profit_rate": 0.12,
+                 "trailing_activate_profit": 0.04, "trailing_stop_rate": 0.03},
+    "neutral":  {"max_positions": 7,  "stop_loss_rate": -0.04,  "take_profit_rate": 0.08,
+                 "trailing_activate_profit": 0.035, "trailing_stop_rate": 0.025},
+    "risk_off": {"max_positions": 4,  "stop_loss_rate": -0.04,  "take_profit_rate": 0.07,
+                 "trailing_activate_profit": 0.03, "trailing_stop_rate": 0.025},
+    "volatile": {"max_positions": 2,  "stop_loss_rate": -0.05,  "take_profit_rate": 0.10,
+                 "trailing_activate_profit": 0.04, "trailing_stop_rate": 0.03},
 }
 _FLOAT_TOL = 1e-9
 

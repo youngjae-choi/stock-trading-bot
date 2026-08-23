@@ -45,7 +45,7 @@ def _make_position(qty: int = 100, entry: float = 100.0) -> dict:
     }
 
 
-def _settings(overrides: dict | None = None):
+def _base_settings(overrides: dict | None = None) -> dict:
     base = {
         "engine.harvest_mode": True,
         "engine.scaleout_ratio": 0.6,
@@ -53,11 +53,30 @@ def _settings(overrides: dict | None = None):
     }
     if overrides:
         base.update(overrides)
+    return base
+
+
+def _settings(overrides: dict | None = None):
+    base = _base_settings(overrides)
 
     def _get(key, default=None):
         return base.get(key, default)
 
     return _get
+
+
+def _sell_params(overrides: dict | None = None):
+    """sell_engine.resolve_sell_params() 목 — 수확 파라미터를 fixture로 고정(라이브 DB 격리).
+
+    _scaleout_check가 scaleout_ratio/target을 여기서 읽으므로, get_setting만 목하면
+    라이브 DB값이 샌다(2026-08-23: 라이브 0.5로 바뀌며 노출). 같은 fixture로 반환.
+    """
+    base = _base_settings(overrides)
+    return {
+        "harvest_mode": base.get("engine.harvest_mode", True),
+        "scaleout_ratio": base.get("engine.scaleout_ratio", 0.6),
+        "scaleout_target_rate": base.get("engine.scaleout_target_rate", 0.02),
+    }
 
 
 class ScaleoutHarvestTest(unittest.IsolatedAsyncioTestCase):
@@ -67,6 +86,7 @@ class ScaleoutHarvestTest(unittest.IsolatedAsyncioTestCase):
         sell = AsyncMock(return_value={"ok": sell_ok, "symbol": position["symbol"]})
         with patch("backend.services.engine.position_manager._now_kst", return_value=_FIXED_NOW), \
              patch("backend.services.engine.position_manager.get_setting", side_effect=_settings(settings_over)), \
+             patch("backend.services.engine.sell_engine.resolve_sell_params", return_value=_sell_params(settings_over)), \
              patch("backend.services.engine.position_manager._upsert_stop_state"), \
              patch("backend.services.engine.position_manager._regime_scaleout_overrides", return_value=regime_override), \
              patch("backend.services.engine.order_executor.order_executor.execute_sell", sell):

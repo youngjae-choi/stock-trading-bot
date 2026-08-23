@@ -105,7 +105,10 @@ class PositionManagerTrailingPersistenceTest(unittest.TestCase):
         self.assertEqual(position["active_stop_price"], 98.0)  # 초기 손절선
 
         # 현재가 110 틱 → 트레일링 활성화, 손절선 상향(110*0.97=106.7)
-        with patch("backend.services.engine.position_manager._upsert_stop_state") as upsert:
+        # 전환대응 활성(2026-08-23) 후 _update_trailing이 라이브 down_transition에 트레일을 조이므로
+        # 기본 트레일 수학만 검증하려면 전환 상태를 격리한다(하락전환 조임은 별도 테스트).
+        with patch("backend.services.engine.position_manager._upsert_stop_state") as upsert, \
+             patch("backend.services.engine.intraday_regime_monitor.get_current_transition", return_value=None):
             manager._update_trailing(position, 110.0)
 
         self.assertTrue(position["trailing_active"])
@@ -115,7 +118,8 @@ class PositionManagerTrailingPersistenceTest(unittest.TestCase):
         upsert.assert_called()
 
         # 손절선은 절대 하향하지 않는다 — 가격이 다시 내려가도 active_stop 유지
-        with patch("backend.services.engine.position_manager._upsert_stop_state"):
+        with patch("backend.services.engine.position_manager._upsert_stop_state"), \
+             patch("backend.services.engine.intraday_regime_monitor.get_current_transition", return_value=None):
             manager._update_trailing(position, 105.0)
         self.assertAlmostEqual(position["active_stop_price"], 106.7)
 
