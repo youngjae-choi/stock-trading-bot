@@ -48,7 +48,7 @@
 
 **④ 매수 — S6 실시간 틱 (09:20~, 최소 09:10)**
 WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
-- `_evaluate_rules`(decision_rules): confidence(`min_ai_confidence` 0.60 + `min_confidence_floor` 0.40 + `confidence_gate_mode` regime_defensive→방어레짐 강제) · 등락률밴드(`min/max_price_change_pct` 1.5~4) · 거래량(`min_volume_ratio` 1.5) · 시간창(`entry_start/end_time`) · TSI>0 · Layer3(vwap/ma/rsi/spread=RulePack)
+- `_evaluate_rules`(decision_rules): 게이트값 = `rule_resolver._settings_gate_rules`(settings 단일출처, RulePack 제거) — confidence(`min_ai_confidence` 0.60 + `min_confidence_floor` 0.40 + `confidence_gate_mode` regime_defensive→방어레짐 강제) · 등락률밴드(`min/max_price_change_pct` 1.5~4) · 거래량(`min_volume_ratio` 1.5) · 시간창(`entry_start/end_time`) · TSI>0 · Layer3(vwap/ma/rsi/spread, `_add_layer3_evaluation`)
 - `_entry_gate_block_reason`(6게이트 순서): 손실3연패 하드차단 → 급락방어(인버스1x 예외) → **하락전환 매수중단 래치**(`get_entry_suspended` — down_transition서 걸고 up_transition서만 해제, `regime.transition_response_active` **활성 2026-08-23**) → new_entry_allowed → 칼리브레이션 → entry_fail 쿨다운 → 장중재진입(`intraday_max_stoploss_per_symbol` 2회)
 - VWAP 눌림 게이트: `entry_vwap_pullback_mode`(enforce)·`entry_max_vwap_dist_pct` / 레버리지: `leverage_restriction_mode`(exclude)
 - 통과→**사이징** `execution_engine.resolve_execution_sizing`: 확신도=`conviction.regime_weight`×레짐 + (1-w)×눌림 → 종목당 `sizing.per_position_rate_min`(5%)~`risk.max_position_rate_per_stock`(15%), 종목수 `sizing.positions_min/max`(6~19), 배포한도 `exploration.deploy_target_rate`(95%)
@@ -140,7 +140,9 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 ### A-4a. 전략설정 엔진① — 레짐→플레이북 권위 (`get_playbook`)
 **시장분위기(5장세)를 판단하면 그 장세의 전략 한 벌을 통째로 꺼낸다.** 구현: `strategy_playbook.get_playbook(regime5)` → `Playbook{선정·매수게이트(9)·매도(레짐SET)·사이징}`. 폭등=상승SET+사이징확대. 레짐 틱마다 `[E1] SHADOW-PLAYBOOK` 로그.
 - **소비자 배선:** ⑤매도(`resolve_sell_params`)·⑥사이징(`resolve_execution_sizing`)·VWAP게이트는 get_playbook 경유. ④매수 게이트(밴드·확신도)는 `decision_rules`가 `final_rule`에서 읽되, **RulePack 제거(2026-08-23 PM) 후 `rule_resolver._settings_gate_rules`가 `engine.*` settings에서 직접 주입**(단일출처).
-- **★ RulePack 제거(2026-08-23 PM, Stage 1):** 구 daily RulePack(rulepacks 테이블·매일생성)은 `engine.*` settings의 **복사본**이라 중복·드리프트만 유발(LLM시절 종목별·Layer3 기능은 8/5 LLM제거 때 이미 소실). `rule_resolver`가 이제 rulepacks 테이블 대신 settings에서 게이트 주입 → **매매는 RulePack 완전 무의존**(밴드 1.5~4.0·확신 0.60·거래량 1.5 = settings). 손절/트레일은 프로필/레짐SET(RulePack과 별개). base_rulepack(정적 order/exit설정)은 유지. **Stage 2(후속):** 생성잡·rulepacks테이블·API 7·프론트 6·`reconcile_buy_gates` shadow 죽은코드 청소.
+- **★ RulePack 전면 제거 완료(2026-08-23 PM):** 구 daily RulePack(rulepacks 테이블·매일생성)은 `engine.*` settings의 **복사본**이라 중복·드리프트만 유발(LLM시절 종목별·Layer3 기능은 8/5 LLM제거 때 이미 소실). **매매는 RulePack 완전 무의존** — `rule_resolver._settings_gate_rules`가 settings에서 게이트 주입(밴드 1.5~4.0·확신 0.60·거래량 1.5).
+  - **Stage1**: rule_resolver rulepacks 주입 제거→settings. **Stage2a**: `reconcile_buy_gates` shadow·`buy_gates_source` 스위치 제거(발산 대상 소멸). **Stage2b**: 생성 중단(hybrid_screening)·모듈 삭제(rulepack_generation/store/validator)·API 삭제(rulepack·rulepack_gen)·rulepacks 테이블 DROP·db 스키마 제거·표시소비자 neutralize·프론트 라벨 정리.
+  - **유지**: `base_rulepack`(base-v1.0, 정적 order/exit·force_exit·take_profit_enabled 설정) + `/api/v1/rule/base` API. 손절/트레일=프로필/레짐SET(RulePack과 별개).
 
 ### A-4b. 사이징·배포 — 예수금비중 모델 (결정4, Phase1 구현중)
 **종목수가 아니라 예수금 투입비중이 기준.** 확신↑ → 종목당 비중↑ → 집중, 확신↓ → 분산.
