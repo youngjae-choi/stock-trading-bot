@@ -236,6 +236,28 @@ def _judge_regime(vix: float | None, kospi_change: float | None) -> str:
     return "neutral"
 
 
+def _resolve_set_regime(kospi_change: float | None, vix: float | None,
+                        ib_regime: str | None) -> tuple[str, str]:
+    """SET 매칭용 regime + 출처 결정 — `regime.set_source` 스위치(§A-7#5).
+
+    - **5tier(기본, 활성 2026-08-23)**: 설정기반 `classify_regime_5tier`(regime.down_pct 등)
+      →`regime_to_set`. 드리프트 감시됨. 롤백=judge.
+    - judge: 하드코딩 `_judge_regime`. 장중 live driver면 judge_live, 아니면 index-board 우선 폴백.
+    반환 (new_regime, regime_source).
+    """
+    from ..settings_store import get_setting
+    src = str(get_setting("regime.set_source", "5tier") or "5tier").lower()
+    if src == "5tier":
+        from .market_sensing import classify_regime_5tier, regime_to_set
+        r5 = classify_regime_5tier(kospi_change, vix)
+        return regime_to_set(r5), "5tier:%s" % r5
+    if _intraday_live_driver_enabled():
+        # 장중 driver = 실시간 KIS KOSPI+VIX. index-board regime은 장전 전용(장중 동결).
+        return _judge_regime(vix, kospi_change), "judge_live"
+    return (ib_regime or _judge_regime(vix, kospi_change),
+            "index-board" if ib_regime else "judge_fallback")
+
+
 def _persist_and_shadow_sensing(kospi_change: float | None, vix: float | None,
                                 current_regime: str) -> None:
     """[SHADOW] 장중 KOSPI 시계열 저장 + market_sensing(5장세·전환) would-be 로그.
@@ -492,23 +514,8 @@ async def check_intraday_regime(slot: str = "") -> dict[str, Any]:
     current_regime = current_app.get("regime_label") or "neutral"
     # regime 권위는 market_tone(index-board); 미가용 시에만 자체 판정 폴백.
     ib_regime = _get_index_board_regime(trade_date)
-    from ..settings_store import get_setting as _gs_rs
-    _set_source = str(_gs_rs("regime.set_source", "judge") or "judge").lower()
-    if _set_source == "5tier":
-        # §A-7#5 배선: SET 선택 regime을 설정기반 5장세(classify_regime_5tier, regime.down_pct 등)로.
-        # 롤백=regime.set_source=judge(기본, 현행 하드코딩 _judge_regime). 기본값이라 활성 전 라이브 무변화.
-        from .market_sensing import classify_regime_5tier, regime_to_set
-        _r5 = classify_regime_5tier(kospi_change, vix)
-        new_regime = regime_to_set(_r5)
-        regime_source = "5tier:%s" % _r5
-    elif _intraday_live_driver_enabled():
-        # 장중 driver = 실시간 KIS KOSPI+VIX. index-board regime은 장전 전용(장중 동결,
-        # intraday_json 공백)이라 장중 전환 판단엔 실시간 데이터를 쓴다(morning SET은 장전 경로가 적용).
-        new_regime = _judge_regime(vix, kospi_change)
-        regime_source = "judge_live"
-    else:
-        new_regime = ib_regime or _judge_regime(vix, kospi_change)
-        regime_source = "index-board" if ib_regime else "judge_fallback"
+    # SET 매칭 regime = `regime.set_source` 스위치(§A-7#5, 기본 5tier=설정기반 활성 2026-08-23).
+    new_regime, regime_source = _resolve_set_regime(kospi_change, vix, ib_regime)
     logger.info(
         "[E2] REGIME 입력 vix=%s kospi=%s → 출력 regime=%s (source=%s)",
         vix, kospi_change, new_regime, regime_source,

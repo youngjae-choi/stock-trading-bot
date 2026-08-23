@@ -105,7 +105,7 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "regime.transition_window_min": 60,             # 전환 판단 window(분)
     "regime.transition_response_active": True,      # 전환 대응 활성(2026-08-23 PM) — 하락전환 매수중단+트레일조임
     "regime.transition_trail_tighten_factor": 0.5,  # 하락전환시 트레일폭 배수(0.5=절반조임, 러너 이익잠금)
-    "regime.set_source": "judge",                   # SET 선택 regime 출처: judge(현행 하드코딩)|5tier(설정기반 classify_regime_5tier). §A-7#5 롤백스위치
+    "regime.set_source": "5tier",                   # SET 선택 regime 출처: 5tier(설정기반 classify_regime_5tier, 활성 2026-08-23)|judge(하드코딩 폴백). §A-7#5 롤백스위치
     # ── 종목선정 엔진③ 점수 가중치(배선 완료 2026-08-23 — universe_filter가 라이브 소비) ──
     "selection.weights_source": "settings",         # settings=아래 가중치 라이브 소비(배선)|tone=구 _TONE_WEIGHTS. 롤백스위치
     "selection.change_weight": 0.5,                 # 등락률 가중(라이브 — 선정에 반영)

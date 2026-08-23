@@ -11,7 +11,18 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from backend.config import settings
+from backend.services import settings_store as _settings_store
 from backend.services.engine import intraday_regime_monitor as m
+
+# set_source 기본이 5tier(활성 2026-08-23)로 바뀌어, judge/index-board 경로를 검증하는
+# legacy 테스트는 set_source=judge를 강제해야 한다(그 외 설정은 원본 위임).
+_orig_get_setting = _settings_store.get_setting
+
+
+def _force_judge_source(key, default=None):
+    if key == "regime.set_source":
+        return "judge"
+    return _orig_get_setting(key, default)
 
 
 class IndexBoardRegimeHelpersTest(unittest.TestCase):
@@ -71,7 +82,8 @@ class CheckIntradayRegimeWiringTest(unittest.IsolatedAsyncioTestCase):
             captured["vix"] = vix
             return {"set_id": "S1"}  # 현재 SET과 동일 → no_change
 
-        with patch.object(m, "get_today_application", return_value={"set_id": "S1", "regime_label": "neutral", "set_name": "n"}), \
+        with patch("backend.services.settings_store.get_setting", side_effect=_force_judge_source), \
+             patch.object(m, "get_today_application", return_value={"set_id": "S1", "regime_label": "neutral", "set_name": "n"}), \
              patch.object(m, "_should_skip_transition", return_value=False), \
              patch.object(m, "_intraday_live_driver_enabled", return_value=False), \
              patch.object(m, "_get_index_board_vix", return_value=18.84), \
@@ -79,7 +91,7 @@ class CheckIntradayRegimeWiringTest(unittest.IsolatedAsyncioTestCase):
              patch.object(m, "_get_index_board_regime", return_value="risk_off"), \
              patch.object(m, "get_match_preview", side_effect=fake_preview):
             res = await m.check_intraday_regime(slot="test")
-        self.assertEqual(captured["regime"], "risk_off")  # 롤백: index-board 우선
+        self.assertEqual(captured["regime"], "risk_off")  # 롤백(judge): index-board 우선
         self.assertEqual(captured["vix"], 18.84)
         self.assertEqual(res["action"], "no_change")
 
@@ -96,7 +108,8 @@ class CheckIntradayRegimeWiringTest(unittest.IsolatedAsyncioTestCase):
             captured["kospi"] = kospi
             return {"set_id": "S1"}
 
-        with patch.object(m, "get_today_application", return_value={"set_id": "S1", "regime_label": "risk_off", "set_name": "방어"}), \
+        with patch("backend.services.settings_store.get_setting", side_effect=_force_judge_source), \
+             patch.object(m, "get_today_application", return_value={"set_id": "S1", "regime_label": "risk_off", "set_name": "방어"}), \
              patch.object(m, "_should_skip_transition", return_value=False), \
              patch.object(m, "_get_index_board_vix", return_value=15.0), \
              patch.object(m, "_fetch_kospi_change", new=AsyncMock(return_value=0.6)), \
