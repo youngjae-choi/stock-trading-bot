@@ -70,7 +70,7 @@ INTENT_SETTINGS: dict[str, object] = {
     # ── 리스크 할트/방어 ──
     "risk.daily_loss_limit_percent": -2,            # 일일 손실 한도
     "risk.force_exit_time": "15:20",                # 강제청산 시각
-    "risk.flash_crash_threshold_pct": -2.0,         # 폭락 방어모드 발동선
+    "risk.flash_crash_threshold_pct": -5.0,         # 폭락 방어모드 발동선(변동성장 적응 — 2% 순간이동 오발 방지, PM 2026-08-23)
     "risk.flash_crash_defense_enabled": True,
     "risk.emergency_halt_enabled": False,           # 수동 긴급정지(평시 off)
     # ── AI/자동화 제거(수동통제) ──
