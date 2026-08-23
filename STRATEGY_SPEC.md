@@ -24,6 +24,51 @@
 - 장세는 레벨(코스피 %)만이 아니라 **방향(가속·정체·꺾임)** 으로 판단해야 한다. → 전환 감지(§A-5, 개발 예정).
 - 어떤 자동 메커니즘도 사람 확인 없이 매매 파라미터를 바꾸지 않는다(S10 LLM·loss auto-tuner 관찰전용).
 
+### A-0b. 하루 운영 흐름 — 시각 · 데이터소스 · 설정 · 판단 (전체 파이프라인)
+> 시각은 설정(`schedule_*`)으로 조정. 아래는 현재값. 비거래일은 Job1이 `schedule_skip_today`로 자동잡 전면 스킵.
+> **매수 신호 = baseline S4/S5 경로만**(탐색모드 완전제거 2026-08-22, 모멘텀스캐너 no-op).
+
+**① 장전 준비 (시장톤 → 후보)**
+| 시각 | 단계(잡) | 데이터 소스 | 판단·설정 | 산출 |
+|---|---|---|---|---|
+| 09:01 | S2 프리마켓 시장톤 (`job_premarket_market_tone`) | index-board 브리핑 텍스트 + 장전 선행지표 21종(나스닥/S&P선물·VIX·금·BTC·달러·미국채, Yahoo) | `classify_regime_heuristic`(결정론) — 코스피200선물%·필라델피아반도체·선행지표→`li_lean` | 아침 regime(참고) + `morning_context` DB |
+| 09:05 | 거래준비 S1~S5-A (`job_trade_preparation_pipeline`) | KIS 유니버스·거래량/거래대금 순위 | S1 토큰→S3 유니버스→**S4 스크리닝**→S5 Daily Plan | 후보 + 종목별 변동성 프로필 배정 |
+
+**S4 스크리닝**: candidates_30(거래량·거래대금 순위·change_rate) → 정량 블렌드 `0.4×TSI + 0.4×유니버스점수 + 0.2×suitability` → `suitability_score`. 진입밴드 `engine.min/max_price_change_pct`(1.5~4%) 참조.
+
+**② 장중 시장감지 (레짐 — 상시)**
+| 주기 | 단계 | 데이터 소스 | 판단·설정 | 반응 |
+|---|---|---|---|---|
+| 08~15시 매2분 | index-board 브리핑 폴링 (`job_intraday_briefing_poll`) | index-board(httpx) | 새 장중 브리핑 시 `check_intraday_regime` 트리거 | 브리핑 DB + 레짐 재평가 |
+| ↑트리거 | 장중 레짐 판정 (`intraday_regime_monitor`) | 실시간 KOSPI(KIS 직접조회) + VIX(index-board/아침) + li_lean | **SET 매칭용 regime = index-board regime OR `_judge_regime`(하드코딩 vix>28→volatile·vix>22&kospi<-1 또는 kospi<-1.5→risk_off·kospi>0.5&vix<22→risk_on)** | `match_set`→`record_application`(SET 재매칭) |
+| ↑동시(shadow/부분live) | 5장세·전환 계산 (`market_sensing`) | 위와 동일 | `classify_regime_5tier`: KOSPI vs `regime.down_pct`(-1.5)/`up_pct`(0.5)/`surge_pct`(2.5)·VIX vs `regime.vix_volatile`(28)·+li_lean×`li_lean_weight`(0.25). `detect_transition`: `transition_window_min` 창 KOSPI **기울기** vs `down_transition_pp`(-1.0)/`up_transition_pp`(1.0) — 레벨무관·방향 | `regime.current_5tier`/`current_transition` 영속화 → **사이징⑥이 5tier 읽음(live)**, SET매칭엔 shadow, 전환 대응 gated |
+| 즉시 | 급락 방어 | KOSPI/VIX | `risk.flash_crash_threshold_pct`(-2)·VIX 임계 | 인버스1x 외 신규매수 차단 |
+
+**③ 전략선택**: `match_set(regime,vix,kospi_change)` → 오늘 Regime SET(risk_on/neutral/risk_off/volatile) → `get_playbook` → 진입게이트·손절/트레일·사이징 한 벌. (아침 S6 activate 시 최초 매칭, 장중 전환 시 재매칭)
+
+**④ 매수 — S6 실시간 틱 (09:20~, 최소 09:10)**
+WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
+- `_evaluate_rules`(decision_rules): confidence(`min_ai_confidence` 0.60 + `min_confidence_floor` 0.40 + `confidence_gate_mode` regime_defensive→방어레짐 강제) · 등락률밴드(`min/max_price_change_pct` 1.5~4) · 거래량(`min_volume_ratio` 1.5) · 시간창(`entry_start/end_time`) · TSI>0 · Layer3(vwap/ma/rsi/spread=RulePack)
+- `_entry_gate_block_reason`(6게이트 순서): 손실3연패 하드차단 → 급락방어(인버스1x 예외) → **하락전환**(`regime.transition_response_active`, 기본 off) → new_entry_allowed → 칼리브레이션 → entry_fail 쿨다운 → 장중재진입(`intraday_max_stoploss_per_symbol` 2회)
+- VWAP 눌림 게이트: `entry_vwap_pullback_mode`(enforce)·`entry_max_vwap_dist_pct` / 레버리지: `leverage_restriction_mode`(exclude)
+- 통과→**사이징** `execution_engine.resolve_execution_sizing`: 확신도=`conviction.regime_weight`×레짐 + (1-w)×눌림 → 종목당 `sizing.per_position_rate_min`(5%)~`risk.max_position_rate_per_stock`(15%), 종목수 `sizing.positions_min/max`(6~19), 배포한도 `exploration.deploy_target_rate`(95%)
+
+**⑤ 매도·모니터링 — S7 실행 / S8 Position Manager (실시간)**
+진입 즉시 손절/트레일 세팅(**출처 `engine.stop_source`=regime** → 당일 Regime SET `applied_settings`):
+- 초기손절 `stop_loss_rate` → `초기손절가=진입가×(1+손절)`, `stop_price_can_only_increase`(하향금지)
+- 트레일 `trailing_activate_profit` 도달→활성, `trailing_stop_rate` 되돌림 시 청산
+- 수확 `engine.harvest_mode`: `scaleout_target_rate`(+1%)서 `scaleout_ratio`(60%) 확정+잔량 트레일러, `daily_target_rate`(계좌 2%)
+- 안전망: 손절 REST 백업(30초)·주문 정합(3분)·10초봉 저장(1분)
+
+**⑥ 후처리·복기**
+| 시각 | 단계 |
+|---|---|
+| 15:12 | S9 강제청산 스윕(동시호가 전 미체결 방지) |
+| 15:20 | 후처리 S9~S10: 청산 백스톱→복기(`daily_review_reports`·day_score·exit성과·calibration)→`SYSTEM_AUDIT.md` |
+| 15:35 | 미진입 수익률 소급 · 23:00 장후 브리핑(evening sentiment, 다음날 신뢰도 보정) · 18:00 백업 |
+
+> ⚠ **레짐 판정 이중구조(정확히)**: (a) **레짐 SET 매칭**(전략 SET 선택)은 `index-board regime` 또는 `_judge_regime`(하드코딩 vix 28/22·kospi ±1.5/0.5) — §A-1/§A-7#5의 "설정화 미완"이 **여전히 맞음**. (b) `classify_regime_5tier`(설정 `regime.down_pct` 등)+`detect_transition`은 **구현·영속화**되어 `regime.current_5tier`를 **사이징⑥이 읽음(live)**, SET매칭엔 shadow. (c) 전환 대응(`regime.transition_response_active`) 기본 off(감지 검증 후 활성). → §A-1/§A-5의 "전환 미구현"은 갱신 필요(감지는 됨, SET반영·대응만 미완).
+
 ### A-1. 레짐(장세) 탐지 — 30분 틱 (09:30~15:00)
 탐지는 `intraday_regime_monitor._judge_regime`(KOSPI·VIX 레벨) + `risk.flash_crash_*`(즉시 방어).
 
@@ -33,9 +78,9 @@
 | **하락** | KOSPI < -1.5% (또는 VIX>22 & KOSPI<-1) | ✅ risk_off |
 | **보합** | -1.5% ≤ KOSPI ≤ +0.5% | ✅ neutral |
 | **상승** | KOSPI > +0.5%, VIX < 22 | ✅ risk_on (검증 8/18·8/20) |
-| **폭등** | KOSPI > +2.5% — 상승의 **사이징 확대 티어**(별도 전략 아님) | ✗ 미구현 (상승에 흡수) |
-| **하락전환** | 최근 30분 KOSPI **-1.0%p↓** (레벨 무관·방향) | ✗ 미구현 ← **최우선 구멍** |
-| **상승전환** | 최근 30분 KOSPI **+1.0%p↑** 반등 | ✗ 미구현 |
+| **폭등** | KOSPI > +2.5% — 상승의 **사이징 확대 티어**(별도 전략 아님) | 🟡 `classify_regime_5tier`(설정 `regime.surge_pct`)로 판정·사이징⑥이 읽음. SET매칭엔 미반영(surge SET 없음) |
+| **하락전환** | 최근 window(`transition_window_min`) KOSPI **-1.0%p↓** (레벨 무관·방향) | 🟡 `detect_transition` **감지·영속화**(`regime.current_transition`) + 진입게이트 코드 존재. **대응 off**(`transition_response_active` 기본 false), SET 미반영 |
+| **상승전환** | 최근 window KOSPI **+1.0%p↑** 반등 | 🟡 감지·영속화됨. 대응(진입재개) 미완 |
 | (VIX축) volatile | VIX > 28 | ✅ (5장세와 직교) |
 
 > **왜 전환이 최우선인가 (8/18 실증):** +2.7%출발 → +2.77%꼭지 → +1.25%(11:00) → -0.19%(11:30) → -1.5%마감.
