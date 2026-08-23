@@ -215,7 +215,7 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 ## B. 실측 — 지금 실제로 이렇게 돈다 (자동 생성, 손대지 마라)
 
 <!-- AUTO:LIVE START -->
-_자동 생성: 2026-08-23 16:03:55 · `scripts/strategy_spec_sync.py` · 손대지 마라._
+_자동 생성: 2026-08-23 21:52:20 · `scripts/strategy_spec_sync.py` · 손대지 마라._
 
 **현재 활성 레짐:** `risk_on` (trigger=intraday, at=2026-08-21T15:00:04)
 
@@ -288,7 +288,6 @@ _자동 생성: 2026-08-23 16:03:55 · `scripts/strategy_spec_sync.py` · 손대
 | `regime.transition_response_active` | `True` | DB(오버라이드) |
 | `regime.transition_trail_tighten_factor` | `0.5` | DB(오버라이드) |
 | `regime.set_source` | `5tier` | DB(오버라이드) |
-| `engine.buy_gates_source` | `legacy` | 코드기본 |
 | `selection.weights_source` | `settings` | 코드기본 |
 | `selection.change_weight` | `0.5` | 코드기본 |
 | `selection.surge_weight` | `0.5` | 코드기본 |
@@ -316,7 +315,7 @@ _드리프트 12건 (아래 C절 참조)_
 ## C. 드리프트 체크 — 실측이 의도를 벗어났나 (자동 생성, 손대지 마라)
 
 <!-- AUTO:DRIFT START -->
-_자동 생성: 2026-08-23 16:03:55_
+_자동 생성: 2026-08-23 21:52:20_
 
 🔴 **드리프트 12건** — 실측이 의도를 벗어났다. 각 항목을 의도대로 되돌리거나, 의도가 바뀐 것이면 A절+INTENT를 갱신하라.
 

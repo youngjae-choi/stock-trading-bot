@@ -62,7 +62,6 @@ _SETTING_META = {
     "engine.min_ai_confidence": ("최소 확신도", "진입 confidence 하한", "num", "0~1"),
     "engine.intraday_max_stoploss_per_symbol": ("종목당 당일 손절 한도", "이 횟수 손절 시 당일 재진입 차단", "num", "회"),
     "engine.leverage_restriction_mode": ("레버리지 제한", "exclude=레버리지/인버스2x 진입 차단·off=허용", "enum", ["exclude", "off"]),
-    "engine.buy_gates_source": ("매수게이트 출처", "legacy=RulePack 우선(현행) · playbook=settings 단일출처(get_playbook 통합). 발산 로그 검증 후 flip", "enum", ["legacy", "playbook"]),
     # ⑤ 매도(수확)
     "engine.harvest_mode": ("수확 모드", "목표 도달 시 부분 확정(하루 수익 실현)", "bool", None),
     "engine.scaleout_ratio": ("1차 확정 비율", "목표 도달 시 이 비율만큼 매도 (0.5=50%, 잔량은 트레일링 러너)", "num", "비율 0~1"),
@@ -97,7 +96,7 @@ def _engine_setting_groups():
                         "regime.transition_window_min", "regime.transition_response_active",
                         "regime.transition_trail_tighten_factor"]),
         ("③ 종목선정 (배선 2026-08-23)", ["selection.weights_source", "selection.change_weight", "selection.surge_weight"]),
-        ("④ 매수(게이트)", GATE_SETTING_KEYS + ["engine.buy_gates_source"]),
+        ("④ 매수(게이트)", GATE_SETTING_KEYS),
         ("⑤ 매도(수확)", SELL_SETTING_KEYS),
         ("⑥ 매매(사이징)", EXEC_SETTING_KEYS),
         # 포트폴리오 손실 안전벨트 단일화(2026-08-22) — 흩어진 손절/손실 설정을 전략엔진 한 곳으로.

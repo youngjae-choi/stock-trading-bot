@@ -45,9 +45,6 @@ from .decision_rules import (  # S6 룰 평가·시장맥락(Phase 5 분해) —
 
 logger = logging.getLogger("DecisionEngine")
 
-# ④ 게이트 단일화 발산 로그 throttle — 같은 발산(RulePack↔settings) 반복 스팸 방지.
-_GATE_DIVERGENCE_SEEN: list = [None]
-
 
 _REGIME_CACHE: dict[str, Any] = {"at": 0.0, "label": ""}
 
@@ -793,19 +790,8 @@ class DecisionEngine:
             return
 
         candidate = self._candidates[symbol]
+        # final_rule의 게이트값은 rule_resolver가 settings 단일출처에서 주입(RulePack 제거 2026-08-23).
         final_rule = get_rule(symbol) or {}
-        # ④ 매수 게이트 단일화(get_playbook 통합) — settings 권위 vs RulePack 발산 대조.
-        # buy_gates_source=playbook 이면 settings값으로 덮어 단일출처화(기본 legacy=현행 RulePack 우선).
-        # 발산은 4중구조 이탈 신호 → throttle 로그(같은 발산 반복 스팸 방지).
-        try:
-            from .buy_engine import reconcile_buy_gates
-            final_rule, _divs = reconcile_buy_gates(final_rule, self._current_regime() or "flat")
-            if _divs and _divs != _GATE_DIVERGENCE_SEEN[0]:
-                _GATE_DIVERGENCE_SEEN[0] = _divs
-                logger.warning("WARN: [S6][④통합] 게이트 발산 RulePack↔settings %s source=%s",
-                               _divs, get_setting("engine.buy_gates_source", "legacy"))
-        except Exception as exc:
-            logger.warning("WARN: [S6] 매수 게이트 단일화 실패 — %s", exc)
         matched = self._evaluate_rules(candidate=candidate, final_rule=final_rule, tick=tick)
 
         if _rules_allow_signal(matched):
