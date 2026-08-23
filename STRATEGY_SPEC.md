@@ -49,7 +49,7 @@
 **④ 매수 — S6 실시간 틱 (09:20~, 최소 09:10)**
 WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 - `_evaluate_rules`(decision_rules): confidence(`min_ai_confidence` 0.60 + `min_confidence_floor` 0.40 + `confidence_gate_mode` regime_defensive→방어레짐 강제) · 등락률밴드(`min/max_price_change_pct` 1.5~4) · 거래량(`min_volume_ratio` 1.5) · 시간창(`entry_start/end_time`) · TSI>0 · Layer3(vwap/ma/rsi/spread=RulePack)
-- `_entry_gate_block_reason`(6게이트 순서): 손실3연패 하드차단 → 급락방어(인버스1x 예외) → **하락전환 신규매수 중단**(`regime.transition_response_active` **활성 2026-08-23**) → new_entry_allowed → 칼리브레이션 → entry_fail 쿨다운 → 장중재진입(`intraday_max_stoploss_per_symbol` 2회)
+- `_entry_gate_block_reason`(6게이트 순서): 손실3연패 하드차단 → 급락방어(인버스1x 예외) → **하락전환 매수중단 래치**(`get_entry_suspended` — down_transition서 걸고 up_transition서만 해제, `regime.transition_response_active` **활성 2026-08-23**) → new_entry_allowed → 칼리브레이션 → entry_fail 쿨다운 → 장중재진입(`intraday_max_stoploss_per_symbol` 2회)
 - VWAP 눌림 게이트: `entry_vwap_pullback_mode`(enforce)·`entry_max_vwap_dist_pct` / 레버리지: `leverage_restriction_mode`(exclude)
 - 통과→**사이징** `execution_engine.resolve_execution_sizing`: 확신도=`conviction.regime_weight`×레짐 + (1-w)×눌림 → 종목당 `sizing.per_position_rate_min`(5%)~`risk.max_position_rate_per_stock`(15%), 종목수 `sizing.positions_min/max`(6~19), 배포한도 `exploration.deploy_target_rate`(95%)
 
@@ -91,8 +91,8 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 | **보합** | -1.5% ≤ KOSPI ≤ +0.5% | ✅ **neutral SET**(-4%) |
 | **상승** | KOSPI > +0.5%, VIX < 22 | ✅ **risk_on SET**(-4.5%, 검증 8/18·8/20) |
 | **폭등** | KOSPI > +2.5% — 상승의 **사이징 확대 티어**(별도 전략 아님) | ✅ **risk_on SET** + 사이징 확대(`surge_per_position_rate_max`). SET매칭엔 risk_on |
-| **하락전환** | 최근 window(`transition_window_min`) KOSPI **-1.0%p↓** (레벨 무관·방향) | ✅ 감지·영속화 + **대응 활성(2026-08-23)**: 신규매수 중단 + 트레일 절반조임(`transition_trail_tighten_factor` 0.5) |
-| **상승전환** | 최근 window KOSPI **+1.0%p↑** 반등 | 🟡 감지·영속화·차단해제(매수재개). 명시적 재개로직은 후속 |
+| **하락전환** | 최근 window(`transition_window_min`) KOSPI **-1.0%p↓** (레벨 무관·방향) | ✅ 대응 활성: 신규매수 중단(**래치**) + 트레일 절반조임(`transition_trail_tighten_factor` 0.5) |
+| **상승전환** | 최근 window KOSPI **+1.0%p↑** 반등 | ✅ **재개 래치(2026-08-23)**: 하락전환 매수중단을 걸어두고 **up_transition에서만 해제**(None 구간 유지=데드캣 방지). `get_entry_suspended` 신선도 75분 |
 | (VIX축) volatile | VIX > 28 | ✅ **volatile SET**(-5%손절·최소포지션, 5장세와 직교) |
 
 > **왜 전환이 최우선인가 (8/18 실증):** +2.7%출발 → +2.77%꼭지 → +1.25%(11:00) → -0.19%(11:30) → -1.5%마감.
@@ -186,7 +186,8 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
   - **하락전환 매수중단**: `_entry_gate_block_reason` + `get_current_transition`(신선도). `regime.transition_response_active`=**on**.
   - **하락전환 트레일조임**: `_update_trailing`이 트레일폭 축소(이익잠금). `regime.transition_trail_tighten_factor`=**0.5**(절반조임).
   - **폭등 사이징확대**: 5장세=surge면 종목당 상한↑. `sizing.surge_per_position_rate_max`(기본 0.15=무변, ↑로 확대).
-- **미구현**: 상승전환 명시적 진입재개 로직(현재는 차단해제로 자연 재개) · market_sensing으로 _judge_regime 대체(SET매칭 활성=`set_source`=5tier, 기본 judge).
+- **상승전환 재개 래치(✅ 2026-08-23)**: `_latch_from_transition`+`get_entry_suspended` — 하락전환 매수중단을 걸고 up_transition에서만 해제(None 유지). 진입게이트가 stateless→래치로 전환.
+- **SET매칭 5tier 활성(✅ 2026-08-23)**: `set_source`=5tier 기본 — `_resolve_set_regime`이 설정기반 `classify_regime_5tier` 사용(judge 롤백).
 - **⚠ 월요일(2026-08-25) 관찰**: 전환 감지 오발 가능성 — 첫 활성이므로 하락전환 발화 빈도·타당성 모니터. 과발동 시 `transition_window_min`/`down_transition_pp` 조정.
 
 ### A-6. 검증 상태 요약

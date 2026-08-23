@@ -196,6 +196,8 @@ async def engine_status() -> dict:
             "engine2_regime": {
                 "current_5tier": _get(conn, "regime.current_5tier", "-"),
                 "current_transition": _get(conn, "regime.current_transition", "-"),
+                "entry_suspended": _get(conn, "regime.entry_suspended", False),  # 상승전환 재개 래치(읽기전용)
+                "set_source": _get(conn, "regime.set_source", "5tier"),
                 "response_active": _get(conn, "regime.transition_response_active", False),
                 "trail_tighten_factor": _get(conn, "regime.transition_trail_tighten_factor", 1.0),
                 "thresholds": {

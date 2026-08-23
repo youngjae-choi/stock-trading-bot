@@ -236,6 +236,19 @@ def _judge_regime(vix: float | None, kospi_change: float | None) -> str:
     return "neutral"
 
 
+def _latch_from_transition(transition: str | None) -> bool | None:
+    """상승전환 재개 래치의 새 상태 — 순수함수.
+
+    down_transition→True(매수중단 래치 ON), up_transition→False(재개=래치 OFF),
+    None→None(불확실 = 이전 래치 유지, 미변경). 데드캣 바운스 재진입 방지(8/18).
+    """
+    if transition == "down_transition":
+        return True
+    if transition == "up_transition":
+        return False
+    return None
+
+
 def _resolve_set_regime(kospi_change: float | None, vix: float | None,
                         ib_regime: str | None) -> tuple[str, str]:
     """SET 매칭용 regime + 출처 결정 — `regime.set_source` 스위치(§A-7#5).
@@ -298,6 +311,16 @@ def _persist_and_shadow_sensing(kospi_change: float | None, vix: float | None,
                        "장중 전환 상태(엔진② — down/up_transition, 상태값)", "regime_monitor")
         upsert_setting("regime.current_transition_at", now.isoformat(), "string",
                        "전환 상태 갱신 시각", "regime_monitor")
+        # 상승전환 재개 래치(엔진② inc4, 2026-08-23): 하락전환 시 매수중단을 **걸어두고**,
+        # up_transition(반등 확인)에서만 해제. None(불확실)은 유지 = 데드캣 바운스 재진입 방지(8/18).
+        _latch = _latch_from_transition(transition)
+        if _latch is not None:
+            upsert_setting("regime.entry_suspended", "true" if _latch else "false", "boolean",
+                           "하락전환 매수중단 래치(상승전환까지 유지)" if _latch else "상승전환 — 매수 재개(래치 해제)",
+                           "regime_monitor")
+            upsert_setting("regime.entry_suspended_at", now.isoformat(), "string",
+                           "매수중단 래치 갱신 시각", "regime_monitor")
+        # _latch None(transition None): 래치 유지(변경 안 함).
         upsert_setting("regime.current_5tier", regime5, "string",
                        "장중 5장세 판정(엔진② shadow)", "regime_monitor")
         logger.info(
@@ -346,6 +369,35 @@ def get_current_transition() -> str | None:
         return str(trans)
     except Exception:
         return None
+
+
+def get_entry_suspended() -> bool:
+    """상승전환 재개 래치 — 하락전환 후 매수중단 상태(신선할 때만). up_transition에서 해제.
+
+    stateless한 `current_transition==down_transition`과 달리 **래치**다: 하락전환이 걸면
+    None(불확실) 구간에도 유지되고 **up_transition에서만 풀린다**(반등 확인 후 재개, 8/18 교훈).
+    래치 갱신이 window+15분 초과로 끊겼으면 False(stale — 종일·익일 차단 방지, 장초 자동해제).
+    """
+    try:
+        from datetime import timedelta
+
+        from ..settings_store import get_setting
+        susp = get_setting("regime.entry_suspended", False)
+        if isinstance(susp, str):
+            susp = susp.strip().lower() in ("true", "1", "yes")
+        if not susp:
+            return False
+        at_str = get_setting("regime.entry_suspended_at", "")
+        if at_str:
+            at = datetime.fromisoformat(str(at_str))
+            if at.tzinfo is None:
+                at = at.replace(tzinfo=ZoneInfo("Asia/Seoul"))
+            win = int(get_setting("regime.transition_window_min", 60) or 60)
+            if datetime.now(ZoneInfo("Asia/Seoul")) - at > timedelta(minutes=win + 15):
+                return False
+        return True
+    except Exception:
+        return False
 
 
 def _should_skip_transition(trade_date: str) -> bool:
