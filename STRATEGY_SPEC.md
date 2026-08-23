@@ -139,7 +139,8 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 
 ### A-4a. 전략설정 엔진① — 레짐→플레이북 권위 (`get_playbook`)
 **시장분위기(5장세)를 판단하면 그 장세의 전략 한 벌을 통째로 꺼낸다.** 구현: `strategy_playbook.get_playbook(regime5)` → `Playbook{선정·매수게이트(9)·매도(레짐SET)·사이징}`. 폭등=상승SET+사이징확대. 레짐 틱마다 `[E1] SHADOW-PLAYBOOK` 로그.
-- **배선 상태:** 권위 조립+shadow 로그 완료. **소비자 미전환**(각 엔진이 아직 흩어진 소스를 읽음) → 설정 4중구조(RulePack·레짐SET·settings·코드기본) **단일화는 후속 inc**(소비자를 get_playbook으로 전환). 현재 동작 불변.
+- **소비자 배선 상태(2026-08-23):** ⑤매도(`resolve_sell_params`)·⑥사이징(`resolve_execution_sizing`)·VWAP게이트는 **get_playbook 경유(배선 완료)**. ④매수 게이트(밴드·확신도)는 `decision_rules`가 `final_rule`(RulePack) 우선으로 읽음 → **`reconcile_buy_gates`로 shadow 대조**(권위 get_playbook.gates=settings vs RulePack 발산 로그) + `engine.buy_gates_source` 스위치(legacy 기본|playbook 단일출처).
+- **⚠ 발견(2026-08-23): 라이브 게이트가 SSOT와 다름.** 활성 RulePack `RP-S4-20260723`(**LLM생성·8/5 LLM제거 후 동결**)이 `min_ai_confidence 0.65·min_price_change 1.0·max 5.0`으로 덮어 **실제 진입밴드는 1.0~5.0/확신0.65**(SSOT/settings 1.5~4.0/0.60 아님). PM 결정 필요: (a) `buy_gates_source=playbook`로 settings 단일화, (b) RulePack 재생성(LLM 없이 결정론) 복구.
 
 ### A-4b. 사이징·배포 — 예수금비중 모델 (결정4, Phase1 구현중)
 **종목수가 아니라 예수금 투입비중이 기준.** 확신↑ → 종목당 비중↑ → 집중, 확신↓ → 분산.
@@ -214,7 +215,7 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 ## B. 실측 — 지금 실제로 이렇게 돈다 (자동 생성, 손대지 마라)
 
 <!-- AUTO:LIVE START -->
-_자동 생성: 2026-08-23 15:50:21 · `scripts/strategy_spec_sync.py` · 손대지 마라._
+_자동 생성: 2026-08-23 16:03:55 · `scripts/strategy_spec_sync.py` · 손대지 마라._
 
 **현재 활성 레짐:** `risk_on` (trigger=intraday, at=2026-08-21T15:00:04)
 
@@ -287,6 +288,7 @@ _자동 생성: 2026-08-23 15:50:21 · `scripts/strategy_spec_sync.py` · 손대
 | `regime.transition_response_active` | `True` | DB(오버라이드) |
 | `regime.transition_trail_tighten_factor` | `0.5` | DB(오버라이드) |
 | `regime.set_source` | `5tier` | DB(오버라이드) |
+| `engine.buy_gates_source` | `legacy` | 코드기본 |
 | `selection.weights_source` | `settings` | 코드기본 |
 | `selection.change_weight` | `0.5` | 코드기본 |
 | `selection.surge_weight` | `0.5` | 코드기본 |
@@ -314,7 +316,7 @@ _드리프트 12건 (아래 C절 참조)_
 ## C. 드리프트 체크 — 실측이 의도를 벗어났나 (자동 생성, 손대지 마라)
 
 <!-- AUTO:DRIFT START -->
-_자동 생성: 2026-08-23 15:50:21_
+_자동 생성: 2026-08-23 16:03:55_
 
 🔴 **드리프트 12건** — 실측이 의도를 벗어났다. 각 항목을 의도대로 되돌리거나, 의도가 바뀐 것이면 A절+INTENT를 갱신하라.
 
