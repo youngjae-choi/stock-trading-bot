@@ -28,8 +28,6 @@ from .api.routes.orders import router as orders_router
 from .api.routes.pipeline import router as pipeline_router
 from .api.routes.autotrade import router as autotrade_router
 from .api.routes.bot import router as bot_router
-from .api.routes.rulepack import router as rulepack_router
-from .api.routes.rulepack_gen import router as rulepack_gen_router
 from .api.routes.engine_test import router as engine_test_router
 from .api.routes.console import router as console_router
 from .api.routes.decision import router as decision_router
@@ -168,7 +166,6 @@ app.include_router(kis_router)
 app.include_router(universe_router)
 app.include_router(universe_filter_router)
 app.include_router(screening_router)
-app.include_router(rulepack_gen_router)
 app.include_router(engine_test_router)
 app.include_router(realtime_router)
 app.include_router(fundamental_router)
@@ -177,7 +174,6 @@ app.include_router(testing_router)
 app.include_router(strategy_router)
 app.include_router(autotrade_router)
 app.include_router(bot_router)
-app.include_router(rulepack_router)
 app.include_router(settings_router)
 app.include_router(trades_router)
 app.include_router(buy_conditions_router)

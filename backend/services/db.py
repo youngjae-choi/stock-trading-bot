@@ -989,21 +989,8 @@ def _schema_statements() -> list[str]:
             created_at TEXT NOT NULL
         )
         """,
-        """
-        CREATE TABLE IF NOT EXISTS rulepacks (
-            rulepack_id   TEXT PRIMARY KEY,
-            trade_date    TEXT NOT NULL,
-            mode          TEXT NOT NULL DEFAULT 'auto',
-            status        TEXT NOT NULL DEFAULT 'pending',
-            machine_rules TEXT NOT NULL,
-            summary       TEXT NOT NULL DEFAULT '',
-            changes       TEXT NOT NULL DEFAULT '',
-            validation    TEXT NOT NULL DEFAULT '{}',
-            created_at    TEXT NOT NULL,
-            activated_at  TEXT
-        )
-        """,
-        "CREATE INDEX IF NOT EXISTS idx_rulepacks_trade_date ON rulepacks(trade_date)",
+        # RulePack 제거(2026-08-23 PM): daily rulepacks 테이블 스키마 제거(매수 게이트=settings 단일출처).
+        # base_rulepacks(정적 order/exit 설정)는 유지.
         """
         CREATE TABLE IF NOT EXISTS morning_context (
             id              TEXT PRIMARY KEY,

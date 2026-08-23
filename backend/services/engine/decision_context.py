@@ -107,13 +107,13 @@ def _save_daily_context_snapshot(today: str) -> None:
     """
     try:
         from .market_tone import get_today_morning_context
-        from .rulepack_generation import get_active_rulepack
 
         ctx = get_today_morning_context(today) or {}
-        rulepack = get_active_rulepack(today) or {}
-        machine_rules = rulepack.get("machine_rules") if isinstance(rulepack.get("machine_rules"), dict) else rulepack
-        risk = machine_rules.get("risk_limits") if isinstance(machine_rules, dict) else {}
-        risk = risk or {}
+        # RulePack 제거(2026-08-23 PM) — 스냅샷의 rulepack/risk 필드는 빈값(손절/트레일은
+        # 진입 시 레짐SET/프로필이 결정, 이 스냅샷은 기록용).
+        rulepack: dict = {}
+        machine_rules: dict = {}
+        risk: dict = {}
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         with get_connection() as conn:

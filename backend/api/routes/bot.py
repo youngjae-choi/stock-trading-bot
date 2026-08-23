@@ -17,7 +17,6 @@ from ...services.console_state import (
     trigger_emergency_halt,
     trigger_resume,
 )
-from ...services.engine import rulepack_store
 
 logger = logging.getLogger("BackendBotConsoleAPI")
 router = APIRouter(prefix="/api/v1/bot", tags=["bot-console"], dependencies=[Depends(require_console_user)])
@@ -100,7 +99,7 @@ async def get_bot_rulepack_today():
         from datetime import datetime, timezone
         from zoneinfo import ZoneInfo
         today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
-        live_record = rulepack_store.get_active_rulepack_for_date(today)
+        live_record = None  # RulePack 제거(2026-08-23 PM) — 매수 게이트는 settings 단일출처
 
         if live_record is not None:
             logger.info("SUCCESS: %s (live rulepack_id=%s)", endpoint, live_record.get("rulepack_id"))

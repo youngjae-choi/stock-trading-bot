@@ -86,7 +86,7 @@ def _patch_rule_layers(monkeypatch, plan):
     monkeypatch.setattr(rc, "get_active_daily_plan", lambda d: plan)
     monkeypatch.setattr(rc, "get_symbol_overrides", lambda: {})
     monkeypatch.setattr(rc, "get_setting", lambda k, d=None: d)
-    monkeypatch.setattr(rr, "_get_active_rulepack_entry_rules", lambda d: {})
+    monkeypatch.setattr(rr, "_settings_gate_rules", lambda: {})
 
 
 def test_plan_assigned_symbol_not_overwritten(monkeypatch):

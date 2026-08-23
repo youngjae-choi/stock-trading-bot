@@ -14,7 +14,6 @@ from zoneinfo import ZoneInfo
 from ..db import get_connection
 from .order_executor import get_today_orders
 from .position_integrity import json_compact, summarize_order_integrity
-from .rulepack_store import get_active_rulepack_for_date
 from ...config import settings
 
 logger = logging.getLogger("DailySummary")
@@ -180,11 +179,8 @@ async def run_daily_summary(trade_date: str | None = None) -> dict[str, Any]:
     except Exception:
         pass
 
-    # RulePack ID 조회
+    # RulePack 제거(2026-08-23 PM) — 표시용 필드만 잔존(빈값).
     rulepack_id = ""
-    rulepack = get_active_rulepack_for_date(trade_date)
-    if rulepack:
-        rulepack_id = rulepack.get("rulepack_id", "")
 
     # DB 저장 (UPSERT)
     summary_id = str(uuid.uuid4())

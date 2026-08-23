@@ -341,35 +341,5 @@ def test_playbook_cap_noop_outside_defense_or_non_inverse(monkeypatch):
                                          balance={}, today=_today()) == 5000
 
 
-# ──────────────────────────────────────────────
-# P3-1: KOSPI 등락률 프롬프트 주입
-# ──────────────────────────────────────────────
-
-def test_kospi_line_from_morning_context():
-    from backend.services.engine.rulepack_generation import _kospi_change_line
-    line = _kospi_change_line({"kospi": {"price": 2500.5, "change_pct": -2.15}})
-    assert "KOSPI" in line and "-2.15%" in line
-
-
-def test_kospi_line_falls_back_to_realtime(monkeypatch):
-    import backend.services.engine.intraday_regime_monitor as irm
-    monkeypatch.setattr(irm, "_get_current_kospi_change", lambda: -1.8)
-    from backend.services.engine.rulepack_generation import _kospi_change_line
-    line = _kospi_change_line({})
-    assert "-1.80%" in line and "실시간" in line
-
-
-def test_kospi_line_explicit_na(monkeypatch):
-    import backend.services.engine.intraday_regime_monitor as irm
-    monkeypatch.setattr(irm, "_get_current_kospi_change", lambda: None)
-    from backend.services.engine.rulepack_generation import _kospi_change_line
-    line = _kospi_change_line({})
-    assert "N/A" in line  # 빈 문자열 금지 — 명시적 N/A
-
-
-def test_morning_context_prompt_includes_kospi(monkeypatch):
-    import backend.services.engine.intraday_regime_monitor as irm
-    monkeypatch.setattr(irm, "_get_current_kospi_change", lambda: None)
-    from backend.services.engine.rulepack_generation import _format_morning_context_for_prompt
-    text = _format_morning_context_for_prompt({"regime": "risk_off", "market_data": {}})
-    assert "KOSPI" in text  # 프롬프트에 KOSPI 라인이 항상 존재
+# P3-1(KOSPI 등락률 프롬프트 주입) 테스트 제거(2026-08-23): rulepack_generation LLM 프롬프트
+# 유틸(_kospi_change_line·_format_morning_context_for_prompt)이 RulePack 제거로 삭제됨.

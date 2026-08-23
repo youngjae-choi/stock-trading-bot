@@ -488,18 +488,9 @@ def get_console_overview() -> dict[str, Any]:
         ws_connected = False
         ws_symbols = []
 
-    # 3. Active RulePack status
-    rulepack = None
-    try:
-        from .engine.rulepack_store import get_active_rulepack_for_date
-
-        rulepack = get_active_rulepack_for_date(display_date)
-        rulepack_ready = rulepack is not None
-        rulepack_id = rulepack.get("rulepack_id", "") if rulepack else ""
-    except Exception as exc:
-        logger.warning("WARN: console_state.get_console_overview rulepack check failed - %s", exc)
-        rulepack_ready = False
-        rulepack_id = ""
+    # 3. RulePack 제거(2026-08-23 PM) — 매수 게이트는 settings 단일출처. 표시용 잔존 필드.
+    rulepack_ready = False
+    rulepack_id = ""
 
     # 4. Decision engine status
     try:
@@ -762,17 +753,12 @@ def get_console_overview() -> dict[str, Any]:
         max_positions = int(resolve_max_positions())
     except Exception as exc:
         logger.warning("WARN: console_state max_positions setting read failed - %s", exc)
+    # 일일 손실한도 — RulePack 제거(2026-08-23) 후 settings 단일출처.
     try:
-        if rulepack:
-            machine_rules = rulepack.get("machine_rules") or {}
-            if isinstance(machine_rules, str):
-                import json as _json2
-
-                machine_rules = _json2.loads(machine_rules)
-            risk_limits = machine_rules.get("risk_limits", {})
-            daily_loss_limit_pct = float(risk_limits.get("daily_loss_limit_rate", -0.02)) * 100
+        from .settings_store import get_setting as _gs_loss
+        daily_loss_limit_pct = float(_gs_loss("risk.daily_loss_limit_percent", -5))
     except Exception as exc:
-        logger.warning("WARN: console_state.get_console_overview risk limits failed - %s", exc)
+        logger.warning("WARN: console_state.get_console_overview 손실한도 조회 실패 - %s", exc)
 
     emergency_halt = is_emergency_halt_enabled()
     payload = {

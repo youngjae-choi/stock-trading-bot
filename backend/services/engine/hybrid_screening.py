@@ -642,13 +642,8 @@ async def run_hybrid_screening(trigger_source: str = "api_manual") -> dict[str, 
         logger.error("FAIL: HybridScreeningService save failed trade_date=%s reason=%s", today, exc)
         raise
 
-    if entry_rules:
-        _save_daily_rulepack_from_screening(
-            trade_date=today,
-            entry_rules=entry_rules,
-            ai_source=provider,
-            overall_confidence=overall_confidence,
-        )
+    # RulePack 제거(2026-08-23 PM): daily RulePack 생성 중단. 매수 게이트는 settings 단일출처
+    # (rule_resolver._settings_gate_rules)라 rulepacks 테이블은 더 이상 매매에 쓰이지 않는다.
 
     # S4 탈락 종목 Missed Opportunities 기록.
     # 정책 제외 상품군 (ETF/ETN/인버스/레버리지/단일종목 파생) 은 S3에서 차단되어야 하지만
