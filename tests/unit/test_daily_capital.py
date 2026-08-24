@@ -32,7 +32,11 @@ def test_active_budget_rate_from_applied_settings(monkeypatch):
         lambda _d: {"applied_settings": {"daily_budget_rate": 0.9, "max_positions": 12}},
     )
     assert dc.get_active_budget_rate("2099-01-05") == 0.9
-    assert dc.get_active_max_positions("2099-01-05") == 12
+    # max_positions는 이제 applied_settings가 아니라 단일출처(strategy_playbook.resolve_max_positions)에서
+    # 온다(A-7#1 다출처 통일). applied_settings의 12는 무시된다.
+    import backend.services.engine.strategy_playbook as sp
+    monkeypatch.setattr(sp, "resolve_max_positions", lambda: 7)
+    assert dc.get_active_max_positions("2099-01-05") == 7
 
 
 def test_seed_sets_carry_budget_rate():

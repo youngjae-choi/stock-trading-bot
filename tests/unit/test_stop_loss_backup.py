@@ -133,9 +133,12 @@ class StopLossBackupTest(unittest.IsolatedAsyncioTestCase):
             return {"output": {"stck_prpr": "105" if symbol == "005930" else "98"}}
 
         sell = AsyncMock()
+        # 스케일아웃 게이트는 sell_engine.resolve_sell_params(자체 get_setting)를 읽으므로 _scaleout_enabled를
+        # 직접 끈다 — 이 테스트는 '손절선 위=미청산'만 검증(승자 +5% 스케일아웃은 별도 관심사).
         with patch("backend.services.engine.position_manager.get_setting", side_effect=_settings()), \
              patch("backend.services.kis.domestic.service.get_current_price", side_effect=_rest), \
              patch("backend.services.engine.order_executor.order_executor.execute_sell", sell), \
+             patch("backend.services.engine.position_manager.PositionManager._scaleout_enabled", lambda self: False), \
              patch("backend.services.engine.position_manager._upsert_stop_state"), \
              patch("backend.services.engine.position_manager._now_kst", return_value=_KST_10AM):
             result = await self.manager.check_exits_via_rest()

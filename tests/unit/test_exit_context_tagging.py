@@ -56,9 +56,12 @@ def test_exit_context_after_tick_flow_mfe_mae_hold():
 
     sell_mock = AsyncMock(return_value={})
     # 이 테스트는 트레일링 이탈 exit·MFE/MAE 컨텍스트만 검증 — 스케일아웃 수확(+2% 익절)은 격리.
+    # 스케일아웃 게이트는 sell_engine.resolve_sell_params(자체 get_setting)를 읽으므로 _scaleout_enabled를
+    # 직접 끈다(position_manager.get_setting 패치만으론 안 꺼짐).
     _no_harvest = lambda key, default=None: False if key == "engine.harvest_mode" else default
     with patch("backend.services.engine.position_manager._upsert_stop_state"), \
          patch("backend.services.engine.position_manager.get_setting", side_effect=_no_harvest), \
+         patch("backend.services.engine.position_manager.PositionManager._scaleout_enabled", lambda self: False), \
          patch("backend.services.engine.position_manager._now_kst", return_value=_FIXED_NOW), \
          patch("backend.services.engine.order_executor.order_executor.execute_sell", sell_mock):
         asyncio.run(manager.on_tick({"symbol": "005930", "price": "100"}))

@@ -26,6 +26,9 @@ from backend.config import settings
 
 _KST = ZoneInfo("Asia/Seoul")
 SOD_EQUITY = 100_000_000  # 당일 시작 계좌 잔고(예수금) 1억
+# 시간독립화: _now_kst를 장중(10:00)으로 고정 — 미고정 시 15:20 이후 실행하면 force_exit가 먼저
+# 발동해 손절/스케일아웃 판정을 DAILY_FORCE_EXIT로 덮는다(flaky). 손절 안전 로직 자체는 무관.
+_FIXED_NOW = datetime(2026, 8, 24, 10, 0, tzinfo=_KST)
 
 
 def _today() -> str:
@@ -112,6 +115,7 @@ def test_crash_day_defense_and_inverse_playbook_yields_half_percent(monkeypatch)
         mgr = PositionManager()
         sell = _SellRecorder()
         with patch("backend.services.engine.order_executor.order_executor.execute_sell", sell), \
+             patch("backend.services.engine.position_manager._now_kst", return_value=_FIXED_NOW), \
              patch.object(PositionManager, "_account_daily_target_reached",
                           new=AsyncMock(return_value=False)):
             mgr.add_position(symbol="114800", name="KODEX 인버스", qty=3000,
@@ -174,6 +178,7 @@ def test_whipsaw_rebound_bounds_inverse_loss(monkeypatch):
         mgr = PositionManager()
         sell = _SellRecorder()
         with patch("backend.services.engine.order_executor.order_executor.execute_sell", sell), \
+             patch("backend.services.engine.position_manager._now_kst", return_value=_FIXED_NOW), \
              patch.object(PositionManager, "_account_daily_target_reached",
                           new=AsyncMock(return_value=False)):
             # 플레이북 예산 상한(30%) 내 인버스 진입: 3,000만
@@ -211,7 +216,8 @@ def test_crash_day_intraday_stop_bounds_losses(monkeypatch):
 
         mgr = PositionManager()
         sell = _SellRecorder()
-        with patch("backend.services.engine.order_executor.order_executor.execute_sell", sell):
+        with patch("backend.services.engine.order_executor.order_executor.execute_sell", sell), \
+             patch("backend.services.engine.position_manager._now_kst", return_value=_FIXED_NOW):
             mgr.add_position(symbol="005930", name="삼성전자", qty=1000,
                              entry_price=10000.0, final_rule=_risk_off_rule())
             pos = mgr._positions["005930"]

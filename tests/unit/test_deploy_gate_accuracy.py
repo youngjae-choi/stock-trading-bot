@@ -43,9 +43,9 @@ def test_effective_deploy_includes_inflight(monkeypatch):
     t = [500.0]
     monkeypatch.setattr(oe.time, "monotonic", lambda: t[0])
     ex._note_inflight_buy(90_000_000)
-    total_eval = 100_000_000.0
     deposit = 100_000_000.0  # 캐시상 전액 가용(미반영)
-    deployed = ex._effective_deployed(total_eval, deposit)
+    # in-flight 매수는 _inflight_amount()로 집계되어 게이트(_effective_deployable)에 반영된다.
+    deployed = ex._inflight_amount()
     deployable = ex._effective_deployable(deposit, buffer=5_000_000.0)
     assert deployed == 90_000_000.0
     assert deployable == 5_000_000.0  # 100M - 5M버퍼 - 90M inflight
