@@ -28,6 +28,7 @@ _M0835 = 8 * 60 + 35
 _M0905 = 9 * 60 + 5
 _M0906 = 9 * 60 + 6
 _M0910 = 9 * 60 + 10
+_M0940 = 9 * 60 + 40
 _M1520 = 15 * 60 + 20
 _M1530 = 15 * 60 + 30
 _M1525 = 15 * 60 + 25
@@ -211,6 +212,260 @@ def _chk_auto_halt(conn, td):
             "해제하려면 설정에서 emergency_halt_enabled를 끄세요.")
 
 
+# ══ 정합성 감시(Sanity Watchdog) — "시스템 믿음 vs 현실" 괴리 감지 (2026-08-24) ══
+# PM이 눈으로 잡던 "이거 이상해"를 규칙화한 6종. 운영 단계 점검(_chk_s2 등)이 "스텝이
+# 돌았나"를 본다면, 이 6종은 "시스템의 내부 판단이 실제 시장·계좌·설정과 어긋난 순간"을
+# 잡는다. 규칙마다 watchdog.<rule>_enabled 킬스위치. LLM·자동수정 없음 — Alert만.
+
+def _enabled(rule: str) -> bool:
+    """규칙별 킬스위치 watchdog.<rule>_enabled (기본 True). 설정 오류/부재는 활성 유지."""
+    try:
+        return bool(get_setting(f"watchdog.{rule}_enabled", True))
+    except Exception:
+        return True
+
+
+def _wnum(key: str, default: float) -> float:
+    """watchdog 임계 설정 읽기 — 설정 오류/부재는 default (unit 테스트 settings 테이블 부재 대응)."""
+    try:
+        return float(get_setting(key, default))
+    except Exception:
+        return default
+
+
+def _latest_kospi_change(conn) -> float | None:
+    """market_snapshots 최신 KOSPI 등락률(%). 없거나 파싱 실패면 None. (KIS 호출 없음 — DB만)"""
+    try:
+        row = conn.execute(
+            "SELECT change_rate FROM market_snapshots"
+            " WHERE UPPER(symbol) IN ('KOSPI','KS11','^KS11')"
+            " ORDER BY captured_at DESC LIMIT 1"
+        ).fetchone()
+        if not row or row["change_rate"] is None:
+            return None
+        return float(row["change_rate"])
+    except Exception:
+        return None
+
+
+def _age_minutes(iso_str: str | None) -> float | None:
+    """ISO 타임스탬프의 현재(_now_kst) 대비 경과 분. tz 없으면 KST 가정. 파싱 실패면 None."""
+    if not iso_str:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(iso_str))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=KST)
+        return (_now_kst() - ts).total_seconds() / 60.0
+    except Exception:
+        return None
+
+
+def _entry_suspended(td: str) -> bool:
+    """하락전환 래치 등 의도된 진입중단 상태인지(래치 최신성 가드 포함). 실패는 False."""
+    try:
+        from .intraday_regime_monitor import get_entry_suspended
+        return bool(get_entry_suspended())  # 무인자(래치는 설정 기반) — td는 인터페이스 일관용
+    except Exception:
+        return False
+
+
+def _active_max_positions(td: str) -> int | None:
+    """오늘 유효 최대 종목수(단일출처 strategy_playbook). 실패면 None(대조 스킵)."""
+    try:
+        from .daily_capital import get_active_max_positions
+        return int(get_active_max_positions(td))
+    except Exception:
+        return None
+
+
+# 상승/중립으로 보는 레짐 라벨 vs 방어로 보는 라벨 (regime_set_applications.regime_label 실측값)
+_BULLISH_REGIMES = {"risk_on", "neutral"}
+_BEARISH_REGIMES = {"risk_off"}
+
+
+def _chk_regime_reality(conn, td):
+    """R1 레짐↔현실 괴리 — 적용 레짐 판단이 라이브 코스피와 반대 방향.
+
+    2026-08-24 재기동 되돌림 사고(하락장에 neutral 재적용→공격매수)를 사후에도 잡는 backstop.
+    적용 후 sustain_min(기본20) 미만이면 신선한 전환으로 보고 억제(전환 직후 오탐 방지).
+    """
+    if not _enabled("regime_reality"):
+        return None
+    row = conn.execute(
+        "SELECT regime_label, applied_at FROM regime_set_applications"
+        " WHERE trade_date=? AND current_flag=1 ORDER BY applied_at DESC, created_at DESC LIMIT 1",
+        (td,),
+    ).fetchone()
+    if not row or not row["regime_label"]:
+        return None
+    regime = str(row["regime_label"]).strip().lower()
+    kospi = _latest_kospi_change(conn)
+    if kospi is None:
+        return None
+    age = _age_minutes(row["applied_at"])
+    if age is not None and age < _wnum("watchdog.regime_div_sustain_min", 20.0):
+        return None  # 방금 전환 — 지속조건 미충족, 억제
+    band = _wnum("watchdog.regime_div_kospi_pct", 1.5)
+    if regime in _BULLISH_REGIMES and kospi <= -band:
+        return ("레짐↔현실 괴리 — 시스템은 상승/중립인데 시장 하락",
+                f"적용 레짐={regime}인데 코스피 {kospi:+.2f}% (임계 -{band:.1f}%). "
+                "레짐 되돌림/오분류 의심 — 방어 레짐 적용 여부 확인 필요.")
+    if regime in _BEARISH_REGIMES and kospi >= band:
+        return ("레짐↔현실 괴리 — 시스템은 방어인데 시장 급반등",
+                f"적용 레짐={regime}인데 코스피 {kospi:+.2f}% (임계 +{band:.1f}%). "
+                "기회상실 의심 — 상승전환 재개 여부 확인 필요.")
+    return None
+
+
+def _chk_order_reject_streak(conn, td):
+    """R2 매수주문 연속 실패 — 오늘 매수주문이 임계N건 이상 전부 실패(성공 0).
+
+    2026-07-13 40910000 주문거부→봇 정지 재발 방지. 계좌만료/토큰 사망 조기경보.
+    """
+    if not _enabled("order_reject"):
+        return None
+    n = int(_wnum("watchdog.order_reject_streak_n", 3.0))
+    failed = _count(
+        conn,
+        "SELECT COUNT(*) FROM trading_orders WHERE trade_date=? AND side='buy' AND status='failed'",
+        (td,),
+    )
+    if failed < n:
+        return None
+    ok = _count(
+        conn,
+        "SELECT COUNT(*) FROM trading_orders WHERE trade_date=? AND side='buy'"
+        " AND status IN ('submitted','filled','submitted_without_order_no')",
+        (td,),
+    )
+    if ok > 0:
+        return None  # 일부 성공 → 계좌 살아있음, streak 아님
+    reason = ""
+    try:
+        r = conn.execute(
+            "SELECT reason FROM trading_orders WHERE trade_date=? AND side='buy' AND status='failed'"
+            " AND reason IS NOT NULL AND reason<>'' ORDER BY created_at DESC LIMIT 1",
+            (td,),
+        ).fetchone()
+        reason = str(r["reason"]) if r and r["reason"] else ""
+    except Exception:
+        reason = ""
+    return ("매수주문 연속 실패 — 계좌/토큰 의심",
+            f"오늘 매수주문 {failed}건 전부 실패, 성공 0건. 최근 사유: {reason[:120] or '기록없음'} "
+            "(40910000=계좌만료 등 KIS 거부 확인 필요).")
+
+
+def _chk_market_data_stale(conn, td):
+    """R3 코스피 시세 정체 — 장중 KOSPI 스냅샷 갱신이 임계(기본10분)보다 오래됨/아예 없음.
+
+    2026-07-11 index-board 사망→시세피드 정체(레짐이 옛 값 고착)를 조기 감지.
+    """
+    if not _enabled("market_stale"):
+        return None
+    row = conn.execute(
+        "SELECT captured_at FROM market_snapshots"
+        " WHERE UPPER(symbol) IN ('KOSPI','KS11','^KS11') ORDER BY captured_at DESC LIMIT 1"
+    ).fetchone()
+    threshold = _wnum("watchdog.market_stale_min", 10.0)
+    if not row or not row["captured_at"]:
+        return ("장중 코스피 시세 없음",
+                "market_snapshots에 오늘 KOSPI 스냅샷이 없음 — 시세피드/폴링잡 사망 의심.")
+    age = _age_minutes(row["captured_at"])
+    if age is None:
+        return None
+    if age > threshold:
+        return ("코스피 시세 정체 — 시세피드 사망 의심",
+                f"마지막 KOSPI 갱신 {age:.0f}분 전 (임계 {threshold:.0f}분). "
+                "index-board/폴링 정체 — 레짐 판단이 옛 값에 고착될 수 있음.")
+    return None
+
+
+def _chk_entry_paralysis(conn, td):
+    """R4 진입 마비 — S3 후보는 있는데 매수신호 0, 긴급정지·의도된 진입중단도 아님.
+
+    2026-07-23 밴드역전 매매마비 재발 방지. (buy_not_executed는 신호>0·주문0을, 이건 신호=0을 본다)
+    """
+    if not _enabled("entry_paralysis"):
+        return None
+    row = conn.execute(
+        "SELECT filtered_count FROM universe_filter_results WHERE trade_date=? ORDER BY created_at DESC LIMIT 1",
+        (td,),
+    ).fetchone()
+    candidates = int(row["filtered_count"] or 0) if row else 0
+    if candidates < 1:
+        return None  # 후보 없으면 신호 없는 게 정상
+    signals = _count(
+        conn, "SELECT COUNT(*) FROM trading_signals WHERE trade_date=? AND signal_type='BUY'", (td,)
+    )
+    if signals > 0:
+        return None  # 신호 나옴 → 마비 아님
+    try:
+        if bool(get_setting("risk.emergency_halt_enabled", False)):
+            return None  # 긴급정지 = 의도된 차단
+    except Exception:
+        pass
+    if _entry_suspended(td):
+        return None  # 하락전환 래치 등 의도된 진입중단
+    return ("진입 마비 의심 — 후보 있으나 신호 0",
+            f"S3 후보 {candidates}건인데 매수신호 0건. 긴급정지·진입중단(하락전환 래치)도 아님 — "
+            "진입밴드 역전/게이트 과도 차단 의심.")
+
+
+def _chk_position_conflict(conn, td):
+    """R5 포지션↔설정 모순 — 실보유 종목수가 max_positions를 초과(과다 노출).
+
+    KIS 잔고 스냅샷(daily_holdings_snapshot) 기준 — fresh KIS 호출 없음.
+    """
+    if not _enabled("position_conflict"):
+        return None
+    held = _count(
+        conn, "SELECT COUNT(*) FROM daily_holdings_snapshot WHERE trade_date=? AND qty>0", (td,)
+    )
+    if held < 1:
+        return None
+    max_pos = _active_max_positions(td)
+    if not max_pos or max_pos <= 0:
+        return None
+    if held > max_pos:
+        return ("보유 종목수 초과 — 과다 노출",
+                f"실보유 {held}종목 > max_positions {max_pos}. 설정 초과 노출 — 교체/청산 로직 점검 필요.")
+    return None
+
+
+def _chk_qty_drift(conn, td):
+    """R6 DB↔KIS 수량 드리프트 — DB 원장(position_cost_basis) 보유 > KIS 실보유(스냅샷).
+
+    유령보유(유령매도의 뿌리) 조기경보. 오늘 원장·스냅샷이 모두 있을 때만 대조(오탐 억제).
+    KIS>DB(외부매수 미반영)는 유령 아님 → 발동 안 함.
+    """
+    if not _enabled("qty_drift"):
+        return None
+    kis_rows = conn.execute(
+        "SELECT norm_symbol, qty FROM daily_holdings_snapshot WHERE trade_date=?", (td,)
+    ).fetchall()
+    if not kis_rows:
+        return None  # 스냅샷 없음 — R3가 별도 감지
+    kis = {str(r["norm_symbol"]): int(r["qty"] or 0) for r in kis_rows}
+    ledger_rows = conn.execute(
+        "SELECT norm_symbol, qty FROM position_cost_basis WHERE trade_date=?", (td,)
+    ).fetchall()
+    if not ledger_rows:
+        return None  # 오늘 원장 갱신 없음 — 대조 스킵(오탐 억제)
+    drifts = []
+    for r in ledger_rows:
+        sym = str(r["norm_symbol"])
+        dq = int(r["qty"] or 0)
+        kq = kis.get(sym, 0)
+        if dq > kq:
+            drifts.append(f"{sym}: DB {dq} > KIS {kq}")
+    if drifts:
+        return ("DB↔KIS 수량 드리프트 — 유령보유 의심",
+                f"{len(drifts)}종목 DB원장>KIS실보유: " + " / ".join(drifts[:5]) +
+                " — 유령매도/미체결 잔여 의심, KIS 정합 확인 필요.")
+    return None
+
+
 class Check(NamedTuple):
     id: str
     severity: str
@@ -238,6 +493,13 @@ _REGISTRY: list[Check] = [
     Check("postprocess", "CRITICAL", _M1525, 24 * 60, _chk_postprocess),
     # 일중손실 자동 긴급정지 — 장중(09:05~15:20)만 적용
     Check("auto_halt", "CRITICAL", _M0905, _M1520, _chk_auto_halt),
+    # ── 정합성 감시(Sanity Watchdog) — 시스템 믿음 vs 현실 괴리, 장중만 적용 (2026-08-24) ──
+    Check("regime_reality", "WARNING", _M0940, _M1520, _chk_regime_reality),
+    Check("order_reject_streak", "CRITICAL", _M0910, _M1520, _chk_order_reject_streak),
+    Check("market_data_stale", "WARNING", _M0940, _M1520, _chk_market_data_stale),
+    Check("entry_paralysis", "WARNING", _M0940, _M1520, _chk_entry_paralysis),
+    Check("position_conflict", "CRITICAL", _M0910, _M1520, _chk_position_conflict),
+    Check("qty_drift", "WARNING", _M0940, _M1520, _chk_qty_drift),
 ]
 
 

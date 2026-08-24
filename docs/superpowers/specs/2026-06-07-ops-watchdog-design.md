@@ -28,6 +28,23 @@
 
 severity: 거래준비·매수미발생·후처리 = CRITICAL, 품질·baseline·프리마켓 = WARNING.
 
+## 정합성 감시 (Sanity Watchdog v2, 2026-08-24)
+v1이 "스텝이 **돌았나**"(운영 단계)를 본다면, v2는 **"시스템의 내부 판단이 실제 시장·계좌·설정과 어긋난 순간"**을 잡는다. PM이 눈으로 잡던 "이거 이상해"를 규칙화한 6종. 감지·Alert만, **자동수정·LLM 없음**(v1 제약 동일). 규칙마다 `watchdog.<rule>_enabled` 킬스위치(기본 True), 임계는 `watchdog.*` 설정으로 재배포 없이 튜닝.
+
+| id | severity | 적용 시각 | 감지 내용 | 임계 설정(기본) | 데이터 소스 | 대응 사고 |
+|----|----------|----------|----------|----------------|------------|----------|
+| `regime_reality` | WARNING | 09:40~15:20 | 적용 레짐(risk_on/neutral) vs 라이브 코스피 반대방향(하락), 또는 risk_off인데 급반등. 적용 후 지속조건 충족 시만 | `regime_div_kospi_pct`(1.5), `regime_div_sustain_min`(20) | `regime_set_applications`(current_flag=1) + `market_snapshots`(KOSPI) | 2026-08-24 재기동 레짐 되돌림 |
+| `order_reject_streak` | CRITICAL | 09:10~15:20 | 오늘 매수주문 N건↑ 전부 실패(성공 0) — 계좌만료/토큰 사망 | `order_reject_streak_n`(3) | `trading_orders`(side=buy, status) | 2026-07-13 40910000 주문거부 |
+| `market_data_stale` | WARNING | 09:40~15:20 | 장중 KOSPI 스냅샷 갱신 나이 > 임계, 또는 스냅샷 부재 | `market_stale_min`(10) | `market_snapshots`(captured_at) | 2026-07-11 index-board 사망 |
+| `entry_paralysis` | WARNING | 09:40~15:20 | S3 후보>0인데 매수신호=0, 긴급정지·진입중단(래치)도 아님 | — | `universe_filter_results`, `trading_signals`, `regime.entry_suspended` | 2026-07-23 밴드역전 마비 |
+| `position_conflict` | CRITICAL | 09:10~15:20 | 실보유 종목수 > max_positions(과다 노출) | — (max_positions 단일출처) | `daily_holdings_snapshot`(qty>0) vs `strategy_playbook.resolve_max_positions` | 포지션-설정 충돌 |
+| `qty_drift` | WARNING | 09:40~15:20 | DB원장 보유 > KIS 실보유(유령보유). 오늘 원장·스냅샷 모두 있을 때만 대조 | — | `position_cost_basis` vs `daily_holdings_snapshot` (fresh KIS 호출 없음) | 유령매도 조기경보 |
+
+설계 원칙:
+- **KIS 호출 금지**: 라이브 코스피는 `market_snapshots`(DB), 잔고는 `daily_holdings_snapshot`(캐시된 스냅샷)만 읽어 레이트리밋 안전.
+- **오탐 억제**: `regime_reality`는 적용 후 20분 지속조건(전환 직후 억제), `qty_drift`는 오늘 원장·스냅샷 동시 존재 시만, 전 규칙 v1 daily dedup 공유.
+- **후속(v2.1 예정)**: `position_conflict`의 "레버리지 차단인데 보유" 서브체크는 보유종목 name 조인 필요 → 별도 과제로 이연.
+
 ## 노이즈 제어 (5분 틱 스팸 방지) — 핵심
 이상 생성 전 `system_alerts`에서 **`(alert_type, trade_date)` 미확인(acknowledged=0) 알림 존재 시 스킵**. → 같은 이상은 하루 1회만. (앞서 Alert Center 도배 경험 반영)
 
