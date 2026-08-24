@@ -217,9 +217,9 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 ## B. 실측 — 지금 실제로 이렇게 돈다 (자동 생성, 손대지 마라)
 
 <!-- AUTO:LIVE START -->
-_자동 생성: 2026-08-23 21:52:20 · `scripts/strategy_spec_sync.py` · 손대지 마라._
+_자동 생성: 2026-08-24 03:11:11 · `scripts/strategy_spec_sync.py` · 손대지 마라._
 
-**현재 활성 레짐:** `risk_on` (trigger=intraday, at=2026-08-21T15:00:04)
+**현재 활성 레짐:** `risk_off` (trigger=intraday, at=2026-08-24T11:00:10)
 
 **전략 게이트/설정 (system_settings 실측 · 출처):**
 
@@ -299,6 +299,7 @@ _자동 생성: 2026-08-23 21:52:20 · `scripts/strategy_spec_sync.py` · 손대
 | `sizing.surge_per_position_rate_max` | `0.15` | 코드기본 |
 | `conviction.regime_weight` | `0.5` | 코드기본 |
 | `conviction.pullback_full_dist_pct` | `-3.0` | 코드기본 |
+| `engine.conviction_gate_min` | `0.0` | 코드기본 |
 | `sizing.model_active` | `True` | DB(오버라이드) |
 
 **레짐 SET별 매도 파라미터 (실측):**
@@ -306,10 +307,10 @@ _자동 생성: 2026-08-23 21:52:20 · `scripts/strategy_spec_sync.py` · 손대
 | 레짐 | max종목 | 손절 | 익절 | 트레일발동 | 트레일폭 |
 |---|---|---|---|---|---|
 | risk_on | 12 | -0.035 | 0.08 | 0.04 | 0.02 |
-| neutral | 7 | -0.02 | 0.045 | 0.025 | 0.012 |
-| risk_off | 4 | -0.012 | 0.025 | 0.015 | 0.008 |
+| neutral | 7 | -0.04 | 0.08 | 0.035 | 0.025 |
+| risk_off | 4 | -0.04 | 0.07 | 0.03 | 0.025 |
 
-_드리프트 12건 (아래 C절 참조)_
+_드리프트 4건 (아래 C절 참조)_
 <!-- AUTO:LIVE END -->
 
 ---
@@ -317,21 +318,13 @@ _드리프트 12건 (아래 C절 참조)_
 ## C. 드리프트 체크 — 실측이 의도를 벗어났나 (자동 생성, 손대지 마라)
 
 <!-- AUTO:DRIFT START -->
-_자동 생성: 2026-08-23 21:52:20_
+_자동 생성: 2026-08-24 03:11:11_
 
-🔴 **드리프트 12건** — 실측이 의도를 벗어났다. 각 항목을 의도대로 되돌리거나, 의도가 바뀐 것이면 A절+INTENT를 갱신하라.
+🔴 **드리프트 4건** — 실측이 의도를 벗어났다. 각 항목을 의도대로 되돌리거나, 의도가 바뀐 것이면 A절+INTENT를 갱신하라.
 
 - 🔴 SET `risk_on.stop_loss_rate` 불일치 — 의도 `-0.045` vs 실측 `-0.035`
 - 🔴 SET `risk_on.take_profit_rate` 불일치 — 의도 `0.12` vs 실측 `0.08`
 - 🔴 SET `risk_on.trailing_stop_rate` 불일치 — 의도 `0.03` vs 실측 `0.02`
-- 🔴 SET `neutral.stop_loss_rate` 불일치 — 의도 `-0.04` vs 실측 `-0.02`
-- 🔴 SET `neutral.take_profit_rate` 불일치 — 의도 `0.08` vs 실측 `0.045`
-- 🔴 SET `neutral.trailing_activate_profit` 불일치 — 의도 `0.035` vs 실측 `0.025`
-- 🔴 SET `neutral.trailing_stop_rate` 불일치 — 의도 `0.025` vs 실측 `0.012`
-- 🔴 SET `risk_off.stop_loss_rate` 불일치 — 의도 `-0.04` vs 실측 `-0.012`
-- 🔴 SET `risk_off.take_profit_rate` 불일치 — 의도 `0.07` vs 실측 `0.025`
-- 🔴 SET `risk_off.trailing_activate_profit` 불일치 — 의도 `0.03` vs 실측 `0.015`
-- 🔴 SET `risk_off.trailing_stop_rate` 불일치 — 의도 `0.025` vs 실측 `0.008`
 - ⚠ 레짐 SET `volatile` 실측 없음 — 의도 존재
 <!-- AUTO:DRIFT END -->
 

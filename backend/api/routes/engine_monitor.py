@@ -62,6 +62,7 @@ _SETTING_META = {
     "engine.min_ai_confidence": ("최소 확신도", "진입 confidence 하한", "num", "0~1"),
     "engine.intraday_max_stoploss_per_symbol": ("종목당 당일 손절 한도", "이 횟수 손절 시 당일 재진입 차단", "num", "회"),
     "engine.leverage_restriction_mode": ("레버리지 제한", "exclude=레버리지/인버스2x 진입 차단·off=허용", "enum", ["exclude", "off"]),
+    "engine.conviction_gate_min": ("품질게이트(conviction)", "최소 conviction(레짐×눌림 0~1). 0=OFF(기본)·0.5권장. suitability sparse 대체", "num", "0~1"),
     # ⑤ 매도(수확)
     "engine.harvest_mode": ("수확 모드", "목표 도달 시 부분 확정(하루 수익 실현)", "bool", None),
     "engine.scaleout_ratio": ("1차 확정 비율", "목표 도달 시 이 비율만큼 매도 (0.5=50%, 잔량은 트레일링 러너)", "num", "비율 0~1"),

@@ -1002,6 +1002,26 @@ class DecisionEngine:
                 logger.info("SHADOW_EARLY: [S6] 9시조기진입 후보 symbol=%s time=%s", symbol, now_hm)
             return  # exec_start(09:30) 전에는 실제 매수 차단(shadow만)
 
+        # ④ 품질 게이트 — conviction(레짐×눌림 결합, 항상 계산되는 0~1)으로 등급 선별.
+        # 구 confidence(=suitability_score)는 sparse(56% 0)라 게이트 부적합 → conviction으로 대체.
+        # 롤백스위치 engine.conviction_gate_min: <=0 이면 OFF(기본, 라이브 무영향). >0이면 그 미만 차단.
+        # 레짐별 자연 차등: risk_off(레짐점수 0.2)는 깊은 눌림만·risk_on(1.0)은 얕은 눌림도 통과.
+        try:
+            _conv_min = float(get_setting("engine.conviction_gate_min", 0.0) or 0.0)
+            if _conv_min > 0:
+                from .strategy_playbook import resolve_conviction
+                _vw = self._bar_engine.get_vwap(symbol)
+                _vwd = (price / _vw - 1) * 100 if (_vw and price) else None
+                _regime5 = self._current_regime() or "flat"
+                _conv = resolve_conviction(_regime5, _vwd)
+                if _conv < _conv_min:
+                    logger.info(
+                        "INFO: [S6] SKIP 품질게이트(conviction) symbol=%s conv=%.2f < %.2f regime=%s vwap_dist=%s",
+                        symbol, _conv, _conv_min, _regime5, _vwd)
+                    return
+        except Exception as exc:
+            logger.warning("WARN: [S6] conviction 품질게이트 실패(fail-open) symbol=%s — %s", symbol, exc)
+
         today = _today_kst()
         signal_id = str(uuid.uuid4())
         profile_assigned = (get_rule(symbol) or {}).get("profile_assigned", "MID_VOL")

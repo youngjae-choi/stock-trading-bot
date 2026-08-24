@@ -118,6 +118,7 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     # ── 확신도 모델(레짐×눌림 결합, 전부 설정화 = 언제든 수정) ──
     "conviction.regime_weight": 0.5,                # 장세 vs 눌림 비중(1=장세만·0=눌림만)
     "conviction.pullback_full_dist_pct": -3.0,      # 이만큼 눌리면 눌림점수 만점
+    "engine.conviction_gate_min": 0.0,              # ④ 품질게이트 최소 conviction(0=OFF·기본). suitability sparse 대체, >0시 활성. 롤백스위치
     "sizing.model_active": True,                    # 예수금비중 신모델 활성(2026-08-21 검증후 on)
 }
 # 레짐 SET별 매도 파라미터 의도 (regime SET applied_settings 와 대조)
