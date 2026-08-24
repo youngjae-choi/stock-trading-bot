@@ -157,10 +157,24 @@ async def engine_status() -> dict:
         ).fetchall()
         # 엔진④매수·⑤매도 — 현재 레짐으로 라이브 파라미터 해석(실매 소비 경로와 동일 권위)
         _r5 = str(_get(conn, "regime.current_5tier", "flat") or "flat")
+        # 오늘 적용 레짐SET(applied_settings)을 실매 경로와 동일하게 넘겨야 손절/트레일이 채워진다.
+        _aps: dict = {}
+        try:
+            from datetime import datetime as _dt
+            from zoneinfo import ZoneInfo as _ZI
+
+            from ...services.regime_set_service import get_today_application
+            _app = get_today_application(_dt.now(_ZI("Asia/Seoul")).strftime("%Y-%m-%d")) or {}
+            _aps = _app.get("applied_settings") or {}
+            if isinstance(_aps, str):
+                import json as _json
+                _aps = _json.loads(_aps)
+        except Exception:
+            _aps = {}
         try:
             from ...services.engine.buy_engine import resolve_buy_gates
             from ...services.engine.sell_engine import resolve_sell_params
-            _g, _s = resolve_buy_gates(_r5), resolve_sell_params(_r5)
+            _g, _s = resolve_buy_gates(_r5), resolve_sell_params(_r5, regime_set=_aps)
         except Exception:
             _g, _s = {}, {}
         _e4 = {
@@ -223,6 +237,6 @@ async def engine_status() -> dict:
                 "conviction": "레짐×눌림 결합",
                 "wired": True,  # order_executor._compute_new_model_sizing 경유
             },
-            "engines_todo": ["엔진③ 종목선정 배선(감지검증 후)", "decision_engine 분해(점진적)"],
+            "engines_todo": ["set_source 5tier 실전검증(2026-08-24 활성)", "conviction 품질게이트 활성(PM)"],
         }
     return {"ok": True, "payload": payload}

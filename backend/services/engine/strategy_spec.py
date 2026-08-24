@@ -163,15 +163,22 @@ def read_live_settings(conn) -> dict[str, object]:
 
 
 def read_live_regime_sets(conn) -> dict[str, dict]:
-    """레짐 라벨별 최신 적용 SET의 applied_settings를 읽는다."""
+    """레짐 라벨별 SET **정의**(regime_sets.settings)를 읽는다 — 구성된 전략(=다음 적용 시 스냅샷될 값).
+
+    구현: 정의(regime_sets) 기준. 구 방식(regime_set_applications 최신 적용값)은 재보정 후 해당
+    레짐이 아직 재적용 안 되면 forward-only 오탐(예: risk_on이 오늘 미발생 시 옛 스냅샷과 비교)이
+    발생했다. SSOT '정의 vs 실측'의 실측 = 지금 구성된 SET 정의로 본다(2026-08-24).
+    """
     rows = conn.execute(
-        "SELECT regime_label, applied_settings, applied_at FROM regime_set_applications "
-        "WHERE regime_label IS NOT NULL ORDER BY applied_at"
+        "SELECT id, settings FROM regime_sets WHERE is_active = 1"
     ).fetchall()
     out: dict[str, dict] = {}
-    for r in rows:  # 나중 것이 덮어씀 = 최신 유지
+    for r in rows:
+        label = str(r["id"] or "").replace("SET-", "").replace("set-", "").lower()
+        if not label:
+            continue
         try:
-            out[r["regime_label"]] = json.loads(r["applied_settings"])
+            out[label] = json.loads(r["settings"])
         except (json.JSONDecodeError, TypeError):
             continue
     return out

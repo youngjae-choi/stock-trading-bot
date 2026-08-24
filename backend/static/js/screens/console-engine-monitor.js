@@ -43,13 +43,16 @@
 
       // 엔진③ 종목선정
       const e3 = p.engine3_selection || {};
-      set('em-e3', `선정 가중치 등락률 <b>${e3.change_weight}</b> · 거래량 <b>${e3.surge_weight}</b> `
-        + `<span class="muted">(점수 모듈 구축, 미배선)</span>`);
+      const e3on = e3.wired === true;
+      set('em-e3', `<span class="status ${e3on ? 'ok' : 'warn'}">${e3on ? '소비중' : '미배선'}</span> `
+        + `선정 가중치 등락률 <b>${e3.change_weight}</b> · 거래량 <b>${e3.surge_weight}</b> `
+        + `<span class="muted">(출처 ${e3.weights_source || '-'})</span>`);
 
       // 엔진④ 매수 게이트 (현재 레짐 기준 라이브)
       const e4 = p.engine4_buy || {};
       const e4on = e4.wired === true;
-      const pct = (v) => (v == null ? '-' : v);
+      const pct = (v) => (v == null ? '-' : v);              // 이미 % 단위(밴드·거래량비)
+      const rate = (v) => (v == null ? '-' : +(v * 100).toFixed(2));  // 비율(0.02)→% 표시(2)
       set('em-e4', `<span class="status ${e4on ? 'ok' : 'warn'}">${e4on ? '소비중' : '미배선'}</span> `
         + `레짐 <b>${e4.regime || '-'}</b> · VWAP눌림 <b>${e4.vwap_mode || '-'}</b> (≤${pct(e4.max_vwap_dist)}%) · `
         + `진입밴드 <b>${pct(e4.band_min)}~${pct(e4.band_max)}%</b> · 거래량 ≥${pct(e4.min_vol)} · 레버리지 ${e4.leverage || '-'}`
@@ -59,8 +62,8 @@
       const e5 = p.engine5_sell || {};
       const e5on = e5.wired === true;
       set('em-e5', `<span class="status ${e5on ? 'ok' : 'warn'}">${e5on ? '소비중' : '미배선'}</span> `
-        + `수확 <b>${e5.harvest || '-'}</b> · +<b>${pct(e5.scaleout_target)}%</b>서 <b>${pct(e5.scaleout_ratio)}</b> 확정 · `
-        + `손절 ${pct(e5.stop_loss)}% · 트레일 ${pct(e5.trail)}%`
+        + `수확 <b>${e5.harvest || '-'}</b> · +<b>${rate(e5.scaleout_target)}%</b>서 <b>${rate(e5.scaleout_ratio)}%</b> 확정 · `
+        + `손절 <b>${rate(e5.stop_loss)}%</b> · 트레일 <b>${rate(e5.trail)}%</b>`
         + `<br><span class="muted" style="font-size:0.85em">position_manager 스케일아웃 + 트레일 경유</span>`);
 
       // 엔진⑥ 매매·실행 사이징
