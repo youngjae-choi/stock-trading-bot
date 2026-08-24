@@ -39,6 +39,75 @@ def _principal() -> int:
         return 100000000
 
 
+# ══ 계좌 당일손익(종가-종가, close-to-close) SSOT — Daily Results·Statistics·리뷰 공유 ══
+# equity_pnl(장시작 baseline 대비 자본변화, intraday)은 간밤 갭을 제외해 '전일 대비 계좌 성장'과
+# 다르다. PM 정의('당일 20만원 수익' = 전일 종가 대비)와 Daily Results 표가 쓰는 값이 이것이다.
+# 하드코딩 앵커: 계좌 전환·리셋으로 종가총평가 이력이 끊긴 지점의 시작값. (PM 2026-07-23: 1억 리셋)
+_EOD_ANCHORS: dict[str, float] = {"2026-07-23": 100_000_000.0}
+
+
+def load_eod_total_eval_by_date() -> dict[str, float]:
+    """거래일별 종가총평가(equity_eod_total_eval) 맵 — daily_review_reports + 하드코딩 앵커."""
+    from ..db import get_connection
+
+    out: dict[str, float] = {}
+    try:
+        with get_connection() as conn:
+            for r in conn.execute(
+                "SELECT trade_date, equity_eod_total_eval FROM daily_review_reports "
+                "WHERE equity_eod_total_eval IS NOT NULL ORDER BY trade_date"
+            ).fetchall():
+                out[str(r["trade_date"])] = float(r["equity_eod_total_eval"])
+    except Exception as exc:
+        logger.warning("WARN: 종가총평가 이력 조회 실패 — %s", exc)
+    out.update(_EOD_ANCHORS)
+    return out
+
+
+def _prior_eod(eod_by_date: dict[str, float], trade_date: str) -> float | None:
+    """trade_date 직전(<) 거래일의 종가총평가. 없으면 None."""
+    import bisect
+
+    dates = sorted(eod_by_date.keys())
+    i = bisect.bisect_left(dates, trade_date)
+    return eod_by_date[dates[i - 1]] if i > 0 else None
+
+
+def daily_account_pnl(trade_date: str, eod_by_date: dict[str, float] | None = None) -> dict[str, Any]:
+    """계좌 당일손익(종가-종가, close-to-close) 단일 계산 소스.
+
+    = 종가총평가[trade_date] − 종가총평가[직전 거래일]. Daily Results·Statistics·리뷰
+    헤드라인이 이 하나를 공유해 화면간 당일손익이 일치한다.
+
+    Args:
+        trade_date: 대상 거래일(YYYY-MM-DD).
+        eod_by_date: 미리 로드한 종가총평가 맵(다건 반복 호출 최적화). None이면 조회.
+
+    반환: {account_pnl, eod_total_eval, prior_eod, available}. eod/prior 결손이면 available=False·account_pnl=None.
+    """
+    m = eod_by_date if eod_by_date is not None else load_eod_total_eval_by_date()
+    eod = m.get(trade_date)
+    prior = _prior_eod(m, trade_date)
+    if eod is None or prior is None:
+        return {
+            "account_pnl": None,
+            "account_pnl_pct": None,
+            "eod_total_eval": eod,
+            "prior_eod": prior,
+            "available": False,
+        }
+    pnl = round(eod - prior)
+    # 수익률은 전일 종가총평가 대비(계좌 잔고 대비 복리) — Daily Results RETURN 컬럼과 동일.
+    pct = round((eod - prior) / prior * 100, 2) if prior else None
+    return {
+        "account_pnl": pnl,
+        "account_pnl_pct": pct,
+        "eod_total_eval": eod,
+        "prior_eod": prior,
+        "available": True,
+    }
+
+
 def compute_account_pnl(balance: dict, *, trade_date: str | None = None) -> dict:
     """KIS balance(get_balance 결과)로 단일 수익 지표를 계산한다.
 
@@ -94,23 +163,25 @@ def compute_account_pnl(balance: dict, *, trade_date: str | None = None) -> dict
     # 실현 = 누적 - 미실현.
     realized_pnl = cumulative_pnl - unrealized_pnl
 
-    # 당일: 장시작 total_eval baseline 기준(자본변화 A안). 없으면 None.
+    # 당일: 전일 종가총평가(prev EOD) 대비 — 계좌(종가-종가) SSOT와 동일 기준(2026-08-24 PM 통일).
+    # 라이브 total_eval − 전일 종가총평가. 전일 eod 없으면 None(허위 0 금지). baseline을 9시→전일종가로
+    # 바꿔 EOD 요약(Daily Results·리뷰)과 라이브 화면(Today Control·Trading Monitor)의 당일손익을 일치시킨다.
+    # 전일종가 baseline도 매일 리셋되므로 '계좌 잔고 대비 복리'(PM 2026-07-06) 원칙은 유지된다.
     daily_pnl: int | None = None
     daily_return_pct: float | None = None
     daily_baseline_available = False
     try:
-        from .daily_capital import get_total_eval_baseline
+        from datetime import datetime as _dt2
+        from zoneinfo import ZoneInfo as _ZI2
 
-        base = get_total_eval_baseline(trade_date)
-        if base and base > 0 and total_eval > 0:
-            daily_pnl = int(total_eval - base)
+        _td = trade_date or _dt2.now(_ZI2("Asia/Seoul")).strftime("%Y-%m-%d")
+        prior_eod = _prior_eod(load_eod_total_eval_by_date(), _td)
+        if prior_eod and prior_eod > 0 and total_eval > 0:
+            daily_pnl = int(total_eval - prior_eod)
             daily_baseline_available = True
-            # 당일 수익률은 '계좌 잔고 대비'(당일 장시작 총평가 baseline 기준).
-            # PM 정의(2026-07-06): 하루 목표 2%는 총자산 대비 매일 복리 → 고정 원금이 아니라
-            # 당일 시작 계좌 잔고(base)로 나눈다. baseline이 매일 리셋되므로 복리 구조가 유지된다.
-            daily_return_pct = round(daily_pnl / base * 100, 2)
+            daily_return_pct = round(daily_pnl / prior_eod * 100, 2)
     except Exception as exc:
-        logger.warning("WARN: daily baseline 조회 실패 — %s", exc)
+        logger.warning("WARN: 전일 종가총평가(당일손익 baseline) 조회 실패 — %s", exc)
         daily_pnl = None
         daily_return_pct = None
         daily_baseline_available = False

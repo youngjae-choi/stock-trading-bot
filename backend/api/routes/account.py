@@ -56,6 +56,27 @@ def _to_optional_int(value: Any) -> int | None:
         return None
 
 
+def _today_filled_amount(trade_date: str, side: str) -> int:
+    """당일 체결 매수/매도 금액(원) — trading_orders 원장 기준(SUM qty*price).
+
+    KIS 모의계좌가 당일 매수/매도 요약(thdt_buy_amt/thdt_sll_amt)을 0/빈값으로 반환할 때의
+    폴백. 화면이 실제 거래(체결원장)와 달리 0원으로 오표시되는 문제를 막는다. 조회 실패는 0.
+    """
+    try:
+        from ...services.db import get_connection
+
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(qty*price),0) FROM trading_orders "
+                "WHERE trade_date=? AND side=? "
+                "AND status IN ('filled','submitted','submitted_without_order_no')",
+                (trade_date, side),
+            ).fetchone()
+        return int(row[0] or 0) if row else 0
+    except Exception:
+        return 0
+
+
 def _as_list(value: Any) -> list[dict[str, Any]]:
     """Normalize a KIS output field into a list of dictionaries.
 
@@ -135,6 +156,10 @@ def _build_balance_payload(data: dict[str, Any]) -> dict[str, Any]:
     _today = _dt.now(_ZI("Asia/Seoul")).strftime("%Y-%m-%d")
     pnl = compute_account_pnl(data, trade_date=_today)
 
+    # 당일 매수/매도금액 — KIS 요약(thdt_*) 우선. 0/빈값이면 아래 return에서 체결원장 폴백.
+    _kis_buy_amt = _to_optional_int(summary.get("thdt_buy_amt"))
+    _kis_sell_amt = _to_optional_int(summary.get("thdt_sll_amt"))
+
     principal = pnl["principal"]
     cumulative_pnl = pnl["cumulative_pnl"]
     cumulative_return_pct = pnl["cumulative_return_pct"]
@@ -168,8 +193,9 @@ def _build_balance_payload(data: dict[str, Any]) -> dict[str, Any]:
         "stock_eval": stock_eval,                     # 주식 평가금액
         "pnl_rate": _to_float(summary.get("asst_icdc_erng_rt")),    # 자산증감수익률
         "prev_buy_amt": _to_int(summary.get("bfdy_buy_amt")),       # 전일 매수금액
-        "today_buy_amt": _to_optional_int(summary.get("thdt_buy_amt")),      # 당일 매수금액
-        "today_sell_amt": _to_optional_int(summary.get("thdt_sll_amt")),     # 당일 매도금액
+        # 당일 매수/매도금액: KIS thdt_* 우선, 0/빈값(모의계좌)이면 체결원장(trading_orders) 폴백.
+        "today_buy_amt": _kis_buy_amt if _kis_buy_amt else _today_filled_amount(_today, "buy"),
+        "today_sell_amt": _kis_sell_amt if _kis_sell_amt else _today_filled_amount(_today, "sell"),
         "positions": positions,
     }
 

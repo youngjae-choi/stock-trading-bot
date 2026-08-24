@@ -67,6 +67,21 @@ def _build_review_markdown(result: dict[str, Any]) -> str:
     realized_pnl_pct = _safe_float(result.get("realized_pnl_pct"))
     pnl_sign = "+" if realized_pnl >= 0 else ""
     pnl_pct_sign = "+" if realized_pnl_pct >= 0 else ""
+    pnl_status = str(result.get("pnl_status") or "")
+
+    # 헤드라인 = 계좌 당일손익(종가-종가) — Daily Results 표와 동일한 SSOT. 체결기준 실현손익은
+    # fills 불완전 시 망가지므로(fills_incomplete), 전일 종가 대비 계좌 성장을 대표 손익으로 싣는다.
+    account_pnl = result.get("account_pnl")
+    account_pnl_pct = result.get("account_pnl_pct")
+    if account_pnl is None:
+        account_row = "| **당일 손익(계좌, 전일 종가 대비)** | 산출 불가 (종가총평가 이력 부족) |"
+    else:
+        ac_sign = "+" if account_pnl >= 0 else ""
+        if account_pnl_pct is not None:
+            ac_pct_sign = "+" if account_pnl_pct >= 0 else ""
+            account_row = f"| **당일 손익(계좌, 전일 종가 대비)** | {ac_sign}{account_pnl:,.0f}원 ({ac_pct_sign}{account_pnl_pct:.2f}%) |"
+        else:
+            account_row = f"| **당일 손익(계좌, 전일 종가 대비)** | {ac_sign}{account_pnl:,.0f}원 |"
 
     # 자본변화(equity) — 콘솔 당일손익과 같은 기준(A안: total_eval - baseline).
     # 짝 실현손익과 달리 미실현 평가손익·거래비용·이월 포지션 영향을 모두 반영한다.
@@ -96,8 +111,9 @@ def _build_review_markdown(result: dict[str, Any]) -> str:
         f"| RulePack | {rulepack_id} |",
         f"| 총 주문 | {result.get('total_orders', 0)}건 |",
         f"| 매수 / 매도 / 실패 | {result.get('buy_orders', 0)} / {result.get('sell_orders', 0)} / {result.get('failed_orders', 0)}건 |",
-        f"| 실현 손익 | {pnl_sign}{realized_pnl:,.0f}원 ({pnl_pct_sign}{realized_pnl_pct:.2f}%) |",
+        account_row,
         equity_row,
+        f"| 실현 손익(체결기준{' · 검증미완' if pnl_status == 'unverified' else ''}) | {pnl_sign}{realized_pnl:,.0f}원 ({pnl_pct_sign}{realized_pnl_pct:.2f}%) |",
         f"| 손익 검증 | {result.get('pnl_status', '-')} ({result.get('pnl_source', '-')}) |",
         f"| 놓친 기회 | {result.get('missed_entries_count', 0)}건 |",
         f"| 손실 거래 | {result.get('false_positive_count', 0)}건 |",
@@ -1401,9 +1417,30 @@ async def run_review_audit(trade_date: str) -> dict[str, Any]:
         _carried_total_fallback_line(trade_date) if _carried_snapshot is None else None
     )
 
+    # 계좌 당일손익(종가-종가) SSOT — Daily Results 표와 동일한 값을 리뷰 헤드라인에 싣는다.
+    # 오늘 종가총평가는 방금 계산한 equity 스냅샷에서(아직 DB에 없음), 직전 종가총평가는 이력에서.
+    _account_pnl = None
+    _account_pnl_pct = None
+    try:
+        from .account_pnl import daily_account_pnl as _dap
+        from .account_pnl import load_eod_total_eval_by_date as _load_eod
+
+        _eod_map = _load_eod()
+        _today_eod = equity.get("equity_eod_total_eval")
+        if _today_eod is not None:
+            _eod_map[trade_date] = float(_today_eod)  # 오늘 행 주입(리뷰 시점엔 DB 미저장)
+        _acct = _dap(trade_date, eod_by_date=_eod_map)
+        if _acct.get("available"):
+            _account_pnl = _acct.get("account_pnl")
+            _account_pnl_pct = _acct.get("account_pnl_pct")
+    except Exception as _ap_exc:
+        logger.warning("WARN: [S10] 계좌 당일손익(종가-종가) 산출 실패(비치명) — %s", _ap_exc)
+
     result = {
         "ok": True,
         "trade_date": trade_date,
+        "account_pnl": _account_pnl,
+        "account_pnl_pct": _account_pnl_pct,
         "total_trades": total_trades,
         "total_orders": orders["total_orders"],
         "buy_orders": orders["buy_orders"],

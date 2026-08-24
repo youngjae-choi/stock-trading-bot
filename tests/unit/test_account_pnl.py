@@ -24,8 +24,9 @@ def _balance(total_eval, stock_eval, purchase, unrealized, cash):
 
 def _patch_common(monkeypatch, *, baseline=None):
     monkeypatch.setattr(ap, "_principal", lambda: 100000000)
-    import backend.services.engine.daily_capital as dc
-    monkeypatch.setattr(dc, "get_total_eval_baseline", lambda d=None: baseline)
+    # 당일손익 baseline = 전일 종가총평가(prev EOD, 2026-08-24 통일). baseline=None이면 전일 eod 없음.
+    _eod = {"2000-01-01": float(baseline)} if baseline is not None else {}
+    monkeypatch.setattr(ap, "load_eod_total_eval_by_date", lambda: _eod)
     import backend.services.engine.trade_pairs as tp
     monkeypatch.setattr(tp, "get_today_realized_pnl", lambda d: 0)
 

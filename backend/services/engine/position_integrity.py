@@ -658,16 +658,11 @@ def create_integrity_alert_once(
     return True
 
 
-def _opening_positions_before(trade_date: str) -> dict[str, int]:
-    """Compute carryover (opening) qty per normalized symbol strictly before trade_date.
+def _opening_from_orders(trade_date: str) -> dict[str, int]:
+    """(재구성) 주문이력 기준 이월수량 = sum(active BUY) - sum(active SELL), trade_date 미만.
 
-    = sum(active BUY qty) - sum(active SELL qty) for trading_orders with trade_date < ?,
-    clamped to >= 0. Used so a position bought on a prior day and sold today is not
-    flagged as a phantom over-sell (false positive). Uses the same active status sets
-    and norm_symbol grouping as load_order_net_positions.
-
-    Args:
-        trade_date: YYYY-MM-DD trade date; orders strictly before this count as opening.
+    clamped >= 0. 오래전(이력 창 밖) 매수는 놓칠 수 있어 스냅샷과 병합해 보완한다.
+    load_order_net_positions와 동일한 active status·norm_symbol 그룹핑.
     """
     if not _table_exists("trading_orders"):
         return {}
@@ -693,6 +688,53 @@ def _opening_positions_before(trade_date: str) -> dict[str, int]:
         elif side == "sell" and status in _ACTIVE_SELL_STATUSES:
             grouped[key] -= qty
     return {sym: max(0, net) for sym, net in grouped.items()}
+
+
+def _opening_from_holdings_snapshot(trade_date: str) -> dict[str, int]:
+    """직전 거래일 실보유 스냅샷(daily_holdings_snapshot) 기준 이월수량(norm_symbol별).
+
+    KIS 실측 잔고라 주문이력 재구성보다 권위 있다 — 오래전 매수·이력 창 밖 보유도 포함.
+    trade_date 직전의 가장 최근 스냅샷 1개 거래일만 사용한다.
+    """
+    if not _table_exists("daily_holdings_snapshot"):
+        return {}
+    with get_connection() as conn:
+        prow = conn.execute(
+            "SELECT MAX(trade_date) AS d FROM daily_holdings_snapshot WHERE trade_date < ?",
+            (trade_date,),
+        ).fetchone()
+        prev = prow["d"] if prow else None
+        if not prev:
+            return {}
+        rows = conn.execute(
+            "SELECT symbol, norm_symbol, qty FROM daily_holdings_snapshot WHERE trade_date = ?",
+            (prev,),
+        ).fetchall()
+    out: dict[str, int] = defaultdict(int)
+    for row in rows:
+        item = dict(row)
+        sym = str(item.get("norm_symbol") or item.get("symbol") or "").strip()
+        qty = _safe_int(item.get("qty"))
+        if not sym or qty <= 0:
+            continue
+        out[norm_symbol(sym)] += qty
+    return dict(out)
+
+
+def _opening_positions_before(trade_date: str) -> dict[str, int]:
+    """당일 이전 이월 보유수량(norm_symbol별) — 실보유 스냅샷과 주문이력 재구성을 종목별 max로 병합.
+
+    어느 한쪽이 놓쳐도(이력 창 밖 오래된 매수, 스냅샷 결손 등) 이월을 인식해, 전일 매수→
+    당일 정상 청산이 유령 과매도로 오탐되지 않게 한다(057680 케이스). 진짜 유령(둘 다 못
+    받쳐주는 초과분)은 여전히 잡힌다.
+
+    Args:
+        trade_date: YYYY-MM-DD; 이 날짜 미만이 이월(opening)로 계산된다.
+    """
+    recon = _opening_from_orders(trade_date)
+    snap = _opening_from_holdings_snapshot(trade_date)
+    keys = set(recon) | set(snap)
+    return {k: max(recon.get(k, 0), snap.get(k, 0)) for k in keys}
 
 
 def summarize_order_integrity(trade_date: str) -> dict[str, Any]:
@@ -801,6 +843,9 @@ def summarize_order_integrity(trade_date: str) -> dict[str, Any]:
         if _safe_int(item.get("sell_qty"))
         > _safe_int(item.get("buy_qty")) + opening_positions.get(norm_symbol(item.get("symbol")), 0)
     ]
+    # 중복(과매도) 매도: 다단 매도(sell_count>1)이면서 총매도량이 가용수량(당일매수+이월)을
+    # 초과할 때만 이상으로 본다. 스케일아웃/트레일링 2단 청산(예: +2% 절반 확정 후 잔량 매도)은
+    # sell_count>1이지만 과매도가 아니므로 정상(2026-08-24: 스케일아웃 오탐 제거).
     duplicate_sell_orders = [
         {
             "symbol": str(item.get("symbol") or ""),
@@ -811,6 +856,8 @@ def summarize_order_integrity(trade_date: str) -> dict[str, Any]:
         }
         for item in order_summaries
         if _safe_int(item.get("sell_count")) > 1
+        and _safe_int(item.get("sell_qty"))
+        > _safe_int(item.get("buy_qty")) + opening_positions.get(norm_symbol(item.get("symbol")), 0)
     ]
     sell_qty_exceeds_buy_qty = [
         {

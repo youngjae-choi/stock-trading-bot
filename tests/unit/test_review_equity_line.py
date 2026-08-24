@@ -109,6 +109,34 @@ def test_markdown_equity_unavailable_marker():
     assert "산출 불가" in md
 
 
+# ── ② 헤드라인 = 계좌 당일손익(종가-종가) SSOT, 체결기준 실현손익은 검증상태 병기 ──
+
+def test_markdown_headline_account_pnl_row():
+    """Daily Results와 동일한 계좌 손익(+223,038·+0.25%)이 헤드라인 행으로 뜬다."""
+    md = ra._build_review_markdown(_base_result(account_pnl=223038, account_pnl_pct=0.25))
+    assert "당일 손익(계좌, 전일 종가 대비)" in md
+    assert "+223,038원" in md
+    assert "+0.25%" in md
+
+
+def test_markdown_realized_marked_unverified_when_fills_incomplete():
+    """fills 불완전이면 체결기준 실현손익 행에 '검증미완'을 병기 — 깨진 값 오해 방지."""
+    md = ra._build_review_markdown(
+        _base_result(pnl_status="unverified", pnl_source="fills_incomplete",
+                     realized_pnl=-3011.0, account_pnl=223038, account_pnl_pct=0.25)
+    )
+    assert "실현 손익(체결기준 · 검증미완)" in md
+    # 헤드라인 계좌 손익은 여전히 정상 표기
+    assert "+223,038원" in md
+
+
+def test_markdown_account_pnl_unavailable_marker():
+    """계좌 손익 산출 불가(종가총평가 이력 부족) 시 명시 — 허위 숫자 금지."""
+    md = ra._build_review_markdown(_base_result(account_pnl=None))
+    assert "당일 손익(계좌, 전일 종가 대비)" in md
+    assert "산출 불가" in md
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # ③ 이월 짝 분리 집계
 # ──────────────────────────────────────────────────────────────────────────────

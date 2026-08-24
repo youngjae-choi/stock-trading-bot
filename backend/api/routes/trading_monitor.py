@@ -905,29 +905,11 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
 
     from ...services.engine.trading_calendar import is_trading_day, non_trading_reason
 
-    # 계좌 P&L(전일 종가 대비 Δ) 산출용 — 표시 범위 밖 전일 종가총평가도 참조해야 하므로 전체 조회.
-    import bisect
+    # 계좌 P&L(전일 종가 대비 Δ) — account_pnl.py SSOT(종가총평가 이력 + 7/23 리셋 앵커)를
+    # Daily Results·Statistics·리뷰가 공유한다(화면간 당일손익 일치). 표시 범위 밖 전일 종가도 참조.
+    from ...services.engine.account_pnl import daily_account_pnl, load_eod_total_eval_by_date
 
-    _eod_by_date: dict[str, float] = {}
-    try:
-        with get_connection() as _conn2:
-            for _r in _conn2.execute(
-                "SELECT trade_date, equity_eod_total_eval FROM daily_review_reports "
-                "WHERE equity_eod_total_eval IS NOT NULL ORDER BY trade_date"
-            ).fetchall():
-                _eod_by_date[str(_r["trade_date"])] = float(_r["equity_eod_total_eval"])
-    except Exception as _eod_exc:
-        logger.warning("WARN: daily-results 종가총평가 조회 실패 — %s", _eod_exc)
-    # 하드코딩 앵커 — 계좌 누적수익/총평가 정합용. 코드 상수라 S10 재실행·DB 복구에도 안 지워진다. (PM 2026-06-20)
-    #  - 7/23: 새 KIS 모의계좌(50198548) 전환 + 거래이력 백지화. 원금 1억을 누적 P&L 시작점으로 재설정. (PM 2026-07-23)
-    #    (옛 계좌 50181813 앵커 6/12 100M·6/19 115,146,855는 계좌 만료·리셋으로 폐기)
-    _EOD_ANCHORS = {"2026-07-23": 100_000_000.0}
-    _eod_by_date.update(_EOD_ANCHORS)
-    _eod_dates = sorted(_eod_by_date.keys())
-
-    def _prior_eod(td: str) -> float | None:
-        i = bisect.bisect_left(_eod_dates, td)
-        return _eod_by_date[_eod_dates[i - 1]] if i > 0 else None
+    _eod_map = load_eod_total_eval_by_date()
 
     result = []
     for row in rows:
@@ -942,16 +924,10 @@ def get_daily_results(start_date: str | None = None, end_date: str | None = None
         else:
             total_closed = wins + losses
             d["win_rate"] = round(wins / total_closed * 100, 1) if total_closed > 0 else 0
-        # 계좌 P&L = 종가총평가[오늘] − 종가총평가[전일종가]. (망가진 equity_pnl 대체, Total은 합산)
-        # 당일 eod도 앵커 반영된 _eod_by_date에서 읽는다(DB 컬럼은 6/12·6/19 등 None일 수 있음).
-        _eod = _eod_by_date.get(td)
-        _prev = _prior_eod(td)
-        if _eod is not None and _prev is not None:
-            d["account_pnl"] = round(float(_eod) - _prev)
-            d["account_pnl_pct"] = round((float(_eod) - _prev) / _prev * 100, 2) if _prev else None
-        else:
-            d["account_pnl"] = None
-            d["account_pnl_pct"] = None
+        # 계좌 P&L = 종가총평가[오늘] − 종가총평가[전일] (account_pnl SSOT). 망가진 equity_pnl 대체.
+        _acct = daily_account_pnl(td, eod_by_date=_eod_map)
+        d["account_pnl"] = _acct["account_pnl"]
+        d["account_pnl_pct"] = _acct["account_pnl_pct"]
         # 비거래일(주말·공휴일)이면 휴장 표식 — 과거에 쌓인 노이즈 행도 휴장으로 덮어 표시한다.
         if not is_trading_day(td):
             d["non_trading"] = True

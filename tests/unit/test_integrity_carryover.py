@@ -96,3 +96,52 @@ def test_carryover_partial_oversell_warns_with_excess(db):
     assert "111111" in neg and "111111" in exc
     item = next(i for i in s["sell_qty_exceeds_buy_qty"] if i["symbol"] == "111111")
     assert item["excess_qty"] == 50
+
+
+# ── Fix A: 실보유 스냅샷(daily_holdings_snapshot) 이월 인식 (057680 케이스) ──
+
+def _snapshot(symbol, qty, trade_date):
+    from backend.services.engine.holdings_snapshot import upsert_holdings
+    upsert_holdings(trade_date, [{"symbol": symbol, "qty": qty, "avg_price": 1600}])
+
+
+def test_carryover_from_holdings_snapshot_no_warning(db):
+    """057680: 당일 매수 이력 없이 전일 실보유 스냅샷(1137)으로만 이월된 종목을
+    당일 2회 분할 매도(568+569=1137) → 스냅샷에서 opening 인식 → 경고 없음."""
+    _snapshot("057680", 1137, "2026-06-22")  # 직전 거래일 실보유
+    _insert("057680", "sell", 568, "2026-06-23")
+    _insert("057680", "sell", 569, "2026-06-23")
+    neg, exc, _ = _warn_symbols("2026-06-23")
+    assert "057680" not in neg
+    assert "057680" not in exc
+
+
+def test_snapshot_carryover_partial_oversell_still_warns(db):
+    """스냅샷 이월 100인데 당일 매도 150 → 여전히 50 초과분 경고(진짜 유령은 유지)."""
+    _snapshot("333333", 100, "2026-06-22")
+    _insert("333333", "sell", 150, "2026-06-23")
+    neg, exc, _ = _warn_symbols("2026-06-23")
+    assert "333333" in neg and "333333" in exc
+
+
+# ── Fix B: 스케일아웃 2단매도는 '중복매도' 오탐이 아님 ──
+
+def test_scaleout_two_leg_sell_no_duplicate_warning(db):
+    """001210: 당일 매수 1175 → 스케일아웃 587 + 트레일링 588(합 1175, 과매도 아님)
+    → sell_count=2지만 중복매도 경고 없어야 함."""
+    _insert("001210", "buy", 1175, "2026-06-23")
+    _insert("001210", "sell", 587, "2026-06-23")
+    _insert("001210", "sell", 588, "2026-06-23")
+    _, _, s = _warn_symbols("2026-06-23")
+    dup = {str(i["symbol"]) for i in s["duplicate_sell_orders"]}
+    assert "001210" not in dup
+
+
+def test_real_double_sell_over_qty_still_flagged(db):
+    """당일 매수 100인데 2회에 걸쳐 150 매도(과매도) → 중복매도 경고 유지."""
+    _insert("222222", "buy", 100, "2026-06-23")
+    _insert("222222", "sell", 80, "2026-06-23")
+    _insert("222222", "sell", 70, "2026-06-23")
+    _, _, s = _warn_symbols("2026-06-23")
+    dup = {str(i["symbol"]) for i in s["duplicate_sell_orders"]}
+    assert "222222" in dup
