@@ -48,7 +48,8 @@
 
 **④ 매수 — S6 실시간 틱 (09:20~, 최소 09:10)**
 WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
-- `_evaluate_rules`(decision_rules): 게이트값 = `rule_resolver._settings_gate_rules`(settings 단일출처, RulePack 제거) — confidence(`min_ai_confidence` 0.60 + `min_confidence_floor` 0.40 + `confidence_gate_mode` regime_defensive→방어레짐 강제) · 등락률밴드(`min/max_price_change_pct` 1.5~4) · 거래량(`min_volume_ratio` 1.5) · 시간창(`entry_start/end_time`) · TSI>0 · Layer3(vwap/ma/rsi/spread, `_add_layer3_evaluation`)
+- `_evaluate_rules`(decision_rules): 게이트값 = `rule_resolver._settings_gate_rules`(settings 단일출처, RulePack 제거) — 등락률밴드(`min/max_price_change_pct` 1.5~4) · 거래량(`min_volume_ratio` 1.5) · 시간창(`entry_start/end_time`) · TSI>0 · Layer3(vwap/ma/rsi/spread, `_add_layer3_evaluation`)
+- ⚠ **confidence 게이트 스케일 문제(2026-08-24 발견)**: 신호 `confidence`=S4 `suitability_score`인데 **56%가 0.0·max 0.68**(sparse)라 임계 `min_ai_confidence` 0.60과 스케일 불일치 → 평시 게이트 OFF(저품질 통과)·방어레짐 전량차단(사고). **해법: conviction 품질게이트**(`engine.conviction_gate_min`, 레짐×눌림 0~1, `resolve_conviction`) — `_emit_signal`서 conv<임계 차단. **기본 0=OFF**(활성은 PM·분포검증 후 ~0.5 권장). suitability confidence는 표시/관찰용.
 - `_entry_gate_block_reason`(6게이트 순서): 손실3연패 하드차단 → 급락방어(인버스1x 예외) → **하락전환 매수중단 래치**(`get_entry_suspended` — down_transition서 걸고 up_transition서만 해제, `regime.transition_response_active` **활성 2026-08-23**) → new_entry_allowed → 칼리브레이션 → entry_fail 쿨다운 → 장중재진입(`intraday_max_stoploss_per_symbol` 2회)
 - VWAP 눌림 게이트: `entry_vwap_pullback_mode`(enforce)·`entry_max_vwap_dist_pct` / 레버리지: `leverage_restriction_mode`(exclude)
 - 통과→**사이징** `execution_engine.resolve_execution_sizing`: 확신도=`conviction.regime_weight`×레짐 + (1-w)×눌림 → 종목당 `sizing.per_position_rate_min`(5%)~`risk.max_position_rate_per_stock`(15%), 종목수 `sizing.positions_min/max`(6~19), 배포한도 `exploration.deploy_target_rate`(95%)
