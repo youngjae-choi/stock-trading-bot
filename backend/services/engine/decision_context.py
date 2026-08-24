@@ -176,21 +176,37 @@ def _save_daily_context_snapshot(today: str) -> None:
                 logger.warning("WARN: [S6] evening confidence 계산 실패 (보정 0) - %s", conf_exc)
                 evening_alignment, confidence_adjustment = None, 0.0
 
-            match_regime_set(
-                regime_label,
-                vix_value,
-                kospi_change,
-                today,
-                evening_alignment=evening_alignment,
-                confidence_adjustment=confidence_adjustment,
-            )
-            logger.info(
-                "SUCCESS: [S6] regime_set matched trade_date=%s regime=%s vix=%s kospi_change_pct=%s",
-                today,
-                regime_label,
-                vix_value,
-                kospi_change,
-            )
+            # 재기동 되돌림 방지(2026-08-24): 이미 장중(intraday) 레짐이 잡혀 있으면 아침 regime으로
+            # 덮지 않는다. S6 activate는 재기동 때마다 호출되는데, 아침 regime(neutral·kospi=None)으로
+            # 매칭하면 폭락장 risk_off가 restart 한 번에 morning-neutral로 되돌아간다.
+            _skip_morning = False
+            try:
+                from ..regime_set_service import get_today_application
+                _existing = get_today_application(today) or {}
+                if str(_existing.get("trigger") or "") == "intraday":
+                    _skip_morning = True
+                    logger.info(
+                        "INFO: [S6] 장중 레짐 유지(%s) — 아침 regime 재적용 스킵(restart 되돌림 방지) trade_date=%s",
+                        _existing.get("regime_label"), today)
+            except Exception:
+                _skip_morning = False
+
+            if not _skip_morning:
+                match_regime_set(
+                    regime_label,
+                    vix_value,
+                    kospi_change,
+                    today,
+                    evening_alignment=evening_alignment,
+                    confidence_adjustment=confidence_adjustment,
+                )
+                logger.info(
+                    "SUCCESS: [S6] regime_set matched trade_date=%s regime=%s vix=%s kospi_change_pct=%s",
+                    today,
+                    regime_label,
+                    vix_value,
+                    kospi_change,
+                )
         except Exception as regime_exc:
             logger.warning("WARN: [S6] regime set matching failed (비치명) - %s", regime_exc)
         logger.info("INFO: [S6] daily_context_snapshot saved trade_date=%s regime=%s", today, ctx.get("regime"))
