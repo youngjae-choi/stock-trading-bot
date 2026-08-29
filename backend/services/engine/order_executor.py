@@ -321,6 +321,18 @@ class OrderExecutor:
                         symbol, qty, _nm["new_qty"], _nm["rate"] * 100, _nm["conv"],
                     )
                     qty = _nm["new_qty"]
+            # 프로필별 종목당 최대금액 캡(2026-08-29 PM) — 변동성 프로필(THEME_SPIKE 등) 블로우업 방지.
+            # 글로벌 금액모델 위에 프로필 상한을 덧씌워 THEME_SPIKE 테마주 손실 크기를 직접 줄인다.
+            try:
+                _prof_max_krw = float(final_rule.get("max_position_krw") or 0)
+            except (TypeError, ValueError):
+                _prof_max_krw = 0.0
+            if _prof_max_krw > 0 and price > 0:
+                _cap = int(_prof_max_krw // price)
+                if 0 < _cap < qty:
+                    logger.info("INFO: [S7] 프로필 금액캡 symbol=%s qty %d→%d (상한 %,.0f원·%s)",
+                                symbol, qty, _cap, _prof_max_krw, final_rule.get("profile_assigned"))
+                    qty = _cap
             if qty <= 0:
                 logger.info("INFO: [S7] 배포 여력 없음 — 매수 스킵 symbol=%s", symbol)
                 self._update_signal_status(signal_id, "skipped_no_room")

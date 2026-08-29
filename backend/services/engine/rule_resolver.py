@@ -202,6 +202,12 @@ def resolve_symbol_rule(
         float(final.get("max_position_rate", guard_max_pos_rate)),
         guard_max_pos_rate,
     )
+    # 프로필별 종목당 최대금액(원) — 사이징 금액모델 위 프로필 캡(2026-08-29 PM). 없으면 None(캡 없음).
+    try:
+        _pmk = float(final.get("max_position_krw") or 0)
+    except (TypeError, ValueError):
+        _pmk = 0.0
+    final["max_position_krw"] = _pmk if _pmk > 0 else None
     final["max_positions"] = int(global_risk.get("max_positions", final.get("max_positions", 5)) or 5)
     final["force_exit_time"] = global_risk.get("force_exit_time", "15:20:00")
     final["new_entry_cutoff_time"] = global_risk.get("new_entry_cutoff_time", "15:10:00")
