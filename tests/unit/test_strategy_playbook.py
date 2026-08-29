@@ -19,6 +19,9 @@ _CFG = {
     "sizing.positions_min": 6,
     "sizing.positions_max": 19,
     "exploration.deploy_target_rate": 0.95,
+    # 2026-08-29 PM: 종목당 절대금액 통제(500만~2000만)
+    "sizing.per_position_min_krw": 5_000_000,
+    "sizing.per_position_max_krw": 20_000_000,
 }
 
 
@@ -26,49 +29,62 @@ def _getter(key, default=None):
     return _CFG.get(key, default)
 
 
-def test_high_conviction_concentrates_to_min_positions():
-    # 확신 1.0 → 종목당 15% → 6종목 집중
+def test_high_conviction_max_amount_concentrates():
+    """확신 1.0 → 종목당 최대금액(2000만) = 집중. 종목수는 파생(클램프 없음)."""
     r = resolve_position_sizing(100_000_000, conviction=1.0, getter=_getter)
-    assert r.per_position_rate == 0.15
-    assert r.target_positions == 6          # int(0.95/0.15)=6
-    assert r.per_position_krw == 15_000_000  # 1억 × 15%
+    assert r.per_position_krw == 20_000_000        # min + (max-min)×1.0 = 2000만
+    assert r.target_positions == 4                 # int(9500만/2000만) = 4 (구 [6,19] 하한 6 아님)
 
 
-def test_low_conviction_diversifies_to_max_positions():
-    # 확신 0.0 → 종목당 5% → 19종목 분산
+def test_low_conviction_min_amount_diversifies():
+    """확신 0.0 → 종목당 최소금액(500만) = 분산."""
     r = resolve_position_sizing(100_000_000, conviction=0.0, getter=_getter)
-    assert r.per_position_rate == 0.05
-    assert r.target_positions == 19         # int(0.95/0.05)=19
     assert r.per_position_krw == 5_000_000
+    assert r.target_positions == 19                # int(9500만/500만) = 19
 
 
-def test_mid_conviction_interpolates():
+def test_amount_independent_of_deposit():
+    """종목당 금액은 예수금과 무관하게 확신도로 결정(투입율은 종목수만 좌우)."""
+    r_small = resolve_position_sizing(50_000_000, conviction=1.0, getter=_getter)
+    r_big = resolve_position_sizing(300_000_000, conviction=1.0, getter=_getter)
+    assert r_small.per_position_krw == r_big.per_position_krw == 20_000_000
+    # 종목수만 예수금에 따라 파생 — [6,19] 클램프 없음(300M/2000만 배포 → 14개)
+    assert r_big.target_positions == 14            # int(2.85억/2000만) = 14
+
+
+def test_surge_expands_max_amount():
+    """폭등 티어(per_rate_max↑)면 최대 금액이 비례 확대된다."""
+    # 기본 max_rate 0.15, 폭등 0.30 → max_krw 2000만 × 2 = 4000만
+    r = resolve_position_sizing(200_000_000, conviction=1.0, getter=_getter, per_rate_max=0.30)
+    assert r.per_position_krw == 40_000_000
+
+
+def test_mid_conviction_amount_interpolates():
+    """확신 0.5 → 종목당 금액 중간(1250만), 종목수 파생."""
     r = resolve_position_sizing(100_000_000, conviction=0.5, getter=_getter)
-    assert r.per_position_rate == 0.10       # 5% + (15-5)*0.5
-    assert 6 <= r.target_positions <= 19
-    assert r.target_positions == 9           # int(0.95/0.10)=9
+    assert r.per_position_krw == 12_500_000       # 500만 + 1500만×0.5
+    assert r.target_positions == 7                # int(9500만/1250만) = 7
 
 
-def test_count_stays_within_bounds():
+def test_amount_stays_within_min_max_bounds():
+    """모든 확신도에서 종목당 금액이 [min,max] 내 — [6,19] 종목수 클램프 없음."""
     for c in (0.0, 0.2, 0.4, 0.6, 0.8, 1.0):
         r = resolve_position_sizing(100_000_000, conviction=c, getter=_getter)
-        assert 6 <= r.target_positions <= 19
-        assert 0.05 <= r.per_position_rate <= 0.15
-        # 총배포가 상한 이내
-        assert r.per_position_rate * r.target_positions <= r.deploy_target_rate + 1e-9
+        assert 5_000_000 <= r.per_position_krw <= 20_000_000
 
 
 def test_conviction_clamped():
-    hi = resolve_position_sizing(1_000_000, conviction=5.0, getter=_getter)
-    lo = resolve_position_sizing(1_000_000, conviction=-3.0, getter=_getter)
-    assert hi.per_position_rate == 0.15
-    assert lo.per_position_rate == 0.05
+    """확신도 [0,1] 밖은 클램프 — 금액 상/하한으로."""
+    hi = resolve_position_sizing(100_000_000, conviction=5.0, getter=_getter)
+    lo = resolve_position_sizing(100_000_000, conviction=-3.0, getter=_getter)
+    assert hi.per_position_krw == 20_000_000
+    assert lo.per_position_krw == 5_000_000
 
 
 def test_zero_deposit_safe():
+    """예수금 0 → 종목수 0(배포 여력 없음)."""
     r = resolve_position_sizing(0, conviction=1.0, getter=_getter)
-    assert r.per_position_krw == 0.0
-    assert r.target_positions == 6
+    assert r.target_positions == 0
 
 
 _CONV = {
@@ -110,9 +126,8 @@ def test_surge_tier_raises_ceiling():
     # 폭등 티어: per_rate_max override로 종목당 상한↑ (확신 1.0에서 15%→20%)
     normal = resolve_position_sizing(100_000_000, 1.0, getter=_getter)
     surge = resolve_position_sizing(100_000_000, 1.0, getter=_getter, per_rate_max=0.20)
-    assert normal.per_position_rate == 0.15
-    assert surge.per_position_rate == 0.20
-    assert surge.per_position_krw == 20_000_000
+    assert normal.per_position_krw == 20_000_000
+    assert surge.per_position_krw == 26_666_666.67          # 2000만 × (0.20/0.15)
 
 
 def test_surge_default_no_change():
@@ -123,11 +138,11 @@ def test_surge_default_no_change():
 
 
 def test_conviction_feeds_sizing_end_to_end():
-    # 결합: 최고 확신 → 15%×6, 최저 확신 → 5%×19 근처
+    # 결합: 최고 확신 → 최대금액(2000만) 집중, 최저 확신 → 최소금액(500만) 분산
     hi = resolve_conviction("risk_on", -3.0, getter=_cgetter)
     lo = resolve_conviction("risk_off", 2.0, getter=_cgetter)
-    assert resolve_position_sizing(100_000_000, hi, getter=_getter).target_positions == 6
-    assert resolve_position_sizing(100_000_000, lo, getter=_getter).per_position_rate <= 0.06
+    assert resolve_position_sizing(100_000_000, hi, getter=_getter).per_position_krw == 20_000_000
+    assert resolve_position_sizing(100_000_000, lo, getter=_getter).per_position_krw <= 7_000_000
 
 
 def test_resolve_max_positions_returns_model_ceiling():

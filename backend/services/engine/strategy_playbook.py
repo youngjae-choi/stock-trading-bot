@@ -22,11 +22,14 @@ from ..settings_store import get_setting
 # ── 사이징 모델 설정키 (결정4) — 관리자가 이 값으로 전략 조절 ──
 #   per_position_rate ∈ [min, max] · positions ∈ [min, max] · 총배포 deploy_target
 _SIZING_KEYS = {
-    "per_rate_min": ("sizing.per_position_rate_min", 0.05),        # 종목당 최소 비중 5%
-    "per_rate_max": ("risk.max_position_rate_per_stock", 0.15),    # 종목당 최대 비중 15%(기존키 재사용)
-    "pos_min": ("sizing.positions_min", 6),                        # 최소 종목수
-    "pos_max": ("sizing.positions_max", 19),                       # 최대 종목수
+    "per_rate_min": ("sizing.per_position_rate_min", 0.05),        # (레거시·표시용) 종목당 최소 비중
+    "per_rate_max": ("risk.max_position_rate_per_stock", 0.15),    # 폭등 티어 확대 비율 판정용
+    "pos_min": ("sizing.positions_min", 6),                        # (레거시) 무결성 백스톱용
+    "pos_max": ("sizing.positions_max", 19),                       # (레거시) 무결성 백스톱용
     "deploy_target": ("exploration.deploy_target_rate", 0.95),     # 총배포 상한 95%(기존키 재사용)
+    # 2026-08-29 PM: 종목수 결정 폐지 → 종목당 절대금액으로 통제(투입율 + [min,max] 금액).
+    "per_position_min_krw": ("sizing.per_position_min_krw", 5_000_000),   # 종목당 최소 500만
+    "per_position_max_krw": ("sizing.per_position_max_krw", 20_000_000),  # 종목당 최대 2000만
 }
 
 
@@ -98,28 +101,30 @@ def resolve_position_sizing(
     deposit: float, conviction: float, getter: Callable = get_setting,
     per_rate_max: float | None = None,
 ) -> SizingResult:
-    """예수금비중 사이징 (결정4). conviction∈[0,1]: 높을수록 집중(비중↑·종목수↓).
+    """종목당 금액 사이징 (2026-08-29 PM: 종목수 결정 폐지, 투입율 + min/max 금액 통제).
 
-    - per_position_rate = min + (max-min)×conviction  (확신↑ → 비중↑)
-    - target_positions  = clamp(deploy_target / rate, [pos_min, pos_max])  (파생)
-    - per_position_krw  = deposit × per_position_rate
-    종목수는 결과일 뿐 사이징의 divisor가 아니다.
-    per_rate_max: 상한 override(폭등 티어 등). None이면 기본 설정 사용.
+    - per_position_krw  = min_krw + (max_krw − min_krw)×conviction  (확신↑ → 금액↑ = 집중)
+    - target_positions  = (deposit×deploy) / per_position_krw        (순수 파생, [6,19] 클램프 제거)
+    - 폭등 티어: per_rate_max가 기본 상한보다 크면 max_krw를 그 비율만큼 확대.
+    종목수는 결과일 뿐 divisor가 아니다. 통제 = 투입율(deploy) + 종목당 절대금액 [min_krw, max_krw].
+    per_rate_max: 폭등 사이징확대 신호(비율). None이면 확대 없음.
     """
-    lo = _f(getter, *(_SIZING_KEYS["per_rate_min"][0], _SIZING_KEYS["per_rate_min"][1]))
-    hi = (float(per_rate_max) if per_rate_max is not None
-          else _f(getter, *(_SIZING_KEYS["per_rate_max"][0], _SIZING_KEYS["per_rate_max"][1])))
-    pmin = _i(getter, *(_SIZING_KEYS["pos_min"][0], _SIZING_KEYS["pos_min"][1]))
-    pmax = _i(getter, *(_SIZING_KEYS["pos_max"][0], _SIZING_KEYS["pos_max"][1]))
+    min_krw = _f(getter, *(_SIZING_KEYS["per_position_min_krw"][0], _SIZING_KEYS["per_position_min_krw"][1]))
+    max_krw = _f(getter, *(_SIZING_KEYS["per_position_max_krw"][0], _SIZING_KEYS["per_position_max_krw"][1]))
+    base_max_rate = _f(getter, *(_SIZING_KEYS["per_rate_max"][0], _SIZING_KEYS["per_rate_max"][1]))
     deploy = _f(getter, *(_SIZING_KEYS["deploy_target"][0], _SIZING_KEYS["deploy_target"][1]))
-    if hi < lo:
-        lo, hi = hi, lo
+    # 폭등 사이징확대: surge 티어면 per_rate_max↑ → 최대 금액을 비례 확대.
+    if per_rate_max is not None and base_max_rate > 0 and float(per_rate_max) > base_max_rate:
+        max_krw = max_krw * (float(per_rate_max) / base_max_rate)
+    if max_krw < min_krw:
+        min_krw, max_krw = max_krw, min_krw
     c = max(0.0, min(1.0, conviction))
-    rate = lo + (hi - lo) * c
-    cnt = int(deploy / rate + 1e-9) if rate > 0 else pmax  # +eps: 0.95/0.05=18.999 부동소수 보정
-    cnt = max(pmin, min(pmax, cnt))
+    per_position_krw = min_krw + (max_krw - min_krw) * c
     deposit = max(0.0, float(deposit or 0.0))
-    return SizingResult(round(rate, 4), cnt, round(deposit * rate, 2), round(deploy, 4))
+    deployable = deposit * deploy
+    cnt = int(deployable / per_position_krw + 1e-9) if per_position_krw > 0 else 0
+    rate = round(per_position_krw / deposit, 4) if deposit > 0 else 0.0  # 파생(표시·shadow용)
+    return SizingResult(rate, cnt, round(per_position_krw, 2), round(deploy, 4))
 
 
 def resolve_max_positions(getter: Callable = get_setting) -> int:

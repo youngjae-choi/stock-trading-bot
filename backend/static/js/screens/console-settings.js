@@ -542,7 +542,9 @@
       const masterEnabled = !!(fullMap['intraday_refresh.master_enabled']?.value);
       
       keys.forEach(key => {
-        const elId = key.replace(/\./g, '-');
+        // HTML 토글 id는 전부 대시(intraday-refresh-master-enabled). 키의 점·언더스코어 모두 대시로
+        // 변환해야 매칭됨(2026-08-29 버그수정: 점만 바꿔 언더스코어가 남아 getElementById=null → OFF 오표시).
+        const elId = key.replace(/[._]/g, '-');
         const el = document.getElementById(elId);
         if (el) {
           el.checked = !!(fullMap[key]?.value);
@@ -594,7 +596,7 @@
             'intraday_refresh.replacement_signal_enabled'
           ];
           subKeys.forEach(sk => {
-            const el = document.getElementById(sk.replace(/\./g, '-'));
+            const el = document.getElementById(sk.replace(/[._]/g, '-'));
             if (el) el.disabled = !val;
           });
         }

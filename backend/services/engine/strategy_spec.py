@@ -111,10 +111,13 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "selection.change_weight": 0.5,                 # 등락률 가중(라이브 — 선정에 반영)
     "selection.surge_weight": 0.5,                  # 거래량급증 가중(라이브 — 선정에 반영)
     # ── 사이징 모델(결정4, Phase1) — 예수금비중: 종목당 5~15%, 종목수 6~19 ──
-    "sizing.per_position_rate_min": 0.05,           # 종목당 최소 비중 5%
-    "sizing.positions_min": 6,                      # 최소 종목수
-    "sizing.positions_max": 19,                     # 최대 종목수
-    "sizing.surge_per_position_rate_max": 0.15,     # 폭등 티어 종목당 상한(기본=일반, ↑로 확대)
+    "sizing.per_position_rate_min": 0.05,           # (레거시·표시용) 종목당 최소 비중
+    "sizing.positions_min": 6,                      # (레거시) 무결성 백스톱용
+    "sizing.positions_max": 19,                     # (레거시) 무결성 백스톱용
+    "sizing.surge_per_position_rate_max": 0.15,     # 폭등 티어 종목당 상한(비율, max_krw 확대 판정)
+    # 2026-08-29 PM: 종목수 결정 폐지 → 종목당 절대금액으로 통제(투입율 + [min,max] 금액). 종목수는 파생.
+    "sizing.per_position_min_krw": 5_000_000,       # 종목당 최소 금액 500만 (확신 0 = 분산)
+    "sizing.per_position_max_krw": 20_000_000,      # 종목당 최대 금액 2000만 (확신 1 = 집중)
     # ── 확신도 모델(레짐×눌림 결합, 전부 설정화 = 언제든 수정) ──
     "conviction.regime_weight": 0.5,                # 장세 vs 눌림 비중(1=장세만·0=눌림만)
     "conviction.pullback_full_dist_pct": -3.0,      # 이만큼 눌리면 눌림점수 만점

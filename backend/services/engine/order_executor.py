@@ -298,16 +298,13 @@ class OrderExecutor:
         try:
             balance = await self._get_cached_balance()
             deposit = self._extract_deposit(balance)
-            from .daily_capital import get_baseline, get_active_budget_rate
-            from .exploration_gate import select_sizing_params
-            baseline = get_baseline(today)
-            # 탐색모드 제거(2026-08-22) — baseline 초기 사이징(예수금비중 신모델이 아래서 최종 override).
-            _, max_positions = select_sizing_params(final_rule)
-            budget_rate = get_active_budget_rate(today)
-            qty = self._calc_budget_qty(baseline, budget_rate, max_positions, price, deposit)
-            if qty <= 0:
-                qty = self._calc_qty(deposit, self._position_size_pct(final_rule), price)
-            logger.info("INFO: [S7] baseline 사이징 symbol=%s qty=%d", symbol, qty)
+            from ..settings_store import get_setting as _gs_fb
+            # 사이징 = 종목당 금액 신모델(⑥ 확신도→[min,max]금액)이 단일 소스(아래서 override).
+            # 레짐→종목수 균등분배(_calc_budget_qty·select_sizing_params)는 死라 제거(2026-08-29 PM:
+            # 종목수 결정 폐지, 투입율+min/max 금액 통제). 신모델 실패 시에만 종목당 최소금액 폴백.
+            _min_krw = float(_gs_fb("sizing.per_position_min_krw", 5_000_000) or 5_000_000)
+            qty = int(min(_min_krw, deposit) // price) if price > 0 else 0
+            logger.info("INFO: [S7] 초기 사이징(최소금액 폴백) symbol=%s qty=%d", symbol, qty)
             # P3-5: 급락 방어 모드 인버스 1x 플레이북 — 계좌 대비 예산 상한(기본 30%) 강제
             qty = self._apply_crash_playbook_cap(
                 name=str(signal.get("name") or ""), qty=qty, price=price,
@@ -855,24 +852,6 @@ class OrderExecutor:
             position_manager._closing.discard(symbol)
         except Exception:
             pass
-
-    def _calc_budget_qty(
-        self,
-        baseline: float | None,
-        budget_rate: float,
-        max_positions: int,
-        price: float,
-        available_cash: float,
-    ) -> int:
-        """예산 균등배분 수량 = floor(min(baseline*budget_rate/max_positions, available_cash) / price).
-
-        baseline 결손/비정상 입력이면 0 반환(호출부가 기존 로직으로 폴백).
-        """
-        if not baseline or baseline <= 0 or budget_rate <= 0 or max_positions <= 0 or price <= 0:
-            return 0
-        per_slot = baseline * budget_rate / max_positions
-        spend = min(per_slot, available_cash if available_cash > 0 else per_slot)
-        return int(spend // price)
 
     def _calc_qty(self, deposit: float, position_size_pct: float, price: float) -> int:
         """Calculate order quantity as floor(deposit * pct / 100 / price), minimum 1.

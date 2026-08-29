@@ -145,17 +145,17 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
   - **Stage1**: rule_resolver rulepacks 주입 제거→settings. **Stage2a**: `reconcile_buy_gates` shadow·`buy_gates_source` 스위치 제거(발산 대상 소멸). **Stage2b**: 생성 중단(hybrid_screening)·모듈 삭제(rulepack_generation/store/validator)·API 삭제(rulepack·rulepack_gen)·rulepacks 테이블 DROP·db 스키마 제거·표시소비자 neutralize·프론트 라벨 정리.
   - **유지**: `base_rulepack`(base-v1.0, 정적 order/exit·force_exit·take_profit_enabled 설정) + `/api/v1/rule/base` API. 손절/트레일=프로필/레짐SET(RulePack과 별개).
 
-### A-4b. 사이징·배포 — 예수금비중 모델 (결정4, Phase1 구현중)
-**종목수가 아니라 예수금 투입비중이 기준.** 확신↑ → 종목당 비중↑ → 집중, 확신↓ → 분산.
-종목수는 파생 결과. 구현: `strategy_playbook.resolve_position_sizing` + `order_executor._compute_new_model_sizing`(가용현금 캡). **`sizing.model_active`=on (2026-08-21 활성)** — 매수 사이징이 확신도→예수금비중으로 결정. 롤백=off. 검증: 8/21 실매수 종목당 투입비 5~12% = 신모델 5~15% 범위 내(과투입 아님).
+### A-4b. 사이징·배포 — 종목당 금액 모델 (결정4, **2026-08-29 PM: 종목수 결정 폐지·금액 통제**)
+**종목수를 결정하지 않는다.** 통제 = **투입율(총배포 95%) + 종목당 절대금액 [min, max]**. 확신↑ → 종목당 금액↑ → 집중, 확신↓ → 금액↓ → 분산. **종목수는 순수 파생**(투입가능액 ÷ 종목당금액), [6,19] 클램프 폐지. 구현: `strategy_playbook.resolve_position_sizing`(금액 = min_krw + (max_krw−min_krw)×conviction) + `order_executor._compute_new_model_sizing`(가용현금 캡). `sizing.model_active`=on.
 
 | 레버 | 설정키 | 값 | 의미 |
 |---|---|---|---|
-| 종목당 비중 | `sizing.per_position_rate_min` ~ `risk.max_position_rate_per_stock` | **5% ~ 15%** | 확신도로 보간 |
-| 종목수(파생) | `sizing.positions_min` ~ `sizing.positions_max` | **6 ~ 19** | 배포/비중, 클램프 |
+| 종목당 금액 | `sizing.per_position_min_krw` ~ `sizing.per_position_max_krw` | **500만 ~ 2,000만** | 확신도로 보간(금액이 통제 knob) |
 | 총배포 상한 | `exploration.deploy_target_rate` | 0.95 | 예수금 95% |
+| 종목수 | (설정 없음 — 파생) | 배포/종목당금액 | 예: 8,800만×95%÷[500~2000만] ≈ 4~17개 |
+| 폭등 확대 | `sizing.surge_per_position_rate_max` | 0.15↑ | 상한금액 비례 확대 |
 
-> 예: 확신 1.0 → 15%×6종목 집중 / 확신 0.0 → 5%×19종목 분산. **포지션 수 단일출처 = 이 [6,19] 사이징모델**(`sizing.model_active`=on이면 `order_executor`가 override). 구 `risk.max_positions=5`·레짐SET `max_positions`(12/7/4/2)·RulePack은 **死**(표시/드리프트 대조용). PM 결정 2026-08-23: 사이징모델 통일.
+> 예: 확신 1.0 → 종목당 2,000만(집중, ~4개) / 확신 0.0 → 500만(분산, ~17개). **레짐→종목수 로직 완전 제거**(구 `_calc_budget_qty` 예산÷종목수 균등분배·`select_sizing_params` 레짐 max_positions 삭제). 레짐SET `max_positions`(12/7/4/2)·`risk.max_positions`(5)·`sizing.positions_min/max`([6,19])는 **死**(무결성 백스톱·표시용). PM 결정 2026-08-29: 종목수 아닌 금액 통제.
 > ✅ `engine.exploration_mode` **완전 제거**(2026-08-22) — 매수=baseline S4/S5만. `exploration.deploy_target_rate`(95%)만 사이징 배포한도로 잔존(=⑥ 예수금투입목표). §A-7 #2 해소.
 
 **확신도(conviction) 모델** — 위 사이징의 "확신"을 정하는 법. 구현: `strategy_playbook.resolve_conviction`.
@@ -212,6 +212,13 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 | 6 | buy_condition_framework 태깅잔존 | 탐색 OR **매수경로 제거**(2026-08-22). 프레임워크는 `_record_exploration_tag`(진입 조건발화 기록·계측)만 잔존. 원자조건/조건그룹 UI 삭제. | 계측 데이터 활용 시 게이트화 검토 |
 
 > **감시 범위:** INTENT 명시설정(~40)+코드기본(14)+레짐SET(**4**, volatile 추가 2026-08-23)은 드리프트 자동감시. 위 6개(특히 1·5·6)는 **구조적이라 수동 관리** — 전략 변경 시 반드시 재확인.
+
+### A-6. 장중 재선별·교체매매 (문서화 2026-08-29)
+**시장이 바뀌면(레짐 전환) 매수 대기 후보도 바뀌고, 보유 종목보다 대기 후보가 더 좋으면 청산·손익절 조건이 아니어도 갈아탄다.** 구현·활성·실행 중(과거 `replacement_swap` 거래 발생 확인).
+- **재선별:** 스케줄러 `job_intraday_refresh`가 **09:30/10:30/11:30(+점심 13:00/14:00)** 에 `intraday_refresh.check_and_refresh` 실행 — 장중 시장 재평가 후 후보 재선별. (`intraday_refresh.master_enabled`·`lunch_slots_enabled`·`sector_rotation_enabled` 토글)
+- **교체매매(swap):** `replacement_signal.evaluate_replacement_signals` — 대기 후보가 보유 종목보다 나으면 교체 신호 생성 → `replacement_executor`가 갈아타기 실행. 매도사유 `replacement_swap->{new}`. (`intraday_refresh.replacement_signal_enabled` 토글)
+- **게이트:** 위 토글 전부 활성(라이브 DB `true`). master OFF면 전체 스킵.
+- ⚠ **UI 표시 버그(2026-08-29 발견):** 설정화면 토글이 DB값(true)을 안 읽어 OFF로 오표시 — 실제는 동작 중. → 수정 대상.
 
 ---
 

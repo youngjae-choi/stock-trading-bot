@@ -45,16 +45,16 @@ def test_sell_engine_matches_playbook_sell():
 
 
 def test_exec_engine_sizing_high_conviction():
-    # ⑥ 매매: risk_on(up)+깊은눌림 → 집중(15%×6)
+    # ⑥ 매매: risk_on(up)+깊은눌림 → 집중(종목당 최대금액 2000만)
     sz = resolve_execution_sizing(100_000_000, "up", vwap_dist_pct=-3.0, getter=_g)
-    assert sz.per_position_rate == 0.15
-    assert sz.target_positions == 6
+    assert sz.per_position_krw == 20_000_000
+    assert sz.target_positions == 4                # int(9500만/2000만), [6,19] 클램프 없음
 
 
 def test_exec_engine_surge_expands():
-    # 폭등 → per_rate_max가 surge 상한(0.20)
+    # 폭등 → per_rate_max(surge 0.20)로 종목당 최대금액 비례 확대 (2000만 → 2666만)
     sz = resolve_execution_sizing(100_000_000, "surge", vwap_dist_pct=-3.0, getter=_g)
-    assert sz.per_position_rate == 0.20
+    assert sz.per_position_krw == 26_666_666.67
 
 
 def test_exec_engine_defensive_diversifies():
