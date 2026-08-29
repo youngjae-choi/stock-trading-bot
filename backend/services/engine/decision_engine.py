@@ -21,6 +21,7 @@ from .rule_cache import load_daily_rules, get_rule, clear_cache, get_meta, set_i
 from .intraday_profile import classify_profile, record_intraday_event
 from .shadow_trading import create_shadow_trade
 from .decision_engine_utils import (  # 순수 파싱·숫자 유틸(Phase 1 분해)
+    _fallback_vwap_from_bars,  # 실시간 VWAP 미가용 시 intraday_bars 폴백(재기동 누수 차단)
     _first_float,
     _vwap_pullback_gate,  # 외부(test_vwap_pullback_gate)가 import — 재-export 보존
 )
@@ -966,7 +967,13 @@ class DecisionEngine:
             vwap_mode = str(_gates.get("vwap_pullback_mode", "enforce"))
             if vwap_mode != "off":
                 max_dist = float(_gates.get("entry_max_vwap_dist_pct", 0.0))
-                vwap_dist = _vwap_pullback_gate(self._bar_engine.get_vwap(symbol), price, max_dist)
+                # 실시간 VWAP(bar_engine) 우선, 미가용(재기동 메모리 소실 등)이면 intraday_bars 폴백
+                # — fail-open 누수 차단(2026-08-29: 추격 진입 -0.7% 손실뿌리, 데이터 확증).
+                _rt_vwap = self._bar_engine.get_vwap(symbol)
+                _eff_vwap = _rt_vwap if (_rt_vwap and _rt_vwap > 0) else _fallback_vwap_from_bars(symbol)
+                if _rt_vwap is None and _eff_vwap is not None:
+                    logger.info("INFO: [S6] 눌림목게이트 VWAP 폴백(intraday_bars) symbol=%s vwap=%.1f", symbol, _eff_vwap)
+                vwap_dist = _vwap_pullback_gate(_eff_vwap, price, max_dist)
                 if vwap_dist is not None and vwap_mode == "shadow":
                     logger.info(
                         "SHADOW: [S6] 눌림목게이트 차단대상(로그만) symbol=%s vwap_dist=%.2f > %.2f",

@@ -54,6 +54,40 @@ def _vwap_pullback_gate(vwap: float | None, price: float | None, max_dist_pct: f
     return round(vwap_dist, 2) if vwap_dist > max_dist_pct else None
 
 
+def _fallback_vwap_from_bars(symbol: str, today: str | None = None) -> float | None:
+    """실시간 VWAP 미가용 시 폴백 VWAP — intraday_bars(10초봉) 기준 Σ(close×vol)/Σ(vol).
+
+    bar_engine 실시간 VWAP은 재기동 시 메모리가 날아가 None이 되고(눌림목 게이트 fail-open →
+    추격 진입 누수, 2026-08-29 백테스트: 추격 -0.7% 손실뿌리), intraday_bars는 장중 실시간
+    적재되고 재기동에도 유지된다. 백테스트가 엣지를 검증한 동일 소스라 일관적이다. 오늘 봉이
+    있으면 오늘(재기동 대비), 없으면 직전 거래일(≤today) 것을 쓴다. 데이터 없으면 None(그때만 fail-open).
+
+    Args:
+        symbol: 종목코드.
+        today: 기준일(YYYY-MM-DD). None이면 KST 오늘.
+    """
+    try:
+        from ..db import get_connection
+
+        if today is None:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+
+            today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(close*volume),0.0) AS pv, COALESCE(SUM(volume),0.0) AS v "
+                "FROM intraday_bars WHERE symbol=? AND trade_date=("
+                "  SELECT MAX(trade_date) FROM intraday_bars WHERE symbol=? AND trade_date<=?)",
+                (symbol, symbol, today),
+            ).fetchone()
+        if row and row["v"] and float(row["v"]) > 0:
+            return float(row["pv"]) / float(row["v"])
+    except Exception:
+        return None
+    return None
+
+
 def _first_positive_float(*values: Any) -> float | None:
     """여러 후보 값 중 0보다 큰 첫 번째 숫자를 반환한다.
 
