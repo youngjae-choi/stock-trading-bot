@@ -45,6 +45,24 @@ v1이 "스텝이 **돌았나**"(운영 단계)를 본다면, v2는 **"시스템�
 - **오탐 억제**: `regime_reality`는 적용 후 20분 지속조건(전환 직후 억제), `qty_drift`는 오늘 원장·스냅샷 동시 존재 시만, 전 규칙 v1 daily dedup 공유.
 - **후속(v2.1 예정)**: `position_conflict`의 "레버리지 차단인데 보유" 서브체크는 보유종목 name 조인 필요 → 별도 과제로 이연.
 
+## v3 — 자기 죽음 감시 + 진입 퍼널 진단 + 라벨 정교화 (2026-08-29)
+계기: 08-28 서버가 오전 내내 죽어(SSH 접속불가·리부팅) 준비 파이프라인이 11:30에야 콜드 기동, 2.5시간 장을 날림. in-process 감시봇은 **자기 사망을 실시간 못 잡고**(되살아난 뒤 뒤늦게 인지), 게다가 "S3 미실행(never ran)"이라 라벨링했으나 실제는 "지연 완료(late)"였다.
+
+### ① 자기 죽음 감시 (heartbeat + 외부 dead-man switch)
+- **heartbeat(in-process)**: 매 5분 틱마다 `watchdog_heartbeat` 단일행에 `last_tick_at` upsert(거래일 가드 **이전**). 되살아난 첫 틱이 직전 틱→현재 공백 중 **장중(09:00~15:30)과 겹치는 분**을 역산 → 임계 초과면 CRITICAL. 야간·주말 공백은 자동 제외(overlap 계산).
+- **dead-man switch(외부)**: 매 틱 `ops_watch.deadman_ping_url`(healthchecks.io식)로 생존 핑. 서버 완전 다운이면 핑이 끊겨 **외부에서** 경보(in-process가 못 잡는 사각지대). 외부 스케줄은 `*/5 8-15 * * *`(Asia/Seoul)·grace 10~15분으로 감시봇 크론과 일치시킬 것. URL 미설정이면 no-op.
+
+| id | severity | 적용 시각 | 감지 내용 | 임계 설정(기본) | 데이터 소스 |
+|----|----------|----------|----------|----------------|------------|
+| `heartbeat` | CRITICAL | 09:00~15:35 | 장중 감시봇 틱 공백(프로세스 사망/재기동) | `heartbeat_gap_min`(15) | `watchdog_heartbeat`(last_tick_at) |
+| `selection_starved` | WARNING | ≥거래준비게이트~15:20 | 오늘 S4 후보수가 최근 중앙값 × ratio 미만(선정 단계 굶주림) | `selection_starved_ratio`(0.4) | `hybrid_screening_results`(최근 10거래일 중앙값) |
+
+### ② 진입 퍼널 진단 (선정→신호→매수)
+`entry_paralysis` 알림 detail에 **`[퍼널] S3 N → S4 M → 신호 K → 매수 J (하드차단 Z종)`** 를 첨부해 어느 칸에서 깔때기가 막혔는지 국소화(PM 가설 "선정 잘못? 매수 too strict?"를 수치로 답). **거부사유 테이블 `candidate_no_entry_reasons`·`approval_decision_logs`는 전 기간 0행(死)** 이라 살아있는 산출물(`universe_filter_results`·`hybrid_screening_results`·`trading_signals`·`fills`·`symbol_entry_blocks`)로 대체. + `selection_starved`로 S4 급감 자체를 조기감지.
+
+### ③ 라벨 정교화 — 미실행 vs 지연
+`trade_prep`: 활성 Plan이 **늦게(게이트 이후) 활성화**되면 "거래준비 지연 완료" **WARNING**(미실행 아님), 아직 없지만 준비 런이 방금 시작이면 "지연 진행중" WARNING, 런 흔적조차 없으면 "미완료" CRITICAL(기본). → 08-28의 28초 레이스·2.5h 지연을 "never ran"으로 오탐 프레이밍하지 않음. 체크가 3-튜플 반환 시 severity 오버라이드.
+
 ## 노이즈 제어 (5분 틱 스팸 방지) — 핵심
 이상 생성 전 `system_alerts`에서 **`(alert_type, trade_date)` 미확인(acknowledged=0) 알림 존재 시 스킵**. → 같은 이상은 하루 1회만. (앞서 Alert Center 도배 경험 반영)
 

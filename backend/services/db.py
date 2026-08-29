@@ -1522,6 +1522,15 @@ CREATE TABLE IF NOT EXISTS system_alerts (
 """,
         "CREATE INDEX IF NOT EXISTS idx_alerts_trade_date ON system_alerts(trade_date)",
         "CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON system_alerts(acknowledged)",
+        # 감시봇 자기-생존 heartbeat(단일행) — 매 5분 틱마다 last_tick_at upsert.
+        # 재기동/프로세스 사망으로 틱이 장중 끊기면, 되살아난 첫 틱이 공백을 역산해 경보한다
+        # (in-process 감시봇의 "자기 죽음" 사각지대 폐쇄). 외부 dead-man switch와 병행.
+        """
+CREATE TABLE IF NOT EXISTS watchdog_heartbeat (
+    id           INTEGER PRIMARY KEY CHECK (id = 1),
+    last_tick_at TEXT NOT NULL
+)
+""",
         # 알림 요약 스냅샷 — 화면은 이 저장값만 읽는다(읽기시점 집계 금지). 알림 생성/확인 시점에
         # 쓰기 경로에서 재계산·UPSERT하므로 항상 최신(자가치유: 없으면 읽기시 1회 백필).
         """

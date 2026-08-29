@@ -32,7 +32,8 @@ def _ddl(conn):
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS market_tone_results(id INTEGER PRIMARY KEY, trade_date TEXT);
-        CREATE TABLE IF NOT EXISTS daily_trading_plans(id INTEGER PRIMARY KEY, trade_date TEXT, status TEXT);
+        CREATE TABLE IF NOT EXISTS daily_trading_plans(id INTEGER PRIMARY KEY, trade_date TEXT, status TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS daily_plan_run_history(id INTEGER PRIMARY KEY, trade_date TEXT, status TEXT, created_at TEXT);
         CREATE TABLE IF NOT EXISTS universe_filter_results(id INTEGER PRIMARY KEY, trade_date TEXT, filtered_count INTEGER, created_at TEXT);
         CREATE TABLE IF NOT EXISTS hybrid_screening_results(id INTEGER PRIMARY KEY, trade_date TEXT, output_count INTEGER, overall_confidence REAL, created_at TEXT);
         CREATE TABLE IF NOT EXISTS daily_capital_baseline(id INTEGER PRIMARY KEY, trade_date TEXT);

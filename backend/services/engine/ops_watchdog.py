@@ -25,12 +25,14 @@ KST = ZoneInfo("Asia/Seoul")
 
 # 적용 시각(분). 거래일에 이 시각이 지나면 해당 단계가 됐어야 함.
 _M0835 = 8 * 60 + 35
+_M0900 = 9 * 60
 _M0905 = 9 * 60 + 5
 _M0906 = 9 * 60 + 6
 _M0910 = 9 * 60 + 10
 _M0940 = 9 * 60 + 40
 _M1520 = 15 * 60 + 20
 _M1530 = 15 * 60 + 30
+_M1535 = 15 * 60 + 35
 _M1525 = 15 * 60 + 25
 
 
@@ -50,6 +52,28 @@ def _gate_min_from_schedule(setting_key: str, *, default_min: int, grace_min: in
 
 def _now_kst() -> datetime:
     return datetime.now(KST)
+
+
+def _to_kst(iso_str: str | None) -> datetime | None:
+    """ISO 타임스탬프를 KST aware datetime으로. tz 없으면 KST 가정, 'Z'는 UTC. 실패는 None."""
+    if not iso_str:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(iso_str).replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=KST)
+        return ts.astimezone(KST)
+    except Exception:
+        return None
+
+
+def _kst_minute_of_day(iso_str: str | None) -> int | None:
+    ts = _to_kst(iso_str)
+    return ts.hour * 60 + ts.minute if ts else None
+
+
+def _min_to_hhmm(m: int) -> str:
+    return f"{int(m) // 60:02d}:{int(m) % 60:02d}"
 
 
 def _count(conn, sql: str, params: tuple = ()) -> int:
@@ -85,15 +109,46 @@ def _chk_s2_premarket(conn, td):
 
 
 def _chk_trade_prep(conn, td):
-    active = _count(
-        conn,
-        "SELECT COUNT(*) FROM daily_trading_plans WHERE trade_date=? AND status='active'",
+    """거래준비 완료 여부 — 활성 Plan 없으면 '미실행', 늦게라도 됐으면 '지연'으로 구분(2026-08-29).
+
+    라벨 정교화: 08-28처럼 준비가 2.5h '지연 완료'된 날을 "미실행(never ran)"으로 오탐 프레이밍
+    하지 않는다. ①활성 Plan이 늦게(게이트 이후) 활성화 → '지연 완료' WARNING. ②아직 없지만 준비
+    런이 방금 시작 → '지연 진행중' WARNING. ③런 흔적도 없음 → '미실행' CRITICAL(기본).
+    """
+    row = conn.execute(
+        "SELECT created_at FROM daily_trading_plans WHERE trade_date=? AND status='active'"
+        " ORDER BY created_at DESC LIMIT 1",
         (td,),
-    )
-    if active > 0:
+    ).fetchone()
+    deadline = _gate_trade_prep()  # 정상 완료 기대 시각(스케줄+grace)
+    if row is not None:
+        m = _kst_minute_of_day(row["created_at"])
+        if m is not None and m > deadline:
+            return ("거래준비 지연 완료 — 늦게 활성화",
+                    f"활성 Daily Plan이 {_min_to_hhmm(m)}에야 활성화됨(기대 {_min_to_hhmm(deadline)} 이내, "
+                    f"{m - deadline}분 지연). 서버 지연기동/파이프라인 지연으로 오전 매매 공백 가능.",
+                    "WARNING")
         return None
+    # 활성 Plan 없음 — 준비 런이 진행중이면 '지연', 아니면 '미실행'
+    try:
+        run = conn.execute(
+            "SELECT created_at, status FROM daily_plan_run_history WHERE trade_date=?"
+            " ORDER BY created_at DESC LIMIT 1",
+            (td,),
+        ).fetchone()
+    except Exception:
+        run = None
+    if run is not None:
+        age = _age_minutes(run["created_at"])
+        status = str(run["status"] or "").lower()
+        grace = _wnum("watchdog.prep_inprogress_grace_min", 20.0)
+        if age is not None and age <= grace and status not in ("failed", "error", "aborted"):
+            return ("거래준비 지연 — 진행중",
+                    f"활성 Plan 아직 없음 — 준비 런이 {age:.0f}분 전 시작(status={run['status']}), 완료 대기. "
+                    "정상 지연이면 곧 활성화됨(미실행 아님).",
+                    "WARNING")
     return ("거래준비(S1~S5-A) 미완료/미활성",
-            "오늘 활성(active) Daily Plan이 없음 — 거래준비 파이프라인이 미완료이거나 활성화 실패."
+            "현재 시각까지 활성(active) Daily Plan이 없음 — 거래준비 파이프라인 미완료/활성화 실패 의심."
             + _audit_fail_suffix(conn, td, ["S1", "S5-V", "S5-A"]))
 
 
@@ -279,6 +334,51 @@ def _active_max_positions(td: str) -> int | None:
         return None
 
 
+def _blocked_symbol_count(conn) -> int:
+    """현재 유효한 하드차단 종목 수(symbol_entry_blocks). 테이블 부재/실패는 0(대조 스킵)."""
+    try:
+        now_iso = _now_kst().isoformat()
+        return _count(
+            conn,
+            "SELECT COUNT(*) FROM symbol_entry_blocks WHERE expires_at IS NULL OR expires_at > ?",
+            (now_iso,),
+        )
+    except Exception:
+        return 0
+
+
+def _entry_funnel(conn, td) -> tuple[int, int, int, int, int]:
+    """진입 전환 퍼널: (S3유니버스, S4스크리닝, 매수신호, 실매수, 하드차단종목).
+
+    "선정→신호→매수" 어느 칸에서 깔때기가 막히는지 국소화. 각 조회는 방어적(테이블 부재는 0).
+    (거부사유 테이블 candidate_no_entry_reasons/approval_decision_logs는 死 → 살아있는 산출물로 대체)
+    """
+    def _latest_int(sql: str, col: str) -> int:
+        try:
+            r = conn.execute(sql, (td,)).fetchone()
+            return int(r[col] or 0) if r and r[col] is not None else 0
+        except Exception:
+            return 0
+
+    s3 = _latest_int(
+        "SELECT filtered_count FROM universe_filter_results WHERE trade_date=?"
+        " ORDER BY created_at DESC LIMIT 1", "filtered_count")
+    s4 = _latest_int(
+        "SELECT output_count FROM hybrid_screening_results WHERE trade_date=?"
+        " ORDER BY created_at DESC LIMIT 1", "output_count")
+    try:
+        signals = _count(
+            conn, "SELECT COUNT(*) FROM trading_signals WHERE trade_date=? AND signal_type='BUY'", (td,))
+    except Exception:
+        signals = 0
+    try:
+        buys = _count(
+            conn, "SELECT COUNT(*) FROM fills WHERE substr(filled_at,1,10)=? AND side='buy'", (td,))
+    except Exception:
+        buys = 0
+    return s3, s4, signals, buys, _blocked_symbol_count(conn)
+
+
 # 상승/중립으로 보는 레짐 라벨 vs 방어로 보는 라벨 (regime_set_applications.regime_label 실측값)
 _BULLISH_REGIMES = {"risk_on", "neutral"}
 _BEARISH_REGIMES = {"risk_off"}
@@ -407,9 +507,43 @@ def _chk_entry_paralysis(conn, td):
         pass
     if _entry_suspended(td):
         return None  # 하락전환 래치 등 의도된 진입중단
+    s3, s4, sig, buys, blocked = _entry_funnel(conn, td)
     return ("진입 마비 의심 — 후보 있으나 신호 0",
-            f"S3 후보 {candidates}건인데 매수신호 0건. 긴급정지·진입중단(하락전환 래치)도 아님 — "
-            "진입밴드 역전/게이트 과도 차단 의심.")
+            f"S3 후보 {candidates}건인데 매수신호 0건. "
+            f"[퍼널] S3 {s3} → S4 {s4} → 신호 {sig} → 매수 {buys} (하드차단 {blocked}종). "
+            "긴급정지·진입중단(하락전환 래치)도 아님 — 진입밴드 역전/게이트 과도 차단 의심 "
+            "(S4는 있는데 신호 0이면 진입게이트 과도, S4가 급감이면 선정 문제).")
+
+
+def _chk_selection_starved(conn, td):
+    """R7 선정 빈약 — 오늘 S4 후보수가 최근 중앙값 대비 급감(선정 단계 붕괴 조기감지, 2026-08-29).
+
+    "종목선정이 잘못된 건 아닐까"(PM 가설)를 수치화. S4 미실행(0행)은 quality_screening이 담당.
+    """
+    if not _enabled("selection_starved"):
+        return None
+    today_row = conn.execute(
+        "SELECT MAX(output_count) AS oc FROM hybrid_screening_results WHERE trade_date=?", (td,)
+    ).fetchone()
+    if not today_row or today_row["oc"] is None:
+        return None  # 미실행 — quality_screening이 담당
+    today = int(today_row["oc"] or 0)
+    rows = conn.execute(
+        "SELECT MAX(output_count) AS oc FROM hybrid_screening_results WHERE trade_date < ?"
+        " GROUP BY trade_date ORDER BY trade_date DESC LIMIT 10", (td,)
+    ).fetchall()
+    vals = sorted(int(r["oc"] or 0) for r in rows if r["oc"] is not None)
+    if len(vals) < 3:
+        return None  # baseline 표본 부족 — 판단 보류
+    median = vals[len(vals) // 2]
+    if median <= 0:
+        return None
+    ratio = _wnum("watchdog.selection_starved_ratio", 0.4)
+    if today < median * ratio:
+        return ("선정 빈약 — S4 후보 급감",
+                f"오늘 S4 후보 {today}건 < 최근 중앙값 {median}건 × {ratio:.0%}. "
+                "데이터 결손/필터 과도/유니버스 축소로 선정 단계가 굶주림 의심.")
+    return None
 
 
 def _chk_position_conflict(conn, td):
@@ -466,6 +600,93 @@ def _chk_qty_drift(conn, td):
     return None
 
 
+# ══ 자기 죽음 감시(heartbeat) + 외부 dead-man switch (2026-08-29) ══════════════
+# in-process 감시봇은 서버가 죽으면 같이 죽어 "자기 사망"을 실시간 못 잡는다(08-28 리부팅
+# 참사=오전 내내 봇 사망을 되살아난 뒤에야 인지). ①매 틱 heartbeat 기록 → 되살아난 첫 틱이
+# 장중 공백을 역산해 경보. ②외부 URL로 dead-man ping → 완전 다운도 외부에서 포착.
+
+def _read_last_heartbeat() -> str | None:
+    """직전 틱 시각(ISO). 테이블 부재/최초 틱은 None."""
+    try:
+        with get_connection() as conn:
+            row = conn.execute("SELECT last_tick_at FROM watchdog_heartbeat WHERE id=1").fetchone()
+            return str(row["last_tick_at"]) if row and row["last_tick_at"] else None
+    except Exception:
+        return None
+
+
+def _write_heartbeat(now: datetime) -> None:
+    """현재 틱 시각을 단일행 upsert(WAL-safe). 자체 CREATE로 스키마 미초기화 DB도 자립."""
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS watchdog_heartbeat"
+                " (id INTEGER PRIMARY KEY CHECK (id=1), last_tick_at TEXT NOT NULL)"
+            )
+            conn.execute(
+                "INSERT INTO watchdog_heartbeat(id, last_tick_at) VALUES(1, ?)"
+                " ON CONFLICT(id) DO UPDATE SET last_tick_at=excluded.last_tick_at",
+                (now.isoformat(),),
+            )
+            conn.commit()
+    except Exception as exc:
+        logger.warning("WARN: [OpsWatchdog] heartbeat 기록 실패 — %s", exc)
+
+
+def _ping_deadman() -> None:
+    """외부 dead-man switch(healthchecks.io식)로 생존 핑. URL 미설정이면 no-op. 실패는 무시.
+
+    ops_watch.deadman_ping_url 설정. 감시봇 크론(매일 08~15시 5분)과 같은 주기이므로 외부는
+    스케줄 `*/5 8-15 * * *`(Asia/Seoul)·grace 10~15분으로 맞추면 서버 완전 다운도 외부 경보.
+    """
+    try:
+        url = str(get_setting("ops_watch.deadman_ping_url", "") or "").strip()
+    except Exception:
+        url = ""
+    if not url:
+        return
+    try:
+        import httpx
+        httpx.get(url, timeout=3.0)
+    except Exception as exc:
+        logger.debug("[OpsWatchdog] deadman ping 실패(무시) — %s", exc)
+
+
+def _market_gap_overlap_min(prev_iso: str | None, now: datetime) -> float | None:
+    """직전 틱→현재 공백 중 '장중(09:00~15:30)'과 겹치는 분. 야간·주말 공백은 자동 제외.
+
+    prev가 전 거래일이어도 오늘 09:00부터만 세므로 08-28식 '오전 내내 사망'을 정확히 계량.
+    """
+    prev = _to_kst(prev_iso)
+    if prev is None:
+        return None
+    open_dt = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    close_dt = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    gap_start = max(prev, open_dt)
+    gap_end = min(now, close_dt)
+    return max(0.0, (gap_end - gap_start).total_seconds() / 60.0)
+
+
+def _heartbeat_gap_alert(prev_iso: str | None, now: datetime, mins: int):
+    """장중 감시봇 틱 공백 → 프로세스 사망/재기동 경보. 되살아난 첫 틱이 역산해 발화."""
+    if not _enabled("heartbeat"):
+        return None
+    if not (_M0900 <= mins <= _M1535):
+        return None  # 장중 창에서만 평가(야간/후처리 시각 오탐 방지)
+    overlap = _market_gap_overlap_min(prev_iso, now)
+    if overlap is None:
+        return None  # 최초 틱 — 비교 대상 없음
+    threshold = _wnum("watchdog.heartbeat_gap_min", 15.0)
+    if overlap <= threshold:
+        return None
+    prev_disp = _to_kst(prev_iso)
+    prev_hhmm = prev_disp.strftime("%m-%d %H:%M") if prev_disp else "?"
+    return ("장중 봇 공백 — 프로세스 사망/재기동 의심",
+            f"감시봇 틱이 장중 약 {overlap:.0f}분 끊김(직전 {prev_hhmm} → 현재 {now:%H:%M}). "
+            "서버 다운/재기동 의심 — 그 사이 매매·손절 감시 공백. 외부 dead-man switch·systemd 상태 확인.",
+            "CRITICAL")
+
+
 class Check(NamedTuple):
     id: str
     severity: str
@@ -500,6 +721,8 @@ _REGISTRY: list[Check] = [
     Check("entry_paralysis", "WARNING", _M0940, _M1520, _chk_entry_paralysis),
     Check("position_conflict", "CRITICAL", _M0910, _M1520, _chk_position_conflict),
     Check("qty_drift", "WARNING", _M0940, _M1520, _chk_qty_drift),
+    # 선정 빈약 — S4 후보 급감(선정 단계 붕괴 조기감지, 2026-08-29)
+    Check("selection_starved", "WARNING", _gate_trade_prep, _M1520, _chk_selection_starved),
 ]
 
 
@@ -522,12 +745,19 @@ def run_ops_watchdog(now: datetime | None = None) -> dict:
     """
     now = now or _now_kst()
     td = now.strftime("%Y-%m-%d")
+
+    # 자기 죽음 감시 — 거래일 가드 이전에 처리(공백 역산·외부 dead-man ping은 매일 수행).
+    prev_tick = _read_last_heartbeat()
+    _write_heartbeat(now)
+    _ping_deadman()
+
     if not is_trading_day(td):
         logger.info("SKIP: [OpsWatchdog] 비거래일 — trade_date=%s", td)
         return {"skipped": "non_trading_day", "created": 0}
 
     mins = now.hour * 60 + now.minute
-    anomalies: list[tuple[Check, str, str]] = []
+    # (title, detail, severity)
+    anomalies: list[tuple[str, str, str]] = []
     checks_run = 0
     with get_connection() as conn:
         for chk in _REGISTRY:
@@ -541,16 +771,23 @@ def run_ops_watchdog(now: datetime | None = None) -> dict:
                 logger.warning("WARN: [OpsWatchdog] check=%s 실패 — %s", chk.id, exc)
                 continue
             if res:
-                anomalies.append((chk, res[0], res[1]))
+                # 체크가 3-튜플이면 severity 오버라이드(예: 미실행 CRITICAL vs 지연 WARNING)
+                sev = res[2] if len(res) >= 3 else chk.severity
+                anomalies.append((res[0], res[1], sev))
+
+    # 장중 감시봇 공백(자기 죽음) — prev_tick은 덮어쓰기 전 값
+    hb = _heartbeat_gap_alert(prev_tick, now, mins)
+    if hb:
+        anomalies.append((hb[0], hb[1], hb[2]))
 
     created = 0
-    for chk, title, detail in anomalies:
+    for title, detail, severity in anomalies:
         if _alert_exists(td, title):
             continue
         try:
-            create_alert("ops_watch", title, chk.severity, detail, trade_date=td)
+            create_alert("ops_watch", title, severity, detail, trade_date=td)
             created += 1
-            logger.warning("OPS-ANOMALY: [%s] %s — %s", chk.severity, title, detail[:160])
+            logger.warning("OPS-ANOMALY: [%s] %s — %s", severity, title, detail[:160])
         except Exception as exc:
             logger.warning("WARN: [OpsWatchdog] alert 생성 실패 title=%s — %s", title, exc)
 

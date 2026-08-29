@@ -43,6 +43,16 @@ def _ddl(conn):
             id INTEGER PRIMARY KEY, trade_date TEXT, symbol TEXT, norm_symbol TEXT, qty INTEGER);
         CREATE TABLE IF NOT EXISTS position_cost_basis(
             id INTEGER PRIMARY KEY, trade_date TEXT, symbol TEXT, norm_symbol TEXT, qty INTEGER);
+        CREATE TABLE IF NOT EXISTS hybrid_screening_results(
+            id INTEGER PRIMARY KEY, trade_date TEXT, output_count INTEGER, overall_confidence REAL, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS fills(
+            id TEXT, symbol TEXT, side TEXT, quantity REAL, price REAL, filled_at TEXT);
+        CREATE TABLE IF NOT EXISTS symbol_entry_blocks(
+            symbol TEXT, reason TEXT, source TEXT, loss_count INTEGER, blocked_at TEXT, expires_at TEXT);
+        CREATE TABLE IF NOT EXISTS daily_trading_plans(
+            id INTEGER PRIMARY KEY, trade_date TEXT, status TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS daily_plan_run_history(
+            id INTEGER PRIMARY KEY, trade_date TEXT, status TEXT, created_at TEXT);
         """
     )
     conn.commit()
@@ -342,3 +352,189 @@ def test_kill_switch_disables_rule(tmp_path, monkeypatch):
         _apply_regime(conn, "risk_on", 0.5, applied_at="2026-08-24T11:00:00+09:00")
         _kospi_snap(conn, -3.0, "2026-08-24T11:29:00+09:00")
         assert ow._chk_regime_reality(conn, _TD) is None
+
+
+# ═══════════ v3: 자기 죽음 감시(heartbeat) — 08-28 리부팅 사각지대 폐쇄 ═══════════
+
+def test_heartbeat_roundtrip(tmp_path, monkeypatch):
+    """단일행 upsert·read. 자체 CREATE로 스키마 미초기화 DB도 자립."""
+    _iso_db(tmp_path, monkeypatch)
+    assert ow._read_last_heartbeat() is None  # 최초
+    now = dt.datetime(2026, 8, 28, 11, 30, tzinfo=ow.KST)
+    ow._write_heartbeat(now)
+    got = ow._read_last_heartbeat()
+    assert got is not None and got.startswith("2026-08-28T11:30")
+
+
+def test_gap_overlap_intraday():
+    """장중 09:30→11:30 공백 = 120분."""
+    prev = "2026-08-24T09:30:00+09:00"
+    now = dt.datetime(2026, 8, 24, 11, 30, tzinfo=ow.KST)
+    ov = ow._market_gap_overlap_min(prev, now)
+    assert ov is not None and abs(ov - 120.0) < 0.01
+
+
+def test_gap_overlap_overnight_excluded():
+    """전 거래일 15:30→오늘 09:05 = 야간 제외, 장중 겹침 5분뿐."""
+    prev = "2026-08-23T15:30:00+09:00"
+    now = dt.datetime(2026, 8, 24, 9, 5, tzinfo=ow.KST)
+    ov = ow._market_gap_overlap_min(prev, now)
+    assert ov is not None and abs(ov - 5.0) < 0.01
+
+
+def test_heartbeat_morning_death_alerts(monkeypatch):
+    """08-28 재현: 전일 마감→오늘 11:30 첫 틱 = 오전 내내 사망 → CRITICAL."""
+    monkeypatch.setattr(ow, "get_setting", lambda k, d=None: d)  # 기본값(enabled True·임계 15)
+    prev = "2026-08-27T15:30:00+09:00"
+    now = dt.datetime(2026, 8, 28, 11, 30, tzinfo=ow.KST)
+    res = ow._heartbeat_gap_alert(prev, now, 11 * 60 + 30)
+    assert res is not None and "공백" in res[0] and res[2] == "CRITICAL"
+
+
+def test_heartbeat_overnight_no_alert(monkeypatch):
+    """정상 개장(09:05) 첫 틱 — 야간 공백은 경보 아님."""
+    monkeypatch.setattr(ow, "get_setting", lambda k, d=None: d)
+    prev = "2026-08-27T15:30:00+09:00"
+    now = dt.datetime(2026, 8, 28, 9, 5, tzinfo=ow.KST)
+    assert ow._heartbeat_gap_alert(prev, now, 9 * 60 + 5) is None
+
+
+def test_heartbeat_first_tick_no_alert(monkeypatch):
+    monkeypatch.setattr(ow, "get_setting", lambda k, d=None: d)
+    now = dt.datetime(2026, 8, 28, 11, 30, tzinfo=ow.KST)
+    assert ow._heartbeat_gap_alert(None, now, 11 * 60 + 30) is None
+
+
+def test_heartbeat_killswitch(monkeypatch):
+    monkeypatch.setattr(
+        ow, "get_setting",
+        lambda k, d=None: False if k == "watchdog.heartbeat_enabled" else d,
+    )
+    prev = "2026-08-27T15:30:00+09:00"
+    now = dt.datetime(2026, 8, 28, 11, 30, tzinfo=ow.KST)
+    assert ow._heartbeat_gap_alert(prev, now, 11 * 60 + 30) is None
+
+
+# ═══════════ v3: 외부 dead-man switch 핑 ═══════════
+
+def test_deadman_ping_noop_when_unset(monkeypatch):
+    """URL 미설정이면 no-op(예외 없이 통과)."""
+    monkeypatch.setattr(ow, "get_setting", lambda k, d=None: "" if k == "ops_watch.deadman_ping_url" else d)
+    ow._ping_deadman()  # 예외 없어야 함
+
+
+def test_deadman_ping_calls_url(monkeypatch):
+    import httpx
+    called = {}
+    monkeypatch.setattr(httpx, "get", lambda url, timeout=None: called.setdefault("url", url))
+    monkeypatch.setattr(
+        ow, "get_setting",
+        lambda k, d=None: "https://hc.example/ping" if k == "ops_watch.deadman_ping_url" else d,
+    )
+    ow._ping_deadman()
+    assert called.get("url") == "https://hc.example/ping"
+
+
+# ═══════════ v3: 진입 퍼널 진단(선정→신호→매수) ═══════════
+
+def test_entry_paralysis_detail_has_funnel(tmp_path, monkeypatch):
+    """진입 마비 시 detail에 [퍼널] S3→S4→신호→매수 국소화가 들어간다."""
+    _iso_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(ow, "_entry_suspended", lambda td: False)
+    monkeypatch.setattr(ow, "_now_kst", lambda: _NOW)
+    with db_mod.get_connection() as conn:
+        _ddl(conn)
+        conn.execute("INSERT INTO universe_filter_results(trade_date, filtered_count, created_at) VALUES(?,?,?)",
+                     (_TD, 12, "2026-08-24T09:05"))
+        conn.execute("INSERT INTO hybrid_screening_results(trade_date, output_count, overall_confidence, created_at) VALUES(?,?,?,?)",
+                     (_TD, 8, 0.5, "2026-08-24T09:06"))
+        conn.commit()
+        res = ow._chk_entry_paralysis(conn, _TD)
+        assert res is not None and "[퍼널]" in res[1] and "S4 8" in res[1]
+
+
+# ═══════════ v3: R7 선정 빈약(S4 후보 급감) ═══════════
+
+def _seed_screening(conn, rows):
+    for d, oc in rows:
+        conn.execute("INSERT INTO hybrid_screening_results(trade_date, output_count, overall_confidence, created_at) VALUES(?,?,?,?)",
+                     (d, oc, 0.5, d))
+    conn.commit()
+
+
+def test_r7_selection_starved_alerts(tmp_path, monkeypatch):
+    _iso_db(tmp_path, monkeypatch)
+    with db_mod.get_connection() as conn:
+        _ddl(conn)
+        _seed_screening(conn, [("2026-08-15", 13), ("2026-08-18", 11), ("2026-08-19", 13),
+                               ("2026-08-20", 10), ("2026-08-21", 9)])  # 모두 오늘(08-24) 이전
+        _seed_screening(conn, [(_TD, 3)])  # 오늘 3 << 중앙값 11 × 0.4
+        res = ow._chk_selection_starved(conn, _TD)
+        assert res is not None and "빈약" in res[0]
+
+
+def test_r7_normal_selection_ok(tmp_path, monkeypatch):
+    _iso_db(tmp_path, monkeypatch)
+    with db_mod.get_connection() as conn:
+        _ddl(conn)
+        _seed_screening(conn, [("2026-08-18", 13), ("2026-08-19", 11), ("2026-08-20", 10)])
+        _seed_screening(conn, [(_TD, 12)])  # 중앙값 11 근처 — 정상
+        assert ow._chk_selection_starved(conn, _TD) is None
+
+
+def test_r7_insufficient_baseline_none(tmp_path, monkeypatch):
+    """과거 표본 3일 미만이면 판단 보류."""
+    _iso_db(tmp_path, monkeypatch)
+    with db_mod.get_connection() as conn:
+        _ddl(conn)
+        _seed_screening(conn, [("2026-08-21", 11)])
+        _seed_screening(conn, [(_TD, 2)])
+        assert ow._chk_selection_starved(conn, _TD) is None
+
+
+# ═══════════ v3: 거래준비 라벨 정교화(미실행 vs 지연) ═══════════
+
+def test_trade_prep_ontime_none(tmp_path, monkeypatch):
+    """정상 시각(09:05) 활성화 → 이상 없음."""
+    _iso_db(tmp_path, monkeypatch)
+    with db_mod.get_connection() as conn:
+        _ddl(conn)
+        conn.execute("INSERT INTO daily_trading_plans(trade_date, status, created_at) VALUES(?,?,?)",
+                     (_TD, "active", "2026-08-24T09:05:00+09:00"))
+        conn.commit()
+        assert ow._chk_trade_prep(conn, _TD) is None
+
+
+def test_trade_prep_late_completion_warns(tmp_path, monkeypatch):
+    """08-28 재현: 11:30 늦게 활성화 → '지연 완료' WARNING(미실행 아님)."""
+    _iso_db(tmp_path, monkeypatch)
+    with db_mod.get_connection() as conn:
+        _ddl(conn)
+        conn.execute("INSERT INTO daily_trading_plans(trade_date, status, created_at) VALUES(?,?,?)",
+                     (_TD, "active", "2026-08-24T11:30:00+09:00"))
+        conn.commit()
+        res = ow._chk_trade_prep(conn, _TD)
+        assert res is not None and "지연" in res[0] and res[2:] == ("WARNING",)
+
+
+def test_trade_prep_inprogress_warns(tmp_path, monkeypatch):
+    """활성 Plan 아직 없지만 준비 런이 방금 시작 → '지연 진행중'(미실행 아님)."""
+    _iso_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(ow, "_now_kst", lambda: _NOW)  # 11:30
+    with db_mod.get_connection() as conn:
+        _ddl(conn)
+        conn.execute("INSERT INTO daily_plan_run_history(trade_date, status, created_at) VALUES(?,?,?)",
+                     (_TD, "running", "2026-08-24T11:26:00+09:00"))  # 4분 전
+        conn.commit()
+        res = ow._chk_trade_prep(conn, _TD)
+        assert res is not None and "진행중" in res[0] and res[2:] == ("WARNING",)
+
+
+def test_trade_prep_missing_is_critical(tmp_path, monkeypatch):
+    """활성 Plan도 런 흔적도 없음 → '미완료' (기본 CRITICAL, 2-튜플)."""
+    _iso_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(ow, "_now_kst", lambda: _NOW)
+    with db_mod.get_connection() as conn:
+        _ddl(conn)
+        res = ow._chk_trade_prep(conn, _TD)
+        assert res is not None and "미완료" in res[0] and len(res) == 2
