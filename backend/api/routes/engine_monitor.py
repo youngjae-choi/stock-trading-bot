@@ -70,14 +70,13 @@ _SETTING_META = {
     "engine.scaleout_ratio_after_target": ("잔량 재확정 비율", "목표 후 잔량에서 추가 확정 비율", "num", "비율 0~1"),
     "engine.daily_target_rate": ("일일 목표 수익률", "계좌 대비 하루 목표(복리, 0.02=2%)", "num", "비율(0.02=2%)"),
     "engine.stop_source": ("손절/트레일 출처", "profile=종목 변동성별 프로필 · regime=시장국면 레짐SET 단일. regime 활성(현행) — 변동성 재보정값 단일출처", "enum", ["profile", "regime"]),
-    # ⑥ 매매(사이징)
-    "sizing.model_active": ("사이징 모델 활성", "예수금 비중 기반 신모델 사용", "bool", None),
-    "sizing.per_position_rate_min": ("종목당 최소 비중", "확신도 낮을 때 예수금 대비 종목당 하한 (0.05=5%)", "num", "비율(0.05=5%)"),
-    "risk.max_position_rate_per_stock": ("종목당 최대 비중", "확신도 높을 때 예수금 대비 종목당 상한 (0.15=15%)", "num", "비율(0.15=15%)"),
-    "sizing.positions_min": ("최소 종목 수", "동시 보유 종목 수 하한", "num", "개"),
-    "sizing.positions_max": ("최대 종목 수", "동시 보유 종목 수 상한", "num", "개"),
-    "exploration.deploy_target_rate": ("예수금 투입 목표비율", "총 예수금 중 배포 목표 (0.95=95%)", "num", "비율(0.95=95%)"),
-    "sizing.surge_per_position_rate_max": ("폭등장 종목당 상한", "폭등 티어에서 종목당 비중 상한", "num", "비율 0~1"),
+    # ⑥ 매매(사이징) — 2026-08-29 PM: 종목수 결정 폐지, 종목당 금액으로 통제. 종목수는 파생.
+    "sizing.model_active": ("사이징 모델 활성", "확신도→종목당 금액 신모델 사용", "bool", None),
+    "sizing.per_position_min_krw": ("종목당 최소 금액", "확신도 낮을 때(분산) 종목당 투입 하한 (원)", "num", "원"),
+    "sizing.per_position_max_krw": ("종목당 최대 금액", "확신도 높을 때(집중) 종목당 투입 상한 (원)", "num", "원"),
+    "exploration.deploy_target_rate": ("예수금 투입 목표비율", "총 예수금 중 배포 목표 (0.95=95%). 종목수 = 배포액÷종목당금액 파생", "num", "비율(0.95=95%)"),
+    "sizing.surge_per_position_rate_max": ("폭등장 확대 배율기준", "폭등 티어에서 종목당 최대금액 확대 판정용(기본 0.15=무변)", "num", "비율 0~1"),
+    "risk.max_position_rate_per_stock": ("폭등 확대 기준비율(레거시)", "폭등 배율 계산의 기준(0.15). 사이징은 금액모델이 단일 통제", "num", "비율(0.15=15%)"),
     # 리스크(공통 안전벨트)
     "risk.daily_loss_limit_percent": ("일일 손실 한도", "당일 손실이 이 %면 신규 진입 차단", "num", "%"),
     "risk.auto_halt_loss_percent": ("자동 긴급정지 손실", "이 손실률 도달 시 자동 긴급정지", "num", "%"),

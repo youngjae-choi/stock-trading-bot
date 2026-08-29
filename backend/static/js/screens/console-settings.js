@@ -641,14 +641,13 @@
               + '</div>'
             + '</div>'
             + '<div style="font-size:11px; color:var(--muted); text-align:right; white-space:nowrap;">'
-              + '포지션 ' + (sc.max_positions || '-') + '개<br>'
               + '손절 ' + ((sc.stop_loss_rate || 0) * 100).toFixed(1) + '%'
             + '</div>'
             + '<span style="color:var(--muted); font-size:14px; margin-left:8px;">▼</span>'
           + '</div>'
           + '<div id="rset-edit-' + escapeHtml(set.id) + '" style="display:none; padding:14px; border-top:1px solid var(--border);">'
             + '<div class="form-grid" style="grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:10px; margin-bottom:12px;">'
-              + _regimeSetField('최대 포지션', 'rset-max_positions-' + set.id, sc.max_positions, 'number', '1', '20')
+              // 종목수(max_positions)는 死 — 사이징은 금액모델(종목당 금액)이 통제, 종목수는 파생(2026-08-29). 편집필드 제거.
               + _regimeSetField('손절선 (%)', 'rset-stop_loss_rate-' + set.id, ((sc.stop_loss_rate || 0) * 100).toFixed(2), 'number', '-20', '0')
               + _regimeSetField('목표 익절 (%)', 'rset-take_profit_rate-' + set.id, ((sc.take_profit_rate || 0) * 100).toFixed(2), 'number', '0', '30', '기록용 — 실제 청산 미적용')
               + _regimeSetField('트레일링 발동 (%)', 'rset-trailing_activate_profit-' + set.id, ((sc.trailing_activate_profit || 0) * 100).toFixed(2), 'number', '0', '30')

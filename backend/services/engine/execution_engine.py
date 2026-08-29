@@ -33,7 +33,10 @@ def resolve_execution_sizing(
 
 # 매매 엔진이 관리하는 설정 키(Settings 화면 ⑥ 그룹)
 EXEC_SETTING_KEYS = [
-    "sizing.model_active", "sizing.per_position_rate_min", "risk.max_position_rate_per_stock",
-    "sizing.positions_min", "sizing.positions_max", "exploration.deploy_target_rate",
-    "sizing.surge_per_position_rate_max",
+    # 2026-08-29 PM: 종목수 결정 폐지 → 종목당 금액 통제. positions_min/max·per_position_rate_min은
+    # 死(무결성 백스톱)라 설정화면에서 제외.
+    "sizing.model_active",
+    "sizing.per_position_min_krw", "sizing.per_position_max_krw",
+    "exploration.deploy_target_rate",
+    "sizing.surge_per_position_rate_max", "risk.max_position_rate_per_stock",
 ]
