@@ -12,12 +12,13 @@ import functools
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 
 from .engine.market_tone import get_today_market_tone, run_market_tone_analysis
 from .kis.common.client import kis_client
@@ -1154,8 +1155,67 @@ async def job_ops_watchdog() -> None:
         result = run_ops_watchdog()
         if result.get("created"):
             logger.warning("WARN: [OpsWatchdog] 신규 이상 %d건 기록", result["created"])
+        # ④ 신규 CRITICAL은 Alert Center(DB)에만 두지 않고 텔레그램으로 즉시 푸시(2026-08-31).
+        # 8/31처럼 '거래준비 미완료'·'장중 봇 공백'이 콘솔을 열어야만 보이던 격차를 메운다.
+        # dedup으로 하루 1회만 생성되므로 텔레그램도 CRITICAL당 하루 1회.
+        for alert in result.get("critical_alerts", []):
+            try:
+                from .alert_service import send_telegram_alert
+                await send_telegram_alert(f"🔴 감시봇 CRITICAL — {alert['title']}", alert["detail"])
+            except Exception as tg_exc:
+                logger.warning("WARN: [OpsWatchdog] CRITICAL 텔레그램 실패 title=%s — %s",
+                               alert.get("title"), tg_exc)
     except Exception as exc:
         logger.error("FAIL: [OpsWatchdog] 감시 실패 — reason=%s", exc)
+
+
+async def job_startup_prep_catchup() -> None:
+    """③ 기동 시 거래준비 catch-up — 서버가 prep 시각에 죽어 있어 prep을 통째로 놓친 경우 복구.
+
+    misfire_grace_time은 '스케줄러가 살아있었지만 잠깐 바빴던' 지연만 잡는다. 프로세스 자체가
+    그 시각에 죽어 있었으면(08-28·8/31 오후형 리부팅) 09:05 잡이 아예 안 뜬다 → 기동 직후 여기서
+    오늘 활성 plan 없음을 확인하고 거래준비를 1회 복구 실행한다. 가드로 오탐 방지:
+      · 거래일 아니면 스킵  · prep 정상시각 이전이면 스킵(정상 잡이 곧 실행)
+      · 14:30 지나면 스킵(장 거의 끝, 실익 없음)  · 이미 활성 plan 있으면 스킵(중복 방지)
+    plan만 재생성하며 S6 활성은 하지 않는다(기존 DE 워치독이 담당) → 장중재기동 레짐 되돌림과 무관.
+    """
+    try:
+        from .db import get_connection
+        from .engine.trading_calendar import is_trading_day
+
+        now = datetime.now(ZoneInfo("Asia/Seoul"))
+        td = now.strftime("%Y-%m-%d")
+        if not is_trading_day(td):
+            return
+        mins = now.hour * 60 + now.minute
+        # prep 정상시각(09:05) 이전이면 정상 스케줄이 실행하므로 스킵. 09:10~14:30만 catch-up 대상.
+        if mins < 9 * 60 + 10:
+            return
+        if mins > 14 * 60 + 30:
+            return  # 장 거의 끝 — catch-up 실익 없음
+        with get_connection() as conn:
+            active = conn.execute(
+                "SELECT COUNT(*) FROM daily_trading_plans WHERE trade_date=? AND status='active'",
+                (td,),
+            ).fetchone()
+        if active and int(active[0] or 0) > 0:
+            return  # 오늘 활성 plan 이미 있음 — 정상 준비됨
+        logger.warning(
+            "RECOVER: [TradePrep] 기동 시 오늘 활성 plan 없음(prep 놓침 추정) — catch-up 실행 td=%s now=%s",
+            td, now.strftime("%H:%M"),
+        )
+        await job_trade_preparation_pipeline()
+        try:
+            from .alert_service import send_telegram_alert
+            await send_telegram_alert(
+                "🟠 거래준비 catch-up 실행",
+                f"서버가 거래준비 시각에 미가동 → 기동 직후({now:%H:%M} KST) 거래준비 1회 복구 실행. "
+                "오늘 Daily Plan 재생성 시도. (리부팅으로 오전 매매 놓침 방지)",
+            )
+        except Exception:
+            pass
+    except Exception as exc:
+        logger.warning("WARN: [TradePrep] 기동 catch-up 실패 — %s", exc)
 
 
 async def job_eod_liquidation() -> dict[str, Any]:
@@ -1754,6 +1814,11 @@ def _build_scheduler() -> AsyncIOScheduler:
 
     scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
 
+    # ⚠️ 아침 1회성 임계 잡(S2·거래준비·S6)은 misfire_grace_time+coalesce 필수.
+    # 2026-08-31 참사: 거래준비(09:05) 잡이 이벤트 루프 지연으로 1.1초 밀려 APScheduler 기본
+    # 유예(1초)를 넘겨 통째로 스킵 → 유니버스·스크리닝·Plan 전무 → 하루 매매 0. 10분 유예로
+    # 루프가 잠깐 바빠도 곧 실행되게 하고, 밀린 실행이 겹치면 1회만 실행(coalesce)한다.
+    _CRIT_MORNING_GRACE = 600  # 초. 이보다 더 밀리면 실행보다 알림(ops_watchdog)이 맞음.
     hour, minute = _parse_time("premarket_tone")
     scheduler.add_job(
         job_premarket_market_tone,
@@ -1761,6 +1826,8 @@ def _build_scheduler() -> AsyncIOScheduler:
         id="job_premarket_market_tone",
         name="프리마켓 시장 톤 분석 (S2)",
         replace_existing=True,
+        misfire_grace_time=_CRIT_MORNING_GRACE,
+        coalesce=True,
     )
     hour, minute = _parse_time("trade_prep")
     scheduler.add_job(
@@ -1769,6 +1836,8 @@ def _build_scheduler() -> AsyncIOScheduler:
         id="job_trade_preparation_pipeline",
         name="거래준비 프로세스 S1~S5-A",
         replace_existing=True,
+        misfire_grace_time=_CRIT_MORNING_GRACE,
+        coalesce=True,
     )
     hour, minute = _parse_time("s6")
     scheduler.add_job(
@@ -1777,6 +1846,8 @@ def _build_scheduler() -> AsyncIOScheduler:
         id="job_decision_engine_start",
         name="Decision Engine 활성화",
         replace_existing=True,
+        misfire_grace_time=_CRIT_MORNING_GRACE,
+        coalesce=True,
     )
     # 매수 엔진 자동복구 워치독 — 장중(09~15시) 2분 간격. should_be_active 플래그와
     # 긴급정지 상태를 보고 "켜져 있어야 하는데 꺼진" 엔진만 재활성화한다.
@@ -1987,6 +2058,17 @@ def _build_scheduler() -> AsyncIOScheduler:
             replace_existing=True,
             misfire_grace_time=300,
         )
+
+    # ③ 거래준비 catch-up — 기동 45초 뒤 1회. 서버가 prep 시각에 죽어 있어(리부팅/크래시)
+    # 09:05 잡이 아예 안 뜬 날, 기동 직후 오늘 활성 plan 없으면 거래준비를 복구 실행한다.
+    scheduler.add_job(
+        job_startup_prep_catchup,
+        DateTrigger(run_date=datetime.now(ZoneInfo("Asia/Seoul")) + timedelta(seconds=45)),
+        id="job_startup_prep_catchup",
+        name="거래준비 catch-up (기동 시 1회)",
+        replace_existing=True,
+        misfire_grace_time=120,
+    )
 
     return scheduler
 

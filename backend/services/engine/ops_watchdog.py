@@ -781,12 +781,16 @@ def run_ops_watchdog(now: datetime | None = None) -> dict:
         anomalies.append((hb[0], hb[1], hb[2]))
 
     created = 0
+    # 신규 생성된 CRITICAL만 텔레그램 푸시 대상(중복 억제된 것·WARNING은 제외 — 도배 방지).
+    critical_pushes: list[dict] = []
     for title, detail, severity in anomalies:
         if _alert_exists(td, title):
             continue
         try:
             create_alert("ops_watch", title, severity, detail, trade_date=td)
             created += 1
+            if severity == "CRITICAL":
+                critical_pushes.append({"title": title, "detail": detail})
             logger.warning("OPS-ANOMALY: [%s] %s — %s", severity, title, detail[:160])
         except Exception as exc:
             logger.warning("WARN: [OpsWatchdog] alert 생성 실패 title=%s — %s", title, exc)
@@ -813,6 +817,7 @@ def run_ops_watchdog(now: datetime | None = None) -> dict:
                 detail = f"conformance {len(conf)}건: " + " / ".join(conf[:5])
                 create_alert("ops_watch", title, "CRITICAL", detail, trade_date=td)
                 created += 1
+                critical_pushes.append({"title": title, "detail": detail})
                 logger.warning("OPS-CONFORM: [전략] 불일치 %d건 — %s", len(conf), detail[:160])
     except Exception as exc:
         logger.warning("WARN: [OpsWatchdog] 전략 사양 체크 실패 — %s", exc)
@@ -821,4 +826,10 @@ def run_ops_watchdog(now: datetime | None = None) -> dict:
         "SUCCESS: [OpsWatchdog] td=%s checks=%d anomalies=%d created=%d",
         td, checks_run, len(anomalies), created,
     )
-    return {"checks": checks_run, "anomalies": len(anomalies), "created": created}
+    return {
+        "checks": checks_run,
+        "anomalies": len(anomalies),
+        "created": created,
+        # job_ops_watchdog(async)가 이 CRITICAL들을 텔레그램으로 푸시 (2026-08-31 ④).
+        "critical_alerts": critical_pushes,
+    }

@@ -538,3 +538,28 @@ def test_trade_prep_missing_is_critical(tmp_path, monkeypatch):
         _ddl(conn)
         res = ow._chk_trade_prep(conn, _TD)
         assert res is not None and "미완료" in res[0] and len(res) == 2
+
+
+# ═══════════ v3 ④: CRITICAL 텔레그램 푸시 대상 수집 ═══════════
+
+def test_run_ops_watchdog_collects_critical_alerts(tmp_path, monkeypatch):
+    """신규 CRITICAL은 result['critical_alerts']에 담긴다(job_ops_watchdog가 텔레그램). WARNING 제외."""
+    _iso_db(tmp_path, monkeypatch, full=True)
+    now = dt.datetime(2026, 8, 24, 9, 30, tzinfo=ow.KST)  # 월요일·거래준비 게이트(09:21) 이후
+    monkeypatch.setattr(ow, "_now_kst", lambda: now)
+    result = ow.run_ops_watchdog(now=now)
+    assert "critical_alerts" in result
+    titles = [a["title"] for a in result["critical_alerts"]]
+    # 데이터 전무 → 거래준비 미완료 CRITICAL 발화
+    assert any("거래준비" in t for t in titles), titles
+    # WARNING(S3 유니버스 없음)은 critical_alerts에 없어야
+    assert all("유니버스" not in t for t in titles), titles
+
+
+def test_run_ops_watchdog_no_critical_when_prepared(tmp_path, monkeypatch):
+    """비거래일이면 critical_alerts는 빈 리스트(스킵)."""
+    _iso_db(tmp_path, monkeypatch, full=True)
+    now = dt.datetime(2026, 8, 23, 9, 30, tzinfo=ow.KST)  # 일요일 = 비거래일
+    monkeypatch.setattr(ow, "_now_kst", lambda: now)
+    result = ow.run_ops_watchdog(now=now)
+    assert result.get("critical_alerts", []) == [] or "skipped" in result

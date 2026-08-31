@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     KIS_RATE_LIMIT_RPS: Optional[float] = None
     KIS_RATE_LIMIT_NEW_ACCOUNT_RPS: float = 2.0
     KIS_RATE_LIMIT_STANDARD_RPS: float = 20.0
-    KIS_RATE_LIMIT_VIRTUAL_RPS: float = 5.0  # 모의(VTS)는 공식상 실전(20)보다 현저히 낮음. 15→5 (2026-06-16, EGW00201 102회/세션)
+    KIS_RATE_LIMIT_VIRTUAL_RPS: float = 3.0  # 모의(VTS)는 공식상 실전(20)보다 현저히 낮음. 15→5(2026-06-16)→3(2026-08-31): 5에서도 EGW00201 지속, 아침 prep 루프 지연(misfire) 기여. 모의 공식 ~2rps에 근접. 장중 응답성 위해 2 대신 3.
     KIS_BULK_CONCURRENCY: Optional[int] = None
     APP_DB_PATH: str = "data/stock_trading_bot.sqlite3"
     APP_ADMIN_USERNAME: str = "admin"
