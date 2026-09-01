@@ -42,9 +42,10 @@ def test_active_budget_rate_from_applied_settings(monkeypatch):
 def test_seed_sets_carry_budget_rate():
     from backend.services.db import _default_regime_sets
     sets = {s["id"]: s for s in _default_regime_sets()}
-    assert sets["SET-RISK_ON"]["settings"]["daily_budget_rate"] == 0.90
+    # 레짐 적응형 투입율 (PM 2026-09-01: 좋은장 시원·나쁜장 조금)
+    assert sets["SET-RISK_ON"]["settings"]["daily_budget_rate"] == 0.95
     assert sets["SET-NEUTRAL"]["settings"]["daily_budget_rate"] == 0.80
-    assert sets["SET-RISK_OFF"]["settings"]["daily_budget_rate"] == 0.50
+    assert sets["SET-RISK_OFF"]["settings"]["daily_budget_rate"] == 0.40
     assert sets["SET-VOLATILE"]["settings"]["daily_budget_rate"] == 0.30
 
 

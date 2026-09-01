@@ -178,7 +178,7 @@ def _default_regime_sets() -> list[dict[str, Any]]:
                 "new_entry_allowed": True,
                 "trailing_activate_profit": 0.04, # +4% 이후 트레일링 발동
                 "trailing_stop_rate": 0.02,       # 2% 되돌리면 청산
-                "daily_budget_rate": 0.90,        # 일일 자본배분 비율 90%
+                "daily_budget_rate": 0.95,        # 일일 배포율 95% — 좋은장 시원하게(PM 2026-09-01)
             },
             "priority": 10,
         },
@@ -210,7 +210,7 @@ def _default_regime_sets() -> list[dict[str, Any]]:
                 "new_entry_allowed": True,         # 모의계좌: 허용 (실계좌: 실적 없으면 차단)
                 "trailing_activate_profit": 0.015,
                 "trailing_stop_rate": 0.008,
-                "daily_budget_rate": 0.50,        # 일일 자본배분 비율 50%
+                "daily_budget_rate": 0.40,        # 일일 배포율 40% — 나쁜장 조금만(PM 2026-09-01)
             },
             "priority": 10,
         },
