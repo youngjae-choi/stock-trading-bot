@@ -276,7 +276,8 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
     now_expr = "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
     defaults = [
         ("risk.daily_loss_limit_percent", -2.0, "number", "일일 손실한도(%)"),
-        ("risk.max_positions", 5, "number", "최대 동시 보유 종목 수"),
+        # risk.max_positions(死 중복 count 설정) 시드 제거 2026-09-01 — 종목수는 결정/캡하지 않음.
+        # 최대 종목수 단일출처=resolve_max_positions(sizing.positions_max 19, 안전 fallback), 주 제어=배포캡 95%.
         ("risk.max_position_rate_per_stock", 0.10, "number", "종목당 최대 투자 비중"),
         ("kis.rate_limit_profile", settings.KIS_RATE_LIMIT_PROFILE, "string", "KIS 호출 제한 프로필"),
         ("engine.mode", "MONITOR", "string", "자동매매 엔진 기본 운용 모드"),

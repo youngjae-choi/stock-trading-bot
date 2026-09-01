@@ -197,9 +197,9 @@ test('settings and trading data persist through authenticated APIs', async ({ re
   const settingsPayload = await settingsResponse.json();
   expect(Array.isArray(settingsPayload.payload.items)).toBeTruthy();
 
-  const updateResponse = await request.put(`${backendUrl}/api/v1/settings/risk.max_positions`, {
+  const updateResponse = await request.put(`${backendUrl}/api/v1/settings/risk.max_position_rate_per_stock`, {
     headers,
-    data: { value: 5, value_type: 'number', description: '최대 보유 종목' },
+    data: { value: 0.10, value_type: 'number', description: '종목당 최대 투자 비중' },
   });
   expect(updateResponse.ok()).toBeTruthy();
 

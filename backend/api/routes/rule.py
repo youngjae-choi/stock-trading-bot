@@ -27,9 +27,12 @@ logger = logging.getLogger("RuleAPI")
 
 
 def _global_risk() -> dict[str, Any]:
+    # max_positions 단일출처 = resolve_max_positions(=sizing.positions_max 19, 안전 fallback).
+    # 死 중복설정 risk.max_positions(5)는 제거(2026-09-01) — 표시도 단일출처로 통일.
+    from ...services.engine.strategy_playbook import resolve_max_positions
     return {
         "daily_loss_limit": float(get_setting("risk.daily_loss_limit_percent", -2.0) or -2.0),
-        "max_positions": int(get_setting("risk.max_positions", 5) or 5),
+        "max_positions": int(resolve_max_positions()),
         "max_position_rate_per_stock": float(get_setting("risk.max_position_rate_per_stock", 0.10) or 0.10),
         "force_exit_time": _clock_with_seconds(get_setting("risk.force_exit_time", "15:20") or "15:20", "15:20:00"),
         "new_entry_cutoff_time": _clock_with_seconds(

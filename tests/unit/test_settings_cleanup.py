@@ -19,6 +19,9 @@ REMOVED_KEYS = [
     "override_take_profit_rate",
     "exploration.budget_rate",
     "exploration.max_positions",
+    # 死 중복 count 설정 제거 2026-09-01 — 종목수 결정/캡 없음(배포캡·금액모델 통제).
+    # 최대 종목수 단일출처=resolve_max_positions(sizing.positions_max 19, 안전 fallback).
+    "risk.max_positions",
 ]
 
 
@@ -32,7 +35,6 @@ def test_removed_keys_are_not_seeded(tmp_path, monkeypatch):
 def test_kept_keys_still_seeded(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "APP_DB_PATH", str(tmp_path / "s.sqlite3"))
     db_mod.initialize_database()
-    assert get_setting("risk.max_positions", None) is not None
     assert get_setting("exploration.deploy_target_rate", None) is not None
 
 

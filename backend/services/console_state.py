@@ -742,8 +742,8 @@ def get_console_overview() -> dict[str, Any]:
 
     logs = sorted(logs, key=lambda x: x["time"], reverse=True)[:10]
 
-    # 11. Risk limits — max_positions는 Settings(risk.max_positions) 단일출처 (2026-06-11:
-    # RulePack 기본 5가 표시돼 PM 설정 20과 어긋나던 문제). 손실한도는 RulePack 우선 유지.
+    # 11. Risk limits — max_positions 단일출처=resolve_max_positions(sizing.positions_max 19,
+    # 안전 fallback). 死 중복 risk.max_positions(5)는 제거(2026-09-01). 손실한도는 RulePack 우선 유지.
     max_positions = 19
     daily_loss_limit_pct = -2.0
     try:

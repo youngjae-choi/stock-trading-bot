@@ -18,7 +18,7 @@ TUNABLE_SETTINGS: dict[str, tuple[float, float]] = {
     "engine.min_volume_ratio": (1.0, 5.0),
     "risk.max_position_rate_per_stock": (0.01, 0.30),
     "risk.daily_loss_limit_percent": (-10.0, -0.5),
-    "risk.max_positions": (1, 20),
+    # risk.max_positions 제거 2026-09-01 — 死 중복 count 설정(종목수 결정/캡 없음, 배포캡·금액모델로 통제).
 }
 
 
