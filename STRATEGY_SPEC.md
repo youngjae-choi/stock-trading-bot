@@ -157,6 +157,8 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 
 > 예: 확신 1.0 → 종목당 2,000만(집중, ~4개) / 확신 0.0 → 500만(분산, ~17개). **레짐→종목수 로직 완전 제거**(구 `_calc_budget_qty` 예산÷종목수 균등분배·`select_sizing_params` 레짐 max_positions 삭제). 레짐SET `max_positions`(12/7/4/2)·`risk.max_positions`(제거 2026-09-01)·`sizing.positions_min/max`([6,19])는 **死**(무결성 백스톱·표시용). PM 결정 2026-08-29: 종목수 아닌 금액 통제.
 > ✅ `engine.exploration_mode` **완전 제거**(2026-08-22) — 매수=baseline S4/S5만. `exploration.deploy_target_rate`(95%)만 사이징 배포한도로 잔존(=⑥ 예수금투입목표). §A-7 #2 해소.
+>
+> **배포 게이트 = 동시배포율(수확 재활용 가능), 레짐 적응형 (복원 2026-09-01):** 신규매수는 `order_preflight`에서 **동시배포율(`(총평가−예수금+inflight)/총평가`) ≥ 레짐율**이면 차단. 레짐율=`daily_capital.get_active_budget_rate`(레짐 SET `daily_budget_rate` — **좋은장↑·나쁜장↓** = "벌 수 있는 날 시원하게, 나쁜 날 조금만"). **누적매수 캡이 아니라 동시배포 기준**이라 **수확(매도)하면 룸이 회복돼 좋은 종목 재매수 가능**(자본 재활용). ⚠ **회귀사고:** 2026-08-22 탐색모드 제거 때 `order_executor`가 preflight에 `deploy_target_rate`를 안 넘겨(=0) 동시게이트가 꺼지고 **누적캡(수확 무시)이 되살아나 오후 좋은 종목이 "일일 투입예산 소진"으로 차단**(9/1 900270·368600). 2026-09-01 배선 복원(`_current_deployed` 분자, `get_active_budget_rate` 넘김). 과회전 가드(재진입·쿨다운·`max_replacement_per_symbol`)는 별도 유지.
 
 **확신도(conviction) 모델** — 위 사이징의 "확신"을 정하는 법. 구현: `strategy_playbook.resolve_conviction`.
 `확신 = regime_weight × 레짐점수 + (1−regime_weight) × 눌림점수` (전부 설정 = 언제든 수정).

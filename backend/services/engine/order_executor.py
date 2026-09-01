@@ -339,8 +339,20 @@ class OrderExecutor:
                 return {"ok": False, "reason": "no_deployable_room", "symbol": symbol}
 
             current_pos_count = len(position_manager.get_positions())
-            # 탐색모드 제거(2026-08-22) — deploy_target 배포한도 없이 baseline preflight.
-            preflight = run_preflight(signal, final_rule, current_positions_count=current_pos_count)
+            # 동시배포 게이트 복원(2026-09-01) — 2026-08-22 탐색모드 제거 때 deploy_target 인자를
+            # 안 넘겨, 수확해도 룸이 안 도는 '누적 예산캡'이 되살아나 오후에 좋은 종목이 차단됐다
+            # (900270 14:00·368600 14:59 "일일 투입예산 소진"). preflight에 레짐 적응형 투입율
+            # (get_active_budget_rate: 좋은장↑·나쁜장↓)·총평가·현재 동시배포액을 넘기면, 누적캡을
+            # 건너뛰고 '동시배포율 ≥ 레짐율' 게이트가 제어 → 수확한 현금이 룸으로 돌아와 새 좋은
+            # 종목 매수 가능. PM: "벌 수 있는 날 시원하게, 나쁜 날 조금만"(SSOT 레짐 적응형).
+            from .daily_capital import get_active_budget_rate
+            _deploy_rate = get_active_budget_rate(today)
+            _total_eval = self._extract_total_eval(balance)
+            _deployed_now = self._current_deployed(_total_eval, deposit)
+            preflight = run_preflight(
+                signal, final_rule, current_positions_count=current_pos_count,
+                deployed_value=_deployed_now, total_eval=_total_eval, deploy_target_rate=_deploy_rate,
+            )
             if not preflight["ok"]:
                 logger.warning(
                     "BLOCK: [S7] Pre-Flight 차단 signal_id=%s symbol=%s reason=%s",
@@ -443,6 +455,17 @@ class OrderExecutor:
     def _effective_deployable(self, deposit: float, buffer: float) -> float:
         """사이징용 가용액 = 가용현금 - 버퍼 - 제출중 금액."""
         return max(0.0, deposit - buffer - self._inflight_amount())
+
+    def _current_deployed(self, total_eval: float, deposit: float) -> float:
+        """현재 동시배포액(배포 게이트 분자) = (총평가 − 예수금) + 제출중 매수금액.
+
+        총평가 = 예수금 + 보유평가액이므로 (총평가−예수금)=현재 보유 배포액. 여기에 아직 잔고에
+        안 잡힌 inflight 매수를 더해 버스트 과배포를 막는다. 수확(매도)하면 보유평가↓·예수금↑ →
+        배포액이 줄어 게이트 룸이 회복된다(누적캡과 달리 재활용 가능). total_eval≤0이면 0.
+        """
+        if total_eval <= 0:
+            return 0.0
+        return max(0.0, total_eval - deposit) + self._inflight_amount()
 
     def _todays_inverse_buy_amount(self, today: str) -> float:
         """오늘 인버스 1x 종목의 누적 매수금액 (종목명 기반 판정, 플레이북 예산 관리용)."""

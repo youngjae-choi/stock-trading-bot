@@ -49,3 +49,30 @@ def test_effective_deploy_includes_inflight(monkeypatch):
     deployable = ex._effective_deployable(deposit, buffer=5_000_000.0)
     assert deployed == 90_000_000.0
     assert deployable == 5_000_000.0  # 100M - 5M버퍼 - 90M inflight
+
+
+# ── 동시배포 게이트 분자 _current_deployed (2026-09-01 게이트 배선 복원) ──
+
+def test_current_deployed_is_holdings_plus_inflight(monkeypatch):
+    """동시배포액 = (총평가 − 예수금) + inflight. 배포 게이트가 이 값/총평가로 판정."""
+    ex = _fresh_executor()
+    t = [500.0]
+    monkeypatch.setattr(oe.time, "monotonic", lambda: t[0])
+    # 총평가 100M · 예수금 30M → 보유배포 70M. + inflight 5M = 75M
+    ex._note_inflight_buy(5_000_000)
+    assert ex._current_deployed(100_000_000.0, 30_000_000.0) == 75_000_000.0
+
+
+def test_current_deployed_frees_room_after_harvest():
+    """수확(매도)하면 보유평가↓·예수금↑ → 동시배포액 감소 = 룸 회복(누적캡과 다른 핵심)."""
+    ex = _fresh_executor()
+    before = ex._current_deployed(100_000_000.0, 20_000_000.0)  # 80M 배포
+    after = ex._current_deployed(100_000_000.0, 50_000_000.0)   # 수확으로 현금 50M → 50M 배포
+    assert before == 80_000_000.0 and after == 50_000_000.0
+    assert after < before  # 수확분이 룸으로 회복됨
+
+
+def test_current_deployed_zero_when_total_eval_unknown():
+    """총평가 조회 실패(≤0)면 0 반환 → 게이트가 count fallback으로 안전 전환."""
+    ex = _fresh_executor()
+    assert ex._current_deployed(0.0, 0.0) == 0.0
