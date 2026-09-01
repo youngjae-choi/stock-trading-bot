@@ -885,6 +885,17 @@ async def poll_once(trade_date: str) -> dict[str, Any]:
                 _CCLD_FIELD_MISSING.pop(order_id, None)
                 _CCLD_MISSING_ALERTED.discard(order_id)
                 ccld_qty = _to_int(raw_ccld_qty or "0")
+                # 유령매도 근절(2026-09-01): output2 tot_ccld_qty가 로컬 주문수량을 초과하면
+                # KIS 주문번호 매핑 오염/재사용으로 '다른 주문' 데이터를 받은 것 → 로컬 주문수량으로
+                # 클램프. (079650: 주문 1068인데 KIS가 tot_ord_qty=4270·ccld=4014 반환→partial 경로가
+                # 4014 기록·잔량 3202 재주문 위험.) filled 경로(_make_output2_fill_data)엔 이미 클램프 존재.
+                _local_ord_qty = _to_int(order.get("qty"))
+                if _local_ord_qty > 0 and ccld_qty > _local_ord_qty:
+                    logger.warning(
+                        "WARN: [FillPoller] output2 ccld_qty capped — order_id=%s symbol=%s raw_ccld=%d local_order_qty=%d (KIS 주문번호 매핑 오염 의심)",
+                        order_id, symbol, ccld_qty, _local_ord_qty,
+                    )
+                    ccld_qty = _local_ord_qty
                 if ccld_qty == 0:
                     logger.info(
                         "INFO: [FillPoller] output2 미체결 symbol=%s order_no=%s tot_ccld_qty=0",
@@ -893,8 +904,10 @@ async def poll_once(trade_date: str) -> dict[str, Any]:
                     )
                     continue
 
-                # 부분체결 인식 — 주문수량은 output2 tot_ord_qty 우선, 없으면 로컬 주문수량
-                ord_qty = _to_int(_kis_value(out2, "tot_ord_qty") or order.get("qty"))
+                # 부분체결 인식 — 주문수량은 **로컬 order.qty 우선**(우리가 낸 주문이 회계 기준),
+                # KIS tot_ord_qty는 폴백. (2026-09-01: KIS가 매핑 오염으로 tot_ord_qty=4270을 주면
+                # ccld=1068을 partial로 오분류→잔량 3202 재주문. 로컬 주문 1068을 기준으로 해야 filled로 확정.)
+                ord_qty = _to_int(order.get("qty")) or _to_int(_kis_value(out2, "tot_ord_qty"))
                 rmn_qty = max(ord_qty - ccld_qty, 0)
                 kis_data = _make_output2_fill_data(order, out2)
                 if ord_qty > 0 and ccld_qty < ord_qty:

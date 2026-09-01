@@ -52,7 +52,7 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 - ⚠ **confidence 게이트 스케일 문제(2026-08-24 발견)**: 신호 `confidence`=S4 `suitability_score`인데 **56%가 0.0·max 0.68**(sparse)라 임계 `min_ai_confidence` 0.60과 스케일 불일치 → 평시 게이트 OFF(저품질 통과)·방어레짐 전량차단(사고). **해법: conviction 품질게이트**(`engine.conviction_gate_min`, 레짐×눌림 0~1, `resolve_conviction`) — `_emit_signal`서 conv<임계 차단. **기본 0=OFF**(활성은 PM·분포검증 후 ~0.5 권장). suitability confidence는 표시/관찰용.
 - `_entry_gate_block_reason`(6게이트 순서): 손실3연패 하드차단 → 급락방어(인버스1x 예외) → **하락전환 매수중단 래치**(`get_entry_suspended` — down_transition서 걸고 up_transition서만 해제, `regime.transition_response_active` **활성 2026-08-23**) → new_entry_allowed → 칼리브레이션 → entry_fail 쿨다운 → 장중재진입(`intraday_max_stoploss_per_symbol` 2회)
 - VWAP 눌림 게이트: `entry_vwap_pullback_mode`(enforce)·`entry_max_vwap_dist_pct` / 레버리지: `leverage_restriction_mode`(exclude)
-- 통과→**사이징** `execution_engine.resolve_execution_sizing`: 확신도=`conviction.regime_weight`×레짐 + (1-w)×눌림 → 종목당 `sizing.per_position_rate_min`(5%)~`risk.max_position_rate_per_stock`(15%), 종목수 `sizing.positions_min/max`(6~19), 배포한도 `exploration.deploy_target_rate`(95%)
+- 통과→**사이징**(→ §A-4b 금액모델, 2026-08-29 PM): 확신도=`conviction.regime_weight`×레짐 + (1-w)×눌림 → 종목당 **절대금액** `sizing.per_position_min_krw`(500만)~`per_position_max_krw`(2000만), 배포한도 `exploration.deploy_target_rate`(95%). **종목수는 순수 파생**(배포가능액÷종목당금액) — 종목수 결정/캡 없음. `sizing.positions_min/max`([6,19])·`risk.max_positions`(5)는 死(안전 fallback·표시용).
 
 **⑤ 매도·모니터링 — S7 실행 / S8 Position Manager (실시간)**
 진입 즉시 손절/트레일 세팅(**출처 `engine.stop_source`=regime** → 당일 Regime SET `applied_settings`). **★ 변동성 재보정(2026-08-23)**: 종목 장중 9.4% 출렁 실측 → 손절을 노이즈(편도 4.7%) 밖으로 넓힘, 트레일도 넓게(러너 극대화), 방어=포지션수↓. `take_profit_rate`는 **항상 비활성**(rule_resolver `take_profit_enabled=False`) — 실익절=트레일+scaleout.
@@ -80,7 +80,7 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 
 > ⚠ **폭등·폭락은 별도 SET 아님** — 4-SET에 흡수(`_SET_MAP`): 폭등(+2.5%↑)→**risk_on SET**+사이징 확대(`surge_per_position_rate_max`), 폭락(-5%↓)→**risk_off SET**+flash_crash 방어(신규매수 봉쇄, 인버스1x만). 추세전환은 방향성 오버레이(SET 불변, 진입·트레일만 수정).
 
-> ⚠ **포지션 수 단일출처 = 사이징모델**(`sizing.positions_min/max` 6~19). `sizing.model_active=True`면 `order_executor`가 신모델 qty로 **override** → 레짐 SET `max_positions`(12/7/4/2)·`risk.max_positions`(5)는 **死**(표시/드리프트 대조용만). 방어=게이트 통과 감소+conviction 비중↓로 자연 축소.
+> ⚠ **포지션 수는 결정·캡하지 않는다**(→ §A-4b 금액모델, 2026-08-29 PM). 주 제어 = **투입율(배포캡 95%, 보유수 무관)** + 종목당 금액. `order_preflight`는 `deploy_target_rate>0 & total_eval>0`이면 **배포캡(95%)** 으로 차단(count 무관); count(`resolve_max_positions`=positions_max 19)는 **배포캡 미산출 시에만 쓰는 안전 fallback**. 레짐 SET `max_positions`(12/7/4/2)·`risk.max_positions`(5)·`positions_min/max`([6,19])는 **死**(안전 fallback·표시/드리프트 대조용). 방어=게이트 통과 감소+conviction 금액↓로 자연 축소.
 
 ### A-1. 레짐(장세) 탐지 — 30분 틱 (09:30~15:00)
 탐지는 `intraday_regime_monitor._judge_regime`(KOSPI·VIX 레벨) + `risk.flash_crash_*`(즉시 방어).
@@ -204,7 +204,7 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 
 | # | 이슈 | 실태 | 해결 방향 |
 |---|---|---|---|
-| 1 | ~~max_positions 다출처~~ **해소(2026-08-23 PM: 사이징모델 통일)** | 포지션 수 단일출처 = `sizing.positions_min/max`([6,19]). `sizing.model_active`=on이면 `order_executor`가 신모델 qty로 override → 레짐SET `max_positions`(12/7/4/2)·`risk.max_positions`(5)는 死(표시/드리프트 대조용). 주력 제약은 95% 배포캡. | ✅ 완료 |
+| 1 | ~~max_positions 다출처~~ **해소(2026-08-23→08-29 금액모델)** | **포지션 수 결정/캡 없음** — 주 제어=투입율(배포캡 95%, 보유수 무관)+종목당 금액(§A-4b). `order_preflight`는 배포캡으로 차단(count 무관), count(`resolve_max_positions`=19)는 배포캡 미산출 시 안전 fallback. 레짐SET `max_positions`(12/7/4/2)·`risk.max_positions`(5)·`positions_min/max`([6,19])는 死(안전 fallback·표시용). | ✅ 완료 |
 | 2 | ~~exploration_mode~~ **완전 제거(2026-08-22)** | `is_exploration_allowed`=하드False, 매수경로·UI·死설정 제거. 매수=baseline S4/S5만. | ✅ 완료 |
 | 3 | min_ai_confidence 타입 | DB에 문자열 `"0.60"` 저장(코드가 float coerce라 동작은 정상) | 숫자로 정규화(선택) |
 | 4 | flash_crash 상태플래그 | `flash_crash_defense_active=true`(date 8/19). 날짜스코프라 다음 거래일 자동해제(동작 정상) | 상태값이라 INTENT 제외 |

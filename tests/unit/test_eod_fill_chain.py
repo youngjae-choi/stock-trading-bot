@@ -138,6 +138,31 @@ def test_output2_full_fill_still_marks_filled(monkeypatch):
     assert result["filled"] == 1
 
 
+def test_output2_ccld_exceeds_local_order_qty_clamped(monkeypatch):
+    """유령매도 근절(2026-09-01): KIS output2가 로컬 주문수량보다 큰 tot_ord/tot_ccld를 줘도
+    (주문번호 매핑 오염) 로컬 주문수량으로 클램프 → 초과 기록·잔량 재주문 없이 filled 확정.
+
+    실사건: 079650 주문 1068주인데 KIS가 tot_ord_qty=4270·tot_ccld_qty=4014 반환 →
+    partial 경로가 4014를 기록(유령 2946주)하고 잔량 3202 재주문 위험까지.
+    """
+    order = _sell_order(qty=1068)
+    out2 = {
+        "odno": "0000012345",
+        "tot_ord_qty": "4270",   # KIS가 전혀 다른 주문 데이터 반환
+        "tot_ccld_qty": "4014",  # 로컬 주문(1068) 초과 → 유령
+        "pchs_avg_pric": "5372",
+    }
+    events = _setup_poll_output2(monkeypatch, order, out2)
+
+    result = asyncio.run(fp.poll_once("2026-06-12"))
+
+    assert events["partial"] == []          # 4014를 partial로 기록하면 안 됨
+    assert events["reorder"] == []          # 잔량(3202) 재주문 금지 — 유령 방지
+    assert len(events["filled"]) == 1       # 로컬 1068==1068 → filled 확정
+    assert int(events["filled"][0]["tot_ccld_qty"]) == 1068  # 로컬 주문수량으로 클램프
+    assert result["filled"] == 1
+
+
 def test_output2_partial_order_repolled_despite_existing_fill_row(monkeypatch):
     """partial 상태 주문은 fills 행이 이미 있어도 다음 폴링에서 계속 추적된다.
 
