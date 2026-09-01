@@ -169,7 +169,7 @@ def build_playbook(regime: str, regime_settings: dict | None = None,
     }
     gates = {  # 매수 게이트(엔진④) — 전 레짐 공통 값(레짐별 차등은 후속)
         "vwap_pullback_mode": getter("engine.entry_vwap_pullback_mode", "enforce"),
-        "entry_max_vwap_dist_pct": _f(getter, "engine.entry_max_vwap_dist_pct", 0.0),
+        "entry_max_vwap_dist_pct": _f(getter, "engine.entry_max_vwap_dist_pct", -1.0),  # VWAP -1%↓ 눌림만(BackDB검증 2026-09-01)
         "max_price_change_pct": _f(getter, "engine.max_price_change_pct", 4.0),
         "min_price_change_pct": _f(getter, "engine.min_price_change_pct", 1.5),
         "min_volume_ratio": _f(getter, "engine.min_volume_ratio", 1.5),
