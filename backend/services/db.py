@@ -194,7 +194,7 @@ def _default_regime_sets() -> list[dict[str, Any]]:
                 "new_entry_allowed": True,
                 "trailing_activate_profit": 0.025,
                 "trailing_stop_rate": 0.012,
-                "daily_budget_rate": 0.80,        # 일일 자본배분 비율 80%
+                "daily_budget_rate": 0.85,        # 일일 배포율 85% — 보합(PM 2026-09-01)
             },
             "priority": 10,
         },
