@@ -497,7 +497,7 @@
       return '<p class="muted">오늘 거래한 종목이 없습니다.</p>';
     }
 
-    // symbol → assignment 맵 (AI 진입 판단 이유)
+    // symbol → assignment 맵 (진입 판단 이유)
     var assignMap = {};
     assignments.forEach(function(a) { if (a.symbol) assignMap[a.symbol] = a; });
 
@@ -554,10 +554,10 @@
         + '</p>');
     }
 
-    // 종목별 AI 진입 판단 → 실제 결과
+    // 종목별 진입 판단 → 실제 결과
     var allPairs = completed.concat(inProgress);
     if (allPairs.length > 0) {
-      lines.push('<p style="margin-top:10px;font-size:12px;color:var(--muted)">종목별 내역 (AI 진입 판단 → 실제 결과):</p>');
+      lines.push('<p style="margin-top:10px;font-size:12px;color:var(--muted)">종목별 내역 (진입 판단 → 실제 결과):</p>');
       allPairs.forEach(function(p) {
         var a      = assignMap[p.symbol] || {};
         var reason = a.reason || a.entry_reason || null;
@@ -567,17 +567,30 @@
           : (p.status !== '매도완료' ? ' <span class="muted">(보유중)</span>' : '');
         lines.push('<p style="font-size:12px;padding-left:12px">'
           + '· <strong>' + escapeHtml(p.name || p.symbol) + '</strong>' + pctSpan
-          + (reason ? '<br><span style="color:var(--muted);padding-left:8px">AI 판단: ' + escapeHtml(reason.slice(0, 120)) + '</span>' : '')
+          + (reason ? '<br><span style="color:var(--muted);padding-left:8px">진입 판단: ' + escapeHtml(reason.slice(0, 120)) + '</span>' : '')
           + '</p>');
       });
     }
 
-    // 승률 평가
+    // 성과 평가 — 승률만이 아니라 계좌 손익·시장 맥락으로 판정한다.
+    // (수확전략은 작은 익절이 많아 승률이 구조적으로 낮게 나옴 → 승률 단독 판정은 오도. 하락장에서
+    //  소액 손실로 시장을 이겼으면 '방어 성공'이다. 2026-09-02: 죽은 confidence 판정 제거·시장대비 도입.)
     if (nCompleted > 0) {
+      var acctPct = (r.account_pnl_pct != null) ? r.account_pnl_pct : null;
+      var tone    = r.market_tone || '';
+      var down    = (tone === 'negative' || tone === 'defensive' || tone === 'bearish');
       var evalLine;
-      if (winRate >= 70)      evalLine = '<span class="good">✓ 승률 ' + winRate + '% — 진입 판단이 전반적으로 좋았습니다.</span>';
-      else if (winRate >= 50) evalLine = '<span style="color:var(--yellow,#e3b341)">△ 승률 ' + winRate + '% — 개선 여지가 있습니다.</span>';
-      else                    evalLine = '<span class="bad">✗ 승률 ' + winRate + '% — 진입 기준을 재검토할 필요가 있습니다.</span>';
+      if (acctPct != null && acctPct >= 0) {
+        evalLine = '<span class="good">✓ 계좌 +' + acctPct.toFixed(2) + '% 마감 — 수익 방어 성공 (승률 ' + winRate + '%).</span>';
+      } else if (acctPct != null && down && acctPct > -1.5) {
+        evalLine = '<span class="good">✓ 하락장에서 계좌 ' + acctPct.toFixed(2) + '%로 방어 — 시장 대비 선방 (승률 ' + winRate + '%는 수확전략 특성상 참고치).</span>';
+      } else if (acctPct != null && acctPct <= -1.5) {
+        evalLine = '<span class="bad">✗ 계좌 ' + acctPct.toFixed(2) + '% — 손실폭 확인 필요 (진입 눌림 깊이·손익비 점검).</span>';
+      } else if (winRate >= 50) {
+        evalLine = '<span style="color:var(--yellow,#e3b341)">△ 승률 ' + winRate + '% — 계좌 손익·시장 대비로 함께 판단하세요.</span>';
+      } else {
+        evalLine = '<span style="color:var(--yellow,#e3b341)">△ 승률 ' + winRate + '% — 수확전략은 승률이 낮게 나옵니다. 절대손익·시장 대비로 판단(진입 눌림 깊이 확인).</span>';
+      }
       lines.push('<p>' + evalLine + '</p>');
     }
 
@@ -649,7 +662,7 @@
       return '<p class="good">오늘은 손실 거래가 없었습니다.</p>';
     }
 
-    // symbol → AI 진입 판단 맵
+    // symbol → 진입 판단 맵
     var assignMap = {};
     assignments.forEach(function(a) { if (a.symbol) assignMap[a.symbol] = a; });
 
@@ -672,20 +685,14 @@
     }).join(' / ');
     lines.push('<p>유형: ' + typeDesc + '</p>');
 
-    if (avgConf != null) {
-      lines.push('<p>진입 시점 평균 confidence: <strong>' + (avgConf * 100).toFixed(1) + '%</strong>'
-        + (minConf != null ? ' (최저 ' + (minConf * 100).toFixed(1) + '%)' : '') + ' — '
-        + (avgConf < 0.45
-          ? '<span class="bad">낮은 confidence에서 진입한 케이스가 많습니다.</span>'
-          : '비교적 높은 confidence에서도 손실이 발생했습니다. 시장 외부 변수를 검토하세요.')
-        + '</p>');
-    }
+    // (confidence는 죽은 LLM 잔재 신호 — edge-backtest 361건으로 승패 무분리 증명(2026-09-02).
+    //  진입 품질은 confidence가 아니라 VWAP 눌림 깊이로 본다. 죽은-confidence 표시·조언 제거.)
 
     var exitDesc = Object.keys(byExit).map(function(e) { return e + ' ' + byExit[e] + '건'; }).join(' / ');
     lines.push('<p>청산 사유: ' + exitDesc + '</p>');
 
-    // 개별 종목 — AI 진입 판단 + 실제 손실 이유 함께 표시
-    lines.push('<p style="margin-top:10px;font-size:12px;color:var(--muted)">종목별 손실 내역 (AI 진입 판단 → 실제 손실 원인):</p>');
+    // 개별 종목 — 진입 판단 + 실제 손실 이유 함께 표시
+    lines.push('<p style="margin-top:10px;font-size:12px;color:var(--muted)">종목별 손실 내역 (진입 판단 → 실제 손실 원인):</p>');
     fp.forEach(function(f) {
       var a           = assignMap[f.symbol] || {};
       var entryReason = a.reason || a.entry_reason || null;
@@ -693,20 +700,20 @@
       var pctStr = f.pnl_pct != null ? ' <span class="bad">' + _pctStr(f.pnl_pct) + '</span>' : '';
       lines.push('<p style="font-size:12px;padding-left:12px">'
         + '· <strong>' + escapeHtml(f.symbol_name || f.symbol) + '</strong>' + pctStr
-        + (entryReason ? '<br><span style="color:var(--muted);padding-left:8px">AI 진입 판단: ' + escapeHtml(entryReason.slice(0, 100)) + '</span>' : '')
+        + (entryReason ? '<br><span style="color:var(--muted);padding-left:8px">진입 판단: ' + escapeHtml(entryReason.slice(0, 100)) + '</span>' : '')
         + (lossReason  ? '<br><span style="color:var(--red,#f85149);padding-left:8px">손실 원인: '  + escapeHtml(lossReason.slice(0, 100))  + '</span>' : '')
         + '</p>');
     });
 
-    // 반성 포인트
+    // 반성 포인트 — 결정론 기준(VWAP 눌림 깊이·손익비). 죽은 confidence 조언 제거(2026-09-02).
     var allEntryFail = Object.keys(byType).length === 1 && byType['entry_fail'];
     var allEod       = Object.keys(byExit).length === 1 && byExit['eod'];
-    var lowConf      = avgConf != null && avgConf < 0.45;
+    var avgLossPct   = fp.length ? fp.reduce(function(s, f){ return s + (f.pnl_pct || 0); }, 0) / fp.length : 0;
     var reflections  = [];
-    if (allEntryFail) reflections.push('손실 전 건이 진입 실패 유형 — 진입 조건 자체를 재검토하세요.');
-    if (allEod)       reflections.push('전 건 EOD 청산 — 장중 손절(-5~8%) 조건을 추가하면 손실을 줄일 수 있습니다.');
-    if (lowConf)      reflections.push('confidence가 낮은 종목을 진입하고 있습니다 — 임계값 상향을 권장합니다.');
-    if (!reflections.length) reflections.push('패턴이 뚜렷하지 않습니다 — AI 진입 판단과 실제 결과의 괴리를 분석하세요.');
+    if (allEntryFail) reflections.push('손실 전 건이 진입 실패 유형 — 얕은 진입(VWAP 위/추격) 여부를 확인하세요. 눌림 깊이(VWAP -1%↓)가 승패를 가릅니다.');
+    if (allEod && avgLossPct < -1.0) reflections.push('전 건 EOD 청산·평균손실 ' + avgLossPct.toFixed(1) + '% — 손실폭이 크면 레짐 손절이 늦게 걸리는지 점검.');
+    else if (allEod) reflections.push('전 건 EOD 청산·손실 소액 — 방향 대기 중 종가 청산으로 정상 범주. 과잉대응 불필요.');
+    if (!reflections.length) reflections.push('패턴이 뚜렷하지 않습니다 — 진입 눌림 깊이·손익비(평균수익 vs 평균손실)를 분석하세요.');
 
     lines.push('<p style="color:var(--red,#f85149);margin-top:8px">[반성] ' + reflections.join(' / ') + '</p>');
     return lines.join('');
@@ -768,8 +775,9 @@
         // 유효했던 override 그대로 추천
         oKeys.forEach(function(k) { recommend(k, overrides[k]); });
       } else if (completed.length > 0 && winRate < 0.5) {
-        add('<strong>파라미터 조정 재검토</strong> — 오늘 적용한 ' + oDesc
-          + ' 에도 불구하고 승률 ' + Math.round(winRate * 100) + '%. 원래 설정 복원 검토.');
+        add('<strong>오늘 파라미터 조정 참고</strong> — ' + oDesc
+          + ' 적용. 승률 ' + Math.round(winRate * 100) + '%지만 수확전략은 승률이 낮게 나오니 '
+          + '계좌 손익·시장 대비로 판단(승률만으로 설정 되돌리지 말 것).');
       }
     }
 
@@ -779,25 +787,24 @@
         + riskFactors.map(function(f) { return escapeHtml(f); }).join(' / '));
     }
 
-    // FP confidence 기반 → min_confidence 추천
-    if (fp.length >= 3 && avgConf != null && avgConf < 0.5) {
-      var rec = Math.ceil((avgConf + 0.07) * 20) * 5 / 100;  // 0.xx 형태
-      recommend('min_confidence', rec);
-      add('<strong>confidence 임계값 상향</strong> — 손실 ' + fp.length + '건 평균 진입 confidence <strong>'
-        + (avgConf * 100).toFixed(0) + '%</strong>. <code>min_confidence → '
-        + (rec * 100).toFixed(0) + '%</code> 적용 권장.');
+    // 손실 다수 → 진입 품질(VWAP 눌림 깊이) 점검. (confidence 자동추천 제거 2026-09-02 —
+    //  confidence는 죽은 신호이고, 방어레짐에서 전량 차단을 유발했다. 진짜 레버는 눌림 깊이.)
+    if (fp.length >= 3) {
+      add('<strong>진입 눌림 깊이 점검</strong> — 손실 ' + fp.length + '건. 얕은 진입(VWAP 위/추격)이 많으면 '
+        + '<code>engine.entry_max_vwap_dist_pct</code>를 더 낮춰(예 -1.5%) 깊은 눌림만 진입.');
     } else if (fp.length >= 2) {
-      add('<strong>진입 필터 재검토</strong> — 손실 ' + fp.length + '건. S3/S4 파라미터 점검 필요.');
+      add('<strong>진입 필터 재검토</strong> — 손실 ' + fp.length + '건. S3/S4 파라미터·VWAP 눌림 조건 점검.');
     } else if (fp.length === 1) {
       add('<strong>손실 종목 개별 확인</strong> — 단발 변수 가능성. 종목 뉴스·재무지표 재검토.');
     }
 
-    // EOD 청산 집중 → stop_loss_pct 추천
-    if (eodAll && fp.length > 0) {
-      recommend('stop_loss_pct', -0.06);
-      add('<strong>장중 손절 조건 추가</strong> — 손실 전 건 EOD 청산. <code>stop_loss_pct → -6%</code> 적용 권장.');
+    // EOD 청산 집중 → 손절 점검은 '손실이 클 때만'(소액 EOD는 방향대기 정상, 레짐 손절 -4% 이미 존재).
+    // (stop_loss_pct→-6% 자동추천 제거 2026-09-02 — 소액 손실에 과잉대응하던 오조언.)
+    var _avgLossR = fp.length ? fp.reduce(function(s, f){ return s + (f.pnl_pct || 0); }, 0) / fp.length : 0;
+    if (eodAll && fp.length > 0 && _avgLossR < -1.5) {
+      add('<strong>장중 손절 점검</strong> — EOD 청산·평균손실 ' + _avgLossR.toFixed(1) + '%. 레짐 손절(-4%)이 늦게 걸렸는지 확인.');
     } else if (eodAll && completed.length > 3) {
-      add('<strong>익절 조건 점검</strong> — 완료 거래 전 건 EOD 청산. <code>take_profit_pct</code> 재확인 권장.');
+      add('<strong>익절/트레일 점검</strong> — 완료 거래 전 건 EOD 청산. 트레일·scaleout(+2%)이 작동했는지 확인.');
     }
 
     // 놓친 기회

@@ -248,7 +248,8 @@ def _build_review_markdown(result: dict[str, Any]) -> str:
         recommendations.append(f"📊 손익 {realized_pnl_pct:+.2f}% — 현재 전략 유지하며 모니터링")
 
     if fp_count >= 2:
-        recommendations.append(f"⚠️ 손실 거래 {fp_count}건 — 진입 조건 confidence 임계값 상향 또는 종목 필터 강화 검토")
+        # confidence는 죽은 신호(edge-backtest 무분리 증명) — 진입 품질은 VWAP 눌림 깊이로 본다(2026-09-02).
+        recommendations.append(f"⚠️ 손실 거래 {fp_count}건 — 얕은 진입(VWAP 위/추격) 여부 점검. 눌림 깊이(entry_max_vwap_dist_pct)가 승패를 가름")
     elif fp_count == 1:
         recommendations.append("📌 손실 거래 1건 — 단발 변수 가능성, 진입 조건 재확인")
 
