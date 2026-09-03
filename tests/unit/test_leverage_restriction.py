@@ -82,6 +82,16 @@ def test_leverage_allowed_in_off_mode(engine_env, monkeypatch):
     assert _signal_count("0193T0") == 1  # off면 구동작(발행)
 
 
+def test_etn_blocked_by_exclusion_backstop(engine_env, monkeypatch):
+    """ETN은 진입 단일길목(_emit_signal) 제외 백스톱에서 차단 (2026-09-03: 570097 한투 엔달러선물
+    ETN이 S3/S4 필터를 뚫고 매수돼 초저유동+Q형 심볼 불일치로 청산 불능 stuck된 사고 재발방지).
+    레버리지 off여도(ETN은 레버리지 아님) 제외 백스톱은 항상 작동."""
+    de_mod, eng = engine_env
+    monkeypatch.setattr(de_mod, "get_setting", lambda k, d=None: "off" if k == "engine.leverage_restriction_mode" else d)
+    _emit(eng, "570097", "한투 엔달러선물 ETN(H)")
+    assert _signal_count("570097") == 0  # ETN 진입 차단
+
+
 def test_normal_stock_unaffected_in_exclude_mode(engine_env, monkeypatch):
     de_mod, eng = engine_env
     monkeypatch.setattr(de_mod, "get_setting", lambda k, d=None: "exclude" if k == "engine.leverage_restriction_mode" else d)

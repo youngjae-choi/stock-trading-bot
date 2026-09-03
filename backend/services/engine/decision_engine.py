@@ -950,6 +950,21 @@ class DecisionEngine:
                     return
                 logger.info("INFO: [S6] 인버스 1x 플레이북 허용 — 급락 방어 모드 symbol=%s name=%s", symbol, _name)
 
+        # ETN/ETF/파생 제외 백스톱(2026-09-03) — 570097 한투 엔달러선물 ETN이 S3/S4 제외필터를
+        # 뚫고 매수돼 초저유동+Q형/무Q형 심볼 불일치로 청산 불능(며칠 stuck)이 된 사고. S3/S4에만
+        # 있던 제외를 진입 단일길목에서 한 번 더 막아 모든 경로(베이스라인·모멘텀스캔·교체매매)를
+        # 커버한다. 보유분 청산은 영향 없음(진입만 차단). 인버스1x 플레이북은 위에서 이미 판정됨.
+        try:
+            from .intraday_profile import is_leverage_product
+            from .universe_filter import _is_excluded_product
+            # 레버리지/인버스는 위 블록(leverage_restriction_mode 존중)이 이미 관장하므로 제외 —
+            # off 모드가 허용하는 레버리지를 백스톱이 재차단하지 않게. ETN/ETF/액티브만 여기서 막는다.
+            if not is_leverage_product(_name) and _is_excluded_product(symbol, _name, allow_inverse_1x=True):
+                logger.info("INFO: [S6] SKIP ETN/ETF/파생 진입 차단(백스톱) symbol=%s name=%s", symbol, _name)
+                return
+        except Exception as _exc_exc:
+            logger.warning("WARN: [S6] 제외필터 백스톱 실패(fail-open) symbol=%s — %s", symbol, _exc_exc)
+
         confidence = _candidate_confidence(candidate)
 
         # ── Phase 2·3 진입 선별성 게이트 — 모든 진입 경로의 단일 길목 ──
