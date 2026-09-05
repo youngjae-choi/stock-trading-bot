@@ -115,7 +115,7 @@ def simulate_exit(path, entry_price, cfg):
             exit_floor = max(stop_price, peak * (1 - tr_stop))
         if lo <= exit_floor and remaining > 0:
             realized += remaining * (exit_floor / P - 1)
-            return (realized - 0.0) * 100
+            return realized * 100
         # 2) scaleout
         if not scaled and hi >= so_price:
             realized += so_ratio * (so_price / P - 1)

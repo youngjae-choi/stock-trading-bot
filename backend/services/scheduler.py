@@ -1152,15 +1152,18 @@ async def job_ops_watchdog() -> None:
     try:
         from .engine.ops_watchdog import run_ops_watchdog
 
-        result = run_ops_watchdog()
+        # run_ops_watchdog은 동기(sqlite 조회 + deadman httpx.get 3초)라 이벤트루프를 블로킹한다 —
+        # 워커 스레드로 오프로드해 루프 정지를 막는다(8/31 misfire=루프지연 계열 리스크 예방).
+        # get_connection()은 매 호출 새 커넥션 → 스레드 내부 생성·사용이라 check_same_thread 안전.
+        result = await asyncio.to_thread(run_ops_watchdog)
         if result.get("created"):
             logger.warning("WARN: [OpsWatchdog] 신규 이상 %d건 기록", result["created"])
         # ④ 신규 CRITICAL은 Alert Center(DB)에만 두지 않고 텔레그램으로 즉시 푸시(2026-08-31).
         # 8/31처럼 '거래준비 미완료'·'장중 봇 공백'이 콘솔을 열어야만 보이던 격차를 메운다.
         # dedup으로 하루 1회만 생성되므로 텔레그램도 CRITICAL당 하루 1회.
+        from .alert_service import send_telegram_alert
         for alert in result.get("critical_alerts", []):
             try:
-                from .alert_service import send_telegram_alert
                 await send_telegram_alert(f"🔴 감시봇 CRITICAL — {alert['title']}", alert["detail"])
             except Exception as tg_exc:
                 logger.warning("WARN: [OpsWatchdog] CRITICAL 텔레그램 실패 title=%s — %s",

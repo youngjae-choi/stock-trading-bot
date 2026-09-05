@@ -34,9 +34,13 @@ _PROFILES = ("LOW_VOL", "MID_VOL", "HIGH_VOL", "THEME_SPIKE")
 
 def _global_risk() -> dict[str, Any]:
     """system_settings에서 Global Risk Guard 값 조회."""
+    # max_positions 단일출처 = resolve_max_positions(sizing.positions_max 19, 안전 fallback).
+    # 死 중복설정 risk.max_positions(기본5) 제거(2026-09-01) — final_rule도 단일출처로 통일해
+    # rule.py·console_state(=19)와 일치시킨다(시드 제거 후 '표시 19 vs 룰 5' 괴리 방지).
+    from .strategy_playbook import resolve_max_positions
     return {
         "daily_loss_limit": float(get_setting("risk.daily_loss_limit_percent", -2.0) or -2.0),
-        "max_positions": int(get_setting("risk.max_positions", 5) or 5),
+        "max_positions": int(resolve_max_positions()),
         "max_position_rate_per_stock": float(get_setting("risk.max_position_rate_per_stock", 0.10) or 0.10),
         "force_exit_time": _clock_with_seconds(get_setting("risk.force_exit_time", "15:20") or "15:20", "15:20:00"),
         "new_entry_cutoff_time": _clock_with_seconds(

@@ -337,11 +337,13 @@ def _active_max_positions(td: str) -> int | None:
 def _blocked_symbol_count(conn) -> int:
     """현재 유효한 하드차단 종목 수(symbol_entry_blocks). 테이블 부재/실패는 0(대조 스킵)."""
     try:
-        now_iso = _now_kst().isoformat()
+        # expires_at은 날짜문자열('YYYY-MM-DD')이므로 datetime isoformat이 아닌 '오늘 날짜'로 비교한다.
+        # (loss_streak_guard.get_active_blocked_symbols와 동일 의미 — expires_at >= 오늘=만료 전=active.)
+        today = _now_kst().strftime("%Y-%m-%d")
         return _count(
             conn,
-            "SELECT COUNT(*) FROM symbol_entry_blocks WHERE expires_at IS NULL OR expires_at > ?",
-            (now_iso,),
+            "SELECT COUNT(*) FROM symbol_entry_blocks WHERE expires_at IS NULL OR expires_at >= ?",
+            (today,),
         )
     except Exception:
         return 0
