@@ -21,6 +21,7 @@ from .rule_cache import load_daily_rules, get_rule, clear_cache, get_meta, set_i
 from .intraday_profile import classify_profile, record_intraday_event
 from .shadow_trading import create_shadow_trade
 from .decision_engine_utils import (  # 순수 파싱·숫자 유틸(Phase 1 분해)
+    _day_open_from_bars,  # 오늘 시가 — 시가대비 추격 판정용(재기동 유지 intraday_bars)
     _fallback_vwap_from_bars,  # 실시간 VWAP 미가용 시 intraday_bars 폴백(재기동 누수 차단)
     _first_float,
     _vwap_dist_pct,  # 순수 VWAP 이격(%) — 바닥(falling knife) 판정용
@@ -872,6 +873,12 @@ class DecisionEngine:
                 _vd = _vwap_dist_pct(_vw, price)
                 if _vd is not None and _vd < _min:
                     return False, "falling_knife"
+            # 시가대비 추격 금지 — enforce 모드일 때만 차단(shadow/off는 통과, _emit_signal과 동기).
+            if str(get_setting("engine.entry_change_from_open_mode", "shadow") or "shadow").lower() == "enforce":
+                _cfo_max = float(get_setting("engine.entry_max_change_from_open_pct", 2.0) or 2.0)
+                _d_open = _day_open_from_bars(symbol)
+                if _d_open and _d_open > 0 and price > 0 and (price / _d_open - 1) * 100 > _cfo_max:
+                    return False, "open_chase"
             _conv_min = float(get_setting("engine.conviction_gate_min", 0.0) or 0.0)
             if _conv_min > 0:
                 from .strategy_playbook import resolve_conviction
@@ -1083,6 +1090,30 @@ class DecisionEngine:
                             return
         except Exception as exc:
             logger.warning("WARN: [S6] 눌림목 게이트 실패(fail-open) symbol=%s reason=%s", symbol, exc)
+
+        # 시가대비 추격 금지(2026-09-05 엣지검증) — 진입가가 오늘 시가보다 임계% 초과(갭 추격)면 차단.
+        # BackDB 335건: change_from_open>+2% = 승률 33%·순 -0.95%(최악). **VWAP 눌림과 독립**(눌림
+        # 안에서도 시가 위 48% vs 시가 아래 69%). 우리 기존 등락률게이트는 전일종가 대비(prdy_ctrt)라
+        # 이 시가대비 추격을 못 걸렀다. 기본 shadow(로그만) — 며칠 관찰 후 PM이 enforce로 전환. off면 비활성.
+        try:
+            _cfo_mode = str(get_setting("engine.entry_change_from_open_mode", "shadow") or "shadow").lower()
+            if _cfo_mode != "off":
+                _cfo_max = float(get_setting("engine.entry_max_change_from_open_pct", 2.0) or 2.0)
+                _d_open = _day_open_from_bars(symbol)  # intraday_bars 첫 봉 open(재기동 유지·백테스트 동일 소스)
+                if _d_open and _d_open > 0 and price > 0:
+                    _cfo = (price / _d_open - 1) * 100
+                    if _cfo > _cfo_max:
+                        if _cfo_mode == "shadow":
+                            logger.info(
+                                "SHADOW: [S6] 시가대비 추격 차단대상(로그만) symbol=%s change_from_open=%.2f > %.2f",
+                                symbol, _cfo, _cfo_max)
+                        else:
+                            logger.info(
+                                "INFO: [S6] SKIP 시가대비 추격 차단 symbol=%s change_from_open=%.2f > %.2f",
+                                symbol, _cfo, _cfo_max)
+                            return
+        except Exception as exc:
+            logger.warning("WARN: [S6] 시가대비 추격 게이트 실패(fail-open) symbol=%s reason=%s", symbol, exc)
 
         # 9시 조기진입 shadow 실험 — entry_start_time을 09:00으로 열되 실제 매수는
         # entry_execute_start_time(기본 09:30)부터. 그 이전(모든 게이트 통과한 후보)은 로그만

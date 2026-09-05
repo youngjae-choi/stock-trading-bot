@@ -120,6 +120,7 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 | **VWAP 밴드 모드** | `entry_vwap_pullback_mode` | enforce | shadow=로그만 · off=비활성 |
 | **천장(추격 차단)** | `entry_max_vwap_dist_pct`(보합/하락) · `entry_max_vwap_dist_pct_riskon`(상승장) | -1.0 · **0.0** | VWAP 위 이격 매수 차단. **상승장(up/surge/risk_on)은 VWAP까지 허용**(눌림종목=laggard·저배포 방지, BackDB 2026-09-05). 돌파(>0)는 여전히 차단 ★핵심엣지 |
 | **바닥(falling knife)** | `entry_min_vwap_dist_pct` | **-5.0** | VWAP **5%↓ 딥눌림**(급락후 매수) 차단 — 전 레짐 공통(BackDB: <-5% 승률↓·순마이너스, 극심<-8은 44%). 09-04 300120 -11.3% 급락후매수 손실 재발방지 |
+| **시가대비 추격 금지** | `entry_change_from_open_mode`·`entry_max_change_from_open_pct` | **shadow**·**+2.0** | 진입가가 **오늘 시가**보다 임계% 초과(갭 추격)면 차단. BackDB 335건: change_from_open>+2% = 승률 **33%**·순 -0.95%(최악). **VWAP 눌림과 독립**(눌림 안에서도 시가 위 48% vs 시가 아래 69%). 기존 등락률게이트는 전일종가(prdy_ctrt) 대비라 이걸 못 걸렀음. 기본 shadow(로그만)→관찰 후 enforce (2026-09-05 엣지검증) |
 | 고점추격 상한 | `max_price_change_pct` | 4.0 | 시가대비 +4% 초과 매수 차단 |
 | 등락률 하한 | `min_price_change_pct` | 1.5 | +1.5% 미만 진입 안 함 |
 | 거래량 | `min_volume_ratio` | 1.5 | 평균 대비 1.5배 미만 제외 |

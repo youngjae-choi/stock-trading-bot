@@ -99,6 +99,35 @@ def _fallback_vwap_from_bars(symbol: str, today: str | None = None) -> float | N
     return None
 
 
+def _day_open_from_bars(symbol: str, today: str | None = None) -> float | None:
+    """오늘 시가(장 첫 봉의 open) — intraday_bars 최소 bar_ts의 open. 시가대비 추격 판정용.
+
+    엣지(2026-09-05 BackDB 335건): 진입가/시가−1 > 임계 = 갭 추격 → 승률 33%·순 -0.95%(최악),
+    VWAP 눌림과 **독립**(눌림 안에서도 시가 위 48% vs 시가 아래 69%). 우리 기존 등락률게이트는
+    전일종가 대비라 이걸 못 걸렀다. VWAP 폴백과 같은 소스(재기동에도 유지). 데이터 없으면 None(fail-open).
+    """
+    try:
+        from ..db import get_connection
+
+        if today is None:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+
+            today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT open FROM intraday_bars WHERE symbol=? AND trade_date=("
+                "  SELECT MAX(trade_date) FROM intraday_bars WHERE symbol=? AND trade_date<=?)"
+                " AND open IS NOT NULL AND open>0 ORDER BY bar_ts LIMIT 1",
+                (symbol, symbol, today),
+            ).fetchone()
+        if row and row["open"] and float(row["open"]) > 0:
+            return float(row["open"])
+    except Exception:
+        return None
+    return None
+
+
 def _first_positive_float(*values: Any) -> float | None:
     """여러 후보 값 중 0보다 큰 첫 번째 숫자를 반환한다.
 

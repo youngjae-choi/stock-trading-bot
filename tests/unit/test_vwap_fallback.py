@@ -68,3 +68,35 @@ def test_fallback_none_when_table_absent(tmp_path, monkeypatch):
     with db_mod.get_connection():
         pass  # 빈 DB — 테이블 미생성
     assert u._fallback_vwap_from_bars("005930", today="2026-08-28") is None
+
+
+# ── 오늘 시가 — 시가대비 추격 판정용 (2026-09-05 엣지) ─────────────────────────
+
+def _seed_open(conn, symbol, trade_date, bars):
+    """bars = [(bar_ts, open), ...] 를 intraday_bars에 시딩."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS intraday_bars(id INTEGER PRIMARY KEY, trade_date TEXT, "
+        "symbol TEXT, bar_ts TEXT, open REAL, high REAL, low REAL, close REAL, volume REAL, "
+        "shnu_rate REAL, created_at TEXT)"
+    )
+    for ts, o in bars:
+        conn.execute(
+            "INSERT INTO intraday_bars(trade_date,symbol,bar_ts,open) VALUES(?,?,?,?)",
+            (trade_date, symbol, ts, o),
+        )
+    conn.commit()
+
+
+def test_day_open_returns_first_bar_open(tmp_path, monkeypatch):
+    """장 첫 봉(최소 bar_ts)의 open을 시가로 반환 — bar_ts 순서 무관."""
+    _iso(tmp_path, monkeypatch)
+    with db_mod.get_connection() as conn:
+        _seed_open(conn, "005930", "2026-08-28", [("093000", 100.0), ("090000", 95.0), ("100000", 110.0)])
+    assert u._day_open_from_bars("005930", today="2026-08-28") == 95.0  # 최소 bar_ts=09:00
+
+
+def test_day_open_none_when_no_bars(tmp_path, monkeypatch):
+    _iso(tmp_path, monkeypatch)
+    with db_mod.get_connection() as conn:
+        _seed_open(conn, "005930", "2026-08-28", [("090000", 95.0)])
+    assert u._day_open_from_bars("999999", today="2026-08-28") is None

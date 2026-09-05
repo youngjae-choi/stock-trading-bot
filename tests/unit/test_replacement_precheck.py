@@ -69,6 +69,28 @@ def test_precheck_riskon_allows_near_vwap(monkeypatch):
     assert eng2.entry_precheck("005930", {"name": "삼성전자"}, 9950.0)[1] == "vwap_chase"
 
 
+def test_precheck_open_chase_blocked_in_enforce(monkeypatch):
+    """시가대비 추격 게이트 — enforce 모드면 시가 대비 +임계 초과 진입 차단(2026-09-05 엣지)."""
+    eng = _mk_engine(monkeypatch, vwap=10000.0, regime="risk_on")
+    # enforce + 시가 9990 → price 9950은 시가대비 -0.4%(추격 아님) & VWAP -0.5%(통과) → 통과
+    monkeypatch.setattr(de_mod, "get_setting",
+        lambda k, d=None: {"engine.entry_change_from_open_mode": "enforce",
+                           "engine.entry_max_change_from_open_pct": 2.0}.get(k, d))
+    monkeypatch.setattr(de_mod, "_day_open_from_bars", lambda s, today=None: 9990.0)
+    assert eng.entry_precheck("005930", {"name": "삼성전자"}, 9950.0)[0] is True
+    # 시가 9000 → price 9950은 시가대비 +10.6% 추격 → open_chase 차단
+    monkeypatch.setattr(de_mod, "_day_open_from_bars", lambda s, today=None: 9000.0)
+    ok, r = eng.entry_precheck("005930", {"name": "삼성전자"}, 9950.0)
+    assert not ok and r == "open_chase"
+
+
+def test_precheck_open_chase_ignored_in_shadow(monkeypatch):
+    """shadow(기본)면 시가대비 추격도 통과 — _emit_signal이 로그만 남기므로."""
+    eng = _mk_engine(monkeypatch, vwap=10000.0, regime="risk_on")  # get_setting→기본(shadow)
+    monkeypatch.setattr(de_mod, "_day_open_from_bars", lambda s, today=None: 9000.0)
+    assert eng.entry_precheck("005930", {"name": "삼성전자"}, 9950.0)[0] is True
+
+
 # ── _resolve_swap_target (원 대상 / 대안 / 보류) ───────────────────────────────
 
 class _FakeDE:
