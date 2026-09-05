@@ -23,6 +23,7 @@ from .shadow_trading import create_shadow_trade
 from .decision_engine_utils import (  # 순수 파싱·숫자 유틸(Phase 1 분해)
     _fallback_vwap_from_bars,  # 실시간 VWAP 미가용 시 intraday_bars 폴백(재기동 누수 차단)
     _first_float,
+    _vwap_dist_pct,  # 순수 VWAP 이격(%) — 바닥(falling knife) 판정용
     _vwap_pullback_gate,  # 외부(test_vwap_pullback_gate)가 import — 재-export 보존
 )
 from .decision_context import (  # 시간·일별 컨텍스트 헬퍼(Phase 2 분해) — 재-export로 기존 참조 보존
@@ -978,16 +979,22 @@ class DecisionEngine:
         # 진입으로 유도. mode=shadow는 로그만(무매매), off는 비활성. VWAP 미가용 시 fail-open.
         try:
             from .buy_engine import resolve_buy_gates
-            _gates = resolve_buy_gates()  # ④ 매수 엔진에서 게이트 파라미터(get_playbook 경유)
+            # 레짐별 진입밴드(2026-09-05 BackDB검증): 상승장은 천장 완화(0.0)·그외 눌림 고수(-1.0),
+            # 바닥(딥눌림 falling knife <-5%)은 전 레짐 차단. resolve_buy_gates에 현재 레짐을 넘겨야
+            # 밴드 차등이 적용된다(기존엔 인자 없이 'flat' 기본→상승장에도 눌림 고정되던 갭).
+            _regime5 = self._current_regime() or "flat"
+            _gates = resolve_buy_gates(_regime5)  # ④ 매수 엔진 게이트 파라미터(get_playbook 경유)
             vwap_mode = str(_gates.get("vwap_pullback_mode", "enforce"))
             if vwap_mode != "off":
                 max_dist = float(_gates.get("entry_max_vwap_dist_pct", 0.0))
+                min_dist = float(_gates.get("entry_min_vwap_dist_pct", -5.0))  # 바닥(falling knife)
                 # 실시간 VWAP(bar_engine) 우선, 미가용(재기동 메모리 소실 등)이면 intraday_bars 폴백
                 # — fail-open 누수 차단(2026-08-29: 추격 진입 -0.7% 손실뿌리, 데이터 확증).
                 _rt_vwap = self._bar_engine.get_vwap(symbol)
                 _eff_vwap = _rt_vwap if (_rt_vwap and _rt_vwap > 0) else _fallback_vwap_from_bars(symbol)
                 if _rt_vwap is None and _eff_vwap is not None:
                     logger.info("INFO: [S6] 눌림목게이트 VWAP 폴백(intraday_bars) symbol=%s vwap=%.1f", symbol, _eff_vwap)
+                # 1) 천장(추격) — VWAP 위 max_dist 초과 진입 차단
                 vwap_dist = _vwap_pullback_gate(_eff_vwap, price, max_dist)
                 if vwap_dist is not None and vwap_mode == "shadow":
                     logger.info(
@@ -1000,6 +1007,22 @@ class DecisionEngine:
                         symbol, vwap_dist, max_dist,
                     )
                     return
+                else:
+                    # 2) 바닥(falling knife) — 천장 통과분에 한해 딥눌림(<min_dist) 차단
+                    #    (BackDB: vwap_dist<-5% = 승률↓·순마이너스. 09-04 300120 -11.3% 급락후 매수 손실.)
+                    _vd = _vwap_dist_pct(_eff_vwap, price)
+                    if _vd is not None and _vd < min_dist:
+                        if vwap_mode == "shadow":
+                            logger.info(
+                                "SHADOW: [S6] 딥눌림 falling knife 차단대상(로그만) symbol=%s vwap_dist=%.2f < %.2f",
+                                symbol, _vd, min_dist,
+                            )
+                        else:
+                            logger.info(
+                                "INFO: [S6] SKIP falling knife — 딥눌림 진입 차단 symbol=%s vwap_dist=%.2f < %.2f",
+                                symbol, _vd, min_dist,
+                            )
+                            return
         except Exception as exc:
             logger.warning("WARN: [S6] 눌림목 게이트 실패(fail-open) symbol=%s reason=%s", symbol, exc)
 

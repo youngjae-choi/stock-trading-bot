@@ -167,9 +167,19 @@ def build_playbook(regime: str, regime_settings: dict | None = None,
         "change_weight": _f(getter, "selection.change_weight", 0.5),
         "surge_weight": _f(getter, "selection.surge_weight", 0.5),
     }
-    gates = {  # 매수 게이트(엔진④) — 전 레짐 공통 값(레짐별 차등은 후속)
+    # VWAP 진입밴드 — 레짐별 차등(2026-09-05 BackDB 335건 검증):
+    #   ceiling(천장): 상승장(up/surge/risk_on)은 0.0(=VWAP까지 허용, 돌파>0는 여전히 차단),
+    #     그 외(보합/하락)는 -1.0(눌림만). ▶ 상승장의 눌림종목=laggard라 -1 고집이 저배포+약체매수
+    #     유발(09-04 사례). 근접눌림(0~-1)이 상승장 유일 흑자구간(+0.08% 순). 보합/하락은 근접눌림이
+    #     손실이라 -1 고수. ▶ 롤백: engine.entry_max_vwap_dist_pct_riskon=-1로 상승장도 원복.
+    #   floor(바닥): 전 레짐 -5.0 — 딥눌림(<-5% falling knife)은 승률↓·순마이너스(극심<-8은 44%).
+    _is_up_regime = regime in ("up", "surge", "risk_on")
+    _vwap_ceiling = (_f(getter, "engine.entry_max_vwap_dist_pct_riskon", 0.0) if _is_up_regime
+                     else _f(getter, "engine.entry_max_vwap_dist_pct", -1.0))
+    gates = {  # 매수 게이트(엔진④)
         "vwap_pullback_mode": getter("engine.entry_vwap_pullback_mode", "enforce"),
-        "entry_max_vwap_dist_pct": _f(getter, "engine.entry_max_vwap_dist_pct", -1.0),  # VWAP -1%↓ 눌림만(BackDB검증 2026-09-01)
+        "entry_max_vwap_dist_pct": _vwap_ceiling,
+        "entry_min_vwap_dist_pct": _f(getter, "engine.entry_min_vwap_dist_pct", -5.0),  # 바닥(falling knife 차단)
         "max_price_change_pct": _f(getter, "engine.max_price_change_pct", 4.0),
         "min_price_change_pct": _f(getter, "engine.min_price_change_pct", 1.5),
         "min_volume_ratio": _f(getter, "engine.min_volume_ratio", 1.5),

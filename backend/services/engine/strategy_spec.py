@@ -61,7 +61,8 @@ INTENT_SETTINGS: dict[str, object] = {
     "engine.stop_source": "regime",                 # 손절/트레일 출처: regime(국면SET·결정된 단일출처, 2026-08-22)|profile(폴백). 롤백스위치
     # ── 사이징/배포 ──
     "exploration.deploy_target_rate": 0.95,         # 예수금 배포 목표(95%)
-    "risk.max_positions": 5,                        # 死(사이징모델 sizing.positions_min/max 6~19가 단일출처, order_executor에서 override). 표시용 잔존
+    # risk.max_positions 제거(2026-09-01, 9e9e51d) — 死 중복 count 설정. 단일출처=resolve_max_positions
+    # (sizing.positions_max 19, 안전 fallback), 주 제어=배포캡 95%. INTENT에서도 제거해 드리프트 오탐 방지.
     "risk.max_position_rate_per_stock": 0.15,       # 종목당 비중 상한(15%)
     # 탐색모드 제거(2026-08-22) — engine.exploration_mode 死키. is_exploration_allowed 하드 False.
     # ── 레짐/시황 ──
@@ -80,7 +81,9 @@ INTENT_SETTINGS: dict[str, object] = {
 # 코드기본값에 숨은 전략 레버 — DB에 없어도 코드가 이 값으로 돈다(의도=코드기본).
 # DB에 다른 값으로 오버라이드되면 그때만 드리프트(의도 이탈)로 잡는다. 가시화용.
 INTENT_CODE_DEFAULTS: dict[str, object] = {
-    "engine.entry_max_vwap_dist_pct": 0.0,          # ★핵심 엣지: 눌림목 게이트 임계(코드기본)
+    "engine.entry_max_vwap_dist_pct": -1.0,         # 눌림목 천장(보합/하락) — VWAP 1%↓ 눌림만 (2026-09-01 조임)
+    "engine.entry_max_vwap_dist_pct_riskon": 0.0,   # 눌림목 천장(상승장) 완화 — VWAP까지 허용 (2026-09-05 BackDB)
+    "engine.entry_min_vwap_dist_pct": -5.0,         # 눌림목 바닥 — 딥눌림(<-5% falling knife) 차단 (2026-09-05)
     "engine.intraday_max_stoploss_per_symbol": 2,   # churn 가드 N회
     "engine.intraday_reentry_block_enabled": True,
     "engine.leverage_restriction_mode": "exclude",  # 레버리지/인버스2x 진입 차단

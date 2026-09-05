@@ -51,7 +51,8 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 - `_evaluate_rules`(decision_rules): 게이트값 = `rule_resolver._settings_gate_rules`(settings 단일출처, RulePack 제거) — 등락률밴드(`min/max_price_change_pct` 1.5~4) · 거래량(`min_volume_ratio` 1.5) · 시간창(`entry_start/end_time`) · TSI>0 · Layer3(vwap/ma/rsi/spread, `_add_layer3_evaluation`)
 - ⚠ **confidence 게이트 스케일 문제(2026-08-24 발견)**: 신호 `confidence`=S4 `suitability_score`인데 **56%가 0.0·max 0.68**(sparse)라 임계 `min_ai_confidence` 0.60과 스케일 불일치 → 평시 게이트 OFF(저품질 통과)·방어레짐 전량차단(사고). **해법: conviction 품질게이트**(`engine.conviction_gate_min`, 레짐×눌림 0~1, `resolve_conviction`) — `_emit_signal`서 conv<임계 차단. **기본 0=OFF**(활성은 PM·분포검증 후 ~0.5 권장). suitability confidence는 표시/관찰용.
 - `_entry_gate_block_reason`(6게이트 순서): 손실3연패 하드차단 → 급락방어(인버스1x 예외) → **하락전환 매수중단 래치**(`get_entry_suspended` — down_transition서 걸고 up_transition서만 해제, `regime.transition_response_active` **활성 2026-08-23**) → new_entry_allowed → 칼리브레이션 → entry_fail 쿨다운 → 장중재진입(`intraday_max_stoploss_per_symbol` 2회)
-- VWAP 눌림 게이트: `entry_vwap_pullback_mode`(enforce)·`entry_max_vwap_dist_pct`(**-1.0**, 2026-09-01 조임) — VWAP보다 **최소 1% 아래(눌림)** 에서만 진입, 위(추격)면 차단. **BackDB 361건 검증: vwap_dist≤-1 필터 시 승률 53.2→65.7%·기대값 -0.15→+0.17%(마이너스→플러스 전환)**. 손실은 INITIAL_STOP_LOSS(15%승)에 집중=얕은진입, 수확 scaleout은 87%승. (confidence는 死신호라 승패 분리 못함 — 리뷰리포트 "confidence 임계상향" 조언은 무효) / 레버리지: `leverage_restriction_mode`(exclude)
+- VWAP 눌림 게이트: `entry_vwap_pullback_mode`(enforce) — VWAP 아래(눌림)에서만 진입, 위(추격)면 차단. **BackDB 361건 검증: vwap_dist≤-1 필터 시 승률 53.2→65.7%·기대값 -0.15→+0.17%(마이너스→플러스 전환)**. 손실은 INITIAL_STOP_LOSS(15%승)에 집중=얕은진입, 수확 scaleout은 87%승. (confidence는 死신호라 승패 분리 못함) / 레버리지: `leverage_restriction_mode`(exclude)
+  - **레짐별 밴드(2026-09-05 BackDB 335건 재검증)**: 눌림 엣지는 **레짐 조건부**. ①**천장**: 보합/하락은 `entry_max_vwap_dist_pct`(-1.0, 눌림만), **상승장은 `entry_max_vwap_dist_pct_riskon`(0.0)로 완화**(상승장의 눌림종목=시장 못 따라가는 laggard → -1 고집이 저배포+약체매수 유발. 근접눌림 0~-1이 상승장 유일 흑자구간 +0.08% 순). ②**바닥**: 전 레짐 `entry_min_vwap_dist_pct`(-5.0) — 딥눌림(<-5%)은 falling knife(급락후 매수, 승률↓·순마이너스; 스위트스팟은 -5~-3%로 +0.21% 순). 롤백: riskon키=-1(천장 원복)·min키=-100(바닥 해제).
 - 통과→**사이징**(→ §A-4b 금액모델, 2026-08-29 PM): 확신도=`conviction.regime_weight`×레짐 + (1-w)×눌림 → 종목당 **절대금액** `sizing.per_position_min_krw`(500만)~`per_position_max_krw`(2000만), 배포한도 `exploration.deploy_target_rate`(95%). **종목수는 순수 파생**(배포가능액÷종목당금액) — 종목수 결정/캡 없음. `sizing.positions_min/max`([6,19])·`risk.max_positions`(제거 2026-09-01)는 死(안전 fallback·표시용).
 
 **⑤ 매도·모니터링 — S7 실행 / S8 Position Manager (실시간)**
@@ -111,12 +112,14 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 | 폭락 | 인버스1x + 급락반등주 트랙 허용 | △ 구현(효과 미검증) |
 | 하락·보합 | 방어적 선정(상대강도·저변동, 레짐별 가중치) | 🟡 토대 완료(설정 라이브) — 레짐별 값 차등은 get_playbook 통합(Phase4)서 |
 
-### A-3. 매수 — 진입 게이트 (전 레짐 공통, 값은 B절 실측)
+### A-3. 매수 — 진입 게이트 (VWAP 밴드는 레짐별 차등, 나머지 공통; 값은 B절 실측)
 진입은 아래 게이트를 **모두** 통과해야 한다. (레버=설정키, 현재값)
 
 | 게이트 | 설정키 | 현재 의도값 | 의미 |
 |---|---|---|---|
-| **눌림목** | `entry_vwap_pullback_mode` / `entry_max_vwap_dist_pct` | enforce / 0.0 | VWAP 위 이격 매수(추격) 차단 ★핵심엣지 |
+| **VWAP 밴드 모드** | `entry_vwap_pullback_mode` | enforce | shadow=로그만 · off=비활성 |
+| **천장(추격 차단)** | `entry_max_vwap_dist_pct`(보합/하락) · `entry_max_vwap_dist_pct_riskon`(상승장) | -1.0 · **0.0** | VWAP 위 이격 매수 차단. **상승장(up/surge/risk_on)은 VWAP까지 허용**(눌림종목=laggard·저배포 방지, BackDB 2026-09-05). 돌파(>0)는 여전히 차단 ★핵심엣지 |
+| **바닥(falling knife)** | `entry_min_vwap_dist_pct` | **-5.0** | VWAP **5%↓ 딥눌림**(급락후 매수) 차단 — 전 레짐 공통(BackDB: <-5% 승률↓·순마이너스, 극심<-8은 44%). 09-04 300120 -11.3% 급락후매수 손실 재발방지 |
 | 고점추격 상한 | `max_price_change_pct` | 4.0 | 시가대비 +4% 초과 매수 차단 |
 | 등락률 하한 | `min_price_change_pct` | 1.5 | +1.5% 미만 진입 안 함 |
 | 거래량 | `min_volume_ratio` | 1.5 | 평균 대비 1.5배 미만 제외 |
@@ -236,6 +239,9 @@ _자동 생성: 2026-08-24 03:24:14 · `scripts/strategy_spec_sync.py` · 손대
 | 설정 | 실측값 | 출처 |
 |---|---|---|
 | `engine.entry_vwap_pullback_mode` | `enforce` | DB |
+| `engine.entry_max_vwap_dist_pct` (보합/하락 천장) | `-1.0` | 코드기본 |
+| `engine.entry_max_vwap_dist_pct_riskon` (상승장 천장) | `0.0` | 코드기본 (2026-09-05) |
+| `engine.entry_min_vwap_dist_pct` (바닥·falling knife) | `-5.0` | 코드기본 (2026-09-05) |
 | `engine.max_price_change_pct` | `4.0` | DB |
 | `engine.min_price_change_pct` | `1.5` | DB |
 | `engine.min_volume_ratio` | `1.5` | DB |
@@ -275,7 +281,6 @@ _자동 생성: 2026-08-24 03:24:14 · `scripts/strategy_spec_sync.py` · 손대
 | `risk.emergency_halt_enabled` | `False` | DB |
 | `engine.s10_llm_review_enabled` | `False` | DB |
 | `engine.loss_autotune_apply_enabled` | `False` | DB |
-| `engine.entry_max_vwap_dist_pct` | `0.0` | 코드기본 |
 | `engine.intraday_max_stoploss_per_symbol` | `2` | 코드기본 |
 | `engine.intraday_reentry_block_enabled` | `True` | 코드기본 |
 | `engine.leverage_restriction_mode` | `exclude` | 코드기본 |

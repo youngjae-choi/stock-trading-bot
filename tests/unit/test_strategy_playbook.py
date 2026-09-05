@@ -234,3 +234,49 @@ def test_build_playbook_assembles_sell_and_sizing():
     assert pb.sell["stop_loss_rate"] == -0.035
     assert pb.sizing["per_position_rate_max"] == 0.15
     assert pb.sizing["positions_max"] == 19
+
+
+# ── 레짐별 VWAP 진입밴드 (2026-09-05 BackDB 335건: 상승장 천장완화 + falling knife floor) ──
+
+def _band_getter(overrides=None):
+    o = overrides or {}
+    return lambda k, d=None: o.get(k, d)  # 미지정 키는 코드 기본값(=밴드 검증 대상)
+
+
+def test_vwap_ceiling_relaxed_in_up_regimes():
+    """상승장(up/surge/risk_on)은 천장 0.0 — VWAP까지 허용(돌파>0는 여전히 차단)."""
+    for rg in ("up", "surge", "risk_on"):
+        assert build_playbook(rg, getter=_band_getter()).gates["entry_max_vwap_dist_pct"] == 0.0, rg
+
+
+def test_vwap_ceiling_tight_in_defensive_regimes():
+    """보합/하락(flat/neutral/down/risk_off/volatile/crash)은 천장 -1.0(눌림만 고수)."""
+    for rg in ("flat", "neutral", "down", "risk_off", "volatile", "crash"):
+        assert build_playbook(rg, getter=_band_getter()).gates["entry_max_vwap_dist_pct"] == -1.0, rg
+
+
+def test_vwap_floor_is_regime_common():
+    """바닥(falling knife) -5.0은 전 레짐 공통 — 딥눌림(<-5%) 진입 차단."""
+    for rg in ("up", "flat", "risk_off", "surge"):
+        assert build_playbook(rg, getter=_band_getter()).gates["entry_min_vwap_dist_pct"] == -5.0, rg
+
+
+def test_vwap_ceiling_riskon_override_rolls_back():
+    """롤백 스위치: engine.entry_max_vwap_dist_pct_riskon=-1 → 상승장도 눌림 원복."""
+    g = _band_getter({"engine.entry_max_vwap_dist_pct_riskon": -1.0})
+    assert build_playbook("risk_on", getter=g).gates["entry_max_vwap_dist_pct"] == -1.0
+
+
+def test_vwap_floor_override():
+    """floor 튜닝: engine.entry_min_vwap_dist_pct 존중."""
+    g = _band_getter({"engine.entry_min_vwap_dist_pct": -8.0})
+    assert build_playbook("flat", getter=g).gates["entry_min_vwap_dist_pct"] == -8.0
+
+
+def test_resolve_buy_gates_applies_regime_band():
+    """회귀: resolve_buy_gates가 레짐을 받아 밴드를 차등 적용(기존 'flat' 기본→상승장 눌림고정 갭 수정)."""
+    from backend.services.engine.buy_engine import resolve_buy_gates
+    g = _band_getter()
+    assert resolve_buy_gates("up", getter=g)["entry_max_vwap_dist_pct"] == 0.0
+    assert resolve_buy_gates("flat", getter=g)["entry_max_vwap_dist_pct"] == -1.0
+    assert resolve_buy_gates("up", getter=g)["entry_min_vwap_dist_pct"] == -5.0

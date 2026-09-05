@@ -54,6 +54,17 @@ def _vwap_pullback_gate(vwap: float | None, price: float | None, max_dist_pct: f
     return round(vwap_dist, 2) if vwap_dist > max_dist_pct else None
 
 
+def _vwap_dist_pct(vwap: float | None, price: float | None) -> float | None:
+    """진입가의 VWAP 이격(%) = (price/vwap−1)×100. VWAP·가격 미가용 시 None(fail-open).
+
+    _vwap_pullback_gate가 '천장(추격) 판정'만 하는 것과 달리, 이 함수는 순수 이격값을 돌려
+    바닥(딥눌림 falling knife) 판정에도 쓴다. 2026-09-05: 진입 밴드[floor, ceiling] 양방향 게이트.
+    """
+    if not vwap or vwap <= 0 or not price or price <= 0:
+        return None
+    return round((price / vwap - 1.0) * 100.0, 2)
+
+
 def _fallback_vwap_from_bars(symbol: str, today: str | None = None) -> float | None:
     """실시간 VWAP 미가용 시 폴백 VWAP — intraday_bars(10초봉) 기준 Σ(close×vol)/Σ(vol).
 
