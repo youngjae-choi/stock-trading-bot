@@ -826,6 +826,64 @@ class DecisionEngine:
         self._regime_cache: tuple[float, str | None] = (now, regime)
         return regime
 
+    def entry_precheck(self, symbol: str, candidate: dict[str, Any], price: float) -> tuple[bool, str]:
+        """진입 게이트 사전검증(부수효과 없음) — 실제 매수 전에 '이 후보가 통과하나'만 판정.
+
+        교체매매가 **약체 매도 전에** 대상의 통과 여부를 확인하는 데 쓴다(대상이 게이트에 막혀
+        매도만 되고 현금이 유휴되던 사고 방지 — 09-04 알트→300120 3.5h 유휴, 2026-09-05).
+        `_emit_signal`의 게이트 순서를 그대로 미러(단일출처 헬퍼 재사용): 레버리지/인버스 →
+        ETN/ETF 백스톱 → 진입선별(_entry_gate_block_reason: 손실스트릭·급락방어·하락전환·confidence)
+        → VWAP 밴드(천장 추격·바닥 falling knife) → conviction. 통과=(True,""), 차단=(False,사유).
+        시간기반 exec_start 가드는 장중 교체엔 무관하므로 제외. VWAP shadow/off는 통과로 본다
+        (_emit_signal이 그때 안 막으므로). 예외는 **fail-closed**(False) — 불확실하면 스왑 보류가 안전.
+        """
+        _name = str(candidate.get("name") or "")
+        try:
+            _lev_mode = str(get_setting("engine.leverage_restriction_mode", "exclude") or "exclude").lower()
+            if _lev_mode != "off":
+                from .intraday_profile import is_inverse_1x_product, is_leverage_product
+                if is_leverage_product(_name):
+                    _pb_ok = False
+                    try:
+                        if bool(get_setting("engine.crash_playbook_enabled", True)) and is_inverse_1x_product(_name):
+                            from .intraday_regime_monitor import is_flash_crash_defense_active
+                            _pb_ok = is_flash_crash_defense_active()
+                    except Exception:
+                        _pb_ok = False
+                    if not _pb_ok:
+                        return False, "leverage_restricted"
+            from .intraday_profile import is_leverage_product as _isl
+            from .universe_filter import _is_excluded_product
+            if not _isl(_name) and _is_excluded_product(symbol, _name, allow_inverse_1x=True):
+                return False, "excluded_product"
+            gr = _entry_gate_block_reason(symbol, _candidate_confidence(candidate), name=_name)
+            if gr:
+                return False, f"entry_gate:{gr}"
+            from .buy_engine import resolve_buy_gates
+            _regime5 = self._current_regime() or "flat"
+            _gates = resolve_buy_gates(_regime5, getter=get_setting)
+            if str(_gates.get("vwap_pullback_mode", "enforce")) == "enforce":
+                _rt = self._bar_engine.get_vwap(symbol)
+                _vw = _rt if (_rt and _rt > 0) else _fallback_vwap_from_bars(symbol)
+                _max = float(_gates.get("entry_max_vwap_dist_pct", 0.0))
+                _min = float(_gates.get("entry_min_vwap_dist_pct", -5.0))
+                if _vwap_pullback_gate(_vw, price, _max) is not None:
+                    return False, "vwap_chase"
+                _vd = _vwap_dist_pct(_vw, price)
+                if _vd is not None and _vd < _min:
+                    return False, "falling_knife"
+            _conv_min = float(get_setting("engine.conviction_gate_min", 0.0) or 0.0)
+            if _conv_min > 0:
+                from .strategy_playbook import resolve_conviction
+                _rt2 = self._bar_engine.get_vwap(symbol)
+                _vwd = (price / _rt2 - 1) * 100 if (_rt2 and price) else None
+                if resolve_conviction(_regime5, _vwd) < _conv_min:
+                    return False, "conviction"
+        except Exception as exc:
+            logger.warning("WARN: [S6] entry_precheck 실패(fail-closed·스왑보류) symbol=%s — %s", symbol, exc)
+            return False, "precheck_error"
+        return True, ""
+
     def _record_exploration_tag(
         self, symbol: str, candidate: dict[str, Any], decision: dict[str, Any]
     ) -> None:

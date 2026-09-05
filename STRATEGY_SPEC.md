@@ -182,6 +182,9 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 | 폭락 방어 발동 | `risk.flash_crash_threshold_pct`·`flash_crash_defense_enabled` | **-5%**·on (변동성장 적응) |
 | 수동 긴급정지 | `risk.emergency_halt_enabled` | off(평시) |
 | 부분체결 재주문 | `risk.partial_fill_reorder_enabled` | on |
+| **매수 접수 재시도** | `engine.buy_submit_retry_enabled` | **on** (2026-09-05) |
+
+- **매수 접수 신뢰성(2026-09-05):** 분석 결과 매수 체결률 ~50%, 미체결의 89%가 지정가 문제가 아닌 **KIS 접수 실패**(ODNO 없음→`submit_uncertain`→EOD 취소)로 배포 손실. `order_executor._submit_buy`가 ①접수 예외 시 최대 2회 재시도(지정가 유지 — 매도엔 있던 재시도가 매수엔 없던 비대칭 해소), ②ODNO 누락 시 `inquire-daily-ccld` **지연 재조회**로 주문번호 복구(재제출 아님=중복매수 방지). 롤백: `engine.buy_submit_retry_enabled=false`.
 
 ### A-5. 시장감지 엔진② — 5장세 판정 + 전환(방향) 감지 (감지+대응 활성 2026-08-23)
 **레벨(5장세) + 방향(전환)** 두 축 결정론 판단. 구현: `market_sensing.py`(순수함수+유닛10, **전부 설정 임계**).
@@ -222,6 +225,7 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 **시장이 바뀌면(레짐 전환) 매수 대기 후보도 바뀌고, 보유 종목보다 대기 후보가 더 좋으면 청산·손익절 조건이 아니어도 갈아탄다.** 구현·활성·실행 중(과거 `replacement_swap` 거래 발생 확인).
 - **재선별:** 스케줄러 `job_intraday_refresh`가 **09:30/10:30/11:30(+점심 13:00/14:00)** 에 `intraday_refresh.check_and_refresh` 실행 — 장중 시장 재평가 후 후보 재선별. (`intraday_refresh.master_enabled`·`lunch_slots_enabled`·`sector_rotation_enabled` 토글)
 - **교체매매(swap):** `replacement_signal.evaluate_replacement_signals` — 대기 후보가 보유 종목보다 나으면 교체 신호 생성 → `replacement_executor`가 갈아타기 실행. 매도사유 `replacement_swap->{new}`. (`intraday_refresh.replacement_signal_enabled` 토글)
+- **매도 전 진입게이트 선검증(2026-09-05):** `_resolve_swap_target`가 **약체를 팔기 전에** 대상이 전 진입게이트(`decision_engine.entry_precheck`: 레버리지·ETN·선별·VWAP밴드·conviction)를 통과하는지 확인. 원 대상(고score)이 막히면(주로 VWAP 위 추격) cand_map에서 **게이트 통과하는 최고score 대안**으로 보정, 통과 후보 없으면 **스왑 보류(약체 유지)**. ▶ 사고: 09-04 알트→300120 교체가 알트 손절 매도 후 대상이 추격상태라 매수 차단 → 현금 3.5h 유휴+손실확정. 이제 "확실히 갈아탈 수 있을 때만 판다".
 - **게이트:** 위 토글 전부 활성(라이브 DB `true`). master OFF면 전체 스킵.
 - ⚠ **UI 표시 버그(2026-08-29 발견):** 설정화면 토글이 DB값(true)을 안 읽어 OFF로 오표시 — 실제는 동작 중. → 수정 대상.
 

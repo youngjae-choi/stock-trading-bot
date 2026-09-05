@@ -84,6 +84,7 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "engine.entry_max_vwap_dist_pct": -1.0,         # 눌림목 천장(보합/하락) — VWAP 1%↓ 눌림만 (2026-09-01 조임)
     "engine.entry_max_vwap_dist_pct_riskon": 0.0,   # 눌림목 천장(상승장) 완화 — VWAP까지 허용 (2026-09-05 BackDB)
     "engine.entry_min_vwap_dist_pct": -5.0,         # 눌림목 바닥 — 딥눌림(<-5% falling knife) 차단 (2026-09-05)
+    "engine.buy_submit_retry_enabled": True,        # 매수 접수 실패 재시도+ODNO 복구 (2026-09-05)
     "engine.intraday_max_stoploss_per_symbol": 2,   # churn 가드 N회
     "engine.intraday_reentry_block_enabled": True,
     "engine.leverage_restriction_mode": "exclude",  # 레버리지/인버스2x 진입 차단

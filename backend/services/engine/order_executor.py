@@ -367,36 +367,7 @@ class OrderExecutor:
                     )
                 return {"ok": False, "reason": "preflight_blocked", "detail": preflight.get("block_reason")}
 
-            try:
-                response = await order_cash(side="buy", symbol=symbol, qty=qty, price=self._price_text(price), ord_dvsn="00")
-            finally:
-                await asyncio.sleep(0.2)
-            kis_order_no = self._extract_order_no(response)
-
-            # KIS 모의투자 환경에서 rate-limit 부하 시 ODNO가 응답에서 빠지는 경우가 있다.
-            # 주문 자체는 HTTP 200으로 접수됐을 가능성이 높으므로 체결내역 재조회로 주문번호를 보정한다.
-            if not kis_order_no:
-                logger.warning(
-                    "WARN: [S7] buy response missing ODNO — fallback to inquire-daily-ccld symbol=%s",
-                    symbol,
-                )
-                try:
-                    from ..kis.domestic.service import get_daily_order_inquiry
-                    date_str = today.replace("-", "")
-                    ccld = await get_daily_order_inquiry(date_str, side="buy")
-                    for row in (ccld.get("output1") or []):
-                        if str(row.get("pdno") or "") == symbol:
-                            candidate = str(row.get("odno") or "").strip()
-                            if candidate:
-                                kis_order_no = candidate
-                                logger.info(
-                                    "INFO: [S7] buy ODNO recovered from ccld symbol=%s odno=%s",
-                                    symbol,
-                                    kis_order_no,
-                                )
-                                break
-                except Exception as ccld_exc:
-                    logger.warning("WARN: [S7] buy ccld fallback failed symbol=%s reason=%s", symbol, ccld_exc)
+            _buy_resp, kis_order_no = await self._submit_buy(symbol, qty, price, today)
 
             order_id = self._save_order(
                 trade_date=today,
@@ -437,6 +408,66 @@ class OrderExecutor:
             self._update_signal_status(signal_id, "failed")
             logger.error("FAIL: [S7] buy order failed order_id=%s symbol=%s reason=%s", order_id, symbol, exc)
             return {"ok": False, "order_id": order_id, "symbol": symbol, "reason": str(exc)}
+
+    async def _submit_buy(self, symbol: str, qty: int, price: float, today: str) -> tuple[Any, str]:
+        """매수 접수 — 접수 실패 재시도(Mode1) + ODNO 누락 복구 재조회(Mode2). (response, kis_order_no) 반환.
+
+        2026-09-05 분석: 매수 체결률 ~50%, 미체결의 89%가 '지정가 문제'가 아니라 **KIS 접수 실패**
+        (ODNO 없음→submit_uncertain→EOD 취소)로 배포 손실. 매도엔 있던 재시도가 매수엔 없던 비대칭을
+        해소하고, 즉시 1회뿐이던 ODNO 복구를 지연 재조회로 강화. 롤백: engine.buy_submit_retry_enabled=false.
+        """
+        from ..settings_store import get_setting as _gs_retry
+        _buy_retry = str(_gs_retry("engine.buy_submit_retry_enabled", True)).lower() not in ("false", "0", "no")
+        response: Any = None
+        try:
+            try:
+                response = await order_cash(side="buy", symbol=symbol, qty=qty, price=self._price_text(price), ord_dvsn="00")
+            except Exception as _buy_first_exc:
+                if not _buy_retry:
+                    raise
+                # 접수 실패(rate-limit EGW00201/네트워크) — 지정가 유지 최대 2회 재시도(총 3회).
+                # 예외=대개 접수 전 실패라 재제출 안전(중복매수 위험 낮음). '접수됐는데 응답만 실패'는
+                # 아래 ODNO 복구가 재제출 없이 주문번호만 회수한다.
+                logger.warning("WARN: [S7] buy 1차 접수 실패, 재시도 symbol=%s reason=%r", symbol, _buy_first_exc)
+                _buy_ok = False
+                for _b_att, _b_delay in enumerate((1.5, 3.0), start=1):
+                    await asyncio.sleep(_b_delay)
+                    try:
+                        response = await order_cash(side="buy", symbol=symbol, qty=qty, price=self._price_text(price), ord_dvsn="00")
+                        _buy_ok = True
+                        logger.info("INFO: [S7] buy 재시도 접수 성공 attempt=%d symbol=%s", _b_att, symbol)
+                        break
+                    except Exception as _b_retry_exc:
+                        logger.warning("WARN: [S7] buy 재시도 %d 실패 symbol=%s reason=%r", _b_att, symbol, _b_retry_exc)
+                if not _buy_ok:
+                    raise _buy_first_exc
+        finally:
+            await asyncio.sleep(0.2)
+        kis_order_no = self._extract_order_no(response)
+
+        # 접수는 됐는데 응답에 ODNO 누락(rate-limit) — 재제출 아님(중복매수 방지), 주문번호만 복구.
+        # ccld 전파 지연·부하 대비 지연 재조회 재시도(즉시 1회만이던 것이 미복구의 주 원인).
+        if not kis_order_no:
+            logger.warning("WARN: [S7] buy response missing ODNO — recover via inquire-daily-ccld symbol=%s", symbol)
+            from ..kis.domestic.service import get_daily_order_inquiry
+            date_str = today.replace("-", "")
+            for _rec_att, _rec_delay in enumerate((0.0, 1.0, 2.0), start=1):
+                if _rec_delay:
+                    await asyncio.sleep(_rec_delay)
+                try:
+                    ccld = await get_daily_order_inquiry(date_str, side="buy")
+                    for row in (ccld.get("output1") or []):
+                        if str(row.get("pdno") or "") == symbol:
+                            candidate = str(row.get("odno") or "").strip()
+                            if candidate:
+                                kis_order_no = candidate
+                                break
+                    if kis_order_no:
+                        logger.info("INFO: [S7] buy ODNO recovered attempt=%d symbol=%s odno=%s", _rec_att, symbol, kis_order_no)
+                        break
+                except Exception as ccld_exc:
+                    logger.warning("WARN: [S7] buy ccld recovery attempt=%d failed symbol=%s reason=%s", _rec_att, symbol, ccld_exc)
+        return response, kis_order_no
 
     def _note_inflight_buy(self, amount: float) -> None:
         """매수 제출 성공 직후 호출 — in-flight 금액 기록 + 잔고 캐시 무효화."""

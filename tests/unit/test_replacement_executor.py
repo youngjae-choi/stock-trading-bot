@@ -14,6 +14,11 @@ def test_execute_swaps_calls_sell_then_buy(monkeypatch):
     calls = []
     async def fake_sell(symbol, reason): calls.append(("sell", symbol)); return {"ok": True}
     async def fake_buy(symbol, candidate, price): calls.append(("buy", symbol)); return {"ok": True}
+    # 2026-09-05: 스왑은 이제 매도 전에 _resolve_swap_target(진입게이트 선검증)을 거친다.
+    # 여기선 대상이 게이트를 통과한 것으로 고정해 '매도→매수 순서' 자체를 검증한다.
+    async def fake_resolve(cur, new, sig, cmap):
+        return (new, cmap.get(new, {"symbol": new}), 7000.0)
+    monkeypatch.setattr(rx, "_resolve_swap_target", fake_resolve)
     monkeypatch.setattr(rx, "_sell_position", fake_sell)
     monkeypatch.setattr(rx, "_buy_candidate", fake_buy)
     monkeypatch.setattr(rx, "_in_cooldown", lambda s, cooldown_min: False)
