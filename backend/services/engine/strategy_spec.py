@@ -87,6 +87,9 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "engine.buy_submit_retry_enabled": True,        # 매수 접수 실패 재시도+ODNO 복구 (2026-09-05)
     "engine.entry_change_from_open_mode": "shadow",  # 시가대비 추격금지 게이트(관찰중, enforce전환 예정) (2026-09-05)
     "engine.entry_max_change_from_open_pct": 2.0,    # 오늘 시가 +2% 초과 진입=갭추격 차단(엣지: 승률33%)
+    "momentum.enabled": True,                        # 모멘텀 진입(실전) — 리더 돌파 매수, 눌림과 독립 (2026-09-07)
+    "momentum.rs_min": 4.0,                          # 상대강도 임계(시가대비≥+4%). 백테스트: 강세4=승률83%·순+1.36%
+    "momentum.entry_premium_pct": 0.3,               # 돌파가 +0.3% 지정가(모멘텀 체결력)
     "engine.intraday_max_stoploss_per_symbol": 2,   # churn 가드 N회
     "engine.intraday_reentry_block_enabled": True,
     "engine.leverage_restriction_mode": "exclude",  # 레버리지/인버스2x 진입 차단

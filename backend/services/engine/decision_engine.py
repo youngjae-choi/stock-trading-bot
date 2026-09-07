@@ -995,6 +995,10 @@ class DecisionEngine:
         # (베이스라인·탐색OR·모멘텀스캔·교체매매)가 이 단일 길목을 지나므로 여기서 한 번에 막는다.
         # engine.leverage_restriction_mode=off 면 구동작(허용). 보유분 청산은 영향 없음(진입만 차단).
         _name = str(candidate.get("name") or "")
+        # 모멘텀 진입(2026-09-07 실전)은 눌림전략과 정반대(강세 돌파 매수)라, mean-reversion 게이트
+        # (VWAP 눌림·시가대비 추격금지·conviction)를 우회한다. 안전 게이트(레버리지/ETN·손실스트릭·
+        # 급락방어·하락전환·exec_start·preflight 배포캡/포지션한도)는 그대로 적용한다.
+        _is_momentum = bool(matched.get("momentum"))
         try:
             _lev_mode = str(get_setting("engine.leverage_restriction_mode", "exclude") or "exclude").lower()
         except Exception:
@@ -1050,7 +1054,7 @@ class DecisionEngine:
             _regime5 = self._current_regime() or "flat"
             _gates = resolve_buy_gates(_regime5)  # ④ 매수 엔진 게이트 파라미터(get_playbook 경유)
             vwap_mode = str(_gates.get("vwap_pullback_mode", "enforce"))
-            if vwap_mode != "off":
+            if vwap_mode != "off" and not _is_momentum:  # 모멘텀은 눌림 게이트 우회(강세 매수)
                 max_dist = float(_gates.get("entry_max_vwap_dist_pct", 0.0))
                 min_dist = float(_gates.get("entry_min_vwap_dist_pct", -5.0))  # 바닥(falling knife)
                 # 실시간 VWAP(bar_engine) 우선, 미가용(재기동 메모리 소실 등)이면 intraday_bars 폴백
@@ -1097,7 +1101,7 @@ class DecisionEngine:
         # 이 시가대비 추격을 못 걸렀다. 기본 shadow(로그만) — 며칠 관찰 후 PM이 enforce로 전환. off면 비활성.
         try:
             _cfo_mode = str(get_setting("engine.entry_change_from_open_mode", "shadow") or "shadow").lower()
-            if _cfo_mode != "off":
+            if _cfo_mode != "off" and not _is_momentum:  # 모멘텀은 시가대비 추격금지 우회(강세 매수)
                 _cfo_max = float(get_setting("engine.entry_max_change_from_open_pct", 2.0) or 2.0)
                 _d_open = _day_open_from_bars(symbol)  # intraday_bars 첫 봉 open(재기동 유지·백테스트 동일 소스)
                 if _d_open and _d_open > 0 and price > 0:
@@ -1142,7 +1146,7 @@ class DecisionEngine:
         # 레짐별 자연 차등: risk_off(레짐점수 0.2)는 깊은 눌림만·risk_on(1.0)은 얕은 눌림도 통과.
         try:
             _conv_min = float(get_setting("engine.conviction_gate_min", 0.0) or 0.0)
-            if _conv_min > 0:
+            if _conv_min > 0 and not _is_momentum:  # 모멘텀은 눌림기반 conviction 우회
                 from .strategy_playbook import resolve_conviction
                 _vw = self._bar_engine.get_vwap(symbol)
                 _vwd = (price / _vw - 1) * 100 if (_vw and price) else None

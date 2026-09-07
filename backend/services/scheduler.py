@@ -1172,6 +1172,26 @@ async def job_ops_watchdog() -> None:
         logger.error("FAIL: [OpsWatchdog] 감시 실패 — reason=%s", exc)
 
 
+async def job_momentum_entries() -> None:
+    """모멘텀 진입(실전) — 장중 2분마다 유니버스 리더(ORB 돌파+VWAP위+강세)를 감지해 매수한다.
+
+    momentum_backtest 발견(강세4=승률83%·순+1.36% 전 레짐)의 실전 경로(2026-09-07, 모의계좌).
+    눌림전략과 독립. 안전게이트(레버리지/ETN·손실스트릭·급락방어·preflight 배포캡/포지션한도)는 통과.
+    거래일 가드 + exec_start 가드는 run_momentum_entries 내부. momentum.enabled=false면 no-op.
+    """
+    try:
+        from .engine.trading_calendar import is_trading_day
+        td = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+        if not is_trading_day(td):
+            return
+        from .engine.momentum_entry import run_momentum_entries
+        result = await run_momentum_entries(td)
+        if result.get("entered"):
+            logger.warning("MOMENTUM: 리더 매수 %d건 (scanned=%d)", result["entered"], result.get("scanned", 0))
+    except Exception as exc:
+        logger.error("FAIL: [MomentumEntry] 실행 실패 — reason=%s", exc)
+
+
 async def job_startup_prep_catchup() -> None:
     """③ 기동 시 거래준비 catch-up — 서버가 prep 시각에 죽어 있어 prep을 통째로 놓친 경우 복구.
 
@@ -1859,6 +1879,18 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour="9-15", minute="*/2", timezone="Asia/Seoul"),
         id="job_decision_engine_watchdog",
         name="Decision Engine 자동복구 워치독",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # 모멘텀 진입(실전) — 장중(09~14시) 2분 간격. 유니버스 리더(ORB 돌파+VWAP위+강세)를 감지해
+    # 눌림전략과 독립적으로 매수(2026-09-07 실전, 모의계좌). exec_start(09:30) 이전은 내부 스킵.
+    # 15시대는 제외(EOD 청산 임박). momentum.enabled=false면 no-op.
+    scheduler.add_job(
+        job_momentum_entries,
+        CronTrigger(hour="9-14", minute="*/2", timezone="Asia/Seoul"),
+        id="job_momentum_entries",
+        name="모멘텀 진입 (리더 매수, 09~14시 2분)",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
