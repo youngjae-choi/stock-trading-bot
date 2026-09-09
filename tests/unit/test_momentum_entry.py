@@ -109,3 +109,81 @@ def test_run_disabled_is_noop(monkeypatch):
     import backend.services.engine.momentum_entry as m
     r = asyncio.run(run_momentum_entries("2026-09-07", getter=lambda k, d=None: False if k == "momentum.enabled" else d))
     assert r["enabled"] is False and r["entered"] == 0
+
+
+# ── #2 뒷북 방지: 돌파가 대비 현재가 이격 ─────────────────────────────────────
+
+def test_late_chase_pct():
+    from backend.services.engine.momentum_entry import _late_chase_pct
+    assert round(_late_chase_pct(10000, 10150), 2) == 1.5   # +1.5%
+    assert round(_late_chase_pct(10000, 10300), 1) == 3.0
+    assert round(_late_chase_pct(10000, 9900), 2) == -1.0   # 돌파 아래(음수) — 뒷북 아님
+    assert _late_chase_pct(0, 100) == 0.0                   # 미가용 안전
+
+
+# ── #1 재시도 + #2 뒷북 통합 (temp DB) ────────────────────────────────────────
+
+def _mom_getter(**over):
+    base = {"momentum.enabled": True, "momentum.exec_start": "000000", "momentum.rs_min": 4.0,
+            "momentum.or_end": "093000", "momentum.min_vol": 1000, "momentum.min_bars": 1,
+            "momentum.entry_premium_pct": 1.5, "momentum.buy_spacing_sec": 0.0,
+            "momentum.max_attempts": 3, "momentum.max_late_chase_pct": 2.0}
+    base.update(over)
+    return lambda k, d=None: base.get(k, d)
+
+
+def _seed_bars(conn, td, sym, rows):
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS intraday_bars(id INTEGER PRIMARY KEY, trade_date TEXT, symbol TEXT,"
+        " bar_ts TEXT, open REAL, high REAL, low REAL, close REAL, volume REAL, shnu_rate REAL, created_at TEXT)")
+    for ts, o, h, lo, c, v in rows:
+        conn.execute("INSERT INTO intraday_bars(trade_date,symbol,bar_ts,open,high,low,close,volume)"
+                     " VALUES(?,?,?,?,?,?,?,?)", (td, sym, ts, o, h, lo, c, v))
+    conn.commit()
+
+
+def _mom_env(monkeypatch, tmp_path, bar_rows):
+    from backend.config import settings as cfg
+    from backend.services.db import initialize_database, get_connection
+    import backend.services.engine.momentum_entry as m
+    import backend.services.engine.position_manager as pm_mod
+    import backend.services.engine.decision_engine as de_mod
+    monkeypatch.setattr(cfg, "APP_DB_PATH", str(tmp_path / "mom.sqlite3"))
+    initialize_database()
+    td = "2026-09-10"
+    with get_connection() as c:
+        _seed_bars(c, td, "005930", bar_rows)
+    monkeypatch.setattr(pm_mod.position_manager, "get_positions", lambda: [])
+    emitted = []
+
+    async def _fake_emit(symbol, cand, price, matched):
+        emitted.append(symbol)
+    monkeypatch.setattr(de_mod.decision_engine, "_emit_signal", _fake_emit)
+    return m, td, emitted
+
+
+def test_momentum_retries_failed_leader_until_cap(monkeypatch, tmp_path):
+    """#1: _emit_signal이 접수를 안 남기면(=실패) 다음 스캔서 재시도, max_attempts 소진 시 중단."""
+    # 돌파: OR고 10000(093000 전), 이후 10100 돌파(시가 9000 → +12%), last_close=10100(뒷북 아님)
+    rows = [("090000", 9000, 10000, 9000, 9500, 100000), ("093100", 9500, 10100, 9500, 10100, 200000)]
+    m, td, emitted = _mom_env(monkeypatch, tmp_path, rows)
+    g = _mom_getter()
+    for expect_attempt in (1, 2, 3):
+        emitted.clear()
+        r = asyncio.run(m.run_momentum_entries(td, getter=g))
+        assert r["entered"] == 1 and emitted == ["005930"], f"attempt {expect_attempt}"
+    # 4번째: attempts>=3 → done → 스킵
+    emitted.clear()
+    r4 = asyncio.run(m.run_momentum_entries(td, getter=g))
+    assert r4["entered"] == 0 and emitted == []
+
+
+def test_momentum_skips_late_chase(monkeypatch, tmp_path):
+    """#2: 돌파 후 현재가가 돌파가 +2% 초과로 달렸으면 진입 보류(뒷북)."""
+    # 돌파가 10000, 마지막 종가 10300(+3% > 2%) → 뒷북 보류
+    rows = [("090000", 9000, 10000, 9000, 9500, 100000),
+            ("093100", 9500, 10100, 9500, 10100, 200000),
+            ("093500", 10100, 10350, 10100, 10300, 200000)]
+    m, td, emitted = _mom_env(monkeypatch, tmp_path, rows)
+    r = asyncio.run(m.run_momentum_entries(td, getter=_mom_getter()))
+    assert r["entered"] == 0 and emitted == []  # 뒷북이라 매수 안 함

@@ -55,14 +55,30 @@ def _detect_breakout(bars: list, or_end: str, exec_start: str, rs_min: float):
     return None
 
 
+def _late_chase_pct(or_high: float, last_close: float) -> float:
+    """돌파레벨(OR 고가) 대비 현재가가 얼마나 위인가(%). 뒷북(이미 달린 돌파) 진입 방지 판정용.
+
+    백테스트는 '돌파레벨 진입'을 가정하는데, 2분 스캔 지연 동안 가격이 돌파가보다 크게 위로 가면
+    (뒷북) 남은 업사이드↓·리스크↑라 엣지가 재현 안 된다. 이 값이 임계 초과면 진입 보류(재검토 대기).
+    """
+    if or_high <= 0 or last_close <= 0:
+        return 0.0
+    return (last_close / or_high - 1.0) * 100.0
+
+
 def _ensure_table(conn) -> None:
     conn.execute(
         "CREATE TABLE IF NOT EXISTS momentum_signals ("
         " id INTEGER PRIMARY KEY, trade_date TEXT NOT NULL, symbol TEXT NOT NULL,"
         " detected_at TEXT NOT NULL, entry_ts TEXT, price REAL, last_close REAL, vwap REAL,"
-        " change_from_open REAL, bought INTEGER NOT NULL DEFAULT 0, reason TEXT,"
+        " change_from_open REAL, bought INTEGER NOT NULL DEFAULT 0,"
+        " attempts INTEGER NOT NULL DEFAULT 0, reason TEXT,"
         " UNIQUE(trade_date, symbol))"
     )
+    try:  # 기존 테이블(09-08 생성) 마이그레이션 — attempts 컬럼 추가
+        conn.execute("ALTER TABLE momentum_signals ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass  # 이미 존재
 
 
 def _name_of(conn, symbol: str) -> str:
@@ -100,9 +116,10 @@ async def run_momentum_entries(trade_date: str | None = None, *, getter: Callabl
     min_bars = int(_f(getter, "momentum.min_bars", 50))
     premium = _f(getter, "momentum.entry_premium_pct", 1.5) / 100.0  # 체결력: 돌파가 위 지정가(빠른 리더 추격)
     spacing = _f(getter, "momentum.buy_spacing_sec", 1.5)            # 매수 간격(KIS 초당한도 EGW00215 회피)
+    max_attempts = int(_f(getter, "momentum.max_attempts", 3))       # #1: 일시적 실패(rate-limit 등) 재시도 상한
+    max_late = _f(getter, "momentum.max_late_chase_pct", 2.0)        # #2: 돌파가 대비 현재가 이 %↑면 뒷북=보류
     now_iso = datetime.now(KST).isoformat()
 
-    # 중복 방지 집합: 보유 + 당일 매수 + 이미 기록
     from .position_manager import position_manager
     held = {str(p.get("symbol") or "").strip() for p in position_manager.get_positions()}
     scanned = entered = 0
@@ -110,17 +127,23 @@ async def run_momentum_entries(trade_date: str | None = None, *, getter: Callabl
     try:
         with get_connection() as conn:
             _ensure_table(conn)
-            already = {r["symbol"] for r in conn.execute(
-                "SELECT symbol FROM momentum_signals WHERE trade_date=?", (td,))}
-            bought_today = {r["symbol"] for r in conn.execute(
-                "SELECT DISTINCT symbol FROM trading_orders WHERE trade_date=? AND side='buy'", (td,))}
+            # #1 중복/재시도: 재시도 소진(attempts>=max)만 제외 — 실패는 재시도 허용(이전엔 감지 1회로 영구 스킵).
+            done = {r["symbol"] for r in conn.execute(
+                "SELECT symbol FROM momentum_signals WHERE trade_date=? AND attempts>=?", (td, max_attempts))}
+            # 이미 접수된 매수(momentum·눌림 무관)만 성공으로 간주해 제외 — failed는 제외 안 함(재시도 대상).
+            try:
+                bought_ok = {r["symbol"] for r in conn.execute(
+                    "SELECT DISTINCT symbol FROM trading_orders WHERE trade_date=? AND side='buy'"
+                    " AND status IN ('filled','partial','submitted')", (td,))}
+            except Exception:
+                bought_ok = set()  # 테이블 부재 등 — 성공 dedup 스킵(스캔은 계속)
             uni = conn.execute(
                 "SELECT symbol FROM intraday_bars WHERE trade_date=? GROUP BY symbol"
                 " HAVING SUM(volume)>=? AND COUNT(*)>=?", (td, min_vol, min_bars)).fetchall()
             for row in uni:
                 sym = row["symbol"]
                 scanned += 1
-                if sym in already or sym in held or sym in bought_today:
+                if sym in done or sym in held or sym in bought_ok:
                     continue
                 bars = conn.execute(
                     "SELECT bar_ts, open, high, low, close, volume FROM intraday_bars"
@@ -130,11 +153,19 @@ async def run_momentum_entries(trade_date: str | None = None, *, getter: Callabl
                     continue
                 entry_ts, or_high, vwap, cfo = sig
                 last_close = float(bars[-1]["close"] or or_high)
+                # #2 뒷북 방지: 돌파가 대비 현재가가 너무 위(스캔 지연 동안 달림)면 보류(기록 안 함 → 재검토 대기).
+                late = _late_chase_pct(or_high, last_close)
+                if late > max_late:
+                    logger.info("INFO: [MomentumEntry] 뒷북 보류 symbol=%s 돌파대비 +%.1f%% > %.1f%%(가격 정상화시 재진입)",
+                                sym, late, max_late)
+                    continue
                 price = round(max(or_high, last_close) * (1 + premium), 2)  # 체결력 위해 소폭 프리미엄
                 conn.execute(
-                    "INSERT OR IGNORE INTO momentum_signals"
+                    "INSERT INTO momentum_signals"
                     " (trade_date, symbol, detected_at, entry_ts, price, last_close, vwap, change_from_open)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                    " ON CONFLICT(trade_date, symbol) DO UPDATE SET"
+                    " detected_at=excluded.detected_at, price=excluded.price, last_close=excluded.last_close",
                     (td, sym, now_iso, entry_ts, price, last_close, vwap, cfo))
                 candidates.append((sym, price, vwap, cfo, entry_ts))
             conn.commit()
@@ -149,15 +180,18 @@ async def run_momentum_entries(trade_date: str | None = None, *, getter: Callabl
             await asyncio.sleep(spacing)  # 버스트 방지(KIS 초당 거래건수 한도)
         try:
             with get_connection() as conn:
+                # 시도 횟수 증가(성공/실패 무관) — 재시도 상한 관리. 성공 여부는 다음 스캔의 bought_ok
+                # (trading_orders 접수상태)가 판정하므로 여기서 bought=1을 단정하지 않는다(_emit_signal이
+                # 접수 성공여부를 반환하지 않아 09-08처럼 실패인데 성공기록되던 문제 방지).
+                conn.execute("UPDATE momentum_signals SET attempts=attempts+1 WHERE trade_date=? AND symbol=?",
+                             (td, sym))
+                conn.commit()
                 name = _name_of(conn, sym)
             logger.warning(
                 "MOMENTUM-BUY: 리더 매수 시도 symbol=%s name=%s 지정가=%.0f 시가대비=%+.2f%% vwap=%.0f",
                 sym, name, price, cfo, vwap)
             await decision_engine._emit_signal(sym, {"name": name, "confidence": 0.7}, price, {"momentum": True})
             entered += 1
-            with get_connection() as conn:
-                conn.execute("UPDATE momentum_signals SET bought=1 WHERE trade_date=? AND symbol=?", (td, sym))
-                conn.commit()
         except Exception as exc:
             logger.warning("WARN: [MomentumEntry] 매수 실패 symbol=%s — %s", sym, exc)
             try:

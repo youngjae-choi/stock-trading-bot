@@ -234,7 +234,8 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 **"코스피 +4%면 시스템도 +4%"** 목표. 우리 눌림(mean-reversion)전략은 보합서만 이기고 추세장(상승·폭등·하락)엔 짐(리더 대신 laggard 매수·+2% 스칼프로 승자 캡). momentum_backtest 확증: **ORB 돌파+VWAP위+상대강도(시가대비≥+4%) = 승률 83%·순 +1.36%, 전 레짐 유효**(눌림과 정반대 엣지).
 - **경로:** `momentum_entry.run_momentum_entries` — 장중 2분마다(`job_momentum_entries`) 유니버스(intraday_bars 구독종목) 스캔 → 리더 감지 → `_emit_signal(momentum=True)` 매수. 눌림전략과 **독립 병행**.
 - **게이트 우회:** 모멘텀은 mean-reversion 게이트(VWAP 눌림·시가대비 추격금지·conviction)를 **우회**(강세 매수라 정반대). 단 **안전게이트는 통과**: 레버리지/ETN·손실스트릭·급락방어·하락전환·exec_start(09:30)·preflight(배포캡 95%·포지션한도·긴급정지·손실한도).
-- **설정:** `momentum.enabled`(on)·`rs_min`(+4)·`entry_premium_pct`(+0.3 지정가 체결력)·`or_end/exec_start`(093000). 종목당 하루 1회, 보유/당일매수 중복 스킵. 기록=`momentum_signals`.
+- **설정:** `momentum.enabled`(on)·`rs_min`(+4)·`entry_premium_pct`(+1.5 지정가 체결력, 호가 스냅)·`or_end/exec_start`(093000). 기록=`momentum_signals`. 보유/접수성공 종목 스킵.
+- **체결 신뢰성(2026-09-09):** ①호가단위 스냅(`_price_text`→`_snap_to_krx_tick`) — 계산가가 KRX 틱 위반이면 IGW00007 거부(09-08/09 전량실패 뿌리). ②`max_attempts`(3)·`buy_spacing_sec`(1.5) — 일시적 실패(EGW00215 rate-limit)는 당일 재시도(감지1회 영구스킵 X), 버스트 완화. ③`max_late_chase_pct`(+2) — 돌파가 대비 현재가 +2%↑ 뒷북이면 진입 보류(재검토 대기).
 - ⚠ **미검증 리스크:** 반사실 백테스트(우리는 이렇게 매매한 적 없음) — 체결현실성·선정갭(우리 S3/S4가 눌림후보만 골라 유니버스에 리더 적음) 라이브 관찰 필요. 롤백 `momentum.enabled=false`.
 
 ---

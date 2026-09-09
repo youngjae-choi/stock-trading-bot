@@ -91,6 +91,8 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "momentum.rs_min": 4.0,                          # 상대강도 임계(시가대비≥+4%). 백테스트: 강세4=승률83%·순+1.36%
     "momentum.entry_premium_pct": 1.5,               # 돌파가 +1.5% 지정가(빠른 리더 체결력, 호가 스냅)
     "momentum.buy_spacing_sec": 1.5,                 # 모멘텀 매수 간격(KIS 초당한도 EGW00215 회피)
+    "momentum.max_attempts": 3,                      # #1 일시적 실패(rate-limit) 당일 재시도 상한 (2026-09-09)
+    "momentum.max_late_chase_pct": 2.0,              # #2 돌파가 대비 현재가 +2%↑면 뒷북=보류 (2026-09-09)
     "engine.intraday_max_stoploss_per_symbol": 2,   # churn 가드 N회
     "engine.intraday_reentry_block_enabled": True,
     "engine.leverage_restriction_mode": "exclude",  # 레버리지/인버스2x 진입 차단
