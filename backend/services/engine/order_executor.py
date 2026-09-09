@@ -78,6 +78,22 @@ def _today_kst() -> str:
     return _now_kst().strftime("%Y-%m-%d")
 
 
+def _snap_to_krx_tick(price: float) -> int:
+    """KRX 호가단위(2023 통합)로 스냅한 정수 가격. 미정렬 가격은 KIS가 IGW00007로 거부하므로 필수.
+
+    밴드: <2천=1 · <5천=5 · <2만=10 · <5만=50 · <20만=100 · <50만=500 · 그이상=1000. 최근접 반올림.
+    """
+    try:
+        p = max(0.0, float(price))
+    except (TypeError, ValueError):
+        return 0
+    if p <= 0:
+        return 0
+    tick = (1 if p < 2000 else 5 if p < 5000 else 10 if p < 20000 else
+            50 if p < 50000 else 100 if p < 200000 else 500 if p < 500000 else 1000)
+    return int(round(p / tick) * tick)
+
+
 def _to_float(value: Any, default: float = 0.0) -> float:
     """Convert KIS numeric strings to float while tolerating blanks and commas.
 
@@ -1072,12 +1088,13 @@ class OrderExecutor:
         return ""
 
     def _price_text(self, price: float) -> str:
-        """Format a KIS order price string without leaking float decimals.
+        """KIS 주문가 문자열 — KRX 호가단위(tick)에 스냅한 정수로 반환.
 
-        Args:
-            price: Numeric price to send to KIS.
+        소수·호가단위 미정렬 가격은 KIS가 IGW00007("MCA 전문바디 구성 오류")로 거부한다.
+        (2026-09-09: 모멘텀 진입 프리미엄가 8967·3791이 호가 위반으로 전량 실패한 사고 재발방지.)
+        틱 미정렬이던 실시간 시세는 보통 이미 정렬돼 있어 스냅=no-op, 계산된 가격만 보정된다.
         """
-        return str(int(price)) if float(price).is_integer() else str(price)
+        return str(_snap_to_krx_tick(price))
 
     def _save_order(
         self,

@@ -89,7 +89,8 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "engine.entry_max_change_from_open_pct": 2.0,    # 오늘 시가 +2% 초과 진입=갭추격 차단(엣지: 승률33%)
     "momentum.enabled": True,                        # 모멘텀 진입(실전) — 리더 돌파 매수, 눌림과 독립 (2026-09-07)
     "momentum.rs_min": 4.0,                          # 상대강도 임계(시가대비≥+4%). 백테스트: 강세4=승률83%·순+1.36%
-    "momentum.entry_premium_pct": 0.3,               # 돌파가 +0.3% 지정가(모멘텀 체결력)
+    "momentum.entry_premium_pct": 1.5,               # 돌파가 +1.5% 지정가(빠른 리더 체결력, 호가 스냅)
+    "momentum.buy_spacing_sec": 1.5,                 # 모멘텀 매수 간격(KIS 초당한도 EGW00215 회피)
     "engine.intraday_max_stoploss_per_symbol": 2,   # churn 가드 N회
     "engine.intraday_reentry_block_enabled": True,
     "engine.leverage_restriction_mode": "exclude",  # 레버리지/인버스2x 진입 차단

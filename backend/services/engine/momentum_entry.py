@@ -10,6 +10,7 @@ momentum_backtest 발견(강세4 돌파 = 승률 83%·순 +1.36%, 전 레짐)을
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Callable
@@ -97,7 +98,8 @@ async def run_momentum_entries(trade_date: str | None = None, *, getter: Callabl
     or_end = str(getter("momentum.or_end", "093000") or "093000")
     min_vol = _f(getter, "momentum.min_vol", 300000)
     min_bars = int(_f(getter, "momentum.min_bars", 50))
-    premium = _f(getter, "momentum.entry_premium_pct", 0.3) / 100.0  # 체결력: 돌파가 소폭 위 지정가
+    premium = _f(getter, "momentum.entry_premium_pct", 1.5) / 100.0  # 체결력: 돌파가 위 지정가(빠른 리더 추격)
+    spacing = _f(getter, "momentum.buy_spacing_sec", 1.5)            # 매수 간격(KIS 초당한도 EGW00215 회피)
     now_iso = datetime.now(KST).isoformat()
 
     # 중복 방지 집합: 보유 + 당일 매수 + 이미 기록
@@ -142,7 +144,9 @@ async def run_momentum_entries(trade_date: str | None = None, *, getter: Callabl
 
     # 매수 실행 — _emit_signal(momentum=True): 눌림게이트 우회, 안전게이트·preflight 통과
     from .decision_engine import decision_engine
-    for sym, price, vwap, cfo, entry_ts in candidates:
+    for _idx, (sym, price, vwap, cfo, entry_ts) in enumerate(candidates):
+        if _idx > 0 and spacing > 0:
+            await asyncio.sleep(spacing)  # 버스트 방지(KIS 초당 거래건수 한도)
         try:
             with get_connection() as conn:
                 name = _name_of(conn, sym)

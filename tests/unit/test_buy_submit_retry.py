@@ -112,3 +112,25 @@ def test_odno_recovery_none_stays_uncertain(monkeypatch):
 
     _resp, odno = asyncio.run(_oe()._submit_buy("005930", 10, 70000.0, "2026-09-05"))
     assert odno == ""  # 복구 실패 → 호출부가 submit_uncertain 기록(재제출 안 함=중복매수 방지)
+
+
+# ── KRX 호가단위 스냅 (2026-09-09: 모멘텀 프리미엄가 호가 위반 IGW00007 재발방지) ──
+
+def test_snap_to_krx_tick():
+    from backend.services.engine.order_executor import _snap_to_krx_tick
+    assert _snap_to_krx_tick(8967) == 8970     # 5천~2만 = 틱10
+    assert _snap_to_krx_tick(3791) == 3790     # 2천~5천 = 틱5
+    assert _snap_to_krx_tick(3516) == 3515
+    assert _snap_to_krx_tick(331) == 331       # <2천 = 틱1 (이미 정렬)
+    assert _snap_to_krx_tick(10792.5) == 10790  # 소수 → 정수·틱
+    assert _snap_to_krx_tick(55555) == 55600   # 5만~20만 = 틱100
+    assert _snap_to_krx_tick(0) == 0
+    assert _snap_to_krx_tick(-5) == 0
+
+
+def test_price_text_snaps_tick():
+    from backend.services.engine.order_executor import OrderExecutor
+    oe = OrderExecutor.__new__(OrderExecutor)
+    assert oe._price_text(8967) == "8970"      # 호가 미정렬 → 스냅
+    assert oe._price_text(3791.4) == "3790"    # 소수 누출 없이 정수·틱
+    assert oe._price_text(12650) == "12650"    # 이미 정렬 = 무변
