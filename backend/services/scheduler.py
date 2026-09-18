@@ -991,6 +991,21 @@ async def job_decision_engine_start() -> None:
     try:
         active_plan = _get_active_daily_plan_for_s6()
         if not active_plan:
+            # prep(≈09:05) 완료 前 시각엔 활성 Daily Plan 없음이 정상 → blocked 감사/알림 억제(오탐 방지).
+            # 워치독(2분)·재기동이 prep 완료 前(09:00~09:05)·야간(재부팅 직후)에 S6 활성화를 시도하며
+            # "S6 차단 ❌" 텔레그램을 도배하던 문제(2026-09-18). prep 예정시각+5분 유예 이후에만
+            # 진짜 문제(prep 됐어야 하는데 plan 없음)로 보고 알림한다. (09:20 정규 S6잡·늦은 워치독은 통과.)
+            try:
+                from .settings_store import get_setting
+                _prep_min = _hhmm_to_minutes(str(get_setting("schedule_trade_prep_time", "09:05") or "09:05")) or (9 * 60 + 5)
+            except Exception:
+                _prep_min = 9 * 60 + 5
+            _now_k = datetime.now(ZoneInfo("Asia/Seoul"))
+            if (_now_k.hour * 60 + _now_k.minute) < _prep_min + 5:
+                logger.info(
+                    "INFO: [Job6] 활성 Daily Plan 없음이나 prep 완료 전(현재 %02d:%02d < 예정 %02d:%02d+5) — 정상 대기(오탐 알림 억제)",
+                    _now_k.hour, _now_k.minute, _prep_min // 60, _prep_min % 60)
+                return
             latest_plan_context = _get_latest_daily_plan_context_for_s6()
             recent_audit_context = _get_recent_pre_s6_audit_context()
             metadata = {
