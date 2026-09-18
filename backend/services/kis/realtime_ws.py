@@ -156,6 +156,15 @@ class RealtimeWSManager:
                     self.is_connected = True
                     self._consecutive_fail_count = 0
                     self._ws_block_published = False
+                    # WS 연결 성공 → 걸어둔 DQ BLOCK_NEW_ENTRY 자동 해제(틱 재개 → 매매 차단 복구).
+                    # 매 연결마다 호출(미해결 없으면 no-op) — 재기동 시 이전 세션의 미해결 이벤트도 정리.
+                    # 없어서 09-18 종일 차단(재연결·틱 흐르는데 이벤트 미해결로 preflight가 전 매수 차단).
+                    try:
+                        from ..engine.data_quality_guard import _today_kst as _dq_today
+                        from ..engine.data_quality_guard import resolve_ws_disconnect_events
+                        resolve_ws_disconnect_events(_dq_today())
+                    except Exception as _dq_exc:
+                        logger.warning("WARN: [WS] 재연결 DQ 블록 해제 실패 reason=%s", _dq_exc)
                     for symbol in self._symbols:
                         subscribe_message = self._build_subscribe_message(approval_key=approval_key, symbol=symbol)
                         await ws.send(json.dumps(subscribe_message))

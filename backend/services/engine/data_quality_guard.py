@@ -251,6 +251,29 @@ def resolve_dq_events(trade_date: str, event_ids: list[str] | None = None) -> in
     return updated
 
 
+def resolve_ws_disconnect_events(trade_date: str) -> int:
+    """WS 재연결 성공 시 ws_consecutive_disconnect BLOCK 이벤트만 해제(다른 DQ 이슈는 보존).
+
+    2026-09-18 사고: WS가 재연결돼 틱이 다시 흐르는데도, disconnect 시 기록된 BLOCK_NEW_ENTRY 이벤트가
+    영구 미해결로 남아 preflight가 종일 신규매수를 차단(11신호 0주문). 재연결이 이 함수를 호출해 블록을
+    자동 해제 → DQ 상태가 실제 WS 상태를 추종한다(끊기면 차단, 붙으면 해제). 이미 해결된 건 no-op.
+    """
+    try:
+        with get_connection() as conn:
+            cur = conn.execute(
+                "UPDATE data_quality_events SET resolved=1"
+                " WHERE trade_date=? AND event_type='ws_consecutive_disconnect' AND resolved=0",
+                (trade_date,),
+            )
+            n = cur.rowcount
+        if n:
+            logger.info("SUCCESS: DataQualityGuard.resolve_ws_disconnect trade_date=%s resolved=%d(WS 재연결 복구)", trade_date, n)
+        return n
+    except Exception as exc:
+        logger.warning("WARN: DataQualityGuard.resolve_ws_disconnect failed reason=%s", exc)
+        return 0
+
+
 def get_current_status() -> str:
     """Return the current overall DQ status based on today's events.
 
