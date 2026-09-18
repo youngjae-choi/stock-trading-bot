@@ -261,6 +261,10 @@ class OrderExecutor:
         symbol = str(signal.get("symbol") or "").strip()
         name = str(signal.get("name") or "")
         price = _to_float(signal.get("trigger_price"))
+        # 주문방식 — 모멘텀 리더 시장가(설정 momentum.order_style)면 즉시체결(ord_dvsn=01, price=0).
+        # 눌림전략은 order_style 미지정=limit 기본. price는 시장가여도 사이징/preflight 기준가로 계속 사용.
+        is_market = str(signal.get("order_style") or "limit").strip().lower() == "market"
+        order_type_label = "market" if is_market else "limit"
         today = _today_kst()
         logger.info("START: [S7] execute_signal signal_id=%s symbol=%s", signal_id, symbol)
 
@@ -383,7 +387,7 @@ class OrderExecutor:
                     )
                 return {"ok": False, "reason": "preflight_blocked", "detail": preflight.get("block_reason")}
 
-            _buy_resp, kis_order_no = await self._submit_buy(symbol, qty, price, today)
+            _buy_resp, kis_order_no = await self._submit_buy(symbol, qty, price, today, is_market=is_market)
 
             order_id = self._save_order(
                 trade_date=today,
@@ -391,7 +395,7 @@ class OrderExecutor:
                 symbol=symbol,
                 name=name,
                 side="buy",
-                order_type="limit",
+                order_type=order_type_label,
                 qty=qty,
                 price=price,
                 kis_order_no=kis_order_no,
@@ -414,7 +418,7 @@ class OrderExecutor:
                 symbol=symbol,
                 name=name,
                 side="buy",
-                order_type="limit",
+                order_type=order_type_label,
                 qty=0,
                 price=price,
                 kis_order_no="",
@@ -425,19 +429,24 @@ class OrderExecutor:
             logger.error("FAIL: [S7] buy order failed order_id=%s symbol=%s reason=%s", order_id, symbol, exc)
             return {"ok": False, "order_id": order_id, "symbol": symbol, "reason": str(exc)}
 
-    async def _submit_buy(self, symbol: str, qty: int, price: float, today: str) -> tuple[Any, str]:
+    async def _submit_buy(self, symbol: str, qty: int, price: float, today: str, *, is_market: bool = False) -> tuple[Any, str]:
         """매수 접수 — 접수 실패 재시도(Mode1) + ODNO 누락 복구 재조회(Mode2). (response, kis_order_no) 반환.
 
         2026-09-05 분석: 매수 체결률 ~50%, 미체결의 89%가 '지정가 문제'가 아니라 **KIS 접수 실패**
         (ODNO 없음→submit_uncertain→EOD 취소)로 배포 손실. 매도엔 있던 재시도가 매수엔 없던 비대칭을
         해소하고, 즉시 1회뿐이던 ODNO 복구를 지연 재조회로 강화. 롤백: engine.buy_submit_retry_enabled=false.
+
+        is_market=True(모멘텀 리더, 설정 momentum.order_style=market): 시장가 접수(ord_dvsn=01·ORD_UNPR=0)로
+        감지 즉시 체결 보장. 09-18 고질병: 상승장 리더를 감지해도 지정가 미체결로 참여 못 함. 매도 시장가와 동일 패턴.
         """
         from ..settings_store import get_setting as _gs_retry
         _buy_retry = str(_gs_retry("engine.buy_submit_retry_enabled", True)).lower() not in ("false", "0", "no")
+        _ord_dvsn = "01" if is_market else "00"
+        _ord_price = "0" if is_market else self._price_text(price)
         response: Any = None
         try:
             try:
-                response = await order_cash(side="buy", symbol=symbol, qty=qty, price=self._price_text(price), ord_dvsn="00")
+                response = await order_cash(side="buy", symbol=symbol, qty=qty, price=_ord_price, ord_dvsn=_ord_dvsn)
             except Exception as _buy_first_exc:
                 if not _buy_retry:
                     raise
@@ -449,7 +458,7 @@ class OrderExecutor:
                 for _b_att, _b_delay in enumerate((1.5, 3.0), start=1):
                     await asyncio.sleep(_b_delay)
                     try:
-                        response = await order_cash(side="buy", symbol=symbol, qty=qty, price=self._price_text(price), ord_dvsn="00")
+                        response = await order_cash(side="buy", symbol=symbol, qty=qty, price=_ord_price, ord_dvsn=_ord_dvsn)
                         _buy_ok = True
                         logger.info("INFO: [S7] buy 재시도 접수 성공 attempt=%d symbol=%s", _b_att, symbol)
                         break

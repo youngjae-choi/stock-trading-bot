@@ -236,6 +236,7 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 - **게이트 우회:** 모멘텀은 mean-reversion 게이트(VWAP 눌림·시가대비 추격금지·conviction)를 **우회**(강세 매수라 정반대). 단 **안전게이트는 통과**: 레버리지/ETN·손실스트릭·급락방어·하락전환·exec_start(09:30)·preflight(배포캡 95%·포지션한도·긴급정지·손실한도).
 - **설정:** `momentum.enabled`(on)·`rs_min`(+4)·`entry_premium_pct`(+1.5 지정가 체결력, 호가 스냅)·`or_end/exec_start`(093000). 기록=`momentum_signals`. 보유/접수성공 종목 스킵.
 - **체결 신뢰성(2026-09-09):** ①호가단위 스냅(`_price_text`→`_snap_to_krx_tick`) — 계산가가 KRX 틱 위반이면 IGW00007 거부(09-08/09 전량실패 뿌리). ②`max_attempts`(3)·`buy_spacing_sec`(1.5) — 일시적 실패(EGW00215 rate-limit)는 당일 재시도(감지1회 영구스킵 X), 버스트 완화. ③`max_late_chase_pct`(+2) — 돌파가 대비 현재가 +2%↑ 뒷북이면 진입 보류(재검토 대기).
+- **주문방식 `momentum.order_style`(2026-09-18, 기본 `market`):** 09-18 고질병 확인 — 상승장 리더를 감지해도 지정가+프리미엄 접수가 미체결돼 참여 못 함(체결현실성 리스크 현실화). **시장가**(`market`)면 `_submit_buy(is_market=True)`가 `ord_dvsn=01·ORD_UNPR=0`(매도 시장가와 동일)로 **감지 즉시 체결 보장**(사이징 기준가만 현재가 사용, 프리미엄 제거). `limit`이면 기존 지정가+프리미엄. **설정화면(설정→모멘텀 진입)에서 수정**(하드코딩 아님). 눌림전략은 `order_style` 미지정=지정가 유지. 배선: `momentum_entry`→`matched.order_style`→`_emit_signal`→`execute_signal(signal.order_style)`→`_submit_buy`. 롤백 `momentum.order_style=limit`.
 - ⚠ **미검증 리스크:** 반사실 백테스트(우리는 이렇게 매매한 적 없음) — 체결현실성·선정갭(우리 S3/S4가 눌림후보만 골라 유니버스에 리더 적음) 라이브 관찰 필요. 롤백 `momentum.enabled=false`.
 
 ---

@@ -114,7 +114,12 @@ async def run_momentum_entries(trade_date: str | None = None, *, getter: Callabl
     or_end = str(getter("momentum.or_end", "093000") or "093000")
     min_vol = _f(getter, "momentum.min_vol", 300000)
     min_bars = int(_f(getter, "momentum.min_bars", 50))
-    premium = _f(getter, "momentum.entry_premium_pct", 1.5) / 100.0  # 체결력: 돌파가 위 지정가(빠른 리더 추격)
+    premium = _f(getter, "momentum.entry_premium_pct", 1.5) / 100.0  # 체결력: 돌파가 위 지정가(빠른 리더 추격) — order_style=limit 전용
+    # 주문방식(설정화면에서 수정) — market=시장가(감지 즉시 체결 보장) / limit=지정가+프리미엄(기존, 체결 미보장).
+    # 09-18 고질병: 상승장 리더를 감지해도 지정가 체결 실패로 참여 못 함 → 기본 시장가로 체결 보장.
+    order_style = str(getter("momentum.order_style", "market") or "market").strip().lower()
+    if order_style not in ("market", "limit"):
+        order_style = "market"
     spacing = _f(getter, "momentum.buy_spacing_sec", 1.5)            # 매수 간격(KIS 초당한도 EGW00215 회피)
     max_attempts = int(_f(getter, "momentum.max_attempts", 3))       # #1: 일시적 실패(rate-limit 등) 재시도 상한
     max_late = _f(getter, "momentum.max_late_chase_pct", 2.0)        # #2: 돌파가 대비 현재가 이 %↑면 뒷북=보류
@@ -159,7 +164,9 @@ async def run_momentum_entries(trade_date: str | None = None, *, getter: Callabl
                     logger.info("INFO: [MomentumEntry] 뒷북 보류 symbol=%s 돌파대비 +%.1f%% > %.1f%%(가격 정상화시 재진입)",
                                 sym, late, max_late)
                     continue
-                price = round(max(or_high, last_close) * (1 + premium), 2)  # 체결력 위해 소폭 프리미엄
+                # 시장가는 사이징 기준가만 필요(프리미엄 무의미) → 현재가. 지정가는 체결력 위해 소폭 프리미엄.
+                price = round(last_close, 2) if order_style == "market" \
+                    else round(max(or_high, last_close) * (1 + premium), 2)
                 conn.execute(
                     "INSERT INTO momentum_signals"
                     " (trade_date, symbol, detected_at, entry_ts, price, last_close, vwap, change_from_open)"
@@ -188,9 +195,11 @@ async def run_momentum_entries(trade_date: str | None = None, *, getter: Callabl
                 conn.commit()
                 name = _name_of(conn, sym)
             logger.warning(
-                "MOMENTUM-BUY: 리더 매수 시도 symbol=%s name=%s 지정가=%.0f 시가대비=%+.2f%% vwap=%.0f",
-                sym, name, price, cfo, vwap)
-            await decision_engine._emit_signal(sym, {"name": name, "confidence": 0.7}, price, {"momentum": True})
+                "MOMENTUM-BUY: 리더 매수 시도 symbol=%s name=%s 방식=%s 기준가=%.0f 시가대비=%+.2f%% vwap=%.0f",
+                sym, name, order_style, price, cfo, vwap)
+            await decision_engine._emit_signal(
+                sym, {"name": name, "confidence": 0.7}, price,
+                {"momentum": True, "order_style": order_style})
             entered += 1
         except Exception as exc:
             logger.warning("WARN: [MomentumEntry] 매수 실패 symbol=%s — %s", sym, exc)

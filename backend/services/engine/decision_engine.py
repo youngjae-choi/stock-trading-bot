@@ -1211,6 +1211,8 @@ class DecisionEngine:
                         "name": candidate.get("name", ""),
                         "trigger_price": price,
                         "confidence": confidence,
+                        # 주문방식 — 모멘텀 리더는 시장가 즉시체결(설정), 눌림전략은 기본 지정가 유지.
+                        "order_style": matched.get("order_style", "limit"),
                     }
                 )
             except Exception as exc:

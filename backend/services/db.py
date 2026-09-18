@@ -457,6 +457,8 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
         ("missed.improvement_high_threshold", 7.0, "number", "Missed 개선후보 고점 임계치(%, 기본 7.0 — 장중 최고가가 기준가 대비 이 이상 올랐을 때)"),
         ("missed.improvement_stop_threshold", 8.0, "number", "Missed 개선후보 저점 손절선(%, 기본 8.0 — 장중 최저가가 이 이하로 내려가지 않아야 후보 인정)"),
         ("account.principal", 100000000, "number", "계좌 원금(시드). 누적 수익률 계산 기준. 모의계좌 기본 1억, 실계좌 전환/증액 시 조정"),
+        ("momentum.enabled", True, "boolean", "모멘텀 진입(실전) 활성 — 리더 돌파 매수(눌림전략과 독립). 롤백 스위치"),
+        ("momentum.order_style", "market", "string", "모멘텀 진입 주문방식: market=시장가(즉시체결·빠른리더) / limit=지정가+프리미엄(체결미보장)"),
         ("momentum_scan.enabled", True, "boolean", "상시 모멘텀 스캐너 활성(모의 전용)"),
         ("momentum_scan.interval_min", 3, "number", "모멘텀 스캔 주기(분)"),
         ("momentum_scan.max_subscriptions", 40, "number", "WS 동시 구독 상한 가드"),

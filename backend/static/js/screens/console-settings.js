@@ -510,9 +510,61 @@
     loadTradingCostSettings();
     loadRegimeSets();
     loadIntradaySettings();
+    loadMomentumSettings();
     loadMissedThresholdSettings();
     _wireSettingsCollapse();
   }
+
+  /* 모멘텀 진입 설정 로드 — 활성 토글 + 주문방식(시장가/지정가) 셀렉트. */
+  async function loadMomentumSettings() {
+    try {
+      const fullMap = await loadSettingsMapFull();
+      const en = document.getElementById('momentum-enabled');
+      if (en) {
+        const m = fullMap['momentum.enabled'];
+        en.checked = m ? !!m.value : true;  // 기본 활성(설정 부재 시)
+      }
+      const os = document.getElementById('momentum-order-style');
+      if (os) {
+        const v = fullMap['momentum.order_style']?.value;
+        os.value = (v === 'limit') ? 'limit' : 'market';  // 기본 시장가
+      }
+      const lastEl = document.getElementById('momentum-settings-last-updated');
+      if (lastEl) {
+        let latest = null;
+        ['momentum.enabled', 'momentum.order_style'].forEach(function(k) {
+          const m = fullMap[k];
+          if (m && m.updated_at && (!latest || m.updated_at > latest.updated_at)) latest = m;
+        });
+        if (latest) lastEl.innerHTML = _fmtSettingTs(latest.updated_at, latest.updated_by);
+      }
+    } catch (e) {
+      console.warn('Failed to load momentum settings', e);
+    }
+  }
+
+  /* 모멘텀 설정 1건 저장(범용) — key/value/타입을 받아 system_settings에 반영. */
+  window.saveMomentumSetting = async function(key, el, valueType) {
+    const value = valueType === 'boolean' ? el.checked : el.value;
+    const prev = valueType === 'boolean' ? !el.checked : null;
+    try {
+      const res = await fetchJson('/api/v1/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: key, value: value, value_type: valueType })
+      });
+      if (res.ok) {
+        showToast('모멘텀 설정이 저장되었습니다.', 'ok');
+        await loadMomentumSettings();
+      } else {
+        showToast('저장 실패: ' + (res.error || '알 수 없는 오류'), 'err');
+        if (valueType === 'boolean') el.checked = prev;  // 원복
+      }
+    } catch (e) {
+      showToast('오류 발생: ' + e.message, 'err');
+      if (valueType === 'boolean') el.checked = prev;  // 원복
+    }
+  };
 
   /* 설정 섹션 접이식 통일(2026-08-22) — 헤더 클릭으로 접기/펴기. HTML/ID 무변경 add-on. */
   function _wireSettingsCollapse() {

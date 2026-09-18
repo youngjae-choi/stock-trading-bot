@@ -1143,6 +1143,48 @@
 
           <div class="section-gap"></div>
 
+          <!-- 모멘텀 진입 설정 (리더 돌파 매수 · 눌림전략과 독립) -->
+          <div class="card">
+            <div class="settings-card-hd">
+              <div class="settings-card-meta">
+                <span class="settings-tag">긴급 제어</span>
+                <div class="settings-card-title-txt">모멘텀 진입 (리더 돌파 매수)</div>
+                <div class="settings-card-desc">상승장 리더(ORB 돌파·VWAP위·상대강도≥+4%)를 눌림전략과 독립 경로로 매수합니다. 주문방식을 시장가로 두면 감지 즉시 체결이 보장돼(상승장 참여율↑), 지정가는 프리미엄 호가라 빠른 리더는 미체결될 수 있습니다.</div>
+              </div>
+            </div>
+            <div style="padding: 0 20px 20px;">
+              <div class="settings-switch-group">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--line);">
+                  <div>
+                    <div style="font-weight:600;">모멘텀 진입 활성화</div>
+                    <div style="font-size:11px; color:var(--muted);">끄면 리더 돌파 매수 중단(눌림전략은 계속). 롤백 스위치</div>
+                  </div>
+                  <label class="switch">
+                    <input type="checkbox" id="momentum-enabled" onchange="saveMomentumSetting('momentum.enabled', this, 'boolean')">
+                    <span class="slider round"></span>
+                  </label>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0;">
+                  <div>
+                    <div style="font-weight:500;">주문 방식</div>
+                    <div style="font-size:11px; color:var(--muted);">시장가=즉시 체결 보장(빠른 리더 추격) · 지정가=프리미엄 호가(체결 미보장)</div>
+                  </div>
+                  <select id="momentum-order-style" onchange="saveMomentumSetting('momentum.order_style', this, 'string')"
+                    style="padding:6px 10px; border-radius:6px; background:var(--panel-2); color:var(--text); border:1px solid var(--line); font-size:12px;">
+                    <option value="market">시장가 (즉시 체결)</option>
+                    <option value="limit">지정가 (프리미엄 호가)</option>
+                  </select>
+                </div>
+              </div>
+              <div style="margin-top:16px; font-size:11px; color:var(--muted); display:flex; justify-content:space-between;">
+                <span>⚠️ 저장 즉시 다음 스캔부터 반영됨 (재시작 불필요)</span>
+                <span id="momentum-settings-last-updated">-</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-gap"></div>
+
           <!-- ③ 리스크 & 운용 설정 (포트폴리오 한도 + 청산 정책 통합) -->
           <div class="card">
             <div class="settings-card-hd">
