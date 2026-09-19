@@ -879,6 +879,14 @@ class DecisionEngine:
                 _d_open = _day_open_from_bars(symbol)
                 if _d_open and _d_open > 0 and price > 0 and (price / _d_open - 1) * 100 > _cfo_max:
                     return False, "open_chase"
+            # E6 강세요건(상승장 전용) — _emit_signal과 동기. entry_require_strength가 켜졌고(상승장+mode!=off)
+            # enforce 모드면 약세(cfo<=0) 후보는 차단(스왑 대상이 약세면 매도만 되고 못 사는 사고 방지).
+            # shadow는 _emit_signal이 실제로 안 막으므로 여기서도 통과로 본다.
+            if bool(_gates.get("entry_require_strength")) and \
+                    str(_gates.get("uptrend_entry_mode") or "enforce").lower() == "enforce":
+                _d_open_s = _day_open_from_bars(symbol)
+                if _d_open_s and _d_open_s > 0 and price > 0 and (price / _d_open_s - 1) * 100 <= 0:
+                    return False, "weak_not_strong"
             _conv_min = float(get_setting("engine.conviction_gate_min", 0.0) or 0.0)
             if _conv_min > 0:
                 from .strategy_playbook import resolve_conviction
@@ -1118,6 +1126,36 @@ class DecisionEngine:
                             return
         except Exception as exc:
             logger.warning("WARN: [S6] 시가대비 추격 게이트 실패(fail-open) symbol=%s reason=%s", symbol, exc)
+
+        # E6 강세요건 게이트(2026-09-18 상승장 필승패턴) — 상승장 전용. 강세종목(시가대비>0=오른 종목)만
+        # 진입 허용. build_playbook이 상승장+uptrend_entry_mode!=off일 때만 entry_require_strength=True로
+        # 켠다(보합/하락/off는 False라 무영향). E6는 "강세종목이 VWAP 근접 눌림에서 매수"라 시가대비 오름
+        # (cfo>0)이 핵심 필터 — 시가 아래(약세)면 laggard라 상승장 승리패턴이 아니다. VWAP 밴드 게이트가
+        # 위(0~+1%)를 허용하는 것과 짝. fail-open. 모멘텀은 우회.
+        try:
+            from .buy_engine import resolve_buy_gates as _resolve_buy_gates_strength
+            _regime5_s = self._current_regime() or "flat"
+            _gates_s = _resolve_buy_gates_strength(_regime5_s)
+            if bool(_gates_s.get("entry_require_strength")) and not _is_momentum:
+                _uptrend_mode_s = str(
+                    _gates_s.get("uptrend_entry_mode")
+                    or get_setting("engine.uptrend_entry_mode", "enforce") or "enforce"
+                ).lower()
+                _d_open_s = _day_open_from_bars(symbol)  # 백테스트 동일 소스(intraday_bars 첫 봉 open)
+                if _d_open_s and _d_open_s > 0 and price > 0:
+                    _cfo_s = (price / _d_open_s - 1) * 100
+                    if _cfo_s <= 0:  # 시가 이하 = 약세 = E6 승리패턴 아님
+                        if _uptrend_mode_s == "shadow":
+                            logger.info(
+                                "SHADOW: [S6] 강세요건 미달 차단대상(로그만) symbol=%s cfo=%.2f",
+                                symbol, _cfo_s)
+                        else:
+                            logger.info(
+                                "INFO: [S6] SKIP 강세요건 미달(cfo<=0) symbol=%s cfo=%.2f",
+                                symbol, _cfo_s)
+                            return
+        except Exception as exc:
+            logger.warning("WARN: [S6] 강세요건 게이트 실패(fail-open) symbol=%s reason=%s", symbol, exc)
 
         # 9시 조기진입 shadow 실험 — entry_start_time을 09:00으로 열되 실제 매수는
         # entry_execute_start_time(기본 09:30)부터. 그 이전(모든 게이트 통과한 후보)은 로그만

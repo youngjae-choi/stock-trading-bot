@@ -38,8 +38,9 @@ def _mk_engine(monkeypatch, vwap: float, regime: str = "risk_on"):
 
 
 def test_precheck_pullback_passes(monkeypatch):
-    eng = _mk_engine(monkeypatch, vwap=10000.0, regime="risk_on")
-    ok, r = eng.entry_precheck("005930", {"name": "삼성전자"}, 9900.0)  # -1% (밴드 내)
+    """보합장 눌림(-1% VWAP 아래, 천장 -1.0 이내)은 통과 — E6는 상승장 전용이라 무영향."""
+    eng = _mk_engine(monkeypatch, vwap=10000.0, regime="neutral")
+    ok, r = eng.entry_precheck("005930", {"name": "삼성전자"}, 9900.0)  # -1% (보합 밴드 내)
     assert ok, r
 
 
@@ -50,7 +51,8 @@ def test_precheck_chase_blocked(monkeypatch):
 
 
 def test_precheck_falling_knife_blocked(monkeypatch):
-    eng = _mk_engine(monkeypatch, vwap=10000.0, regime="risk_on")
+    """보합장 딥눌림(-10% < 바닥 -5) 차단 — E6 상승장 밖이라 기존 falling knife 그대로."""
+    eng = _mk_engine(monkeypatch, vwap=10000.0, regime="neutral")
     ok, r = eng.entry_precheck("005930", {"name": "삼성전자"}, 9000.0)  # -10% < 바닥 -5
     assert not ok and r == "falling_knife"
 
@@ -61,34 +63,67 @@ def test_precheck_etn_blocked(monkeypatch):
     assert not ok and r == "excluded_product"
 
 
-def test_precheck_riskon_allows_near_vwap(monkeypatch):
-    """상승장 천장 0.0 — VWAP 바로 아래(-0.5%)도 통과(보합이면 -1 천장에 막힘)."""
+def test_precheck_riskon_e6_requires_at_or_above_vwap(monkeypatch):
+    """E6 enforce 상승장: 바닥 0.0 — VWAP 아래(-0.5%)는 falling_knife 차단(laggard 배제)."""
     eng = _mk_engine(monkeypatch, vwap=10000.0, regime="risk_on")
-    assert eng.entry_precheck("005930", {"name": "삼성전자"}, 9950.0)[0] is True
+    # E6 강세요건도 켜지므로 시가는 강세(price 위)로 격리 — VWAP 밴드만 검증
+    monkeypatch.setattr(de_mod, "_day_open_from_bars", lambda s, today=None: 9000.0)
+    ok, r = eng.entry_precheck("005930", {"name": "삼성전자"}, 9950.0)  # -0.5% (VWAP 아래)
+    assert not ok and r == "falling_knife"
+
+
+def test_precheck_riskon_e6_allows_just_above_vwap(monkeypatch):
+    """E6 enforce 상승장: 천장 +1.0 — VWAP 바로 위(+0.5%)는 통과(강세근접 매수구간)."""
+    eng = _mk_engine(monkeypatch, vwap=10000.0, regime="risk_on")
+    monkeypatch.setattr(de_mod, "_day_open_from_bars", lambda s, today=None: 9000.0)  # 강세(시가 위)
+    assert eng.entry_precheck("005930", {"name": "삼성전자"}, 10050.0)[0] is True  # +0.5% VWAP 위
+    # 보합장이면 VWAP 위(+0.5%)는 추격 차단
     eng2 = _mk_engine(monkeypatch, vwap=10000.0, regime="neutral")
-    assert eng2.entry_precheck("005930", {"name": "삼성전자"}, 9950.0)[1] == "vwap_chase"
+    assert eng2.entry_precheck("005930", {"name": "삼성전자"}, 10050.0)[1] == "vwap_chase"
+
+
+def test_precheck_e6_strength_blocks_weak_in_uptrend(monkeypatch):
+    """E6 enforce 상승장: 시가 이하(약세 cfo<=0) 후보는 weak_not_strong 차단."""
+    eng = _mk_engine(monkeypatch, vwap=10000.0, regime="risk_on")
+    monkeypatch.setattr(de_mod, "_day_open_from_bars", lambda s, today=None: 10100.0)  # 시가 위=현재가 아래=약세
+    ok, r = eng.entry_precheck("005930", {"name": "삼성전자"}, 10050.0)  # VWAP +0.5%(밴드 내)지만 시가 -0.5%(약세)
+    assert not ok and r == "weak_not_strong"
+
+
+def test_precheck_e6_off_reverts_riskon_band(monkeypatch):
+    """롤백: uptrend_entry_mode=off면 상승장도 구동작(VWAP 아래 -0.5% 통과·강세요건 없음)."""
+    eng = _mk_engine(monkeypatch, vwap=10000.0, regime="risk_on")
+    monkeypatch.setattr(de_mod, "get_setting",
+        lambda k, d=None: "off" if k == "engine.uptrend_entry_mode" else d)
+    monkeypatch.setattr(be_mod, "get_setting",
+        lambda k, d=None: "off" if k == "engine.uptrend_entry_mode" else d)
+    assert eng.entry_precheck("005930", {"name": "삼성전자"}, 9950.0)[0] is True  # -0.5% 통과(구 천장 0.0)
 
 
 def test_precheck_open_chase_blocked_in_enforce(monkeypatch):
-    """시가대비 추격 게이트 — enforce 모드면 시가 대비 +임계 초과 진입 차단(2026-09-05 엣지)."""
-    eng = _mk_engine(monkeypatch, vwap=10000.0, regime="risk_on")
-    # enforce + 시가 9990 → price 9950은 시가대비 -0.4%(추격 아님) & VWAP -0.5%(통과) → 통과
+    """시가대비 추격 게이트 — enforce 모드면 시가 대비 +임계 초과 진입 차단(2026-09-05 엣지).
+
+    보합장(neutral)으로 E6 밴드/강세요건 격리. VWAP 밴드는 -1.5%(천장 -1 이내·바닥 -5 이내)로 통과시킨 뒤
+    시가대비만 검증한다.
+    """
+    eng = _mk_engine(monkeypatch, vwap=10000.0, regime="neutral")
+    # enforce + 시가 9860 → price 9850은 시가대비 -0.1%(추격 아님) & VWAP -1.5%(보합 밴드 내) → 통과
     monkeypatch.setattr(de_mod, "get_setting",
         lambda k, d=None: {"engine.entry_change_from_open_mode": "enforce",
                            "engine.entry_max_change_from_open_pct": 2.0}.get(k, d))
-    monkeypatch.setattr(de_mod, "_day_open_from_bars", lambda s, today=None: 9990.0)
-    assert eng.entry_precheck("005930", {"name": "삼성전자"}, 9950.0)[0] is True
-    # 시가 9000 → price 9950은 시가대비 +10.6% 추격 → open_chase 차단
+    monkeypatch.setattr(de_mod, "_day_open_from_bars", lambda s, today=None: 9860.0)
+    assert eng.entry_precheck("005930", {"name": "삼성전자"}, 9850.0)[0] is True
+    # 시가 9000 → price 9850은 시가대비 +9.4% 추격 → open_chase 차단
     monkeypatch.setattr(de_mod, "_day_open_from_bars", lambda s, today=None: 9000.0)
-    ok, r = eng.entry_precheck("005930", {"name": "삼성전자"}, 9950.0)
+    ok, r = eng.entry_precheck("005930", {"name": "삼성전자"}, 9850.0)
     assert not ok and r == "open_chase"
 
 
 def test_precheck_open_chase_ignored_in_shadow(monkeypatch):
-    """shadow(기본)면 시가대비 추격도 통과 — _emit_signal이 로그만 남기므로."""
-    eng = _mk_engine(monkeypatch, vwap=10000.0, regime="risk_on")  # get_setting→기본(shadow)
+    """shadow(기본)면 시가대비 추격도 통과 — _emit_signal이 로그만 남기므로. 보합장으로 E6 격리."""
+    eng = _mk_engine(monkeypatch, vwap=10000.0, regime="neutral")  # get_setting→기본(shadow)
     monkeypatch.setattr(de_mod, "_day_open_from_bars", lambda s, today=None: 9000.0)
-    assert eng.entry_precheck("005930", {"name": "삼성전자"}, 9950.0)[0] is True
+    assert eng.entry_precheck("005930", {"name": "삼성전자"}, 9850.0)[0] is True  # VWAP -1.5% 보합 밴드 내
 
 
 # ── _resolve_swap_target (원 대상 / 대안 / 보류) ───────────────────────────────

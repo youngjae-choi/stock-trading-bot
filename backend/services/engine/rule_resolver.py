@@ -22,6 +22,16 @@ logger = logging.getLogger("RuleResolver")
 _PROFILES = ("LOW_VOL", "MID_VOL", "HIGH_VOL", "THEME_SPIKE")
 
 
+def _to_float_or_none(value: Any) -> float | None:
+    """숫자면 float, 아니면 None (E6 하이브리드 트레일의 5장세 재분류 입력 정규화)."""
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def get_active_base_rulepack() -> dict[str, Any]:
     """현재 활성 Base RulePack 반환. 없으면 기본값."""
     with get_connection() as conn:
@@ -191,6 +201,35 @@ def resolve_symbol_rule(
             final["stop_source"] = "regime"
         except Exception as _exc:
             logger.warning("WARN: [RuleResolver] regime stop_source 적용 실패(프로필 유지) — %s", _exc)
+
+    # E6 하이브리드 트레일 오버라이드(2026-09-18 상승장 필승패턴) — 상승/폭등장 전용 청산 튜닝.
+    #   상승장(up/risk_on): +2% 발동·1.5% 트레일 / 폭등장(surge): +3% 발동·2% 트레일(더 태움).
+    #   보합/하락/변동성은 절대 미오버라이드(레짐SET 값 유지 = 구동작 불변). 하드손절(initial_stop_loss)은 유지.
+    #   레짐SET/스냅샷의 regime_label은 SET 4종(risk_on/…)이라 surge↔up을 구분 못한다 →
+    #   당일 application에 기록된 kospi_change_pct/vix로 classify_regime_5tier를 다시 돌려 5장세를 복원한다
+    #   (이 코드베이스가 이미 쓰는 분류기 재사용). 이 지점이 trailing_activate_profit/trailing_stop_rate의
+    #   **최종 권위**(add_position이 여기서 캐시된 final_rule을 읽음) — 다른 곳에서 중복 적용하지 않는다.
+    #   롤백=engine.exit_hybrid_mode=off(오버라이드 완전 비활성). fail-open(예외 시 기존 값 유지).
+    if str(_gs("engine.exit_hybrid_mode", "enforce") or "enforce").lower() == "enforce" and trade_date:
+        try:
+            from ..regime_set_service import get_today_application
+            from .market_sensing import classify_regime_5tier
+            _app_h = get_today_application(trade_date)
+            if _app_h:
+                _kospi_h = _to_float_or_none(_app_h.get("kospi_change_pct"))
+                _vix_h = _to_float_or_none(_app_h.get("vix_value"))
+                _r5 = classify_regime_5tier(_kospi_h, _vix_h)
+                if _r5 == "surge":
+                    final["trailing_activate_profit"] = float(_gs("engine.exit_surge_trail_activate", 0.03))
+                    final["trailing_stop_rate"] = float(_gs("engine.exit_surge_trail_stop", 0.02))
+                    final["exit_hybrid"] = "surge"
+                elif _r5 in ("up", "risk_on"):
+                    final["trailing_activate_profit"] = float(_gs("engine.exit_riskon_trail_activate", 0.02))
+                    final["trailing_stop_rate"] = float(_gs("engine.exit_riskon_trail_stop", 0.015))
+                    final["exit_hybrid"] = "up"
+                # else(flat/down/crash/volatile): 오버라이드 없음 — 레짐SET 값 유지(불변)
+        except Exception as _exc_h:
+            logger.warning("WARN: [RuleResolver] E6 하이브리드 트레일 적용 실패(기존 유지) — %s", _exc_h)
 
     final.update(symbol_overrides.get(symbol_code, {}))
 

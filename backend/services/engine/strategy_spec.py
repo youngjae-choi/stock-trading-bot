@@ -87,6 +87,19 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "engine.buy_submit_retry_enabled": True,        # 매수 접수 실패 재시도+ODNO 복구 (2026-09-05)
     "engine.entry_change_from_open_mode": "shadow",  # 시가대비 추격금지 게이트(관찰중, enforce전환 예정) (2026-09-05)
     "engine.entry_max_change_from_open_pct": 2.0,    # 오늘 시가 +2% 초과 진입=갭추격 차단(엣지: 승률33%)
+    # ── E6 강세근접VWAP: 상승장 필승패턴(2026-09-18 uptrend_pattern 22일 백테스트: 상승장 76%승·EV+0.63%) ──
+    #   강세종목(시가대비>0)이 VWAP 0~+1% 위로 얕게 눌릴 때 매수 + 타이트 트레일 청산. 상승장 전용.
+    #   현행 게이트는 상승장서도 VWAP 위 매수를 구조적 차단(entry_max_vwap_dist_pct_riskon=0.0)해 승리구간 봉쇄.
+    #   보합/하락은 기존 눌림 게이트가 이김 → 절대 불변(전부 상승장 전용, 롤백=uptrend_entry_mode off).
+    "engine.uptrend_entry_mode": "enforce",          # off|shadow|enforce — E6 진입 마스터 롤백
+    "engine.entry_vwap_ceiling_riskon": 1.0,         # 상승장 VWAP 밴드 천장(%) — +1=VWAP 1% 위까지 허용
+    "engine.entry_vwap_floor_riskon": 0.0,           # 상승장 VWAP 밴드 바닥(%) — 0=VWAP 이상만(상승장선 아래눌림 배제)
+    "engine.entry_require_strength_riskon": True,     # 상승장 강세요건(시가대비>0=오른 종목만) 강제
+    "engine.exit_riskon_trail_activate": 0.02,       # 상승장(비폭등) 트레일 발동(+2%)
+    "engine.exit_riskon_trail_stop": 0.015,          # 상승장 트레일 폭(1.5%)
+    "engine.exit_surge_trail_activate": 0.03,        # 폭등장 트레일 발동(+3%, 더 태움)
+    "engine.exit_surge_trail_stop": 0.02,            # 폭등장 트레일 폭(2%)
+    "engine.exit_hybrid_mode": "enforce",            # off|enforce — 상승/폭등 트레일 오버라이드 롤백
     "momentum.enabled": True,                        # 모멘텀 진입(실전) — 리더 돌파 매수, 눌림과 독립 (2026-09-07)
     "momentum.rs_min": 4.0,                          # 상대강도 임계(시가대비≥+4%). 백테스트: 강세4=승률83%·순+1.36%
     "momentum.entry_premium_pct": 1.5,               # 돌파가 +1.5% 지정가(빠른 리더 체결력, 호가 스냅) — order_style=limit일 때만 사용

@@ -467,6 +467,61 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
         ("briefing.scrape_url", "https://index-board.space/briefing", "string", "시황 브리핑 스크래핑 URL"),
         ("briefing.scrape_timeout_sec", 20, "number", "브리핑 스크래핑 HTTP 타임아웃(초)"),
         ("regime.evening_confidence_enabled", True, "boolean", "장후 브리핑 기반 regime 신뢰도 보정 on/off"),
+        # ── E6 강세근접VWAP: 상승장 필승패턴(2026-09-18 백테스트 76%승·EV+0.63%). 전부 상승장 전용, 보합/하락 불변 ──
+        (
+            "engine.uptrend_entry_mode",
+            "enforce",
+            "string",
+            "E6 상승장 진입 마스터 롤백: off(비활성·구동작) | shadow(로그만) | enforce(적용). 강세종목이 VWAP 0~+1% 위 얕은 눌림에서 매수",
+        ),
+        (
+            "engine.entry_vwap_ceiling_riskon",
+            1.0,
+            "number",
+            "상승장(risk_on) VWAP 밴드 천장(%). +1.0=VWAP 1% 위까지 매수 허용(E6 승리구간). off 모드면 미적용",
+        ),
+        (
+            "engine.entry_vwap_floor_riskon",
+            0.0,
+            "number",
+            "상승장(risk_on) VWAP 밴드 바닥(%). 0=VWAP 이상만 매수(상승장선 아래 눌림=laggard 배제). off 모드면 미적용",
+        ),
+        (
+            "engine.entry_require_strength_riskon",
+            True,
+            "boolean",
+            "상승장 강세요건: 시가대비 오른 종목(change_from_open>0)만 진입. off 모드면 미적용",
+        ),
+        (
+            "engine.exit_riskon_trail_activate",
+            0.02,
+            "number",
+            "상승장(비폭등) 트레일링 발동 수익률(0.02=+2%). exit_hybrid_mode=enforce일 때만 오버라이드",
+        ),
+        (
+            "engine.exit_riskon_trail_stop",
+            0.015,
+            "number",
+            "상승장(비폭등) 트레일링 폭(0.015=1.5%). exit_hybrid_mode=enforce일 때만 오버라이드",
+        ),
+        (
+            "engine.exit_surge_trail_activate",
+            0.03,
+            "number",
+            "폭등장 트레일링 발동 수익률(0.03=+3%, 더 태움). exit_hybrid_mode=enforce일 때만 오버라이드",
+        ),
+        (
+            "engine.exit_surge_trail_stop",
+            0.02,
+            "number",
+            "폭등장 트레일링 폭(0.02=2%). exit_hybrid_mode=enforce일 때만 오버라이드",
+        ),
+        (
+            "engine.exit_hybrid_mode",
+            "enforce",
+            "string",
+            "상승/폭등 트레일 오버라이드 롤백: off(레짐SET 값 유지·구동작) | enforce(surge/up만 오버라이드, 보합/하락 불변)",
+        ),
     ]
     for key, value, value_type, description in defaults:
         connection.execute(

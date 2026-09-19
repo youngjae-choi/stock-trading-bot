@@ -61,6 +61,7 @@
       engineTestRun: function() { return engineTestRun(element.dataset.step); },
       engineTestClearLog: function() { return engineTestClearLog(); },
       saveRiskSettings: function() { return saveRiskSettings(); },
+      saveUptrendStrategySettings: function() { return saveUptrendStrategySettings(); },
       saveRiskProfilePack: function() { return saveRiskProfilePack(); },
       saveTradingCostSettings: function() { return saveTradingCostSettings(); },
       saveMissedThresholdSettings: function() { return saveMissedThresholdSettings(); },

@@ -174,12 +174,29 @@ def build_playbook(regime: str, regime_settings: dict | None = None,
     #     손실이라 -1 고수. ▶ 롤백: engine.entry_max_vwap_dist_pct_riskon=-1로 상승장도 원복.
     #   floor(바닥): 전 레짐 -5.0 — 딥눌림(<-5% falling knife)은 승률↓·순마이너스(극심<-8은 44%).
     _is_up_regime = regime in ("up", "surge", "risk_on")
-    _vwap_ceiling = (_f(getter, "engine.entry_max_vwap_dist_pct_riskon", 0.0) if _is_up_regime
-                     else _f(getter, "engine.entry_max_vwap_dist_pct", -1.0))
+    # E6 강세근접VWAP(2026-09-18 백테스트: 상승장 76%승·EV+0.63%) — 상승장 전용 밴드 전환.
+    #   상승장(up/surge/risk_on) + uptrend_entry_mode!=off:
+    #     천장=entry_vwap_ceiling_riskon(+1.0, VWAP 1% 위까지)·바닥=entry_vwap_floor_riskon(0.0, VWAP 이상만)
+    #     + 강세요건(시가대비>0). ▶ 현행은 상승장서도 VWAP 위 매수를 봉쇄해 승리구간을 구조적 차단.
+    #   uptrend_entry_mode==off면 상승장도 **정확히 구동작**(천장=entry_max_vwap_dist_pct_riskon 0.0,
+    #     바닥=entry_min_vwap_dist_pct -5.0, 강세요건 없음). 보합/하락은 어느 경우든 기존 눌림 게이트 불변.
+    _uptrend_mode = str(getter("engine.uptrend_entry_mode", "enforce") or "enforce").lower()
+    _e6_active = _is_up_regime and _uptrend_mode != "off"
+    if _e6_active:
+        _vwap_ceiling = _f(getter, "engine.entry_vwap_ceiling_riskon", 1.0)
+        _vwap_floor = _f(getter, "engine.entry_vwap_floor_riskon", 0.0)
+        _require_strength = bool(getter("engine.entry_require_strength_riskon", True))
+    else:
+        _vwap_ceiling = (_f(getter, "engine.entry_max_vwap_dist_pct_riskon", 0.0) if _is_up_regime
+                         else _f(getter, "engine.entry_max_vwap_dist_pct", -1.0))
+        _vwap_floor = _f(getter, "engine.entry_min_vwap_dist_pct", -5.0)
+        _require_strength = False
     gates = {  # 매수 게이트(엔진④)
         "vwap_pullback_mode": getter("engine.entry_vwap_pullback_mode", "enforce"),
         "entry_max_vwap_dist_pct": _vwap_ceiling,
-        "entry_min_vwap_dist_pct": _f(getter, "engine.entry_min_vwap_dist_pct", -5.0),  # 바닥(falling knife 차단)
+        "entry_min_vwap_dist_pct": _vwap_floor,  # 바닥(falling knife 차단 / 상승장 E6는 VWAP 이상만)
+        "entry_require_strength": _require_strength,  # E6 강세요건(상승장+mode!=off일 때만 True)
+        "uptrend_entry_mode": _uptrend_mode,          # decision_engine이 shadow/enforce 판정에 사용
         "max_price_change_pct": _f(getter, "engine.max_price_change_pct", 4.0),
         "min_price_change_pct": _f(getter, "engine.min_price_change_pct", 1.5),
         "min_volume_ratio": _f(getter, "engine.min_volume_ratio", 1.5),

@@ -243,40 +243,74 @@ def _band_getter(overrides=None):
     return lambda k, d=None: o.get(k, d)  # 미지정 키는 코드 기본값(=밴드 검증 대상)
 
 
-def test_vwap_ceiling_relaxed_in_up_regimes():
-    """상승장(up/surge/risk_on)은 천장 0.0 — VWAP까지 허용(돌파>0는 여전히 차단)."""
+def test_vwap_ceiling_e6_enforce_in_up_regimes():
+    """E6 enforce(기본): 상승장(up/surge/risk_on) 천장 +1.0 — VWAP 1% 위까지 허용(강세근접 매수)."""
     for rg in ("up", "surge", "risk_on"):
-        assert build_playbook(rg, getter=_band_getter()).gates["entry_max_vwap_dist_pct"] == 0.0, rg
+        assert build_playbook(rg, getter=_band_getter()).gates["entry_max_vwap_dist_pct"] == 1.0, rg
 
 
 def test_vwap_ceiling_tight_in_defensive_regimes():
-    """보합/하락(flat/neutral/down/risk_off/volatile/crash)은 천장 -1.0(눌림만 고수)."""
+    """보합/하락(flat/neutral/down/risk_off/volatile/crash)은 천장 -1.0(눌림만 고수) — E6 무영향."""
     for rg in ("flat", "neutral", "down", "risk_off", "volatile", "crash"):
         assert build_playbook(rg, getter=_band_getter()).gates["entry_max_vwap_dist_pct"] == -1.0, rg
 
 
-def test_vwap_floor_is_regime_common():
-    """바닥(falling knife) -5.0은 전 레짐 공통 — 딥눌림(<-5%) 진입 차단."""
-    for rg in ("up", "flat", "risk_off", "surge"):
+def test_vwap_floor_e6_up_vs_defensive():
+    """E6 enforce: 상승장 바닥 0.0(VWAP 이상만) / 보합·하락 바닥 -5.0(falling knife 차단)."""
+    for rg in ("up", "surge", "risk_on"):
+        assert build_playbook(rg, getter=_band_getter()).gates["entry_min_vwap_dist_pct"] == 0.0, rg
+    for rg in ("flat", "risk_off"):
         assert build_playbook(rg, getter=_band_getter()).gates["entry_min_vwap_dist_pct"] == -5.0, rg
 
 
-def test_vwap_ceiling_riskon_override_rolls_back():
-    """롤백 스위치: engine.entry_max_vwap_dist_pct_riskon=-1 → 상승장도 눌림 원복."""
-    g = _band_getter({"engine.entry_max_vwap_dist_pct_riskon": -1.0})
-    assert build_playbook("risk_on", getter=g).gates["entry_max_vwap_dist_pct"] == -1.0
+def test_e6_off_reverts_up_regimes_to_prior_behavior():
+    """롤백 스위치: uptrend_entry_mode=off → 상승장도 정확히 구동작(천장 0.0·바닥 -5.0·강세요건 없음)."""
+    g = _band_getter({"engine.uptrend_entry_mode": "off"})
+    for rg in ("up", "surge", "risk_on"):
+        gates = build_playbook(rg, getter=g).gates
+        assert gates["entry_max_vwap_dist_pct"] == 0.0, rg     # 구 entry_max_vwap_dist_pct_riskon 기본
+        assert gates["entry_min_vwap_dist_pct"] == -5.0, rg    # 구 falling knife 바닥
+        assert gates["entry_require_strength"] is False, rg    # 강세요건 미적용
 
 
-def test_vwap_floor_override():
-    """floor 튜닝: engine.entry_min_vwap_dist_pct 존중."""
+def test_e6_riskon_ceiling_floor_strength_overridable():
+    """E6 밴드/강세요건은 설정으로 튜닝 가능."""
+    g = _band_getter({
+        "engine.entry_vwap_ceiling_riskon": 2.0,
+        "engine.entry_vwap_floor_riskon": -0.5,
+        "engine.entry_require_strength_riskon": False,
+    })
+    gates = build_playbook("risk_on", getter=g).gates
+    assert gates["entry_max_vwap_dist_pct"] == 2.0
+    assert gates["entry_min_vwap_dist_pct"] == -0.5
+    assert gates["entry_require_strength"] is False
+
+
+def test_entry_require_strength_only_up_and_mode_on():
+    """강세요건: 상승장+enforce/shadow=True, off=False, 보합/하락=항상 False."""
+    # enforce(기본): 상승장 True
+    for rg in ("up", "surge", "risk_on"):
+        assert build_playbook(rg, getter=_band_getter()).gates["entry_require_strength"] is True, rg
+    # 보합/하락: 항상 False
+    for rg in ("flat", "neutral", "down", "risk_off", "volatile", "crash"):
+        assert build_playbook(rg, getter=_band_getter()).gates["entry_require_strength"] is False, rg
+    # shadow: 상승장 강세요건 True(로그판정은 decision_engine에서 mode로)
+    g_shadow = _band_getter({"engine.uptrend_entry_mode": "shadow"})
+    assert build_playbook("risk_on", getter=g_shadow).gates["entry_require_strength"] is True
+    assert build_playbook("risk_on", getter=g_shadow).gates["uptrend_entry_mode"] == "shadow"
+
+
+def test_vwap_floor_override_defensive():
+    """floor 튜닝(보합/하락): engine.entry_min_vwap_dist_pct 존중."""
     g = _band_getter({"engine.entry_min_vwap_dist_pct": -8.0})
     assert build_playbook("flat", getter=g).gates["entry_min_vwap_dist_pct"] == -8.0
 
 
 def test_resolve_buy_gates_applies_regime_band():
-    """회귀: resolve_buy_gates가 레짐을 받아 밴드를 차등 적용(기존 'flat' 기본→상승장 눌림고정 갭 수정)."""
+    """회귀: resolve_buy_gates가 레짐을 받아 밴드를 차등 적용(E6 enforce 기본)."""
     from backend.services.engine.buy_engine import resolve_buy_gates
     g = _band_getter()
-    assert resolve_buy_gates("up", getter=g)["entry_max_vwap_dist_pct"] == 0.0
+    assert resolve_buy_gates("up", getter=g)["entry_max_vwap_dist_pct"] == 1.0   # E6 천장
     assert resolve_buy_gates("flat", getter=g)["entry_max_vwap_dist_pct"] == -1.0
-    assert resolve_buy_gates("up", getter=g)["entry_min_vwap_dist_pct"] == -5.0
+    assert resolve_buy_gates("up", getter=g)["entry_min_vwap_dist_pct"] == 0.0    # E6 바닥(VWAP 이상만)
+    assert resolve_buy_gates("up", getter=g)["entry_require_strength"] is True

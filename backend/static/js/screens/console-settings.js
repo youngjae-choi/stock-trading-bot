@@ -238,6 +238,105 @@
     }
   }
 
+  /* 상승장 전략(E6 강세근접VWAP · 하이브리드 청산) 설정 로드.
+     상승장(risk_on)/폭등장(surge) 전용 — 하락장·보합 방어는 불변. */
+  async function loadUptrendStrategySettings() {
+    try {
+      var settingsMap = await loadSettingsMap();
+
+      var entryMode = document.getElementById('setting-uptrend-entry-mode');
+      var vwapCeiling = document.getElementById('setting-entry-vwap-ceiling-riskon');
+      var vwapFloor = document.getElementById('setting-entry-vwap-floor-riskon');
+      var requireStrength = document.getElementById('setting-entry-require-strength-riskon');
+      var hybridMode = document.getElementById('setting-exit-hybrid-mode');
+      var riskonActivate = document.getElementById('setting-exit-riskon-trail-activate');
+      var riskonStop = document.getElementById('setting-exit-riskon-trail-stop');
+      var surgeActivate = document.getElementById('setting-exit-surge-trail-activate');
+      var surgeStop = document.getElementById('setting-exit-surge-trail-stop');
+
+      if (entryMode) entryMode.value = settingsMap['engine.uptrend_entry_mode'] ?? 'enforce';
+      if (vwapCeiling) vwapCeiling.value = settingsMap['engine.entry_vwap_ceiling_riskon'] ?? '1.0';
+      if (vwapFloor) vwapFloor.value = settingsMap['engine.entry_vwap_floor_riskon'] ?? '0.0';
+      // boolean은 값이 true/false로 저장 → 셀렉트 .value는 문자열이므로 String()으로 정규화
+      if (requireStrength) requireStrength.value = String(settingsMap['engine.entry_require_strength_riskon'] ?? true);
+      if (hybridMode) hybridMode.value = settingsMap['engine.exit_hybrid_mode'] ?? 'enforce';
+      if (riskonActivate) riskonActivate.value = settingsMap['engine.exit_riskon_trail_activate'] ?? '0.02';
+      if (riskonStop) riskonStop.value = settingsMap['engine.exit_riskon_trail_stop'] ?? '0.015';
+      if (surgeActivate) surgeActivate.value = settingsMap['engine.exit_surge_trail_activate'] ?? '0.03';
+      if (surgeStop) surgeStop.value = settingsMap['engine.exit_surge_trail_stop'] ?? '0.02';
+
+      var fm = await loadSettingsMapFull();
+      _insertSettingTs('setting-uptrend-entry-mode', 'engine.uptrend_entry_mode', fm);
+      _insertSettingTs('setting-entry-vwap-ceiling-riskon', 'engine.entry_vwap_ceiling_riskon', fm);
+      _insertSettingTs('setting-entry-vwap-floor-riskon', 'engine.entry_vwap_floor_riskon', fm);
+      _insertSettingTs('setting-entry-require-strength-riskon', 'engine.entry_require_strength_riskon', fm);
+      _insertSettingTs('setting-exit-hybrid-mode', 'engine.exit_hybrid_mode', fm);
+      _insertSettingTs('setting-exit-riskon-trail-activate', 'engine.exit_riskon_trail_activate', fm);
+      _insertSettingTs('setting-exit-riskon-trail-stop', 'engine.exit_riskon_trail_stop', fm);
+      _insertSettingTs('setting-exit-surge-trail-activate', 'engine.exit_surge_trail_activate', fm);
+      _insertSettingTs('setting-exit-surge-trail-stop', 'engine.exit_surge_trail_stop', fm);
+    } catch (e) {
+      console.error('Failed to load uptrend strategy settings', e);
+    }
+  }
+
+  /* 상승장 전략 설정 저장 — 모드는 string, 강세요건은 boolean, 트레일/밴드는 number. */
+  async function saveUptrendStrategySettings() {
+    var entryMode = document.getElementById('setting-uptrend-entry-mode');
+    var vwapCeiling = document.getElementById('setting-entry-vwap-ceiling-riskon');
+    var vwapFloor = document.getElementById('setting-entry-vwap-floor-riskon');
+    var requireStrength = document.getElementById('setting-entry-require-strength-riskon');
+    var hybridMode = document.getElementById('setting-exit-hybrid-mode');
+    var riskonActivate = document.getElementById('setting-exit-riskon-trail-activate');
+    var riskonStop = document.getElementById('setting-exit-riskon-trail-stop');
+    var surgeActivate = document.getElementById('setting-exit-surge-trail-activate');
+    var surgeStop = document.getElementById('setting-exit-surge-trail-stop');
+
+    // 숫자 입력 검증 — 하나라도 유한수가 아니면 중단(isClockTime 가드 스타일 미러)
+    var numFields = [
+      { el: vwapCeiling, label: '상승장 VWAP 천장(%)' },
+      { el: vwapFloor, label: '상승장 VWAP 바닥(%)' },
+      { el: riskonActivate, label: '상승장 트레일 발동' },
+      { el: riskonStop, label: '상승장 트레일 폭' },
+      { el: surgeActivate, label: '폭등장 트레일 발동' },
+      { el: surgeStop, label: '폭등장 트레일 폭' }
+    ];
+    for (var i = 0; i < numFields.length; i++) {
+      var n = Number(numFields[i].el ? numFields[i].el.value : NaN);
+      if (!Number.isFinite(n)) {
+        showToast(numFields[i].label + ' 값이 올바른 숫자가 아닙니다.', 'err');
+        return;
+      }
+    }
+
+    var items = [
+      { key: 'engine.uptrend_entry_mode', value: entryMode ? entryMode.value : 'enforce', value_type: 'string' },
+      { key: 'engine.entry_vwap_ceiling_riskon', value: Number(vwapCeiling.value), value_type: 'number' },
+      { key: 'engine.entry_vwap_floor_riskon', value: Number(vwapFloor.value), value_type: 'number' },
+      // boolean: 셀렉트 문자열 'true'/'false' → 실제 boolean으로 변환하여 전송
+      { key: 'engine.entry_require_strength_riskon', value: (requireStrength ? requireStrength.value : 'true') === 'true', value_type: 'boolean' },
+      { key: 'engine.exit_hybrid_mode', value: hybridMode ? hybridMode.value : 'enforce', value_type: 'string' },
+      { key: 'engine.exit_riskon_trail_activate', value: Number(riskonActivate.value), value_type: 'number' },
+      { key: 'engine.exit_riskon_trail_stop', value: Number(riskonStop.value), value_type: 'number' },
+      { key: 'engine.exit_surge_trail_activate', value: Number(surgeActivate.value), value_type: 'number' },
+      { key: 'engine.exit_surge_trail_stop', value: Number(surgeStop.value), value_type: 'number' }
+    ];
+
+    try {
+      await Promise.all(items.map(function(item) {
+        return fetchJson('/api/v1/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(item)
+        });
+      }));
+      showToast('상승장 전략 설정이 저장되었습니다.', 'ok');
+      loadUptrendStrategySettings();
+    } catch (e) {
+      showToast('저장 실패: ' + e.message, 'err');
+    }
+  }
+
   /* Load persisted scheduler times into the Settings table. */
   async function loadSchedulerSettings() {
     try {
@@ -505,6 +604,7 @@
   function initSettingsUI() {
     // 탐색모드 제거(2026-08-22) — loadConditionEditor·loadExplorationSettings 섹션 삭제됨
     loadRiskSettings();
+    loadUptrendStrategySettings();
     loadSchedulerSettings();
     loadSettingsProfiles();
     loadTradingCostSettings();
