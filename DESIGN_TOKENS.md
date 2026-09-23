@@ -4,7 +4,7 @@
 AI 에이전트가 UI를 작업할 때 이 파일을 먼저 읽고, 여기 있는 값만 사용한다.
 임의 색상 추가·변경 금지. 변경 필요 시 PM 확인 후 이 파일 먼저 수정한다.
 
-연계 문서: `UI_BASELINE.md`, `IMPLEMENTATION_RULES.md`
+연계 문서: `UI_BASELINE.md`
 
 ---
 
