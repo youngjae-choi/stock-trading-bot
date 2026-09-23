@@ -80,7 +80,9 @@ def test_submit_buy_market_retry_keeps_market(monkeypatch):
 # ── ② momentum_entry — 설정값 전파(+시장가 프리미엄 제거) ──────────────────────
 
 def _mom_getter(**over):
-    base = {"momentum.enabled": True, "momentum.exec_start": "000000", "momentum.rs_min": 4.0,
+    # breakout(구 ORB 추격) 시나리오 검증 — entry_mode=breakout 명시(기본은 pullback으로 변경됨 2026-09-24).
+    base = {"momentum.enabled": True, "momentum.entry_mode": "breakout",
+            "momentum.exec_start": "000000", "momentum.rs_min": 4.0,
             "momentum.or_end": "093000", "momentum.min_vol": 1000, "momentum.min_bars": 1,
             "momentum.entry_premium_pct": 1.5, "momentum.buy_spacing_sec": 0.0,
             "momentum.max_attempts": 3, "momentum.max_late_chase_pct": 2.0,

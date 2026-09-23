@@ -1,12 +1,15 @@
-"""모멘텀 진입(실전) — 리더(ORB 돌파+VWAP위+상대강도)를 실제 매수한다.
+"""리더 진입(실전) — 스캐너가 넣은 강세 리더를 실제 매수한다. 두 모드(momentum.entry_mode).
 
-momentum_backtest 발견(강세4 돌파 = 승률 83%·순 +1.36%, 전 레짐)을 실전 적용(2026-09-07, 모의계좌).
-우리 눌림전략과 **독립 경로**로 유니버스를 스캔해, 돌파 리더를 `_emit_signal(momentum=True)`로 매수한다.
-모멘텀은 mean-reversion 게이트(VWAP 눌림/시가대비 추격금지/conviction)를 **우회**하되, 안전 게이트
-(레버리지·ETN·손실스트릭·급락방어·하락전환·exec_start·preflight 배포캡/포지션한도)는 그대로 통과해야 한다.
+**pullback(E6 강세근접VWAP, 기본)** — 2026-09-18 backtest 발굴 필승패턴(상승장 76%승·EV+0.63%).
+  강세(시가대비>0) 리더가 **VWAP 눌림 구간[floor,ceiling]** 으로 얕게 눌릴 때만 매수(추격 아님).
+  **상승장(risk_on/surge) 전용** — 보합/하락은 현행 눌림전략 담당(불변). 09-18 규명: 상승장 손실 뿌리는
+  ①추격(momentum breakout=꼭지매수) ②laggard 매수. pullback은 둘 다 회피(강세필터+VWAP지지).
 
-감지 규칙(백테스트 동일): 시가~OR_END 고가를 exec_start 이후 첫 상향돌파 & 현재가 > 누적VWAP &
-시가대비 ≥ rs_min. 종목당 하루 1회. 이미 보유/당일 매수/기록된 종목은 스킵(중복 방지).
+**breakout(구 ORB 추격, 롤백용)** — 시가~OR_END 고가를 첫 상향돌파+VWAP위+시가대비≥rs_min. 상승장서
+  꼭지추격으로 매 세션 순손실이라 기본 비활성(momentum.entry_mode=breakout로만 복귀).
+
+공통: 유니버스 스캔→`_emit_signal(momentum=True)`(mean-reversion 게이트 우회, 안전게이트·preflight 통과).
+종목당 하루 1회. 보유/당일매수/기록 종목 스킵. 청산은 rule_resolver 하이브리드 트레일(상승+2/1.5·폭등+3/2).
 """
 from __future__ import annotations
 
@@ -52,6 +55,36 @@ def _detect_breakout(bars: list, or_end: str, exec_start: str, rs_min: float):
             cfo = (c / day_open - 1) * 100
             if cfo >= rs_min:
                 return b["bar_ts"], round(or_high, 2), round(vwap, 2), round(cfo, 2)
+    return None
+
+
+def _detect_leader_pullback(bars: list, floor_pct: float, ceiling_pct: float, strength_min: float = 0.0):
+    """E6 강세근접VWAP(2026-09-18 backtest 76%승·EV+0.63%) — 강세 리더가 VWAP 눌림 구간에 있으면 진입.
+
+    추격(_detect_breakout)의 정반대: 시가대비 오른 강한 종목(cfo>strength_min)이 **VWAP 지지 근처**
+    (floor_pct ≤ vwap_dist% ≤ ceiling_pct)로 얕게 눌릴 때만 산다. laggard(cfo≤0)·추격(vwap_dist>ceiling)
+    은 제외. 스크리너가 강세 리더를 유니버스에 넣으면 이 검출이 눌림 순간을 잡아 매수한다.
+    반환: (entry_ts, ref_price, vwap, cfo) 또는 None.
+    """
+    if not bars:
+        return None
+    day_open = (bars[0]["open"] or bars[0]["close"] or 0)
+    if day_open <= 0:
+        return None
+    pv = vv = 0.0
+    for b in bars:
+        c = b["close"] or 0
+        v = b["volume"] or 0
+        pv += c * v
+        vv += v
+    vwap = pv / vv if vv > 0 else (bars[-1]["close"] or 0)
+    last = bars[-1]["close"] or 0
+    if last <= 0 or vwap <= 0:
+        return None
+    cfo = (last / day_open - 1) * 100
+    vwap_dist = (last / vwap - 1) * 100
+    if cfo > strength_min and floor_pct <= vwap_dist <= ceiling_pct:
+        return bars[-1]["bar_ts"], round(last, 2), round(vwap, 2), round(cfo, 2)
     return None
 
 
@@ -105,6 +138,24 @@ async def run_momentum_entries(trade_date: str | None = None, *, getter: Callabl
     except Exception:
         pass
     td = trade_date or datetime.now(KST).strftime("%Y-%m-%d")
+    # 진입 방식 — pullback(E6 강세근접VWAP, 기본) | breakout(구 ORB 추격, 롤백용).
+    #   pullback은 09-18 발굴 필승패턴: 스캐너가 넣은 강세 리더를 VWAP 눌림에서만 매수(추격 아님).
+    #   추격(breakout)은 상승장서 꼭지매수로 매 세션 순손실(09-18 규명)이라 기본 비활성.
+    entry_mode = str(getter("momentum.entry_mode", "pullback") or "pullback").strip().lower()
+    if entry_mode not in ("pullback", "breakout"):
+        entry_mode = "pullback"
+    # pullback(E6)은 상승장(risk_on/surge) 전용 — 보합/하락은 현행 눌림전략이 담당(불변). 레짐 게이트.
+    if entry_mode == "pullback":
+        try:
+            from .decision_engine import _current_regime_label
+            _regime = _current_regime_label()
+        except Exception:
+            _regime = ""
+        if _regime not in ("risk_on", "up", "surge"):
+            return {"enabled": True, "scanned": 0, "entered": 0, "reason": f"not_up_regime({_regime})"}
+    # E6 밴드 — 진입 게이트와 동일 설정 재사용(설정화면에서 함께 조정). strength: cfo>0(강세).
+    e6_floor = _f(getter, "engine.entry_vwap_floor_riskon", -3.0)
+    e6_ceiling = _f(getter, "engine.entry_vwap_ceiling_riskon", 1.0)
     # exec_start 이전이면 스킵(장 초반 OR 형성 전)
     now_hm = datetime.now(KST).strftime("%H%M%S")
     exec_start = str(getter("momentum.exec_start", "093000") or "093000")
@@ -153,20 +204,31 @@ async def run_momentum_entries(trade_date: str | None = None, *, getter: Callabl
                 bars = conn.execute(
                     "SELECT bar_ts, open, high, low, close, volume FROM intraday_bars"
                     " WHERE trade_date=? AND symbol=? ORDER BY bar_ts", (td, sym)).fetchall()
-                sig = _detect_breakout([dict(b) for b in bars], or_end, exec_start, rs_min)
-                if not sig:
-                    continue
-                entry_ts, or_high, vwap, cfo = sig
-                last_close = float(bars[-1]["close"] or or_high)
-                # #2 뒷북 방지: 돌파가 대비 현재가가 너무 위(스캔 지연 동안 달림)면 보류(기록 안 함 → 재검토 대기).
-                late = _late_chase_pct(or_high, last_close)
-                if late > max_late:
-                    logger.info("INFO: [MomentumEntry] 뒷북 보류 symbol=%s 돌파대비 +%.1f%% > %.1f%%(가격 정상화시 재진입)",
-                                sym, late, max_late)
-                    continue
+                if entry_mode == "pullback":
+                    # E6: 강세(cfo>0) 리더가 VWAP 눌림 구간[e6_floor, e6_ceiling]일 때만. 추격/뒷북 판정 불필요.
+                    sig = _detect_leader_pullback([dict(b) for b in bars], e6_floor, e6_ceiling, 0.0)
+                    if not sig:
+                        continue
+                    entry_ts, or_high, vwap, cfo = sig  # or_high=현재가(ref) — pullback은 돌파레벨 개념 없음
+                    last_close = float(bars[-1]["close"] or or_high)
+                else:  # breakout(구 추격, 롤백용)
+                    sig = _detect_breakout([dict(b) for b in bars], or_end, exec_start, rs_min)
+                    if not sig:
+                        continue
+                    entry_ts, or_high, vwap, cfo = sig
+                    last_close = float(bars[-1]["close"] or or_high)
+                    # #2 뒷북 방지: 돌파가 대비 현재가가 너무 위(스캔 지연 동안 달림)면 보류.
+                    late = _late_chase_pct(or_high, last_close)
+                    if late > max_late:
+                        logger.info("INFO: [MomentumEntry] 뒷북 보류 symbol=%s 돌파대비 +%.1f%% > %.1f%%(가격 정상화시 재진입)",
+                                    sym, late, max_late)
+                        continue
                 # 시장가는 사이징 기준가만 필요(프리미엄 무의미) → 현재가. 지정가는 체결력 위해 소폭 프리미엄.
-                price = round(last_close, 2) if order_style == "market" \
-                    else round(max(or_high, last_close) * (1 + premium), 2)
+                # 단 pullback(E6)은 VWAP 지지 근처 매수라 프리미엄 추격이 무의미 → 지정가여도 현재가.
+                if order_style == "market" or entry_mode == "pullback":
+                    price = round(last_close, 2)
+                else:
+                    price = round(max(or_high, last_close) * (1 + premium), 2)
                 conn.execute(
                     "INSERT INTO momentum_signals"
                     " (trade_date, symbol, detected_at, entry_ts, price, last_close, vwap, change_from_open)"
@@ -195,8 +257,8 @@ async def run_momentum_entries(trade_date: str | None = None, *, getter: Callabl
                 conn.commit()
                 name = _name_of(conn, sym)
             logger.warning(
-                "MOMENTUM-BUY: 리더 매수 시도 symbol=%s name=%s 방식=%s 기준가=%.0f 시가대비=%+.2f%% vwap=%.0f",
-                sym, name, order_style, price, cfo, vwap)
+                "LEADER-BUY: 리더 매수 시도 mode=%s symbol=%s name=%s 방식=%s 기준가=%.0f 시가대비=%+.2f%% vwap=%.0f",
+                entry_mode, sym, name, order_style, price, cfo, vwap)
             await decision_engine._emit_signal(
                 sym, {"name": name, "confidence": 0.7}, price,
                 {"momentum": True, "order_style": order_style})

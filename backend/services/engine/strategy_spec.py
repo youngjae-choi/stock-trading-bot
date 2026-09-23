@@ -100,8 +100,9 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "engine.exit_surge_trail_activate": 0.03,        # 폭등장 트레일 발동(+3%, 더 태움)
     "engine.exit_surge_trail_stop": 0.02,            # 폭등장 트레일 폭(2%)
     "engine.exit_hybrid_mode": "enforce",            # off|enforce — 상승/폭등 트레일 오버라이드 롤백
-    "momentum.enabled": True,                        # 모멘텀 진입(실전) — 리더 돌파 매수, 눌림과 독립 (2026-09-07)
-    "momentum.rs_min": 4.0,                          # 상대강도 임계(시가대비≥+4%). 백테스트: 강세4=승률83%·순+1.36%
+    "momentum.enabled": True,                        # 리더 진입(실전) 활성 — 눌림과 독립 경로. 롤백 스위치 (2026-09-07)
+    "momentum.entry_mode": "pullback",               # pullback=E6 강세근접VWAP(상승장 전용·09-18 필승패턴) | breakout=구 ORB추격(꼭지매수·기본비활)
+    "momentum.rs_min": 4.0,                          # (breakout전용) 상대강도 임계(시가대비≥+4%). 백테스트: 강세4=승률83%·순+1.36%
     "momentum.entry_premium_pct": 1.5,               # 돌파가 +1.5% 지정가(빠른 리더 체결력, 호가 스냅) — order_style=limit일 때만 사용
     "momentum.order_style": "market",                # 진입 주문방식: market=시장가(감지 즉시 체결 보장·빠른 리더 추격) / limit=지정가+프리미엄(체결 미보장) (2026-09-18)
     "momentum.buy_spacing_sec": 1.5,                 # 모멘텀 매수 간격(KIS 초당한도 EGW00215 회피)

@@ -124,7 +124,8 @@ def test_late_chase_pct():
 # ── #1 재시도 + #2 뒷북 통합 (temp DB) ────────────────────────────────────────
 
 def _mom_getter(**over):
-    base = {"momentum.enabled": True, "momentum.exec_start": "000000", "momentum.rs_min": 4.0,
+    base = {"momentum.enabled": True, "momentum.entry_mode": "breakout",
+            "momentum.exec_start": "000000", "momentum.rs_min": 4.0,
             "momentum.or_end": "093000", "momentum.min_vol": 1000, "momentum.min_bars": 1,
             "momentum.entry_premium_pct": 1.5, "momentum.buy_spacing_sec": 0.0,
             "momentum.max_attempts": 3, "momentum.max_late_chase_pct": 2.0}

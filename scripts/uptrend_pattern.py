@@ -101,6 +101,10 @@ def _entry_rules():
         "E8 개장강세유지(cfo>+2·VWAP위)": ("0945", lambda p, b: b["cfo"] > 2.0 and b["vwap_dist"] > 0),
         # 포착 레버: 밴드 확대(신호 수↑, 리스크 불변) — 승률 유지되나 검증
         "E9 강세밴드확대(cfo>0·VWAP-0.5~1.5%)": ("1100", lambda p, b: b["cfo"] > 0 and -0.5 <= b["vwap_dist"] <= 1.5),
+        # 라이브 굶주림 해결 후보: 강세필터 유지 + 넓은 밴드(눌림 아래까지) — 거래는 하되 laggard(cfo<0) 회피
+        "S1 강세+눌림아래(cfo>0·VWAP-2~0)": ("1100", lambda p, b: b["cfo"] > 0 and -2.0 <= b["vwap_dist"] <= 0.0),
+        "S2 강세+와이드(cfo>0·VWAP-3~+1)": ("1100", lambda p, b: b["cfo"] > 0 and -3.0 <= b["vwap_dist"] <= 1.0),
+        "S3 강세만(cfo>0·VWAP-5~+1)": ("1100", lambda p, b: b["cfo"] > 0 and -5.0 <= b["vwap_dist"] <= 1.0),
     }
 
 
