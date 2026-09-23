@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import re
 import uuid
 from datetime import datetime, timezone
@@ -425,6 +426,206 @@ def _apply_memory_adjustments(weights: dict[str, float], memories: list[dict[str
 _VOLUME_SURGE_SATURATION_PCT = 300.0
 
 
+# ---------------------------------------------------------------------------
+# 수급(외국인+기관 순매수) 기반 선정 — SHADOW 우선 (2026-09-23)
+# ---------------------------------------------------------------------------
+#
+# 근거: KOSPI 상승은 외국인·기관 순매수(수급)가 주도. 현행 선정(거래량+등락률)은
+# 수급 없는 '고거래량 laggard'를 잡아 손실. 수급 팩터를 추가하되 SHADOW(로그만)로
+# 먼저 관찰 후 enforce 전환한다. 모든 값은 selection.supply_demand_* 설정에서 온다.
+#
+# 데이터 의미(중요): KIS inquire-investor(FHKST01010900)는 **일별 시계열**을 반환한다
+# (output = 리스트, 최근 거래일 first). S3 prep(~09:01)에는 오늘 장중 누적이 0에 가깝거나
+# 미형성이라, **가장 최근 '유효' 거래일(순매수 데이터가 있는 첫 행)**의 외국인+기관 순매수를
+# 수급 측정치로 쓴다. 전일 강한 매집 → 오늘 지속(연속성) 가정. (아래 _extract_supply_row)
+#
+# 정규화: 순매수'금액'(원)을 tanh로 [-1,1]에 압축한다. 금액 기반이 거래량 기반보다
+# 종목 규모/가격에 덜 휘둘린다(대형주 소량주 비교 안정). 최종 supply_score=[0,1]로 shift.
+#   raw = frgn_ntby_tr_pbmn + orgn_ntby_tr_pbmn  (외국인+기관 순매수 금액, 백만원 또는 원)
+#   signed = tanh(raw / SATURATION)   → [-1,1]  (양수=매집, 음수=분산)
+#   supply_score = (signed + 1) / 2   → [0,1]   (기존 점수와 결합용, 0.5=중립)
+# SATURATION은 '이 금액이면 강한 수급'의 스케일. KIS 금액 단위는 백만원(tr_pbmn) 관례라
+# 100(억원 근처)에서 포화하도록 잡되 설정 없이 상수로 문서화한다.
+
+# 수급 순매수 금액 포화 스케일. tr_pbmn 단위(백만원) 기준: 10,000백만=100억에서 tanh≈0.76.
+# 순매수 금액이 이 스케일이면 '강한 수급'으로 본다. (단위가 원이어도 부호/순서는 보존됨)
+_SUPPLY_AMOUNT_SATURATION = 10_000.0
+
+
+def _extract_supply_row(payload: dict[str, Any]) -> dict[str, Any]:
+    """KIS inquire-investor 일별 시계열에서 수급 측정에 쓸 행을 고른다.
+
+    output은 최근 거래일 first 리스트다. S3 prep(~09:01)엔 오늘 장중 누적이 0/미형성이라
+    **순매수 데이터가 존재하는 가장 최근 행**(사실상 직전 완료 거래일)을 고른다.
+    dict(단일 행) 응답도 안전 처리. 유효 행이 없으면 빈 dict.
+    """
+    output = payload.get("output") if isinstance(payload, dict) else None
+    rows: list[dict[str, Any]]
+    if isinstance(output, list):
+        rows = [r for r in output if isinstance(r, dict)]
+    elif isinstance(output, dict):
+        rows = [output]
+    else:
+        rows = []
+    for row in rows:
+        frgn = _to_number(row.get("frgn_ntby_tr_pbmn"))
+        orgn = _to_number(row.get("orgn_ntby_tr_pbmn"))
+        if frgn is not None or orgn is not None:
+            return row
+    return rows[0] if rows else {}
+
+
+def _to_number(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        text = str(value).replace(",", "").strip()
+        if not text:
+            return None
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _compute_supply_score(investor_payload: dict[str, Any] | None) -> dict[str, Any]:
+    """외국인+기관 순매수 금액을 [0,1] supply_score로 정규화한다.
+
+    양수 순매수(매집) → score>0.5, 음수(분산) → score<0.5, 데이터 없음/실패 → 0.5(중립).
+    tanh 압축으로 극단 금액이 점수를 지배하지 않게 한다(fail-open: None→중립).
+
+    Returns:
+        {"supply_score": [0,1], "frgn_ntby_amount": .., "orgn_ntby_amount": ..,
+         "supply_signed": [-1,1], "as_of": 데이터 기준일, "available": bool}
+    """
+    row = _extract_supply_row(investor_payload or {})
+    frgn = _to_number(row.get("frgn_ntby_tr_pbmn"))
+    orgn = _to_number(row.get("orgn_ntby_tr_pbmn"))
+    if frgn is None and orgn is None:
+        return {
+            "supply_score": 0.5,
+            "frgn_ntby_amount": None,
+            "orgn_ntby_amount": None,
+            "supply_signed": 0.0,
+            "as_of": row.get("stck_bsop_date", ""),
+            "available": False,
+        }
+    combined = (frgn or 0.0) + (orgn or 0.0)
+    signed = math.tanh(combined / _SUPPLY_AMOUNT_SATURATION)
+    supply_score = (signed + 1.0) / 2.0
+    return {
+        "supply_score": round(max(0.0, min(1.0, supply_score)), 6),
+        "frgn_ntby_amount": frgn,
+        "orgn_ntby_amount": orgn,
+        "supply_signed": round(signed, 6),
+        "as_of": row.get("stck_bsop_date", ""),
+        "available": True,
+    }
+
+
+def _resolve_supply_config() -> dict[str, Any]:
+    """수급 선정 설정을 라이브로 읽는다(매 호출 반영). 실패 시 안전 기본."""
+    def _num(key: str, default: float) -> float:
+        try:
+            return float(get_setting(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    mode = "shadow"
+    try:
+        mode = str(get_setting("selection.supply_demand_mode", "shadow") or "shadow").strip().lower()
+    except Exception:
+        mode = "shadow"
+    if mode not in ("off", "shadow", "enforce"):
+        mode = "shadow"
+    weight = _num("selection.supply_demand_weight", 0.3)
+    weight = max(0.0, min(1.0, weight))
+    topk = int(_num("selection.supply_demand_topk", 30))
+    topk = max(1, topk)
+    gate_min = _num("selection.supply_demand_gate_min", -0.5)
+    return {"mode": mode, "weight": weight, "topk": topk, "gate_min": gate_min}
+
+
+def _supply_combined_score(existing_score: float, supply_score: float, weight: float) -> float:
+    """기존 선정점수와 수급점수를 가중 결합한다: (1-w)*existing + w*supply."""
+    return round((1.0 - weight) * float(existing_score) + weight * float(supply_score), 6)
+
+
+def _rerank_by_supply(candidates: list[dict[str, Any]], weight: float) -> list[dict[str, Any]]:
+    """candidates(각 supply_score 보유)를 결합점수로 재정렬하고 rank 재부여한다.
+
+    supply_score 부재 시 0.5(중립)로 취급 → 수급 데이터 없는 종목은 기존 순위 근처 유지.
+    원본 리스트는 변경하지 않고 새 리스트를 반환한다.
+    """
+    reranked = []
+    for item in candidates:
+        base = float(item.get("score", 0.0) or 0.0)
+        supply = float(item.get("supply_score", 0.5) if item.get("supply_score") is not None else 0.5)
+        combined = _supply_combined_score(base, supply, weight)
+        reranked.append({**item, "supply_combined_score": combined})
+    reranked.sort(key=lambda x: x["supply_combined_score"], reverse=True)
+    for idx, item in enumerate(reranked, start=1):
+        item["supply_rank"] = idx
+    return reranked
+
+
+def _ensure_supply_shadow_table() -> None:
+    """selection_supply_shadow 테이블(수급 shadow 비교 기록)이 없으면 생성한다."""
+    with get_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS selection_supply_shadow (
+                id                       TEXT PRIMARY KEY,
+                trade_date               TEXT NOT NULL,
+                current_topn_json        TEXT NOT NULL DEFAULT '[]',
+                supply_reranked_topn_json TEXT NOT NULL DEFAULT '[]',
+                detail_json              TEXT NOT NULL DEFAULT '{}',
+                created_at               TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_selection_supply_shadow_trade_date ON selection_supply_shadow(trade_date)"
+        )
+
+
+async def _fetch_supply_for_candidates(
+    candidates: list[dict[str, Any]],
+    topk: int,
+    spacing_sec: float = 0.34,
+) -> dict[str, dict[str, Any]]:
+    """상위 topk 후보에 대해 KIS inquire-investor를 순차 조회해 supply_score를 계산한다.
+
+    KIS rate-limit 가드: 상위 K만, 호출 간 spacing_sec 간격(≈3tps). 각 조회는 fail-open
+    (실패/누락 → 중립 0.5, S3를 절대 깨뜨리지 않음). get_investor_profile는 서버 내부 KIS.
+
+    Returns: {symbol: supply_detail_dict}
+    """
+    from ..kis.domestic import service as domestic_service
+
+    out: dict[str, dict[str, Any]] = {}
+    subset = candidates[: max(1, topk)]
+    for idx, item in enumerate(subset):
+        sym = str(item.get("symbol") or "").strip()
+        if not sym:
+            continue
+        try:
+            payload = await domestic_service.get_investor_profile(symbol=sym, market_code="J")
+            out[sym] = _compute_supply_score(payload if isinstance(payload, dict) else {})
+        except Exception as exc:  # fail-open — 수급 실패가 S3를 막지 않는다
+            logger.warning("WARN: UniverseFilter 수급 조회 실패 symbol=%s reason=%s (중립 처리)", sym, exc)
+            out[sym] = {
+                "supply_score": 0.5,
+                "frgn_ntby_amount": None,
+                "orgn_ntby_amount": None,
+                "supply_signed": 0.0,
+                "as_of": "",
+                "available": False,
+            }
+        if spacing_sec > 0 and idx < len(subset) - 1:
+            await asyncio.sleep(spacing_sec)
+    return out
+
+
 def _score_and_rank(items: list[dict[str, Any]], total: int, weights: dict[str, float]) -> list[dict[str, Any]]:
     """단타 모멘텀 정량 점수를 계산하고 내림차순으로 정렬한다.
 
@@ -554,7 +755,115 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
     filtered = _apply_filters(merged, allow_inverse_1x=_allow_inv1x)
     ranked = _score_and_rank(filtered, total=len(merged), weights=weights)
     top_n_count = _TONE_TOP_N.get(tone_used, _TOP_N_RESULT)
-    top_n = ranked[:top_n_count]
+
+    # ── 수급(외국인+기관 순매수) 기반 선정 — SHADOW 우선 (2026-09-23) ──
+    # off=현행 그대로. shadow=수급 조회+비교 로그·테이블 기록만(top_n 불변).
+    # enforce=수급 결합점수로 ranked 실제 재정렬 후 top_n 선택 + 강한 순매도 게이트.
+    supply_cfg = _resolve_supply_config()
+    supply_diag: dict[str, Any] = {"mode": supply_cfg["mode"]}
+    if supply_cfg["mode"] != "off" and ranked:
+        try:
+            supply_map = await _fetch_supply_for_candidates(ranked, topk=supply_cfg["topk"])
+            for item in ranked:
+                sym = str(item.get("symbol") or "").strip()
+                detail = supply_map.get(sym)
+                if detail is not None:
+                    item["supply_score"] = detail.get("supply_score", 0.5)
+                    item["frgn_ntby_amount"] = detail.get("frgn_ntby_amount")
+                    item["orgn_ntby_amount"] = detail.get("orgn_ntby_amount")
+                    item["supply_available"] = detail.get("available", False)
+                    item["supply_as_of"] = detail.get("as_of", "")
+            supply_diag.update({
+                "weight": supply_cfg["weight"],
+                "topk": supply_cfg["topk"],
+                "fetched": len(supply_map),
+                "available": sum(1 for d in supply_map.values() if d.get("available")),
+            })
+        except Exception as _sd_exc:  # fail-open — 수급 전체 실패해도 현행 선정 유지
+            logger.warning("WARN: UniverseFilter 수급 단계 실패 — 현행 선정 유지 reason=%s", _sd_exc)
+            supply_diag["error"] = str(_sd_exc)
+            supply_cfg = {**supply_cfg, "mode": "off"}
+
+    if supply_cfg["mode"] == "enforce":
+        # 실제 재정렬: 결합점수로 ranked 재정렬. 강한 순매도(gate_min 미만)는 후보 제외.
+        gate_signed_min = float(supply_cfg["gate_min"])
+        gated = [
+            it for it in ranked
+            if float((it.get("supply_score", 0.5) if it.get("supply_score") is not None else 0.5) * 2.0 - 1.0)
+            >= gate_signed_min or not it.get("supply_available", False)
+        ]
+        reranked = _rerank_by_supply(gated, supply_cfg["weight"])
+        excluded = len(ranked) - len(gated)
+        top_n = reranked[:top_n_count]
+        supply_diag.update({"enforced": True, "gate_excluded": excluded, "gate_signed_min": gate_signed_min})
+        logger.info(
+            "INFO: UniverseFilter 수급 ENFORCE — 결합점수 재정렬(w=%.2f) gate제외=%d top_n=%d",
+            supply_cfg["weight"], excluded, len(top_n),
+        )
+    else:
+        top_n = ranked[:top_n_count]
+
+    if supply_cfg["mode"] == "shadow":
+        # SHADOW: top_n 불변. 수급 재정렬 대안 top_n을 계산해 비교만 기록한다(매매 영향 없음).
+        try:
+            reranked_shadow = _rerank_by_supply(ranked, supply_cfg["weight"])
+            supply_shadow_topn = reranked_shadow[:top_n_count]
+            _cur_syms = [it.get("symbol") for it in top_n]
+            _new_syms = [it.get("symbol") for it in supply_shadow_topn]
+            _cur_set, _new_set = set(_cur_syms), set(_new_syms)
+            added = [s for s in _new_syms if s not in _cur_set]     # 수급 반영 시 새로 진입
+            dropped = [s for s in _cur_syms if s not in _new_set]   # 수급 반영 시 탈락
+            _detail_by_sym = {
+                str(it.get("symbol")): {
+                    "score": it.get("score"),
+                    "supply_score": it.get("supply_score"),
+                    "supply_combined_score": it.get("supply_combined_score"),
+                    "frgn_ntby_amount": it.get("frgn_ntby_amount"),
+                    "orgn_ntby_amount": it.get("orgn_ntby_amount"),
+                    "supply_available": it.get("supply_available"),
+                    "supply_as_of": it.get("supply_as_of"),
+                }
+                for it in reranked_shadow
+            }
+            shadow_detail = {
+                "weight": supply_cfg["weight"],
+                "topk": supply_cfg["topk"],
+                "added_symbols": added,
+                "dropped_symbols": dropped,
+                "added_detail": {s: _detail_by_sym.get(str(s)) for s in added},
+                "dropped_detail": {s: _detail_by_sym.get(str(s)) for s in dropped},
+                "supply_stats": {
+                    "fetched": supply_diag.get("fetched", 0),
+                    "available": supply_diag.get("available", 0),
+                },
+            }
+            _ensure_supply_shadow_table()
+            _shadow_id = str(uuid.uuid4())
+            _shadow_now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+            with get_connection() as _sconn:
+                _sconn.execute(
+                    """
+                    INSERT INTO selection_supply_shadow
+                        (id, trade_date, current_topn_json, supply_reranked_topn_json, detail_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        _shadow_id,
+                        today,
+                        json.dumps(_cur_syms, ensure_ascii=False),
+                        json.dumps(_new_syms, ensure_ascii=False),
+                        json.dumps(shadow_detail, ensure_ascii=False),
+                        _shadow_now,
+                    ),
+                )
+            supply_diag.update({"shadow_recorded": True, "added": added, "dropped": dropped})
+            logger.info(
+                "INFO: UniverseFilter 수급 SHADOW — 현행 top_n 불변, 수급 재정렬 대안 기록 added=%s dropped=%s (w=%.2f)",
+                added, dropped, supply_cfg["weight"],
+            )
+        except Exception as _sh_exc:  # fail-open — shadow 기록 실패가 선정을 막지 않는다
+            logger.warning("WARN: UniverseFilter 수급 SHADOW 기록 실패 — %s (선정 영향 없음)", _sh_exc)
+            supply_diag["shadow_error"] = str(_sh_exc)
 
     # 탈락 종목 Missed Opportunities 기록.
     # 정책상 절대 매수 안 하는 상품군 (ETF/ETN/인버스/레버리지/단일종목 파생) 은 학습 노이즈가 되므로
@@ -600,6 +909,7 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
             "merged": _sample_symbols(merged),
             "filtered": _sample_symbols(filtered),
         },
+        "supply_demand": supply_diag,
     }
 
     # DB 저장
@@ -639,6 +949,7 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
         "memory_count": len(memories),
         "knowledge_refs": knowledge_refs,
         "knowledge_count": len(knowledge_items),
+        "supply_demand": supply_diag,
         "items": top_n,
         "id": record_id,
     }

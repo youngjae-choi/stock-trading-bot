@@ -523,6 +523,31 @@ def _seed_system_settings(connection: sqlite3.Connection) -> None:
             "string",
             "상승/폭등 트레일 오버라이드 롤백: off(레짐SET 값 유지·구동작) | enforce(surge/up만 오버라이드, 보합/하락 불변)",
         ),
+        # ── 수급(외국인+기관 순매수) 기반 종목선정 — SHADOW 우선(2026-09-23) ──
+        (
+            "selection.supply_demand_mode",
+            "shadow",
+            "string",
+            "수급 선정 마스터 롤백: off(현행 그대로) | shadow(로그·비교만·매매 불변) | enforce(수급 결합점수로 실제 재정렬)",
+        ),
+        (
+            "selection.supply_demand_weight",
+            0.3,
+            "number",
+            "enforce 시 수급 팩터 가중(0~1). 결합점수=(1-w)*기존점수 + w*수급점수",
+        ),
+        (
+            "selection.supply_demand_topk",
+            30,
+            "number",
+            "수급 조회 대상 상위 K (KIS rate-limit 가드 — ranked 상위 K 종목만 수급 조회)",
+        ),
+        (
+            "selection.supply_demand_gate_min",
+            -0.5,
+            "number",
+            "enforce 시 이 수급점수([-1,1]) 미만(강한 순매도)이면 후보 제외. 0=중립 경계, 음수=완화",
+        ),
     ]
     for key, value, value_type, description in defaults:
         connection.execute(

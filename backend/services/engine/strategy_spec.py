@@ -137,6 +137,14 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "selection.weights_source": "settings",         # settings=아래 가중치 라이브 소비(배선)|tone=구 _TONE_WEIGHTS. 롤백스위치
     "selection.change_weight": 0.5,                 # 등락률 가중(라이브 — 선정에 반영)
     "selection.surge_weight": 0.5,                  # 거래량급증 가중(라이브 — 선정에 반영)
+    # ── 수급(외국인+기관 순매수) 기반 종목선정 — SHADOW 우선(2026-09-23) ──
+    #   근거: KOSPI 상승은 외국인·기관 순매수(수급)가 주도. 현행 선정은 거래량+등락률만 봐서
+    #   '고거래량 laggard'(수급 없는 급등주)를 잡아 손실. 수급 팩터를 추가하되 SHADOW(로그만)로
+    #   먼저 관찰 후 enforce 전환. off=현행 그대로(byte-for-byte).
+    "selection.supply_demand_mode": "shadow",       # off|shadow|enforce — 수급 선정 마스터 롤백
+    "selection.supply_demand_weight": 0.3,          # enforce 시 수급 팩터 가중(0~1). 결합점수=(1-w)*기존+w*수급
+    "selection.supply_demand_topk": 30,             # 수급 조회 대상 상위 K (KIS rate-limit 가드 — 상위 K만 조회)
+    "selection.supply_demand_gate_min": -0.5,       # enforce 시 이 값 미만(강한 순매도)이면 후보 제외. 0=중립,음수=분산
     # ── 사이징 모델(결정4, Phase1) — 예수금비중: 종목당 5~15%, 종목수 6~19 ──
     "sizing.per_position_rate_min": 0.05,           # (레거시·표시용) 종목당 최소 비중
     "sizing.positions_min": 6,                      # (레거시) 무결성 백스톱용
