@@ -1052,18 +1052,30 @@ class DecisionEngine:
             logger.info("INFO: [S6] SKIP 진입 게이트 차단 symbol=%s reason=%s", symbol, gate_reason)
             return
 
-        # ── ABCD 눌림목 SHADOW(관찰만) — 수급 리더 한정, 로그만(매매 영향 0). 백테스트는 전 유니버스서
-        #    손실이었으나 Aziz 'stocks in play'(=수급 리더) 한정 효과는 과거 수급데이터 부재로 미검증.
-        #    → 향후 상승일에 수급리더 ABCD가 뭘 언제 사는지 forward 관찰. enforce 아님(fail-open).
+        # ── ABCD 눌림목 (수급리더 한정) — engine.abcd_entry_mode: off/shadow/enforce.
+        #    enforce = **상승장(up/surge/risk_on)+수급리더+ABCD 성립 시 실제 매수 허용**(모의 라이브 실험,
+        #    롤백스위치). 백테스트는 전 유니버스서 졌으나 수급리더 한정(Aziz stocks-in-play) 효과는 과거
+        #    수급데이터 부재로 검증 불가 → forward 라이브로만 검증. _abcd_pass=True면 눌림목 VWAP 게이트를
+        #    우회(ABCD는 반등 진입이라 VWAP 위일 수 있음). 청산은 상승장 regime_set(트레일링=추세 태우기).
+        #    fail-open(신호 실패가 매매를 막지 않음). scripts/abcd_shadow_review.py가 성과 감시.
+        _abcd_pass = False
         try:
-            from .abcd_pattern import abcd_shadow_signal
-            _ab = abcd_shadow_signal(symbol)
-            if _ab and _ab["entry"] > 0:
-                logger.info(
-                    "SHADOW: [S6] ABCD 진입후보(수급리더·로그만) symbol=%s entry=%.0f stop=%.0f(-%.1f%%) target=%.0f(+%.1f%%)",
-                    symbol, _ab["entry"], _ab["stop"], (1 - _ab["stop"] / _ab["entry"]) * 100,
-                    _ab["target"], (_ab["target"] / _ab["entry"] - 1) * 100,
-                )
+            _abcd_mode = _get_setting_str("engine.abcd_entry_mode", "shadow").lower()
+            if _abcd_mode != "off":
+                from .abcd_pattern import abcd_shadow_signal
+                _ab = abcd_shadow_signal(symbol)
+                if _ab and _ab["entry"] > 0:
+                    _abcd_up = (self._current_regime() or "flat") in ("up", "surge", "risk_on")
+                    if _abcd_mode == "enforce" and _abcd_up:
+                        _abcd_pass = True
+                        logger.info(
+                            "ENFORCE: [S6] ABCD 진입(수급리더·상승장·모의실험) symbol=%s entry=%.0f stop=%.0f target=%.0f",
+                            symbol, _ab["entry"], _ab["stop"], _ab["target"])
+                    else:
+                        logger.info(
+                            "SHADOW: [S6] ABCD 진입후보(수급리더·로그만) symbol=%s entry=%.0f stop=%.0f(-%.1f%%) target=%.0f(+%.1f%%)",
+                            symbol, _ab["entry"], _ab["stop"], (1 - _ab["stop"] / _ab["entry"]) * 100,
+                            _ab["target"], (_ab["target"] / _ab["entry"] - 1) * 100)
         except Exception:
             pass
 
@@ -1078,7 +1090,7 @@ class DecisionEngine:
             _regime5 = self._current_regime() or "flat"
             _gates = resolve_buy_gates(_regime5)  # ④ 매수 엔진 게이트 파라미터(get_playbook 경유)
             vwap_mode = str(_gates.get("vwap_pullback_mode", "enforce"))
-            if vwap_mode != "off" and not _is_momentum:  # 모멘텀은 눌림 게이트 우회(강세 매수)
+            if vwap_mode != "off" and not _is_momentum and not _abcd_pass:  # 모멘텀·ABCD enforce는 눌림 게이트 우회
                 max_dist = float(_gates.get("entry_max_vwap_dist_pct", 0.0))
                 min_dist = float(_gates.get("entry_min_vwap_dist_pct", -5.0))  # 바닥(falling knife)
                 # 실시간 VWAP(bar_engine) 우선, 미가용(재기동 메모리 소실 등)이면 intraday_bars 폴백
