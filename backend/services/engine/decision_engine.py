@@ -23,6 +23,7 @@ from .shadow_trading import create_shadow_trade
 from .decision_engine_utils import (  # 순수 파싱·숫자 유틸(Phase 1 분해)
     _day_open_from_bars,  # 오늘 시가 — 시가대비 추격 판정용(재기동 유지 intraday_bars)
     _fallback_vwap_from_bars,  # 실시간 VWAP 미가용 시 intraday_bars 폴백(재기동 누수 차단)
+    _vol_dryup_from_bars,  # 거래량 마름 비율(P2 진입 게이트) — edge_backtest 동일 소스
     _first_float,
     _vwap_dist_pct,  # 순수 VWAP 이격(%) — 바닥(falling knife) 판정용
     _vwap_pullback_gate,  # 외부(test_vwap_pullback_gate)가 import — 재-export 보존
@@ -1100,6 +1101,26 @@ class DecisionEngine:
                                 symbol, _vd, min_dist,
                             )
                             return
+                    else:
+                        # 3) 거래량 마름 게이트(P2) — 눌림 통과분에 한해 진입 직전 거래량이 급증(패닉/분산)이면
+                        #    차단. edge_backtest 114건: vwap≤-1 & vol_dryup≤1.2 → 승률 50→66%·기대값 흑자전환.
+                        #    off=비활성 · shadow=로그만(무매매) · enforce=실제 차단. 봉<15/데이터없음 fail-open.
+                        _dryup_mode = str(_gates.get("entry_vol_dryup_mode", "off"))
+                        if _dryup_mode != "off":
+                            _dryup_max = float(_gates.get("entry_vol_dryup_max", 1.2))
+                            _dryup = _vol_dryup_from_bars(symbol)
+                            if _dryup is not None and _dryup > _dryup_max:
+                                if _dryup_mode == "shadow":
+                                    logger.info(
+                                        "SHADOW: [S6] 거래량마름게이트 차단대상(로그만) symbol=%s vol_dryup=%.2f > %.2f",
+                                        symbol, _dryup, _dryup_max,
+                                    )
+                                else:
+                                    logger.info(
+                                        "INFO: [S6] SKIP 거래량마름게이트 — 진입직전 거래량 급증(눌림 아님) symbol=%s vol_dryup=%.2f > %.2f",
+                                        symbol, _dryup, _dryup_max,
+                                    )
+                                    return
         except Exception as exc:
             logger.warning("WARN: [S6] 눌림목 게이트 실패(fail-open) symbol=%s reason=%s", symbol, exc)
 

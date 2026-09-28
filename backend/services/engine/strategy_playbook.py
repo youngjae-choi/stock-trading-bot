@@ -195,6 +195,8 @@ def build_playbook(regime: str, regime_settings: dict | None = None,
         "vwap_pullback_mode": getter("engine.entry_vwap_pullback_mode", "enforce"),
         "entry_max_vwap_dist_pct": _vwap_ceiling,
         "entry_min_vwap_dist_pct": _vwap_floor,  # 바닥(falling knife 차단 / 상승장 E6는 VWAP 이상만)
+        "entry_vol_dryup_mode": getter("engine.entry_vol_dryup_mode", "off"),  # 거래량 마름 게이트(P2): off/shadow/enforce
+        "entry_vol_dryup_max": _f(getter, "engine.entry_vol_dryup_max", 1.2),  # 최근5봉/직전10봉 거래량비 상한(초과=투매 차단)
         "entry_require_strength": _require_strength,  # E6 강세요건(상승장+mode!=off일 때만 True)
         "uptrend_entry_mode": _uptrend_mode,          # decision_engine이 shadow/enforce 판정에 사용
         "max_price_change_pct": _f(getter, "engine.max_price_change_pct", 4.0),

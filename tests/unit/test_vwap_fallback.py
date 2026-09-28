@@ -100,3 +100,53 @@ def test_day_open_none_when_no_bars(tmp_path, monkeypatch):
     with db_mod.get_connection() as conn:
         _seed_open(conn, "005930", "2026-08-28", [("090000", 95.0)])
     assert u._day_open_from_bars("999999", today="2026-08-28") is None
+
+
+# ── 거래량 마름 — P2 진입 게이트 (2026-09-28 edge_backtest 검증) ────────────────
+
+def _seed_vol(conn, symbol, trade_date, vols):
+    """vols = [volume, ...] 를 bar_ts 순서대로 intraday_bars에 시딩."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS intraday_bars(id INTEGER PRIMARY KEY, trade_date TEXT, "
+        "symbol TEXT, bar_ts TEXT, open REAL, high REAL, low REAL, close REAL, volume REAL, "
+        "shnu_rate REAL, created_at TEXT)"
+    )
+    for i, v in enumerate(vols):
+        conn.execute(
+            "INSERT INTO intraday_bars(trade_date,symbol,bar_ts,volume) VALUES(?,?,?,?)",
+            (trade_date, symbol, f"{i:04d}", v),
+        )
+    conn.commit()
+
+
+def test_vol_dryup_computes_recent_over_prior(tmp_path, monkeypatch):
+    """최근5봉 평균 / 직전 5~15봉(=그전 10봉) 평균. 마르면 <1."""
+    _iso(tmp_path, monkeypatch)
+    with db_mod.get_connection() as conn:
+        # 직전 10봉(0~9)=200, 최근 5봉(10~14)=100 → 100/200 = 0.5
+        _seed_vol(conn, "005930", "2026-08-28", [200] * 10 + [100] * 5)
+    assert u._vol_dryup_from_bars("005930", today="2026-08-28") == 0.5
+
+
+def test_vol_dryup_surge_over_one(tmp_path, monkeypatch):
+    """진입 직전 거래량 급증(투매)이면 >1 → 게이트가 차단할 값."""
+    _iso(tmp_path, monkeypatch)
+    with db_mod.get_connection() as conn:
+        _seed_vol(conn, "005930", "2026-08-28", [100] * 10 + [400] * 5)  # 400/100 = 4.0
+    assert u._vol_dryup_from_bars("005930", today="2026-08-28") == 4.0
+
+
+def test_vol_dryup_none_when_too_few_bars(tmp_path, monkeypatch):
+    """봉<15개면 None(fail-open — 게이트 통과)."""
+    _iso(tmp_path, monkeypatch)
+    with db_mod.get_connection() as conn:
+        _seed_vol(conn, "005930", "2026-08-28", [100] * 14)
+    assert u._vol_dryup_from_bars("005930", today="2026-08-28") is None
+
+
+def test_vol_dryup_none_when_no_bars(tmp_path, monkeypatch):
+    """해당 종목 봉 없음 → None."""
+    _iso(tmp_path, monkeypatch)
+    with db_mod.get_connection() as conn:
+        _seed_vol(conn, "005930", "2026-08-28", [100] * 20)
+    assert u._vol_dryup_from_bars("999999", today="2026-08-28") is None

@@ -128,6 +128,43 @@ def _day_open_from_bars(symbol: str, today: str | None = None) -> float | None:
     return None
 
 
+def _vol_dryup_from_bars(symbol: str, today: str | None = None) -> float | None:
+    """거래량 마름 비율 — 최근 5봉 평균거래량 / 직전 5~15봉 평균거래량. <1=조정 중 거래량 감소.
+
+    P2 진입 엔진 검증 엣지(2026-09-28 edge_backtest 114건): 눌림(vwap≤-1)에 이 조건을 AND로
+    걸면 승률 50→66%·기대값 흑자전환. 진입 직전 거래량이 급증(패닉/분산)이면 눌림이 아니라
+    투매이므로 차단하고, 거래량이 마를 때(건전한 조정)만 허용한다. edge_backtest와 **동일 소스
+    (intraday_bars)·동일 창(최근5 vs 직전10)** 이라 임계값(1.2)이 일관적이다. 봉<15개면 None(fail-open).
+    """
+    try:
+        from ..db import get_connection
+
+        if today is None:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+
+            today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT volume FROM intraday_bars WHERE symbol=? AND trade_date=("
+                "  SELECT MAX(trade_date) FROM intraday_bars WHERE symbol=? AND trade_date<=?)"
+                " ORDER BY bar_ts",
+                (symbol, symbol, today),
+            ).fetchall()
+        vols = [float(r["volume"] or 0) for r in rows]
+        if len(vols) < 15:
+            return None
+        recent5 = vols[-5:]
+        prior = vols[-15:-5]
+        m5 = sum(recent5) / len(recent5)
+        mp = sum(prior) / len(prior)
+        if mp <= 0:
+            return None
+        return m5 / mp
+    except Exception:
+        return None
+
+
 def _first_positive_float(*values: Any) -> float | None:
     """여러 후보 값 중 0보다 큰 첫 번째 숫자를 반환한다.
 
