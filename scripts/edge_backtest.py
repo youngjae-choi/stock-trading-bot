@@ -89,17 +89,46 @@ def entry_features(conn, date, sym, entry_ts, entry_price):
     day_open = bars[0]["open"] or 0
     avg_vol = vv / len(bars) if bars else 0
     last_vol = bars[-1]["volume"] or 0
+
+    # ── P2 반등/지지 포착 피처 (진입 직전 10~20바 미시구조) ──
+    vols = [b["volume"] or 0 for b in bars]
+    closes = [b["close"] or 0 for b in bars]
+    last = bars[-1]
+    # 1) 저점 대비 회복(%) — 최근 10바 최저가 대비 진입가가 얼마나 올라왔나. 0≈바닥매수(아직 하락중),
+    #    +↑=반등 시작 후 매수. "떨어지는 칼 vs 반등 포착"을 직접 가르는 핵심 피처.
+    win10 = bars[-10:]
+    recent_low = min((b["low"] or 0) for b in win10) if win10 else 0
+    recovery_from_low = round((entry_price / recent_low - 1) * 100, 2) if recent_low > 0 else None
+    # 2) 진입봉 캔들 위치 [0,1] — (진입가-저가)/(고가-저가). 1=고가끝(반등 마감·강), 0=저가끝(약세).
+    _lh = (last["high"] or 0) - (last["low"] or 0)
+    entry_bar_pos = round((entry_price - (last["low"] or 0)) / _lh, 2) if _lh > 0 else None
+    # 3) 거래량 마름 — 최근5바 평균 / 그전 5~15바 평균. <1=조정 중 거래량 감소(건전한 눌림).
+    _r5 = vols[-5:]
+    _prior = vols[-15:-5]
+    _m5 = sum(_r5) / len(_r5) if _r5 else 0
+    _mp = sum(_prior) / len(_prior) if _prior else 0
+    vol_dryup = round(_m5 / _mp, 2) if _mp > 0 else None
+    # 4) 단기 MA(20바) 이격(%) — 진입가 vs 최근20바 종가평균. 0 근처=이평 지지 부근 매수.
+    _maw = closes[-20:]
+    _ma20 = sum(_maw) / len(_maw) if _maw else 0
+    ma20_dist = round((entry_price / _ma20 - 1) * 100, 2) if _ma20 > 0 else None
+
     return {
         "vwap_dist": round((entry_price / vwap - 1) * 100, 2) if vwap else None,
         "high_dist": round((entry_price / day_high - 1) * 100, 2) if day_high else None,
         "change_rate": round((entry_price / day_open - 1) * 100, 2) if day_open else None,
         "vol_surge": round(last_vol / avg_vol, 2) if avg_vol > 0 else None,
         "gangdo": round(bars[-1]["shnu_rate"] or 0, 4),
+        "recovery_from_low": recovery_from_low,
+        "entry_bar_pos": entry_bar_pos,
+        "vol_dryup": vol_dryup,
+        "ma20_dist": ma20_dist,
         "n_bars": len(bars),
     }
 
 
-_FEATURES = ["vwap_dist", "high_dist", "change_rate", "vol_surge", "gangdo"]
+_FEATURES = ["vwap_dist", "high_dist", "change_rate", "vol_surge", "gangdo",
+             "recovery_from_low", "entry_bar_pos", "vol_dryup", "ma20_dist"]
 
 
 def _mean(xs):
