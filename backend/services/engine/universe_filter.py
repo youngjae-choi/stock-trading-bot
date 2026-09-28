@@ -447,9 +447,11 @@ _VOLUME_SURGE_SATURATION_PCT = 300.0
 # SATURATION은 '이 금액이면 강한 수급'의 스케일. KIS 금액 단위는 백만원(tr_pbmn) 관례라
 # 100(억원 근처)에서 포화하도록 잡되 설정 없이 상수로 문서화한다.
 
-# 수급 순매수 금액 포화 스케일. tr_pbmn 단위(백만원) 기준: 10,000백만=100억에서 tanh≈0.76.
-# 순매수 금액이 이 스케일이면 '강한 수급'으로 본다. (단위가 원이어도 부호/순서는 보존됨)
-_SUPPLY_AMOUNT_SATURATION = 10_000.0
+# 수급 순매수 금액 포화 스케일(백만원). 설정 `selection.supply_saturation_pbmn`로 조절(캐시리스).
+# 2026-09-28 실측 재보정: 기존 10,000은 너무 커서 실제 순매수 분포(-2,043~+3,084백만)가 전부
+#   0.4~0.5로 뭉쳐 분리력 상실(리더 매몰). 1,500(≈15억)에서 포화하도록 낮춰 수급 강약을 실제로 벌린다.
+#   (단위가 원이어도 부호/순서는 보존됨)
+_SUPPLY_AMOUNT_SATURATION = 1_500.0
 
 
 def _extract_supply_row(payload: dict[str, Any]) -> dict[str, Any]:
@@ -487,7 +489,8 @@ def _to_number(value: Any) -> float | None:
         return None
 
 
-def _compute_supply_score(investor_payload: dict[str, Any] | None) -> dict[str, Any]:
+def _compute_supply_score(investor_payload: dict[str, Any] | None,
+                          saturation: float | None = None) -> dict[str, Any]:
     """외국인+기관 순매수 금액을 [0,1] supply_score로 정규화한다.
 
     양수 순매수(매집) → score>0.5, 음수(분산) → score<0.5, 데이터 없음/실패 → 0.5(중립).
@@ -510,7 +513,8 @@ def _compute_supply_score(investor_payload: dict[str, Any] | None) -> dict[str, 
             "available": False,
         }
     combined = (frgn or 0.0) + (orgn or 0.0)
-    signed = math.tanh(combined / _SUPPLY_AMOUNT_SATURATION)
+    _sat = float(saturation) if saturation and float(saturation) > 0 else _SUPPLY_AMOUNT_SATURATION
+    signed = math.tanh(combined / _sat)
     supply_score = (signed + 1.0) / 2.0
     return {
         "supply_score": round(max(0.0, min(1.0, supply_score)), 6),
@@ -537,12 +541,13 @@ def _resolve_supply_config() -> dict[str, Any]:
         mode = "shadow"
     if mode not in ("off", "shadow", "enforce"):
         mode = "shadow"
-    weight = _num("selection.supply_demand_weight", 0.3)
+    weight = _num("selection.supply_demand_weight", 0.6)  # 2026-09-28 수급 1차 승격(등락률보다 우선)
     weight = max(0.0, min(1.0, weight))
     topk = int(_num("selection.supply_demand_topk", 30))
     topk = max(1, topk)
-    gate_min = _num("selection.supply_demand_gate_min", -0.5)
-    return {"mode": mode, "weight": weight, "topk": topk, "gate_min": gate_min}
+    gate_min = _num("selection.supply_demand_gate_min", -0.1)
+    saturation = _num("selection.supply_saturation_pbmn", _SUPPLY_AMOUNT_SATURATION)
+    return {"mode": mode, "weight": weight, "topk": topk, "gate_min": gate_min, "saturation": saturation}
 
 
 def _supply_combined_score(existing_score: float, supply_score: float, weight: float) -> float:
@@ -592,6 +597,7 @@ async def _fetch_supply_for_candidates(
     candidates: list[dict[str, Any]],
     topk: int,
     spacing_sec: float = 0.34,
+    saturation: float | None = None,
 ) -> dict[str, dict[str, Any]]:
     """상위 topk 후보에 대해 KIS inquire-investor를 순차 조회해 supply_score를 계산한다.
 
@@ -610,7 +616,7 @@ async def _fetch_supply_for_candidates(
             continue
         try:
             payload = await domestic_service.get_investor_profile(symbol=sym, market_code="J")
-            out[sym] = _compute_supply_score(payload if isinstance(payload, dict) else {})
+            out[sym] = _compute_supply_score(payload if isinstance(payload, dict) else {}, saturation)
         except Exception as exc:  # fail-open — 수급 실패가 S3를 막지 않는다
             logger.warning("WARN: UniverseFilter 수급 조회 실패 symbol=%s reason=%s (중립 처리)", sym, exc)
             out[sym] = {
@@ -763,7 +769,8 @@ async def run_universe_filter(trigger_source: str = "api_manual") -> dict[str, A
     supply_diag: dict[str, Any] = {"mode": supply_cfg["mode"]}
     if supply_cfg["mode"] != "off" and ranked:
         try:
-            supply_map = await _fetch_supply_for_candidates(ranked, topk=supply_cfg["topk"])
+            supply_map = await _fetch_supply_for_candidates(
+                ranked, topk=supply_cfg["topk"], saturation=supply_cfg.get("saturation"))
             for item in ranked:
                 sym = str(item.get("symbol") or "").strip()
                 detail = supply_map.get(sym)

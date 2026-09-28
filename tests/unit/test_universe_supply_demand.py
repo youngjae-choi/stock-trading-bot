@@ -76,6 +76,22 @@ def test_supply_score_bounded_0_1():
     assert tiny["supply_score"] < 0.01
 
 
+def test_supply_score_saturation_param_spreads_distribution():
+    """재보정 saturation(1500)이 중간 규모 순매수를 실제로 벌린다 — 기존 10000은 중립으로 뭉침.
+
+    2026-09-28 실측: 엑스게이트 외국인 +3,084(백만)이 기존 sat=10000에선 0.65로 뭉쳐 7위 매몰.
+    sat=1500으로 낮추면 0.9+로 벌어져 리더가 부상한다.
+    """
+    amt = {"output": [{"frgn_ntby_tr_pbmn": "3084", "orgn_ntby_tr_pbmn": "0"}]}  # 엑스게이트 실측
+    strong = uf._compute_supply_score(amt, saturation=1500.0)
+    compressed = uf._compute_supply_score(amt, saturation=10000.0)
+    assert strong["supply_score"] > 0.9        # 재보정: 강한 수급으로 인식
+    assert compressed["supply_score"] < 0.7    # 기존: 중립 근처로 뭉침(분리력 상실)
+    # saturation None/0 → 상수 기본값(_SUPPLY_AMOUNT_SATURATION=1500) 사용
+    default = uf._compute_supply_score(amt)
+    assert default["supply_score"] == pytest.approx(strong["supply_score"])
+
+
 def test_extract_supply_row_skips_empty_today():
     """오늘 행(순매수 미형성)을 건너뛰고 데이터 있는 최근 행 선택.
 
@@ -137,8 +153,9 @@ def test_resolve_config_defaults_shadow(monkeypatch):
     monkeypatch.setattr(uf, "get_setting", lambda k, d=None: d)
     cfg_ = uf._resolve_supply_config()
     assert cfg_["mode"] == "shadow"
-    assert cfg_["weight"] == 0.3
+    assert cfg_["weight"] == 0.6                          # 2026-09-28 수급 1차 승격
     assert cfg_["topk"] == 30
+    assert cfg_["saturation"] == uf._SUPPLY_AMOUNT_SATURATION  # 재보정 포화(1500) 기본
 
 
 def test_resolve_config_clamps_and_validates(monkeypatch):
@@ -210,8 +227,8 @@ def _run(monkeypatch, settings_map):
     # spacing 0 — 테스트 속도(rate-limit은 프로덕션 설정)
     orig = uf._fetch_supply_for_candidates
 
-    async def _fast(candidates, topk, spacing_sec=0.0):
-        return await orig(candidates, topk, spacing_sec=0.0)
+    async def _fast(candidates, topk, spacing_sec=0.0, saturation=None):
+        return await orig(candidates, topk, spacing_sec=0.0, saturation=saturation)
 
     monkeypatch.setattr(uf, "_fetch_supply_for_candidates", _fast)
     return asyncio.run(uf.run_universe_filter("api_manual"))
@@ -317,6 +334,31 @@ def test_enforce_gate_excludes_strong_netsell(monkeypatch, tmp_path):
     syms = [it["symbol"] for it in res["items"]]
     assert "DUMP" not in syms
     assert "KEEP" in syms
+    assert res["supply_demand"].get("gate_excluded", 0) >= 1
+
+
+def test_enforce_new_gate_excludes_moderate_netsell(monkeypatch, tmp_path):
+    """재보정(gate -0.1 + sat 1500): 급등이어도 중간 순매도면 배제 + 수급 리더가 1위.
+
+    2026-09-28 실측 유형: SELLOFF=아이씨티케이(+21.7%지만 외국인 -2,013 순매도),
+    LEADER=엑스게이트(+7.4% 외국인 +3,083). 기존 gate(-0.5)는 SELLOFF를 통과시켰다.
+    """
+    _setup_db(monkeypatch, tmp_path)
+    vol = [
+        {"symbol": "SELLOFF", "name": "급등순매도", "price": 1000, "change_rate": 21.0, "volume": 100, "volume_surge": 300.0},
+        {"symbol": "LEADER", "name": "수급리더", "price": 1000, "change_rate": 7.0, "volume": 90, "volume_surge": 100.0},
+    ]
+    _patch_kis_ranks(monkeypatch, vol, [])
+    _patch_supply(monkeypatch, {"LEADER": (3083, 1), "SELLOFF": (-2013, -30)})
+
+    settings = _settings_map("enforce", weight=0.6, gate_min=-0.1)
+    settings["selection.supply_saturation_pbmn"] = 1500.0
+    res = _run(monkeypatch, settings)
+
+    syms = [it["symbol"] for it in res["items"]]
+    assert "SELLOFF" not in syms                    # 급등이어도 순매도라 배제
+    assert "LEADER" in syms
+    assert res["items"][0]["symbol"] == "LEADER"    # 수급 리더가 실제 top_n 1위
     assert res["supply_demand"].get("gate_excluded", 0) >= 1
 
 

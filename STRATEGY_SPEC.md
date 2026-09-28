@@ -104,11 +104,13 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 > ⚠ **레짐 임계 — 5tier 활성(2026-08-23)**: 기본 SET매칭 = 설정기반 `classify_regime_5tier`(regime.down_pct/up_pct/surge_pct/vix_volatile, **드리프트 감시됨**). 롤백=`regime.set_source`=judge(하드코딩 `_judge_regime`). judge와 차이는 vix22~28+얕은딥 구간뿐(judge=risk_off vs 5tier=neutral)이나 재보정 후 두 SET 손절 모두 -4%라 실질 영향 미미. **월요일 첫 실전 — SET 매칭 타당성 관찰**.
 
 ### A-2. 종목 선정 (엔진③)
-선정 점수 = `selection.change_weight`×등락률점수 + `selection.surge_weight`×거래량급증점수 (`universe_filter._score_and_rank`). **배선 완료(2026-08-23)**: `selection.weights_source`=settings(기본)면 이 설정을 **라이브 소비**(Engine Monitor ③에서 편집→선정 반영). 롤백=tone(구 `_TONE_WEIGHTS` 0.5/0.5).
+base 점수 = `selection.change_weight`×등락률점수 + `selection.surge_weight`×거래량급증점수 (`universe_filter._score_and_rank`). **배선 완료(2026-08-23)**: `selection.weights_source`=settings(기본)면 이 설정을 **라이브 소비**. 롤백=tone(구 `_TONE_WEIGHTS` 0.5/0.5).
+
+**★ 수급(외국인+기관 순매수) 1차 승격 (2026-09-28):** base(등락률+거래량)는 **급등/테마 과열주(laggard)** 를 잡아 손실(실측: entry-side 승자는 change_rate -3.72% vs 패자 -1.63% = 오른 걸 사면 진다). 그래서 **수급을 1차 선정 기준으로 승격** — 최종점수 = `(1-w)×base + w×수급점수`, `w=selection.supply_demand_weight`(**0.6**). 수급점수 = 외국인+기관 순매수금액을 `tanh(금액/saturation)`로 [0,1] 정규화(`selection.supply_saturation_pbmn`=**1500**백만, 낮을수록 강약 분리↑). **강한 순매도 게이트**: signed < `selection.supply_demand_gate_min`(**-0.1**)이면 후보 제외. `selection.supply_demand_mode`=enforce(off/shadow/enforce 롤백스위치). KIS `FHKST01010900` 상위 topk(30) 조회(prep창, fail-open). *한계: 09-28 첫 라이브, 과거 수급-실현승률 검증은 데이터 부재로 forward 관찰 필요.*
 
 | 장세 | 선정 의도 | 현재 |
 |---|---|---|
-| 공통 | 거래량 순위(`quant_topup`) + VWAP 눌림목 게이트 + 설정 가중치(라이브) | ✅ 배선 |
+| 공통 | **수급(순매수) 1차** + 거래량/등락률 base(2차) + VWAP 눌림목 게이트 | ✅ 배선(수급 enforce 2026-09-28) |
 | 폭락 | 인버스1x + 급락반등주 트랙 허용 | △ 구현(효과 미검증) |
 | 하락·보합 | 방어적 선정(상대강도·저변동, 레짐별 가중치) | 🟡 토대 완료(설정 라이브) — 레짐별 값 차등은 get_playbook 통합(Phase4)서 |
 
