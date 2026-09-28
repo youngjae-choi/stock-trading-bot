@@ -108,6 +108,33 @@ def entry_features(conn, date, sym, entry_ts, entry_price):
     _m5 = sum(_r5) / len(_r5) if _r5 else 0
     _mp = sum(_prior) / len(_prior) if _prior else 0
     vol_dryup = round(_m5 / _mp, 2) if _mp > 0 else None
+
+    # 창 크기 비교용(사람 1분봉=6×10초, 3분봉=18×10초). recent n봉 / 직전 2n봉.
+    def _dry(n):
+        r = vols[-n:]
+        p = vols[-3 * n:-n]
+        if len(r) < n or len(p) < n:
+            return None
+        mr = sum(r) / len(r)
+        mp = sum(p) / len(p)
+        return round(mr / mp, 2) if mp > 0 else None
+    vol_dryup_1m = _dry(6)    # 최근 60초 / 직전 120초
+    vol_dryup_3m = _dry(18)   # 최근 180초 / 직전 360초
+
+    # 분 단위 반등(상승전환) — n봉 전 종가 대비 현재가 변화율(%). PM 패턴: 눌림 후 지지→반등을
+    # 분(分) 단위로 포착. >0 = 최근 n봉 동안 올라섬(반등 시작). (앞서 실패한 recovery_from_low는
+    # 100초 초단기라 다른 것.)
+    def _chg(n):
+        if len(closes) <= n:
+            return None
+        base = closes[-1 - n]
+        return round((entry_price / base - 1) * 100, 2) if base > 0 else None
+    rebound_1m = _chg(6)      # 최근 1분 상승전환
+    rebound_3m = _chg(18)     # 최근 3분 상승전환
+    # 지지 후 반등: 최근 30봉(5분) 최저 대비 현재 회복(%) — 저점에서 얼마나 올라왔나(분 단위 지지반등).
+    _lookback = [b["low"] or 0 for b in bars[-30:]]
+    _swing_low = min(_lookback) if _lookback else 0
+    rebound_from_swing = round((entry_price / _swing_low - 1) * 100, 2) if _swing_low > 0 else None
     # 4) 단기 MA(20바) 이격(%) — 진입가 vs 최근20바 종가평균. 0 근처=이평 지지 부근 매수.
     _maw = closes[-20:]
     _ma20 = sum(_maw) / len(_maw) if _maw else 0
@@ -122,13 +149,19 @@ def entry_features(conn, date, sym, entry_ts, entry_price):
         "recovery_from_low": recovery_from_low,
         "entry_bar_pos": entry_bar_pos,
         "vol_dryup": vol_dryup,
+        "vol_dryup_1m": vol_dryup_1m,
+        "vol_dryup_3m": vol_dryup_3m,
         "ma20_dist": ma20_dist,
+        "rebound_1m": rebound_1m,
+        "rebound_3m": rebound_3m,
+        "rebound_from_swing": rebound_from_swing,
         "n_bars": len(bars),
     }
 
 
 _FEATURES = ["vwap_dist", "high_dist", "change_rate", "vol_surge", "gangdo",
-             "recovery_from_low", "entry_bar_pos", "vol_dryup", "ma20_dist"]
+             "recovery_from_low", "entry_bar_pos", "vol_dryup", "vol_dryup_1m", "vol_dryup_3m",
+             "ma20_dist", "rebound_1m", "rebound_3m", "rebound_from_swing"]
 
 
 def _mean(xs):
