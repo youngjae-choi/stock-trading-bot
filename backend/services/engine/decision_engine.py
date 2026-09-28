@@ -1052,6 +1052,21 @@ class DecisionEngine:
             logger.info("INFO: [S6] SKIP 진입 게이트 차단 symbol=%s reason=%s", symbol, gate_reason)
             return
 
+        # ── ABCD 눌림목 SHADOW(관찰만) — 수급 리더 한정, 로그만(매매 영향 0). 백테스트는 전 유니버스서
+        #    손실이었으나 Aziz 'stocks in play'(=수급 리더) 한정 효과는 과거 수급데이터 부재로 미검증.
+        #    → 향후 상승일에 수급리더 ABCD가 뭘 언제 사는지 forward 관찰. enforce 아님(fail-open).
+        try:
+            from .abcd_pattern import abcd_shadow_signal
+            _ab = abcd_shadow_signal(symbol)
+            if _ab and _ab["entry"] > 0:
+                logger.info(
+                    "SHADOW: [S6] ABCD 진입후보(수급리더·로그만) symbol=%s entry=%.0f stop=%.0f(-%.1f%%) target=%.0f(+%.1f%%)",
+                    symbol, _ab["entry"], _ab["stop"], (1 - _ab["stop"] / _ab["entry"]) * 100,
+                    _ab["target"], (_ab["target"] / _ab["entry"] - 1) * 100,
+                )
+        except Exception:
+            pass
+
         # 눌림목 게이트(P-EDGE) — 데이터 확증 엣지(17일 백테스트: VWAP 아래 진입 승률 51→61%·흑자,
         # 꼭지추격 39%). 진입가가 VWAP보다 임계%(기본 0) 넘게 위(=추격)면 차단해 "VWAP 지지 부근/아래"
         # 진입으로 유도. mode=shadow는 로그만(무매매), off는 비활성. VWAP 미가용 시 fail-open.
