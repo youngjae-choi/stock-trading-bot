@@ -122,7 +122,18 @@
       var r = await fetch('/api/v1/trading-monitor/candidates');
       var d = await r.json();
       var candidates = d.payload && d.payload.candidates ? d.payload.candidates : [];
-      
+
+      // 전역 신규매수 차단 배너(하락전환 래치 등) — 종목 조건과 별개로 전체 매수를 멈춤.
+      var haltEl = document.getElementById('tm-entry-halt');
+      if (haltEl) {
+        var h = (d.payload && d.payload.entry_halt) || {};
+        haltEl.innerHTML = h.halted
+          ? '<div style="background:rgba(239,68,68,0.12); border:1px solid var(--danger,#ef4444); color:var(--danger,#ef4444); border-radius:8px; padding:8px 12px; font-size:12px; margin-bottom:10px;">'
+            + '⛔ 신규매수 일시 중단 — ' + (h.reason || '')
+            + '<br><span style="color:var(--muted); font-size:11px;">종목 조건과 무관하게 전체 매수가 멈춥니다.</span></div>'
+          : '';
+      }
+
       if (!candidates.length) {
         container.innerHTML = '<div style="color:var(--muted); text-align:center; padding:20px 0; font-size:12px;">매수 대기 종목 없음</div>';
         return;

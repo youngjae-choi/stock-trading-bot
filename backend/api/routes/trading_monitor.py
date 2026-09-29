@@ -231,7 +231,8 @@ def _engine_gate_readiness(code: str, latest_price: Any, state: dict[str, Any], 
 
     any_met = any(g["met"] for g in groups)
     ratios = [g["met_count"] / g["total"] for g in groups if g["total"] > 0]
-    return {"mode": "engine_gates", "any_met": any_met, "groups": groups,
+    # mode=or_groups: 프론트가 그룹 렌더 경로를 쓰도록(그룹·조건 표시). engine_gates 데이터를 그대로 담음.
+    return {"mode": "or_groups", "any_met": any_met, "groups": groups,
             "overall_pct": round(max(ratios) * 100, 1) if ratios else 0.0}
 
 
@@ -697,10 +698,21 @@ def get_candidates():
         })
 
     result.sort(key=lambda x: x["buy_readiness"]["overall_pct"], reverse=True)
+    # 전역 신규매수 차단 상태(종목별 조건과 별개) — 하락전환 래치 등. 켜져 있으면 조건 충족이어도
+    # 매수 안 됨. 화면 상단 배너로 "왜 전체가 안 사는지"를 보여준다.
+    try:
+        from ...services.engine.intraday_regime_monitor import get_entry_suspended
+        _halted = bool(get_entry_suspended())
+    except Exception:
+        _halted = False
     return {"ok": True, "payload": {
         "candidates": result,
         "plan_id": plan.get("id"),
         "daily_overrides": overrides,
+        "entry_halt": {
+            "halted": _halted,
+            "reason": "하락전환 감지 — 신규매수 일시 중단(반등/상승전환 확인까지)" if _halted else "",
+        },
     }}
 
 
