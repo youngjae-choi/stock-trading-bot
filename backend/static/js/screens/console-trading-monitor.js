@@ -535,6 +535,17 @@
       var d = await r.json();
       var positions = d.payload && d.payload.positions ? d.payload.positions : [];
 
+      // 매도 기준(설정값 동적) — 헤더에 조건 칩 표시. 설정/레짐 바뀌면 자동 반영.
+      var scEl = document.getElementById('tm-sell-conditions');
+      if (scEl) {
+        var scs = (d.payload && d.payload.sell_conditions) || [];
+        scEl.innerHTML = scs.map(function (c) {
+          return '<span style="background:var(--surface2,#1e293b); border:1px solid var(--border,#334155); border-radius:6px; padding:3px 8px;">'
+            + '<span style="color:var(--muted);">' + c.label + '</span> '
+            + '<b style="color:var(--text);">' + c.value + '</b></span>';
+        }).join('');
+      }
+
       if (!positions.length) {
         container.innerHTML = '<div style="color:var(--muted); text-align:center; padding:20px 0; font-size:12px;">보유 포지션 없음</div>';
         return;

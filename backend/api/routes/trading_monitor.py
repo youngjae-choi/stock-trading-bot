@@ -720,6 +720,53 @@ async def _get_cached_balance() -> dict[str, Any]:
     return _balance_cache
 
 
+def _engine_sell_conditions() -> list[dict[str, Any]]:
+    """실제 매도 엔진 기준을 현재 레짐 SET + 설정값 기반으로 반환(표시 전용·동적).
+
+    매도는 레짐 SET(손절·트레일)이 단일 관리 + 수확(스케일아웃)·강제청산 설정. 설정/레짐이
+    바뀌면 이 값도 바뀐다(화면이 실제 매도 조건과 항상 일치).
+    """
+    from ...services.settings_store import get_setting
+    import json as _json
+
+    rs: dict[str, Any] = {}
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT applied_settings FROM regime_set_applications "
+                "WHERE trade_date=? AND current_flag=1 ORDER BY rowid DESC LIMIT 1",
+                (_today_kst(),)).fetchone()
+        if row:
+            rs = _json.loads(row["applied_settings"] or "{}")
+    except Exception:
+        rs = {}
+
+    def _num(k: str, d: float) -> float:
+        try:
+            return float(get_setting(k, d))
+        except (TypeError, ValueError):
+            return d
+
+    def _pct(v: Any, signed: bool = True) -> str:
+        try:
+            f = float(v) * 100
+            return f"{f:+.1f}%" if signed else f"{f:.1f}%"
+        except (TypeError, ValueError):
+            return "—"
+
+    out: list[dict[str, Any]] = [
+        {"label": "초기손절", "value": _pct(rs.get("stop_loss_rate")), "key": "regime.stop_loss_rate"},
+        {"label": "트레일 발동", "value": _pct(rs.get("trailing_activate_profit")), "key": "regime.trailing_activate_profit"},
+        {"label": "트레일 폭", "value": _pct(rs.get("trailing_stop_rate"), signed=False), "key": "regime.trailing_stop_rate"},
+    ]
+    if bool(get_setting("engine.harvest_mode", True)):
+        _t = _num("engine.scaleout_target_rate", 0.02) * 100
+        _r = _num("engine.scaleout_ratio", 0.5) * 100
+        out.append({"label": "수확(스케일아웃)", "value": f"+{_t:.1f}%서 {_r:.0f}% 확정", "key": "engine.scaleout_target_rate"})
+    out.append({"label": "강제청산", "value": str(get_setting("risk.force_exit_time", "15:20") or "15:20"), "key": "risk.force_exit_time"})
+    return out
+
+
 @router.get("/positions")
 async def get_positions():
     """Return actual KIS holdings with persisted trailing-stop state."""
@@ -784,7 +831,11 @@ async def get_positions():
         })
 
     logger.info("SUCCESS: GET %s count=%d", endpoint, len(positions))
-    return {"ok": True, "payload": {"positions": positions, "count": len(positions)}}
+    return {"ok": True, "payload": {
+        "positions": positions,
+        "count": len(positions),
+        "sell_conditions": _engine_sell_conditions(),  # 매도 기준(설정값 동적)
+    }}
 
 
 @router.get("/policy-summary")
