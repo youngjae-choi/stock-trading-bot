@@ -155,6 +155,86 @@ def _compute_group_readiness(
     }
 
 
+def _engine_gate_readiness(code: str, latest_price: Any, state: dict[str, Any], regime: str) -> dict[str, Any]:
+    """실제 매수 엔진(_emit_signal) 게이트를 **설정값 기반으로 동적 평가**(표시 전용).
+
+    엔진이 읽는 것과 동일한 설정키를 읽어 화면이 항상 실제 매매 조건과 일치하게 한다.
+    옛 buy_condition_framework(돌파/눌림/모멘텀/베이스라인 — 엔진 미사용)를 대체.
+    설정을 바꾸면(예: entry_max_vwap_dist_pct) 이 화면도 즉시 반영된다(get_setting 캐시리스).
+    """
+    from ...services.settings_store import get_setting
+    from ...services.engine.decision_engine_utils import (
+        _fallback_vwap_from_bars, _vwap_dist_pct, _vol_dryup_from_bars,
+    )
+
+    def _num(k: str, d: float) -> float:
+        try:
+            return float(get_setting(k, d))
+        except (TypeError, ValueError):
+            return d
+
+    is_up = regime in ("up", "surge", "risk_on")
+    vwap_ceiling = _num("engine.entry_max_vwap_dist_pct_riskon", 0.0) if is_up else _num("engine.entry_max_vwap_dist_pct", -1.0)
+    vwap_floor = _num("engine.entry_min_vwap_dist_pct", -5.0)
+    cr_min = _num("engine.min_price_change_pct", 1.5)
+    cr_max = _num("engine.max_price_change_pct", 4.0)
+    vol_min = _num("engine.min_volume_ratio", 1.5)
+    dryup_max = _num("engine.entry_vol_dryup_max", 1.2)
+    dryup_mode = str(get_setting("engine.entry_vol_dryup_mode", "off") or "off").lower()
+
+    try:
+        _lp = float(latest_price) if latest_price else 0.0
+    except (TypeError, ValueError):
+        _lp = 0.0
+    _vwap = _fallback_vwap_from_bars(code)
+    vdist = _vwap_dist_pct(_vwap, _lp) if (_vwap and _lp > 0) else state.get("vwap_dist")
+    change_rate = float(state.get("change_rate") or 0.0)
+    vol_ratio = float(state.get("tick_vol_mult") or state.get("volume_ratio") or 0.0)
+    dryup = _vol_dryup_from_bars(code)
+
+    conds: list[dict[str, Any]] = []
+    vwap_met = vdist is not None and vwap_floor <= vdist <= vwap_ceiling
+    conds.append({"name": "VWAP 눌림 밴드", "label": "VWAP 눌림 밴드", "ctype": "vwap_band", "met": bool(vwap_met),
+                  "current_value": round(vdist, 2) if vdist is not None else "—",
+                  "threshold_label": f"{vwap_floor:.1f}% ~ {vwap_ceiling:.1f}%"})
+    cr_met = cr_min <= change_rate <= cr_max
+    conds.append({"name": "등락률", "label": "등락률", "ctype": "change_rate_band", "met": bool(cr_met),
+                  "current_value": round(change_rate, 2), "threshold_label": f"{cr_min:.1f}% ~ {cr_max:.1f}%"})
+    vol_met = vol_ratio >= vol_min
+    conds.append({"name": "거래량 비율", "label": "거래량 비율", "ctype": "vol_ratio", "met": bool(vol_met),
+                  "current_value": round(vol_ratio, 2), "threshold_label": f">= {vol_min:.1f}x"})
+    if dryup_mode != "off":
+        dry_met = dryup is not None and dryup <= dryup_max
+        _sfx = " (관찰)" if dryup_mode == "shadow" else ""
+        conds.append({"name": f"거래량 마름{_sfx}", "label": f"거래량 마름{_sfx}", "ctype": "vol_dryup", "met": bool(dry_met),
+                      "current_value": round(dryup, 2) if dryup is not None else "—", "threshold_label": f"<= {dryup_max:.1f}"})
+    met_count = sum(1 for c in conds if c["met"])
+    groups: list[dict[str, Any]] = [{"name": "눌림 진입 (A엔진)", "met": met_count == len(conds),
+                                     "met_count": met_count, "total": len(conds), "conditions": conds}]
+
+    abcd_mode = str(get_setting("engine.abcd_entry_mode", "off") or "off").lower()
+    if abcd_mode != "off":
+        try:
+            from ...services.engine.abcd_pattern import abcd_shadow_signal
+            ab = abcd_shadow_signal(code)
+        except Exception:
+            ab = None
+        scope = str(get_setting("engine.abcd_enforce_regimes", "up") or "up").lower()
+        regime_ok = scope == "all" or is_up
+        ab_met = bool(ab and ab.get("entry", 0) > 0 and regime_ok)
+        _amode = "실매매" if (abcd_mode == "enforce" and regime_ok) else "관찰"
+        groups.append({"name": f"ABCD 진입 (수급리더·{_amode})", "met": ab_met,
+                       "met_count": 1 if ab_met else 0, "total": 1,
+                       "conditions": [{"name": "ABCD 패턴(A→B→C)", "label": "ABCD 패턴(A→B→C)", "ctype": "abcd",
+                                       "met": ab_met, "current_value": "성립" if ab_met else "—",
+                                       "threshold_label": "수급리더 급등→눌림→반등"}]})
+
+    any_met = any(g["met"] for g in groups)
+    ratios = [g["met_count"] / g["total"] for g in groups if g["total"] > 0]
+    return {"mode": "engine_gates", "any_met": any_met, "groups": groups,
+            "overall_pct": round(max(ratios) * 100, 1) if ratios else 0.0}
+
+
 def _build_readiness_state(
     candidate: dict[str, Any],
     tick: dict[str, Any] | None,
@@ -561,6 +641,10 @@ def get_candidates():
     from ...services.engine.decision_engine import decision_engine
     bar_engine = getattr(decision_engine, "_bar_engine", None)
     engine_live = bool(decision_engine.is_active()) and bar_engine is not None
+    try:
+        _monitor_regime = decision_engine._current_regime() or "flat"
+    except Exception:
+        _monitor_regime = "flat"
 
     # 이미 보유 중인 종목은 매수 대기 목록에서 제외한다.
     # 엔진은 종목당 1회 진입(single-entry)이라 보유 종목은 재매수하지 않으므로
@@ -594,7 +678,8 @@ def get_candidates():
         else:
             live_state = {}
         state = _build_readiness_state(c, latest_tick, live_state)
-        readiness = _compute_group_readiness(state, readiness_groups, readiness_conds)
+        # 실제 엔진 게이트(설정값 동적)로 매수 준비도 계산 — 옛 프레임워크(돌파/모멘텀) 대체.
+        readiness = _engine_gate_readiness(code, latest_tick.get("price"), state, _monitor_regime)
         result.append({
             "code": code,
             "name": c.get("name") or "",
