@@ -702,7 +702,9 @@ def get_candidates():
     # 매수 안 됨. 화면 상단 배너로 "왜 전체가 안 사는지"를 보여준다.
     try:
         from ...services.engine.intraday_regime_monitor import get_entry_suspended
-        _halted = bool(get_entry_suspended())
+        from ...services.settings_store import get_setting as _gs
+        # 실제 게이트와 동일 조건: 래치는 regime.transition_response_active로 게이팅됨(꺼져 있으면 무효).
+        _halted = bool(_gs("regime.transition_response_active", False)) and bool(get_entry_suspended())
     except Exception:
         _halted = False
     return {"ok": True, "payload": {
