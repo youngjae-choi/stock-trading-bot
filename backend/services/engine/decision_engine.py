@@ -1065,12 +1065,16 @@ class DecisionEngine:
                 from .abcd_pattern import abcd_shadow_signal
                 _ab = abcd_shadow_signal(symbol)
                 if _ab and _ab["entry"] > 0:
-                    _abcd_up = (self._current_regime() or "flat") in ("up", "surge", "risk_on")
-                    if _abcd_mode == "enforce" and _abcd_up:
+                    # 레짐 스코프: engine.abcd_enforce_regimes = "up"(상승장만·기본) | "all"(전 레짐).
+                    #   PM 요청(2026-09-29): 하락/보합에도 수급·급등 종목을 ABCD가 잡는지 전 레짐 관찰(모의).
+                    _abcd_regime = self._current_regime() or "flat"
+                    _abcd_scope = _get_setting_str("engine.abcd_enforce_regimes", "up").lower()
+                    _abcd_regime_ok = (_abcd_scope == "all") or (_abcd_regime in ("up", "surge", "risk_on"))
+                    if _abcd_mode == "enforce" and _abcd_regime_ok:
                         _abcd_pass = True
                         logger.info(
-                            "ENFORCE: [S6] ABCD 진입(수급리더·상승장·모의실험) symbol=%s entry=%.0f stop=%.0f target=%.0f",
-                            symbol, _ab["entry"], _ab["stop"], _ab["target"])
+                            "ENFORCE: [S6] ABCD 진입(수급리더·모의실험) symbol=%s regime=%s entry=%.0f stop=%.0f target=%.0f",
+                            symbol, _abcd_regime, _ab["entry"], _ab["stop"], _ab["target"])
                     else:
                         logger.info(
                             "SHADOW: [S6] ABCD 진입후보(수급리더·로그만) symbol=%s entry=%.0f stop=%.0f(-%.1f%%) target=%.0f(+%.1f%%)",
