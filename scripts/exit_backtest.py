@@ -89,6 +89,30 @@ def entry_vwap_dist(conn, date, sym, entry_ts, entry_price):
     return (entry_price / vwap - 1) * 100 if vwap else None
 
 
+def entry_feats(conn, date, sym, entry_ts, entry_price):
+    """진입 시점 피처(vwap_dist·vol_dryup·high_dist) — entry-filter용(edge_backtest와 동일 정의)."""
+    bars = conn.execute(
+        "SELECT high, low, close, volume FROM intraday_bars WHERE trade_date=? AND symbol=? AND bar_ts<=? ORDER BY bar_ts",
+        (date, sym, entry_ts),
+    ).fetchall()
+    if not bars:
+        return {"vwap_dist": None, "vol_dryup": None, "high_dist": None}
+    vv = sum((b["volume"] or 0) for b in bars)
+    vwap = (sum((b["close"] or 0) * (b["volume"] or 0) for b in bars) / vv) if vv > 0 else None
+    day_high = max((b["high"] or 0) for b in bars)
+    vols = [b["volume"] or 0 for b in bars]
+    dryup = None
+    if len(vols) >= 15:
+        r5, pr = vols[-5:], vols[-15:-5]
+        m5, mp = sum(r5) / len(r5), sum(pr) / len(pr)
+        dryup = round(m5 / mp, 2) if mp > 0 else None
+    return {
+        "vwap_dist": (entry_price / vwap - 1) * 100 if vwap else None,
+        "vol_dryup": dryup,
+        "high_dist": (entry_price / day_high - 1) * 100 if day_high > 0 else None,
+    }
+
+
 def simulate_exit(path, entry_price, cfg):
     """진입 후 경로에 청산설정 적용 → 라운드트립 손익%(가중). 값은 소수%(예 +2.0)."""
     P = entry_price
@@ -140,6 +164,12 @@ _CONFIGS = {
     "넓은트레일(+2%/50%·2.5/3.5)": dict(stop_loss=-0.04, scaleout_target=0.02, scaleout_ratio=0.50, trailing_activate=0.035, trailing_stop=0.035),
     "타이트손절(-3%)":            dict(stop_loss=-0.03, scaleout_target=0.02, scaleout_ratio=0.50, trailing_activate=0.035, trailing_stop=0.025),
     "넓은손절(-5%)":              dict(stop_loss=-0.05, scaleout_target=0.02, scaleout_ratio=0.50, trailing_activate=0.035, trailing_stop=0.025),
+    # ── 승자 크게 태우기(무수확·풀런) — 최고 진입에서 큰 움직임 포착 가설 ──
+    "무수확·풀트레일(발동+1.5·폭3)":  dict(stop_loss=-0.04, scaleout_target=9.9, scaleout_ratio=0.0, trailing_activate=0.015, trailing_stop=0.03),
+    "무수확·타이트트레일(발동+1·폭1.5)": dict(stop_loss=-0.04, scaleout_target=9.9, scaleout_ratio=0.0, trailing_activate=0.01, trailing_stop=0.015),
+    "큰목표(+5%/50·트레일3)":     dict(stop_loss=-0.04, scaleout_target=0.05, scaleout_ratio=0.50, trailing_activate=0.02, trailing_stop=0.03),
+    "반수확+풀런(+2%/30·트레일3)": dict(stop_loss=-0.04, scaleout_target=0.02, scaleout_ratio=0.30, trailing_activate=0.02, trailing_stop=0.03),
+    "타이트손절+무수확(-2%·풀트레일)": dict(stop_loss=-0.02, scaleout_target=9.9, scaleout_ratio=0.0, trailing_activate=0.01, trailing_stop=0.02),
 }
 
 
@@ -173,10 +203,9 @@ def main():
         if not path:
             continue
         if args.entry_filter:
-            vd = entry_vwap_dist(conn, e["date"], e["symbol"], e["entry_ts"], e["entry_price"])
-            scope = {"vwap_dist": vd}
+            scope = entry_feats(conn, e["date"], e["symbol"], e["entry_ts"], e["entry_price"])
             try:
-                if vd is None or not eval(args.entry_filter, {"__builtins__": {}}, scope):
+                if not eval(args.entry_filter, {"__builtins__": {}}, scope):
                     continue
             except Exception:
                 continue
