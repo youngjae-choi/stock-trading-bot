@@ -33,7 +33,7 @@ INTENT_SETTINGS: dict[str, object] = {
     "engine.max_price_change_pct": 4.0,             # 고점추격 상한(시가대비 +4% 초과 매수 차단)
     "engine.min_price_change_pct": 1.5,             # 진입 최소 등락률
     "engine.min_volume_ratio": 1.5,                 # 진입 최소 거래량 배수
-    "engine.confidence_gate_mode": "regime_defensive",  # 컨피던스 게이트(방어레짐만 강화)
+    "engine.confidence_gate_mode": "off",           # 컨피던스 게이트 OFF(2026-09-02) — suitability confidence가 sparse(56% 0)라 死신호. 롤백=regime_defensive
     "engine.min_ai_confidence": "0.60",             # 최소 confidence(문자열 저장·float coerce)
     "engine.min_confidence_floor": 0.5,             # confidence 하한
     "engine.calibration_gate_enabled": True,        # 캘리브레이션 게이트
@@ -47,6 +47,25 @@ INTENT_SETTINGS: dict[str, object] = {
     "engine.entry_fail_cooldown_min_count": 2,
     "engine.regime_confidence_bonus_risk_off": 0.05,
     "engine.regime_confidence_bonus_volatile": 0.1,
+    # ── 매수: DB 명시로 코드기본과 다르게 도는 레버(2026-09-30 SSOT 정합) ──
+    #   코드기본과 값이 달라 **DB row가 사라지면 동작이 급변**하는 키. INTENT_SETTINGS에 두어
+    #   row 삭제 시 '⚠ 미설정'으로 잡히게 한다(코드기본은 괄호 안).
+    "engine.entry_vol_dryup_mode": "enforce",       # 거래량마름 게이트 ★승리조건(2026-10-01 enforce, 코드기본 off). 롤백=shadow
+    "engine.entry_vol_dryup_max": 1.2,              # 최근5봉/직전10봉(10초봉) 거래량비 상한
+    "engine.abcd_entry_mode": "enforce",            # ⚠실험(모의, 2026-09-28) ABCD 진입엔진(코드기본 shadow). 롤백=shadow
+    "engine.abcd_enforce_regimes": "all",           # ⚠실험(2026-09-29) 전 레짐 enforce(코드기본 up). VWAP천장·바닥·거래량마름 우회
+    "engine.uptrend_entry_mode": "off",             # E6 상승장 밴드 OFF(2026-09-23 실현손익 반증, 코드기본 enforce)
+    "engine.entry_vwap_floor_riskon": -3.0,         # E6 바닥(uptrend off라 현재 미사용, 코드기본 0.0)
+    "momentum.enabled": False,                      # 모멘텀 진입 OFF(2026-09-18 꼭지추격 손실→09-23 pullback모드도 반증, 코드기본 True)
+    "momentum.entry_mode": "pullback",              # (enabled=false라 미사용)
+    # ── 종목선정: 수급 1차(2026-09-28 PM 승격) ──
+    "selection.supply_demand_mode": "enforce",      # 코드기본 shadow
+    "selection.supply_demand_weight": 0.6,          # 결합점수=(1-w)*base+w*수급 (코드기본 0.6)
+    "selection.supply_demand_gate_min": -0.1,       # signed<이 값이면 제외 (코드기본 -0.1)
+    "selection.supply_saturation_pbmn": 1500,       # tanh 포화(백만원)
+    "selection.supply_demand_topk": 30,             # 수급 조회 상위 K
+    # ── 시장감지: 하락전환 대응 ──
+    "regime.transition_response_active": False,     # ⚠실험(2026-09-29 PM 하락장 테스트) 래치+트레일조임 OFF(코드기본 False). 롤백=true
     # ── 매수: 실행 시간창 ──
     "engine.entry_execute_start_time": "09:30",     # 실매매 시작(이전은 shadow)
     "engine.entry_start_time": "09:00",             # 후보 로깅 시작
@@ -91,17 +110,13 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     #   강세종목(시가대비>0)이 VWAP 0~+1% 위로 얕게 눌릴 때 매수 + 타이트 트레일 청산. 상승장 전용.
     #   현행 게이트는 상승장서도 VWAP 위 매수를 구조적 차단(entry_max_vwap_dist_pct_riskon=0.0)해 승리구간 봉쇄.
     #   보합/하락은 기존 눌림 게이트가 이김 → 절대 불변(전부 상승장 전용, 롤백=uptrend_entry_mode off).
-    "engine.uptrend_entry_mode": "enforce",          # off|shadow|enforce — E6 진입 마스터 롤백
     "engine.entry_vwap_ceiling_riskon": 1.0,         # 상승장 VWAP 밴드 천장(%) — +1=VWAP 1% 위까지 허용
-    "engine.entry_vwap_floor_riskon": 0.0,           # 상승장 VWAP 밴드 바닥(%) — 0=VWAP 이상만(상승장선 아래눌림 배제)
     "engine.entry_require_strength_riskon": True,     # 상승장 강세요건(시가대비>0=오른 종목만) 강제
     "engine.exit_riskon_trail_activate": 0.02,       # 상승장(비폭등) 트레일 발동(+2%)
     "engine.exit_riskon_trail_stop": 0.015,          # 상승장 트레일 폭(1.5%)
     "engine.exit_surge_trail_activate": 0.03,        # 폭등장 트레일 발동(+3%, 더 태움)
     "engine.exit_surge_trail_stop": 0.02,            # 폭등장 트레일 폭(2%)
     "engine.exit_hybrid_mode": "enforce",            # off|enforce — 상승/폭등 트레일 오버라이드 롤백
-    "momentum.enabled": True,                        # 리더 진입(실전) 활성 — 눌림과 독립 경로. 롤백 스위치 (2026-09-07)
-    "momentum.entry_mode": "pullback",               # pullback=E6 강세근접VWAP(상승장 전용·09-18 필승패턴) | breakout=구 ORB추격(꼭지매수·기본비활)
     "momentum.rs_min": 4.0,                          # (breakout전용) 상대강도 임계(시가대비≥+4%). 백테스트: 강세4=승률83%·순+1.36%
     "momentum.entry_premium_pct": 1.5,               # 돌파가 +1.5% 지정가(빠른 리더 체결력, 호가 스냅) — order_style=limit일 때만 사용
     "momentum.order_style": "market",                # 진입 주문방식: market=시장가(감지 즉시 체결 보장·빠른 리더 추격) / limit=지정가+프리미엄(체결 미보장) (2026-09-18)
@@ -130,21 +145,13 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
     "regime.up_transition_pp": 1.0,                 # 상승전환: window 내 +1.0%p
     "regime.li_lean_weight": 0.25,                  # 선행지표 lean 바이어스 가중
     "regime.transition_window_min": 60,             # 전환 판단 window(분)
-    "regime.transition_response_active": True,      # 전환 대응 활성(2026-08-23 PM) — 하락전환 매수중단+트레일조임
     "regime.transition_trail_tighten_factor": 0.5,  # 하락전환시 트레일폭 배수(0.5=절반조임, 러너 이익잠금)
     "regime.set_source": "5tier",                   # SET 선택 regime 출처: 5tier(설정기반 classify_regime_5tier, 활성 2026-08-23)|judge(하드코딩 폴백). §A-7#5 롤백스위치
     # ── 종목선정 엔진③ 점수 가중치(배선 완료 2026-08-23 — universe_filter가 라이브 소비) ──
     "selection.weights_source": "settings",         # settings=아래 가중치 라이브 소비(배선)|tone=구 _TONE_WEIGHTS. 롤백스위치
     "selection.change_weight": 0.5,                 # 등락률 가중(라이브 — 선정에 반영)
     "selection.surge_weight": 0.5,                  # 거래량급증 가중(라이브 — 선정에 반영)
-    # ── 수급(외국인+기관 순매수) 기반 종목선정 — SHADOW 우선(2026-09-23) ──
-    #   근거: KOSPI 상승은 외국인·기관 순매수(수급)가 주도. 현행 선정은 거래량+등락률만 봐서
-    #   '고거래량 laggard'(수급 없는 급등주)를 잡아 손실. 수급 팩터를 추가하되 SHADOW(로그만)로
-    #   먼저 관찰 후 enforce 전환. off=현행 그대로(byte-for-byte).
-    "selection.supply_demand_mode": "shadow",       # off|shadow|enforce — 수급 선정 마스터 롤백
-    "selection.supply_demand_weight": 0.3,          # enforce 시 수급 팩터 가중(0~1). 결합점수=(1-w)*기존+w*수급
-    "selection.supply_demand_topk": 30,             # 수급 조회 대상 상위 K (KIS rate-limit 가드 — 상위 K만 조회)
-    "selection.supply_demand_gate_min": -0.5,       # enforce 시 이 값 미만(강한 순매도)이면 후보 제외. 0=중립,음수=분산
+    # 수급 선정·E6·모멘텀·하락전환 대응 키는 DB 명시값으로 돌아 INTENT_SETTINGS로 이동(2026-09-30).
     # ── 사이징 모델(결정4, Phase1) — 예수금비중: 종목당 5~15%, 종목수 6~19 ──
     "sizing.per_position_rate_min": 0.05,           # (레거시·표시용) 종목당 최소 비중
     "sizing.positions_min": 6,                      # (레거시) 무결성 백스톱용
@@ -164,15 +171,16 @@ INTENT_CODE_DEFAULTS: dict[str, object] = {
 #   손절을 노이즈(편도 4.7%) 밖으로 넓히고, 트레일도 넓게(러너 극대화). 방어=포지션수↓(사이징모델).
 #   take_profit_rate는 표시용(rule_resolver가 take_profit_enabled=False 강제) — 실익절=트레일+scaleout.
 #   max_positions는 死(사이징모델 6~19가 order_executor에서 override) — 표시/드리프트 대조용만 유지.
+#   daily_budget_rate = preflight 동시배포 게이트 레짐율(PM 2026-09-01, 2026-09-30 감시 추가).
 INTENT_REGIME_SETS: dict[str, dict[str, float]] = {
     "risk_on":  {"max_positions": 12, "stop_loss_rate": -0.045, "take_profit_rate": 0.12,
-                 "trailing_activate_profit": 0.04, "trailing_stop_rate": 0.03},
+                 "trailing_activate_profit": 0.04, "trailing_stop_rate": 0.03, "daily_budget_rate": 0.95},
     "neutral":  {"max_positions": 7,  "stop_loss_rate": -0.04,  "take_profit_rate": 0.08,
-                 "trailing_activate_profit": 0.035, "trailing_stop_rate": 0.025},
+                 "trailing_activate_profit": 0.035, "trailing_stop_rate": 0.025, "daily_budget_rate": 0.85},
     "risk_off": {"max_positions": 4,  "stop_loss_rate": -0.04,  "take_profit_rate": 0.07,
-                 "trailing_activate_profit": 0.03, "trailing_stop_rate": 0.025},
+                 "trailing_activate_profit": 0.03, "trailing_stop_rate": 0.025, "daily_budget_rate": 0.40},
     "volatile": {"max_positions": 2,  "stop_loss_rate": -0.05,  "take_profit_rate": 0.10,
-                 "trailing_activate_profit": 0.04, "trailing_stop_rate": 0.03},
+                 "trailing_activate_profit": 0.04, "trailing_stop_rate": 0.03, "daily_budget_rate": 0.30},
 }
 _FLOAT_TOL = 1e-9
 
@@ -314,6 +322,9 @@ CONFORMANCE: list[tuple[str, str | None, str | None]] = [
     ("매도 엔진⑤", "resolve_sell_params", None),
     ("매매 엔진⑥", "resolve_execution_sizing", None),
     ("종목선정 점수", "selection_score", "selection.change_weight"),
+    ("수급 1차 선정", "_compute_supply_score", "selection.supply_demand_mode"),
+    ("거래량마름 진입게이트", "_vol_dryup_from_bars", "engine.entry_vol_dryup_mode"),
+    ("ABCD 눌림목 진입엔진", "detect_abcd_entry", "engine.abcd_entry_mode"),
 ]
 
 
