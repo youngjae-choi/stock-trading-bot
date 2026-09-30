@@ -24,10 +24,10 @@
 > **⚠ 지금 켜져 있는 실험 설정 (모의계좌 — 되돌릴 때 여기부터):**
 > | 설정 | 현재 | 원래/롤백 | 켠 날·이유 |
 > |---|---|---|---|
-> | `regime.transition_response_active` | **false** | true | 09-29 하락장 방어력 테스트 — 하락전환 매수중단·트레일조임 **꺼짐** |
-> | `engine.abcd_enforce_regimes` | **all** | up | 09-29 — ABCD가 **전 레짐**에서 VWAP천장·바닥·거래량마름을 **우회**해 매수 |
-> | `engine.abcd_entry_mode` | **enforce** | shadow | 09-28 모의 실험 |
+> | `engine.abcd_entry_mode` | **enforce**(상승장 한정 `abcd_enforce_regimes=up`) | shadow | 09-28 모의 실험 |
 > | `engine.entry_vol_dryup_mode` | **enforce** | shadow | 10-01 승리조건(표본 41건, 통계적 유의성 미달 — §A-8) |
+>
+> **✅ 10-01 장전 적용(PM):** 하락전환 래치 **복원**(`transition_response_active=true`, 래치 잔재 리셋) · ABCD **all→up** · VWAP밴드 레짐 **장중 SET 추종**(`engine.gate_regime_source=intraday`) · 인버스 예산상한 **버그 수정**. 09-29 하락장 테스트 종료.
 
 ### A-0. 핵심 철학
 - **연산·판단·실행 = 결정론 시스템 / 코딩·분석·전략 = PM+Claude 수동 통제.** LLM 매매개입 0.
@@ -61,7 +61,7 @@
 > | 소비자 | 읽는 레짐 | 장중 전환 반영 |
 > |---|---|---|
 > | 손절·트레일(SET)·배포율·레짐별 수확 | 당일 SET 적용(`regime_set_applications`) | ✅ (손절·트레일은 규칙캐시 재로드 시점: activate·장중재선별) |
-> | **VWAP 밴드 천장·ABCD 범위·conviction 게이트** | `daily_context_snapshot.regime`(`decision_engine._current_regime`) — **S6 activate/재기동 때만 기록** | ❌ **아침값 고정**. 예: 09-30 아침 risk_on → 11:00 SET neutral 전환, 그러나 종일 상승장 천장 0.0 적용 |
+> | **VWAP 밴드 천장·ABCD 범위·conviction 게이트** | `decision_engine._current_regime` — **오늘 현재 SET**(`regime_set_applications` current_flag=1) 우선, 없으면 아침 `daily_context_snapshot` (`engine.gate_regime_source`=intraday, 롤백 snapshot) | ✅ (**10-01 수정** — 이전엔 아침값 고정: 09-30 11:00 neutral 전환됐는데 종일 상승장 천장 0.0) |
 > | 사이징 확신도 | `regime.current_5tier`(30분 갱신, 09:30 첫 판정 전엔 전날값) | ✅ |
 > | confidence 게이트(현재 off) | applications 우선 | ✅ |
 
@@ -69,7 +69,7 @@
 WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 - `_evaluate_rules`(decision_rules): 게이트값 = `rule_resolver._settings_gate_rules`(settings 단일출처, RulePack 제거) — 등락률밴드(`min/max_price_change_pct` 1.5~4, **기준=전일종가 대비 `prdy_ctrt`**) · 거래량(`min_volume_ratio` 1.5) · 시간창(`entry_start/end_time`) · TSI>0(없으면 통과) · Layer3(vwap/ma/rsi/spread — **final_rule에 미주입이라 사실상 no-op**). 차단 후 같은 종목 30초 쿨다운·당일 신호발송 종목 skip.
 - **confidence 게이트 = OFF**(`engine.confidence_gate_mode=off`, 2026-09-02): 신호 `confidence`=S4 `suitability_score`가 **56% 0.0·max 0.68**(sparse)라 死신호. 대체 = **conviction 품질게이트**(`engine.conviction_gate_min`, 레짐×눌림 0~1, `resolve_conviction`) — **기본 0=OFF**(미활성). ⚠ 칼리브레이션 게이트는 여전히 이 sparse confidence를 사용.
-- `_entry_gate_block_reason`(**7게이트** 순서): 손실3연패 하드차단 → 급락방어(인버스1x 예외) → **하락전환 매수중단 래치**(`get_entry_suspended` — down_transition서 걸고 up_transition서만 해제, 신선도 75분) — **⚠현재 OFF**(`regime.transition_response_active=false`, 09-29 하락장 테스트. DB `regime.entry_suspended="true"` 잔재 → **다시 켜면 즉시 차단될 수 있음**) → new_entry_allowed → 칼리브레이션 → entry_fail 쿨다운 → 장중재진입(`intraday_max_stoploss_per_symbol` 2회)
+- `_entry_gate_block_reason`(**7게이트** 순서): 손실3연패 하드차단 → 급락방어(인버스1x 예외) → **하락전환 매수중단 래치**(`get_entry_suspended` — down_transition서 걸고 up_transition서만 해제, 신선도 75분) — **ON**(`regime.transition_response_active=true`, 09-29~09-30 하락장 테스트 후 10-01 복원·래치 리셋) → new_entry_allowed → 칼리브레이션 → entry_fail 쿨다운 → 장중재진입(`intraday_max_stoploss_per_symbol` 2회)
 - **`_emit_signal` 진입 순서(실제):** 레버리지/인버스2x 차단 → ETN/ETF 백스톱 → 위 7게이트 → **ABCD**(성립 시 아래 VWAP천장·바닥·거래량마름 **전부 우회**, 시가대비 게이트는 미우회) → VWAP 천장 → 바닥(-5) → 거래량마름 → 시가대비 추격(shadow) → 실행시각(09:30 전 shadow) → conviction(OFF) → preflight(긴급정지·손실한도·급락·컷오프·종목비중·**레짐 배포캡**·가격·데이터품질DQ).
 - VWAP 눌림 게이트: `entry_vwap_pullback_mode`(enforce) — VWAP 아래(눌림)에서만 진입, 위(추격)면 차단. **BackDB 361건 검증: vwap_dist≤-1 필터 시 승률 53.2→65.7%·기대값 -0.15→+0.17%(마이너스→플러스 전환)**. 손실은 INITIAL_STOP_LOSS(15%승)에 집중=얕은진입, 수확 scaleout은 87%승. (confidence는 死신호라 승패 분리 못함) / 레버리지: `leverage_restriction_mode`(exclude)
   - **레짐별 밴드(2026-09-05 BackDB 335건 재검증)**: 눌림 엣지는 **레짐 조건부**. ①**천장**: 보합/하락은 `entry_max_vwap_dist_pct`(-1.0, 눌림만), **상승장은 `entry_max_vwap_dist_pct_riskon`(0.0)로 완화**(상승장의 눌림종목=시장 못 따라가는 laggard → -1 고집이 저배포+약체매수 유발. 근접눌림 0~-1이 상승장 유일 흑자구간 +0.08% 순). ②**바닥**: 전 레짐 `entry_min_vwap_dist_pct`(-5.0) — 딥눌림(<-5%)은 falling knife(급락후 매수, 승률↓·순마이너스; 스위트스팟은 -5~-3%로 +0.21% 순). 롤백: riskon키=-1(천장 원복)·min키=-100(바닥 해제).
@@ -86,7 +86,7 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 | 변동성 volatile (VIX>28) | -5.0% | +4% | 3.0% | +10% |
 
 - 초기손절 `stop_loss_rate` → `초기손절가=진입가×(1+손절)`, `stop_price_can_only_increase`(하향금지). ⚠ **예외:** 규칙캐시에 없는 종목(자동편입·캐시 누락)은 `position_manager._DEFAULT_RULE` **-2.5% / 트레일 +1.5%·1.0%**로 돈다(9월 10거래일 실발생 확인).
-- 트레일 `trailing_activate_profit` 도달→활성, `trailing_stop_rate` 되돌림 시 청산. **상승/폭등 오버라이드(E6 exit, `engine.exit_hybrid_mode`=enforce):** 상승 **+2% 발동·1.5% 폭**, 폭등 **+3%·2%**(`exit_riskon_*`/`exit_surge_*`) — 단 장중 전환으로 KOSPI가 기록된 SET에서만(아침 SET은 KOSPI NULL→미적용). 하락전환 시 트레일폭 ×`transition_trail_tighten_factor`(0.5) 조임 — **⚠현재 OFF**(transition_response_active=false).
+- 트레일 `trailing_activate_profit` 도달→활성, `trailing_stop_rate` 되돌림 시 청산. **상승/폭등 오버라이드(E6 exit, `engine.exit_hybrid_mode`=enforce):** 상승 **+2% 발동·1.5% 폭**, 폭등 **+3%·2%**(`exit_riskon_*`/`exit_surge_*`) — 단 장중 전환으로 KOSPI가 기록된 SET에서만(아침 SET은 KOSPI NULL→미적용). 하락전환 시 트레일폭 ×`transition_trail_tighten_factor`(0.5) 조임(ON).
 - 수확 `engine.harvest_mode`: `scaleout_target_rate`(**+2%**)서 `scaleout_ratio`(**50%**) 확정+잔량 러너(트레일), `daily_target_rate`(계좌 2%) 도달 후 비율 80%. **레짐별 오버라이드(`position_manager._REGIME_SCALEOUT_DEFAULTS`, SET 명시값 없으면 적용):** risk_off **+1.5%에서 80%**, volatile **+1.2%에서 100%(전량)**. = PM "부분익절+트레일링 극대화"
 - 안전망: 손절 REST 백업(30초)·주문 정합(3분)·10초봉 저장(1분)
 
@@ -97,7 +97,7 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 | 15:20 | 후처리 S9~S10: 청산 백스톱→복기(`daily_review_reports`·day_score·exit성과·calibration)→`SYSTEM_AUDIT.md` |
 | 15:35 | 미진입 수익률 소급 · 23:00 장후 브리핑(evening sentiment, 다음날 신뢰도 보정) · 18:00 백업 |
 
-> ⚠ **레짐 판정 이중구조(정확히)**: (a) **레짐 SET 매칭**(전략 SET 선택)은 `regime.set_source` 스위치 — **5tier(기본·활성 2026-08-23)** = 설정기반 `classify_regime_5tier`→`regime_to_set`(regime.down_pct 등, 드리프트 감시), judge(폴백) = 하드코딩 `_judge_regime`/index-board. `_resolve_set_regime`이 dispatch. (b) `classify_regime_5tier`+`detect_transition`은 `regime.current_5tier`를 영속화 → **사이징⑥이 읽음(live)**, 이제 SET매칭도 live(5tier). (c) 전환 대응(`regime.transition_response_active`) — 하락전환 감지 시 신규매수 중단+트레일 절반조임. **⚠현재 OFF(2026-09-29 하락장 테스트, 롤백=true).** 감지·래치 기록은 계속됨.
+> ⚠ **레짐 판정 이중구조(정확히)**: (a) **레짐 SET 매칭**(전략 SET 선택)은 `regime.set_source` 스위치 — **5tier(기본·활성 2026-08-23)** = 설정기반 `classify_regime_5tier`→`regime_to_set`(regime.down_pct 등, 드리프트 감시), judge(폴백) = 하드코딩 `_judge_regime`/index-board. `_resolve_set_regime`이 dispatch. (b) `classify_regime_5tier`+`detect_transition`은 `regime.current_5tier`를 영속화 → **사이징⑥이 읽음(live)**, 이제 SET매칭도 live(5tier). (c) 전환 대응(`regime.transition_response_active`) — 하락전환 감지 시 신규매수 중단+트레일 절반조임. **ON**(09-29 테스트 OFF → 10-01 복원).
 
 > ⚠ **폭등·폭락은 별도 SET 아님** — 4-SET에 흡수(`_SET_MAP`): 폭등(+2.5%↑)→**risk_on SET**+사이징 확대(`surge_per_position_rate_max`), 폭락(-5%↓)→**risk_off SET**+flash_crash 방어(신규매수 봉쇄, 인버스1x만). 추세전환은 방향성 오버레이(SET 불변, 진입·트레일만 수정).
 
@@ -113,7 +113,7 @@ WS 틱마다 후보 평가(단일 길목 `_emit_signal`):
 | **보합** | -1.5% ≤ KOSPI ≤ +0.5% | ✅ **neutral SET**(-4%) |
 | **상승** | KOSPI > +0.5%, VIX < 22 | ✅ **risk_on SET**(-4.5%, 검증 8/18·8/20) |
 | **폭등** | KOSPI > +2.5% — 상승의 **사이징 확대 티어**(별도 전략 아님) | ✅ **risk_on SET** + 사이징 확대(`surge_per_position_rate_max`). SET매칭엔 risk_on |
-| **하락전환** | 최근 window(`transition_window_min`) KOSPI **-1.0%p↓** (레벨 무관·방향) | ⚠ **대응 OFF(09-29 테스트)** — 설계: 신규매수 중단(**래치**) + 트레일 절반조임(`transition_trail_tighten_factor` 0.5). 롤백=`transition_response_active=true` |
+| **하락전환** | 최근 window(`transition_window_min`) KOSPI **-1.0%p↓** (레벨 무관·방향) | ✅ 대응 ON(10-01 복원): 신규매수 중단(**래치**) + 트레일 절반조임(`transition_trail_tighten_factor` 0.5) |
 | **상승전환** | 최근 window KOSPI **+1.0%p↑** 반등 | ✅ **재개 래치(2026-08-23)**: 하락전환 매수중단을 걸어두고 **up_transition에서만 해제**(None 구간 유지=데드캣 방지). `get_entry_suspended` 신선도 75분 |
 | (VIX축) volatile | VIX > 28 | ✅ **volatile SET**(-5%손절·최소포지션, 5장세와 직교) |
 
@@ -141,11 +141,11 @@ base 점수 = `selection.change_weight`×등락률점수 + `selection.surge_weig
 | 게이트 | 설정키 | 현재 의도값 | 의미 |
 |---|---|---|---|
 | **VWAP 밴드 모드** | `entry_vwap_pullback_mode` | enforce | shadow=로그만 · off=비활성 |
-| **천장(추격 차단)** | `entry_max_vwap_dist_pct`(보합/하락) · `entry_max_vwap_dist_pct_riskon`(상승장) | -1.0 · **0.0** | VWAP 위 이격 매수 차단. **상승장(up/surge/risk_on)은 VWAP까지 허용**(눌림종목=laggard·저배포 방지, BackDB 2026-09-05). 돌파(>0)는 여전히 차단 ★핵심엣지. ⚠ "상승장" 판정은 **아침 스냅샷 레짐**(장중 전환 미반영, §A-0b③) |
+| **천장(추격 차단)** | `entry_max_vwap_dist_pct`(보합/하락) · `entry_max_vwap_dist_pct_riskon`(상승장) | -1.0 · **0.0** | VWAP 위 이격 매수 차단. **상승장(up/surge/risk_on)은 VWAP까지 허용**(눌림종목=laggard·저배포 방지, BackDB 2026-09-05). 돌파(>0)는 여전히 차단 ★핵심엣지. "상승장" 판정 = 장중 현재 SET 레짐(10-01~, §A-0b③) |
 | E6 상승장 밴드 | `uptrend_entry_mode`·`entry_vwap_ceiling_riskon`·`entry_vwap_floor_riskon`·`entry_require_strength_riskon` | **off**·1.0·-3.0·true | 켜면 상승장 밴드를 [floor, ceiling]로 교체 + 강세(시가대비>0) 요건. 09-23 실현손익 반증으로 OFF. ⚠ **코드기본이 enforce** — DB row 삭제 시 켜짐(드리프트 감시 등록) |
 | **바닥(falling knife)** | `entry_min_vwap_dist_pct` | **-5.0** | VWAP **5%↓ 딥눌림**(급락후 매수) 차단 — 전 레짐 공통(BackDB: <-5% 승률↓·순마이너스, 극심<-8은 44%). 09-04 300120 -11.3% 급락후매수 손실 재발방지 |
 | **거래량 마름(P2) ★승부처** | `entry_vol_dryup_mode`·`entry_vol_dryup_max` | **enforce**·**1.2** | 눌림 통과분 중 진입 직전 거래량이 급증(최근5봉/직전10봉 > 1.2, **10초봉 기준=최근50초/직전100초**, 봉<15면 fail-open)이면 **투매/분산**으로 보고 차단 — 건전한 눌림(거래량 마름)만 허용. **exit_backtest(청산 재시뮬) 확정(2026-10-01): 이 필터가 흑자/적자를 가름.** vwap≤-2 단독=순 **-0.605%**(적자), vwap≤-1 **+ 거래량마름**=순 **+0.165~0.200%**(흑자·승률 66~68%·~42거래). 즉 **거래량 터질 때(투매) 매수=패, 마를 때(건전눌림)=승.** R:R(청산)은 재설계해도 개선 없음(현행 최적)—진짜 레버는 이 진입필터. 2026-10-01 shadow→**enforce**(승리조건). 롤백=shadow |
-| **ABCD 눌림목(별도 진입엔진)** | `engine.abcd_entry_mode`·`engine.abcd_enforce_regimes` | **enforce**·**all**(모의 실험) | Aziz ABCD(A스윙고점→B눌림저점→C higher-low 반등, 임펄스 2%·눌림 1~5%, 09:35~13:30) — **⚠현재 전 레짐**(`all`, 09-29; 원설계 `up`=상승장 한정) + 수급리더(`supply_score≥0.5`, 중립·조회실패 포함) 성립 시 **VWAP 천장·바닥·거래량마름을 전부 우회**해 매수(시가대비 게이트는 미우회). 청산=상승장 regime_set 트레일링. **전 유니버스 백테스트는 손실(상승장 2.6~24%)** 이나 수급리더 한정 효과는 과거검증 불가 → **모의계좌 라이브 실험**(PM 승인 2026-09-28). 롤백=abcd_entry_mode=shadow/off. 감시=scripts/abcd_shadow_review.py. `backend/services/engine/abcd_pattern.py` |
+| **ABCD 눌림목(별도 진입엔진)** | `engine.abcd_entry_mode`·`engine.abcd_enforce_regimes` | **enforce**·**up**(모의 실험) | Aziz ABCD(A스윙고점→B눌림저점→C higher-low 반등, 임펄스 2%·눌림 1~5%, 09:35~13:30) — **상승장 한정**(`up`; 09-29~09-30 `all` 실험 후 10-01 복귀) + 수급리더(`supply_score≥0.5`, 중립·조회실패 포함) 성립 시 **VWAP 천장·바닥·거래량마름을 전부 우회**해 매수(시가대비 게이트는 미우회). 청산=상승장 regime_set 트레일링. **전 유니버스 백테스트는 손실(상승장 2.6~24%)** 이나 수급리더 한정 효과는 과거검증 불가 → **모의계좌 라이브 실험**(PM 승인 2026-09-28). 롤백=abcd_entry_mode=shadow/off. 감시=scripts/abcd_shadow_review.py. `backend/services/engine/abcd_pattern.py` |
 | **시가대비 추격 금지** | `entry_change_from_open_mode`·`entry_max_change_from_open_pct` | **shadow**·**+2.0** | 진입가가 **오늘 시가**보다 임계% 초과(갭 추격)면 차단. BackDB 335건: change_from_open>+2% = 승률 **33%**·순 -0.95%(최악). **VWAP 눌림과 독립**(눌림 안에서도 시가 위 48% vs 시가 아래 69%). 기존 등락률게이트는 전일종가(prdy_ctrt) 대비라 이걸 못 걸렀음. 기본 shadow(로그만)→관찰 후 enforce (2026-09-05 엣지검증) |
 | 고점추격 상한 | `max_price_change_pct` | 4.0 | **전일종가 대비**(prdy_ctrt) +4% 초과 매수 차단 |
 | 등락률 하한 | `min_price_change_pct` | 1.5 | 전일종가 대비 +1.5% 미만 진입 안 함 |
@@ -161,7 +161,7 @@ base 점수 = `selection.change_weight`×등락률점수 + `selection.surge_weig
 | 밴드역전 가드 | `band_inversion_guard_enabled` | on | 진입밴드 역전 마비 방지 |
 | 실행 시간창 | `entry_execute_start_time`·`entry_end_time`·`new_entry_cutoff_time` | 09:30·15:00·15:10 | 이전은 shadow |
 
-- **폭락:** 신규진입 차단(인버스1x 예외). **폭등:** 천장 0.0 완화(상승장과 동일). 사이징 확대는 `surge_per_position_rate_max`=0.15(기준과 동일)라 **실효 없음**. **하락전환(§A-5):** 설계=신규매수 즉시 중단, **⚠현재 OFF(09-29 테스트)**.
+- **폭락:** 신규진입 차단(인버스1x 예외). **폭등:** 천장 0.0 완화(상승장과 동일). 사이징 확대는 `surge_per_position_rate_max`=0.15(기준과 동일)라 **실효 없음**. **하락전환(§A-5):** 신규매수 즉시 중단(ON).
 - ⚠ **어제 데이터 누출 위험:** `_day_open_from_bars`·`_vol_dryup_from_bars`·`_fallback_vwap_from_bars`는 오늘 봉이 없으면 **가장 최근 거래일 ≤ 오늘** 봉으로 계산(장 초반 전일값 사용 가능).
 
 ### A-4. 매도 — 레짐 SET별 차등 + 공통 수확 (값은 B절 실측)
@@ -169,7 +169,7 @@ base 점수 = `selection.change_weight`×등락률점수 + `selection.surge_weig
 - **스케일아웃 수확**(`harvest_mode`=on): `scaleout_target_rate`(**+2%**)서 `scaleout_ratio`(**50%**) 확정 + 잔량 러너(넓은 트레일), 목표후 `scaleout_ratio_after_target`(80%). 하루 목표 `daily_target_rate`(계좌 +2%). = PM "부분익절+트레일링 극대화". **레짐 오버라이드(하드코딩):** risk_off +1.5%/80% · volatile +1.2%/100%.
 - **상승/폭등 트레일 오버라이드(E6 exit, enforce):** 상승 +2%/1.5% · 폭등 +3%/2% (SET 4%/3%보다 타이트, §A-0b⑤).
 - **공통:** EOD 강제청산(실제 15:05~15:12, 톤별 — §A-0b⑥) · 폭락 방어모드(검증 8/19) · 무틱 손절 REST 백업(`stop_loss_backup_*`). 청산사유엔 `eod`·`replacement_swap->X`(교체매매)도 있음.
-- **하락전환:** 설계=트레일폭 ×`transition_trail_tighten_factor`(0.5) 절반조임 + 신규매수 중단. **⚠현재 OFF(09-29 테스트).**
+- **하락전환:** 설계=트레일폭 ×`transition_trail_tighten_factor`(0.5) 절반조임 + 신규매수 중단. (ON)
 
 ### A-4a. 전략설정 엔진① — 레짐→플레이북 권위 (`get_playbook`)
 **시장분위기(5장세)를 판단하면 그 장세의 전략 한 벌을 통째로 꺼낸다.** 구현: `strategy_playbook.get_playbook(regime5)` → `Playbook{선정·매수게이트(9)·매도(레짐SET)·사이징}`. 폭등=상승SET+사이징확대. 레짐 틱마다 `[E1] SHADOW-PLAYBOOK` 로그.
@@ -189,7 +189,7 @@ base 점수 = `selection.change_weight`×등락률점수 + `selection.surge_weig
 | 폭등 확대 | `sizing.surge_per_position_rate_max` | 0.15 | 상한금액 비례 확대 — **현재 기준값과 같아 실효 없음**(↑로 올려야 작동) |
 | 프로필 금액상한 | 프로필 `max_position_krw` | LOW 2000만·MID 1500만·HIGH 1000만·THEME 600만 | 금액모델 위에 덧씌움(테마주 블로우업 방지, 2026-08-29) |
 | 종목당 비중 | `risk.max_position_rate_per_stock` | 0.15 | (preflight는 30% 초과만 차단) |
-| 급락 인버스1x 예산 | `engine.crash_playbook_budget_rate` | 0.30 | ⚠ **버그: 무력화** — `order_executor`가 상한(`_apply_crash_playbook_cap`) 적용 **후** 신모델 사이징이 qty를 덮어씀(§A-7 #9) |
+| 급락 인버스1x 예산 | `engine.crash_playbook_budget_rate` | 0.30 | 최종 수량(신모델·프로필캡) 확정 **후** 적용(10-01 버그 수정 — 이전엔 신모델이 덮어써 무력화) |
 
 > 예: 확신 1.0 → 종목당 2,000만(집중, ~4개) / 확신 0.0 → 500만(분산, ~17개). **레짐→종목수 로직 완전 제거**(구 `_calc_budget_qty` 예산÷종목수 균등분배·`select_sizing_params` 레짐 max_positions 삭제). 레짐SET `max_positions`(12/7/4/2)·`risk.max_positions`(제거 2026-09-01)·`sizing.positions_min/max`([6,19])는 **死**(무결성 백스톱·표시용). PM 결정 2026-08-29: 종목수 아닌 금액 통제.
 > ✅ `engine.exploration_mode` **완전 제거**(2026-08-22) — 매수=baseline S4/S5만. `exploration.deploy_target_rate`(95%)만 사이징 배포한도로 잔존(=⑥ 예수금투입목표). §A-7 #2 해소.
@@ -227,8 +227,8 @@ base 점수 = `selection.change_weight`×등락률점수 + `selection.surge_weig
 
 **배선 상태:**
 - **감지(shadow)**: `_persist_and_shadow_sensing` — 레짐 틱마다 KOSPI 시계열 저장 + 전환/5장세 상태 영속화 + `SHADOW-REGIME` 로그. 라이브 `_judge_regime` 불변. 검증도구 `scripts/analyze_shadow_regime.py`.
-- **대응 (2026-08-23 PM 활성 → ⚠2026-09-29 OFF, 하락장 방어력 테스트)**:
-  - **하락전환 매수중단**: `_entry_gate_block_reason` + `get_current_transition`(신선도). `regime.transition_response_active`=**false(현재)**, 롤백=true.
+- **대응 (2026-08-23 PM 활성 → 09-29 테스트 OFF → 10-01 복원 ON)**:
+  - **하락전환 매수중단**: `_entry_gate_block_reason` + `get_current_transition`(신선도). `regime.transition_response_active`=**true**.
   - **하락전환 트레일조임**: `_update_trailing`이 트레일폭 축소(이익잠금). `regime.transition_trail_tighten_factor`=**0.5**(절반조임).
   - **폭등 사이징확대**: 5장세=surge면 종목당 상한↑. `sizing.surge_per_position_rate_max`(기본 0.15=무변, ↑로 확대).
 - **상승전환 재개 래치(✅ 2026-08-23)**: `_latch_from_transition`+`get_entry_suspended` — 하락전환 매수중단을 걸고 up_transition에서만 해제(None 유지). 진입게이트가 stateless→래치로 전환.
@@ -252,11 +252,11 @@ base 점수 = `selection.change_weight`×등락률점수 + `selection.surge_weig
 | 4 | flash_crash 상태플래그 | `flash_crash_defense_active=true`(date 8/19). 날짜스코프라 다음 거래일 자동해제(동작 정상) | 상태값이라 INTENT 제외 |
 | 5 | ~~레짐 임계 하드코딩~~ **해소(2026-08-23 활성)** | `regime.set_source`=**5tier(기본)** — SET매칭이 설정기반 `classify_regime_5tier`→`regime_to_set`(드리프트 감시). `_resolve_set_regime` dispatch. 롤백=judge. **월요일 첫 실전 관찰** | ✅ 완료 |
 | 6 | buy_condition_framework 태깅잔존 | 탐색 OR **매수경로 제거**(2026-08-22). 프레임워크는 `_record_exploration_tag`(진입 조건발화 기록·계측)만 잔존. 원자조건/조건그룹 UI 삭제. | 계측 데이터 활용 시 게이트화 검토 |
-| 7 | **VWAP밴드 레짐 = 아침 고정** (2026-09-30) | `_current_regime`이 `daily_context_snapshot`(activate 시만 기록) 사용 → 장중 SET 전환이 천장·ABCD·conviction에 미반영 | PM 결정: 장중 SET 추종 여부 |
+| 7 | ~~VWAP밴드 레짐 = 아침 고정~~ **수정(10-01)** | `_current_regime`이 장중 현재 SET 우선(`engine.gate_regime_source`) | ✅ 완료(롤백=snapshot) |
 | 8 | **-2.5% 기본손절 경로** (2026-09-30) | 규칙캐시 없는 종목은 `_DEFAULT_RULE`(-2.5%/+1.5%/1.0%) — 레짐SET 손절(-4~-5%)과 다름. 9월 10일치 발생 | 레짐SET 손절로 통일 검토 |
-| 9 | **인버스1x 예산상한 무력화 버그** (2026-09-30) | `order_executor` 상한 적용 후 신모델 qty가 덮어씀 → 급락장 인버스 과대매수 위험 | **다음 급락 전 수정 필요** |
+| 9 | ~~인버스1x 예산상한 무력화 버그~~ **수정(10-01)** | 상한을 최종 수량 확정 후로 이동 | ✅ 완료 |
 | 10 | 수확 오버라이드 하드코딩 | `_REGIME_SCALEOUT_DEFAULTS`(risk_off/volatile) 코드 상수 | SET 명시값으로 이관 검토 |
-| 11 | `regime.entry_suspended="true"` 잔재 | 09-29 래치값이 남음. 래치 복원 시 75분 신선도 외 즉시 차단 가능 | 복원 시 함께 리셋 |
+| 11 | ~~entry_suspended 잔재~~ **리셋(10-01)** | 래치 복원과 함께 false로 리셋. ⚠ 교훈: pytest가 라이브 DB에 가짜 전환을 쓰던 누수 발견→conftest 차단 | ✅ 완료 |
 | 12 | 어제 봉 폴백 | 시가·거래량마름·VWAP 폴백이 오늘 봉 없으면 전일 봉 사용 | 장초반 영향 관찰·trade_date=오늘 고정 검토 |
 
 > **감시 범위:** INTENT 명시설정(~40)+코드기본(14)+레짐SET(**4**, volatile 추가 2026-08-23)은 드리프트 자동감시. 위 6개(특히 1·5·6)는 **구조적이라 수동 관리** — 전략 변경 시 반드시 재확인.
@@ -314,7 +314,7 @@ base 점수 = `selection.change_weight`×등락률점수 + `selection.surge_weig
 ## B. 실측 — 지금 실제로 이렇게 돈다 (자동 생성, 손대지 마라)
 
 <!-- AUTO:LIVE START -->
-_자동 생성: 2026-09-30 22:17:39 · `scripts/strategy_spec_sync.py` · 손대지 마라._
+_자동 생성: 2026-09-30 22:33:22 · `scripts/strategy_spec_sync.py` · 손대지 마라._
 
 **현재 활성 레짐:** `neutral` (trigger=intraday, at=2026-09-30T11:00:03)
 
@@ -343,7 +343,7 @@ _자동 생성: 2026-09-30 22:17:39 · `scripts/strategy_spec_sync.py` · 손대
 | `engine.entry_vol_dryup_mode` | `enforce` | DB |
 | `engine.entry_vol_dryup_max` | `1.2` | DB |
 | `engine.abcd_entry_mode` | `enforce` | DB |
-| `engine.abcd_enforce_regimes` | `all` | DB |
+| `engine.abcd_enforce_regimes` | `up` | DB |
 | `engine.uptrend_entry_mode` | `off` | DB |
 | `engine.entry_vwap_floor_riskon` | `-3.0` | DB |
 | `momentum.enabled` | `False` | DB |
@@ -353,7 +353,7 @@ _자동 생성: 2026-09-30 22:17:39 · `scripts/strategy_spec_sync.py` · 손대
 | `selection.supply_demand_gate_min` | `-0.1` | DB |
 | `selection.supply_saturation_pbmn` | `1500` | DB |
 | `selection.supply_demand_topk` | `30` | DB |
-| `regime.transition_response_active` | `False` | DB |
+| `regime.transition_response_active` | `True` | DB |
 | `engine.entry_execute_start_time` | `09:30` | DB |
 | `engine.entry_start_time` | `09:00` | DB |
 | `engine.entry_end_time` | `15:00` | DB |
@@ -377,6 +377,7 @@ _자동 생성: 2026-09-30 22:17:39 · `scripts/strategy_spec_sync.py` · 손대
 | `engine.loss_autotune_apply_enabled` | `False` | DB |
 | `engine.entry_max_vwap_dist_pct` | `-1.0` | DB(오버라이드) |
 | `engine.entry_max_vwap_dist_pct_riskon` | `0.0` | 코드기본 |
+| `engine.gate_regime_source` | `intraday` | 코드기본 |
 | `engine.entry_min_vwap_dist_pct` | `-5.0` | 코드기본 |
 | `engine.buy_submit_retry_enabled` | `True` | 코드기본 |
 | `engine.entry_change_from_open_mode` | `shadow` | 코드기본 |
@@ -448,7 +449,7 @@ _드리프트 0건 (아래 C절 참조)_
 ## C. 드리프트 체크 — 실측이 의도를 벗어났나 (자동 생성, 손대지 마라)
 
 <!-- AUTO:DRIFT START -->
-_자동 생성: 2026-09-30 22:17:39_
+_자동 생성: 2026-09-30 22:33:22_
 
 ✅ **드리프트 없음** — 실측이 의도와 일치한다. 시스템이 사양대로 동작 중.
 <!-- AUTO:DRIFT END -->

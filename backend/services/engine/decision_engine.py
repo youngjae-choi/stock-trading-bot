@@ -803,8 +803,14 @@ class DecisionEngine:
             return
 
     def _current_regime(self) -> str | None:
-        """현재 레짐을 daily_context_snapshot 에서 조회한다(60초 TTL 인스턴스 캐시).
+        """현재 레짐 조회(60초 TTL 인스턴스 캐시) — VWAP 밴드·ABCD 범위·conviction 게이트용.
 
+        `engine.gate_regime_source`:
+          - intraday(기본): 오늘 **현재 적용 SET**(`regime_set_applications` current_flag=1)을 우선 —
+            장중 레짐 전환(30분 틱)이 진입 게이트에 반영된다. 없으면 아침 스냅샷으로 폴백.
+          - snapshot(롤백): 아침 `daily_context_snapshot`만(구 동작 — activate 시점 고정).
+        2026-09-30 전수점검: 09-30 11:00 SET이 neutral로 바뀌었는데 게이트는 종일 아침 risk_on
+        천장(0.0)을 써 SET(손절·배포)과 진입 게이트가 서로 다른 레짐으로 돌았다.
         틱 처리에서 매 후보마다 호출될 수 있어 DB 조회를 캐시로 막는다.
         조회 실패/레코드 없음 → None 반환(레짐 필터 미적용 = fail-open).
         """
@@ -814,14 +820,25 @@ class DecisionEngine:
             return cached[1]
         regime: str | None = None
         try:
+            source = str(_get_setting_str("engine.gate_regime_source", "intraday") or "intraday").lower()
             with get_connection() as conn:
-                row = conn.execute(
-                    "SELECT regime FROM daily_context_snapshot WHERE trade_date = ? "
-                    "ORDER BY created_at DESC LIMIT 1",
-                    (_today_kst(),),
-                ).fetchone()
-                if row and row["regime"]:
-                    regime = str(row["regime"])
+                if source != "snapshot":
+                    app = conn.execute(
+                        "SELECT regime_label FROM regime_set_applications "
+                        "WHERE trade_date = ? AND current_flag = 1 "
+                        "ORDER BY applied_at DESC LIMIT 1",
+                        (_today_kst(),),
+                    ).fetchone()
+                    if app and app["regime_label"]:
+                        regime = str(app["regime_label"])
+                if regime is None:
+                    row = conn.execute(
+                        "SELECT regime FROM daily_context_snapshot WHERE trade_date = ? "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        (_today_kst(),),
+                    ).fetchone()
+                    if row and row["regime"]:
+                        regime = str(row["regime"])
         except Exception as exc:
             logger.warning("WARN: [S6/탐색] regime 조회 실패(fail-open) reason=%s", exc)
             regime = None

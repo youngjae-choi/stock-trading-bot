@@ -325,11 +325,6 @@ class OrderExecutor:
             _min_krw = float(_gs_fb("sizing.per_position_min_krw", 5_000_000) or 5_000_000)
             qty = int(min(_min_krw, deposit) // price) if price > 0 else 0
             logger.info("INFO: [S7] 초기 사이징(최소금액 폴백) symbol=%s qty=%d", symbol, qty)
-            # P3-5: 급락 방어 모드 인버스 1x 플레이북 — 계좌 대비 예산 상한(기본 30%) 강제
-            qty = self._apply_crash_playbook_cap(
-                name=str(signal.get("name") or ""), qty=qty, price=price,
-                balance=balance, today=today,
-            )
             # 예수금비중 신모델 사이징: 계산 → shadow 로그 → (sizing.model_active면) 실제 적용.
             _nm = self._compute_new_model_sizing(symbol, price, balance)
             if _nm:
@@ -353,6 +348,13 @@ class OrderExecutor:
                     logger.info("INFO: [S7] 프로필 금액캡 symbol=%s qty %d→%d (상한 %,.0f원·%s)",
                                 symbol, qty, _cap, _prof_max_krw, final_rule.get("profile_assigned"))
                     qty = _cap
+            # P3-5: 급락 방어 모드 인버스 1x 플레이북 — 계좌 대비 예산 상한(기본 30%) 강제.
+            # 반드시 최종 수량(신모델·프로필캡) 확정 **후** 적용한다 — 이전엔 신모델 전에 적용돼
+            # 신모델 qty가 상한을 덮어써 무력화됐다(2026-09-30 전수점검 발견).
+            qty = self._apply_crash_playbook_cap(
+                name=str(signal.get("name") or ""), qty=qty, price=price,
+                balance=balance, today=today,
+            )
             if qty <= 0:
                 logger.info("INFO: [S7] 배포 여력 없음 — 매수 스킵 symbol=%s", symbol)
                 self._update_signal_status(signal_id, "skipped_no_room")

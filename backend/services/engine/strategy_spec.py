@@ -53,7 +53,7 @@ INTENT_SETTINGS: dict[str, object] = {
     "engine.entry_vol_dryup_mode": "enforce",       # 거래량마름 게이트 ★승리조건(2026-10-01 enforce, 코드기본 off). 롤백=shadow
     "engine.entry_vol_dryup_max": 1.2,              # 최근5봉/직전10봉(10초봉) 거래량비 상한
     "engine.abcd_entry_mode": "enforce",            # ⚠실험(모의, 2026-09-28) ABCD 진입엔진(코드기본 shadow). 롤백=shadow
-    "engine.abcd_enforce_regimes": "all",           # ⚠실험(2026-09-29) 전 레짐 enforce(코드기본 up). VWAP천장·바닥·거래량마름 우회
+    "engine.abcd_enforce_regimes": "up",            # 상승장 한정(2026-10-01 전수점검 복귀 — 09-29 all 실험 종료, 전 게이트 우회 위험)
     "engine.uptrend_entry_mode": "off",             # E6 상승장 밴드 OFF(2026-09-23 실현손익 반증, 코드기본 enforce)
     "engine.entry_vwap_floor_riskon": -3.0,         # E6 바닥(uptrend off라 현재 미사용, 코드기본 0.0)
     "momentum.enabled": False,                      # 모멘텀 진입 OFF(2026-09-18 꼭지추격 손실→09-23 pullback모드도 반증, 코드기본 True)
@@ -65,7 +65,7 @@ INTENT_SETTINGS: dict[str, object] = {
     "selection.supply_saturation_pbmn": 1500,       # tanh 포화(백만원)
     "selection.supply_demand_topk": 30,             # 수급 조회 상위 K
     # ── 시장감지: 하락전환 대응 ──
-    "regime.transition_response_active": False,     # ⚠실험(2026-09-29 PM 하락장 테스트) 래치+트레일조임 OFF(코드기본 False). 롤백=true
+    "regime.transition_response_active": True,      # 하락전환 매수중단+트레일조임 ON(2026-10-01 복원, 09-29 테스트 종료. 코드기본 False)
     # ── 매수: 실행 시간창 ──
     "engine.entry_execute_start_time": "09:30",     # 실매매 시작(이전은 shadow)
     "engine.entry_start_time": "09:00",             # 후보 로깅 시작
@@ -102,6 +102,7 @@ INTENT_SETTINGS: dict[str, object] = {
 INTENT_CODE_DEFAULTS: dict[str, object] = {
     "engine.entry_max_vwap_dist_pct": -1.0,         # 눌림목 천장(보합/하락) — VWAP 1%↓ 눌림만 (2026-09-01 조임)
     "engine.entry_max_vwap_dist_pct_riskon": 0.0,   # 눌림목 천장(상승장) 완화 — VWAP까지 허용 (2026-09-05 BackDB)
+    "engine.gate_regime_source": "intraday",        # VWAP밴드·ABCD·conviction 레짐 출처: intraday=장중 현재SET(2026-10-01)|snapshot=아침 고정(롤백)
     "engine.entry_min_vwap_dist_pct": -5.0,         # 눌림목 바닥 — 딥눌림(<-5% falling knife) 차단 (2026-09-05)
     "engine.buy_submit_retry_enabled": True,        # 매수 접수 실패 재시도+ODNO 복구 (2026-09-05)
     "engine.entry_change_from_open_mode": "shadow",  # 시가대비 추격금지 게이트(관찰중, enforce전환 예정) (2026-09-05)
