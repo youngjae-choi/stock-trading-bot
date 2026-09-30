@@ -58,6 +58,14 @@ INTENT_SETTINGS: dict[str, object] = {
     "engine.entry_vwap_floor_riskon": -3.0,         # E6 바닥(uptrend off라 현재 미사용, 코드기본 0.0)
     "momentum.enabled": False,                      # 모멘텀 진입 OFF(2026-09-18 꼭지추격 손실→09-23 pullback모드도 반증, 코드기본 True)
     "momentum.entry_mode": "pullback",              # (enabled=false라 미사용)
+    # ── 매수·매도 타이밍(2026-10-01 exit 재시뮬: 승리조건 41건 +0.165%→+0.50~0.63%) ──
+    "engine.entry_reclaim_mode": "enforce",         # 되찾기 매수: arm→-dip→arm가 회복 시 매수(코드기본 off). 롤백=off
+    "engine.entry_reclaim_dip_pct": 0.2,            # arm가 대비 추가 하락폭(%) — 민감도 0.1~0.5 모두 양(+)
+    "engine.entry_reclaim_window_min": 30,          # arm 유효시간(분)
+    "engine.entry_reclaim_cutoff": "14:30",         # 이후 arm·매수 없음
+    "engine.breakeven_mode": "enforce",             # 본전보호(코드기본 off). 롤백=off
+    "engine.breakeven_trigger_rate": 0.01,          # 고점 진입가+1% → 손절선 본전으로 (민감도 0.8~1.2 모두 개선)
+    "engine.breakeven_lock_rate": 0.0023,           # 본전 손절가 = 진입가×(1+왕복비용)
     # ── 종목선정: 수급 1차(2026-09-28 PM 승격) ──
     "selection.supply_demand_mode": "enforce",      # 코드기본 shadow
     "selection.supply_demand_weight": 0.6,          # 결합점수=(1-w)*base+w*수급 (코드기본 0.6)
@@ -326,6 +334,8 @@ CONFORMANCE: list[tuple[str, str | None, str | None]] = [
     ("수급 1차 선정", "_compute_supply_score", "selection.supply_demand_mode"),
     ("거래량마름 진입게이트", "_vol_dryup_from_bars", "engine.entry_vol_dryup_mode"),
     ("ABCD 눌림목 진입엔진", "detect_abcd_entry", "engine.abcd_entry_mode"),
+    ("되찾기 매수 타이밍", "_reclaim_gate", "engine.entry_reclaim_mode"),
+    ("본전 보호 매도", "_breakeven_stop_price", "engine.breakeven_mode"),
 ]
 
 

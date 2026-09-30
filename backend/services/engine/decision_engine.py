@@ -256,6 +256,62 @@ def _restore_positions_from_db(trade_date: str, candidate_symbols: list[str]) ->
     logger.info("SUCCESS: [S6] 포지션 복원 완료 count=%d trade_date=%s", restored, trade_date)
 
 
+# 되찾기(reclaim) 매수 대기 상태 — symbol → {date, price, low, at(datetime), bar_hms}. 프로세스 메모리
+# (재기동 시 초기화 = 다시 arm). `_reclaim_gate`만 읽고 쓴다.
+_RECLAIM_ARMS: dict[str, dict[str, Any]] = {}
+
+
+def _reclaim_bars_low(symbol: str, trade_date: str, since_hms: str) -> float | None:
+    """arm 이후 저장된 10초봉 저가 최소값(틱이 게이트 쿨다운으로 안 들어온 구간 보완)."""
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT MIN(low) AS lo FROM intraday_bars WHERE trade_date=? AND symbol=? "
+                "AND bar_ts >= ? AND low > 0",
+                (trade_date, symbol, since_hms),
+            ).fetchone()
+        return float(row["lo"]) if row and row["lo"] else None
+    except Exception:
+        return None
+
+
+def _reclaim_gate(symbol: str, price: float, now: datetime | None = None) -> tuple[bool, str]:
+    """되찾기 매수 판정. (True, 설명)=지금 매수 / (False, 상태)=대기.
+
+    설정: `engine.entry_reclaim_dip_pct`(0.2 — arm가 대비 이만큼 더 밀려야 함) ·
+    `engine.entry_reclaim_window_min`(30 — arm 유효시간, 백테스트 180×10초봉) ·
+    `engine.entry_reclaim_cutoff`("14:30" — 이후 신규 arm·매수 없음, 백테스트와 동일).
+    """
+    now = now or _now_kst()
+    today = now.strftime("%Y-%m-%d")
+    if now.strftime("%H:%M") >= _get_setting_str("engine.entry_reclaim_cutoff", "14:30"):
+        _RECLAIM_ARMS.pop(symbol, None)
+        return False, "cutoff"
+    try:
+        dip = float(_get_setting_str("engine.entry_reclaim_dip_pct", "0.2")) / 100.0
+        window = float(_get_setting_str("engine.entry_reclaim_window_min", "30"))
+    except (TypeError, ValueError):
+        dip, window = 0.002, 30.0
+    arm = _RECLAIM_ARMS.get(symbol)
+    if arm and (arm["date"] != today or (now - arm["at"]).total_seconds() > window * 60):
+        arm = None
+    if not arm:
+        _RECLAIM_ARMS[symbol] = {"date": today, "price": price, "low": price, "at": now,
+                                 "bar_hms": now.strftime("%H%M%S")}
+        return False, "armed"
+    lows = [arm["low"], price]
+    bar_low = _reclaim_bars_low(symbol, today, arm["bar_hms"])
+    if bar_low:
+        lows.append(bar_low)
+    arm["low"] = min(lows)
+    if arm["low"] < arm["price"] * (1 - dip) and price >= arm["price"]:
+        _RECLAIM_ARMS.pop(symbol, None)
+        return True, f"arm={arm['price']:.0f} low={arm['low']:.0f}"
+    if arm["low"] < arm["price"] * (1 - dip):
+        return False, f"dipped(low={arm['low']:.0f}<arm={arm['price']:.0f})"
+    return False, "waiting_dip"
+
+
 class DecisionEngine:
     """S6: 실시간 tick을 받아 RulePack 조건을 평가하고 매수 신호를 생성한다."""
 
@@ -1266,6 +1322,28 @@ class DecisionEngine:
                     return
         except Exception as exc:
             logger.warning("WARN: [S6] conviction 품질게이트 실패(fail-open) symbol=%s — %s", symbol, exc)
+
+        # ⑤ 되찾기(reclaim) 매수 타이밍(2026-10-01, exit 재시뮬 검증) — 눌림 "위치" 조건을 다 통과해도
+        # 즉시 사지 않고 arm(대기) → 한 번 더 밀렸다가(-dip) arm가격을 되찾는 순간 매수 = 지지 확인.
+        # 승리조건 41건: 즉시매수 +0.165% → 되찾기+본전보호 +0.50~0.63%(t 2.29). 즉시매수는 이긴 거래도
+        # 42%가 사자마자 -1% 먼저 빠짐(바닥 전 매수). ABCD(자체가 반등패턴)·교체매매·모멘텀은 우회.
+        if not _is_momentum and not _abcd_pass and not matched.get("replacement"):
+            try:
+                _rc_mode = _get_setting_str("engine.entry_reclaim_mode", "off").lower()
+                if _rc_mode in ("shadow", "enforce"):
+                    _rc_ok, _rc_state = _reclaim_gate(symbol, price)
+                    if not _rc_ok:
+                        if _rc_mode == "enforce":
+                            logger.info("INFO: [S6] WAIT 되찾기 대기(%s) symbol=%s price=%.0f",
+                                        _rc_state, symbol, price)
+                            return
+                        logger.info("SHADOW: [S6] 되찾기 미충족(로그만·매수진행) state=%s symbol=%s",
+                                    _rc_state, symbol)
+                    else:
+                        logger.info("INFO: [S6] 되찾기 확인 — 매수 symbol=%s price=%.0f %s",
+                                    symbol, price, _rc_state)
+            except Exception as exc:
+                logger.warning("WARN: [S6] 되찾기 게이트 실패(fail-open) symbol=%s — %s", symbol, exc)
 
         today = _today_kst()
         signal_id = str(uuid.uuid4())

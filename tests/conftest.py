@@ -34,3 +34,16 @@ def _stub_shadow_sensing_live_db_write(monkeypatch):
     import backend.services.engine.intraday_regime_monitor as irm
 
     monkeypatch.setattr(irm, "_persist_and_shadow_sensing", lambda *a, **k: None, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _neutralize_live_timing_gates(monkeypatch):
+    """(C) 되찾기 매수 게이트·본전보호는 **라이브 DB 설정**(enforce)을 직접 읽는다. 기존 테스트가
+    라이브 설정에 따라 흔들리지 않게 기본 무력화(통과·무영향). 전용 테스트(test_timing_gates)는
+    import 시점에 잡은 원본 함수를 복원해 검증한다.
+    """
+    import backend.services.engine.decision_engine as de
+    import backend.services.engine.position_manager as pm
+
+    monkeypatch.setattr(de, "_reclaim_gate", lambda *a, **k: (True, "test-bypass"), raising=False)
+    monkeypatch.setattr(pm, "_breakeven_stop_price", lambda *a, **k: 0.0, raising=False)

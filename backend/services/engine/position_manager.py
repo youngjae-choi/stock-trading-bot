@@ -36,7 +36,27 @@ _DEFAULT_RULE = {
     "profile_assigned": "MID_VOL",
 }
 
-EXIT_REASONS = ("INITIAL_STOP_LOSS", "TRAILING_STOP", "TIME_EXIT", "DAILY_FORCE_EXIT", "EMERGENCY_HALT", "MANUAL_EXIT")
+EXIT_REASONS = ("INITIAL_STOP_LOSS", "BREAKEVEN_STOP", "TRAILING_STOP", "TIME_EXIT", "DAILY_FORCE_EXIT", "EMERGENCY_HALT", "MANUAL_EXIT")
+
+
+def _breakeven_stop_price(entry_price: float, high: float) -> float:
+    """본전 보호 손절가 — 미발동/OFF/실패면 0.0(무영향).
+
+    `engine.breakeven_mode`(off|enforce, 코드기본 off) · `engine.breakeven_trigger_rate`(0.01) ·
+    `engine.breakeven_lock_rate`(0.0023=왕복비용). high ≥ entry×(1+trigger)면 entry×(1+lock).
+    """
+    try:
+        from ..settings_store import get_setting
+
+        if str(get_setting("engine.breakeven_mode", "off") or "off").lower() != "enforce":
+            return 0.0
+        trigger = float(get_setting("engine.breakeven_trigger_rate", 0.01) or 0.01)
+        lock = float(get_setting("engine.breakeven_lock_rate", 0.0023) or 0.0)
+        if entry_price > 0 and high >= entry_price * (1 + trigger):
+            return entry_price * (1 + lock)
+    except Exception:
+        return 0.0
+    return 0.0
 
 # 강제청산 시각 하드 실링 (P1-T1, 2026-06-12 사고 대응).
 # 15:20은 장마감 동시호가 시작 시각이고 KIS 모의투자는 동시호가 체결을 시뮬레이션하지
@@ -845,6 +865,9 @@ class PositionManager:
         # active_stop_price는 절대 하향 불가
         prev_active = _to_float(position["active_stop_price"])
         new_active = max(prev_active, position["initial_stop_price"], new_trailing_stop if position["trailing_active"] else 0)
+        # 본전 보호(2026-10-01, exit 재시뮬 검증): 고점이 진입가 +trigger(1%) 이상 가면 손절선을
+        # 진입가 +lock(왕복비용 0.23%)으로 상향 — 올랐다가 -4% 손절까지 되돌리는 손실(패자 27%) 차단.
+        new_active = max(new_active, _breakeven_stop_price(entry_price, new_high))
         position["active_stop_price"] = new_active
 
         trailing_state_changed = bool(position["trailing_active"]) != was_trailing_active
@@ -931,6 +954,9 @@ class PositionManager:
         if price <= active_stop:
             if position["trailing_active"]:
                 return "TRAILING_STOP"
+            # 손절선이 진입가 이상 = 본전 보호로 상향된 선(재기동 후에도 영속 stop으로 판별).
+            if active_stop >= _to_float(position.get("entry_price")) > 0:
+                return "BREAKEVEN_STOP"
             return "INITIAL_STOP_LOSS"
 
         # 3. 시간 손절(TIME_EXIT, 최대 보유 시간 초과)은 2026-06-02 제거됨 (PM 결정).
