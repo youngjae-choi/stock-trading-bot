@@ -181,7 +181,7 @@ def test_b2_ccld_field_missing_alerts_after_threshold(db, monkeypatch):
     _mock_kis_empty_output1(monkeypatch)
 
     # output2가 체결필드 없는 dict를 반환 (keys는 있지만 tot_ccld_qty 부재)
-    async def fake_out2(symbol, date_str, order_no):
+    async def fake_out2(symbol, date_str, order_no, **_kw):
         return {"odno": order_no, "prdt_name": "ETN"}
 
     monkeypatch.setattr(fp, "_fetch_symbol_output2", fake_out2)
@@ -202,7 +202,7 @@ def test_b2_ccld_field_missing_alerts_after_threshold(db, monkeypatch):
     assert len(alerts) == 1
 
     # 해소: output2가 체결수량을 주면 카운터/알림 상태 리셋
-    async def fake_out2_filled(symbol, date_str, order_no):
+    async def fake_out2_filled(symbol, date_str, order_no, **_kw):
         return {"odno": order_no, "tot_ccld_qty": "5", "tot_ord_qty": "5", "pchs_avg_pric": "2000"}
 
     monkeypatch.setattr(fp, "_fetch_symbol_output2", fake_out2_filled)
@@ -280,3 +280,69 @@ def _get_order(oid):
     with get_connection() as c:
         row = c.execute("SELECT * FROM trading_orders WHERE id = ?", (oid,)).fetchone()
     return dict(row)
+
+
+# ── 체결가 오염 수정(2026-10-06): 방향별 조회 + 타주문 기록분 차감 ─────────────────────
+
+def _insert_fill(order_id, symbol, side, qty, price, day):
+    from backend.services.db import get_connection
+
+    with get_connection() as c:
+        c.execute(
+            "INSERT INTO fills (id, order_id, broker_fill_id, symbol, side, quantity, price, fee, tax, filled_at, raw_json) "
+            "VALUES (?, ?, '', ?, ?, ?, ?, 0, 0, ?, '{}')",
+            (str(uuid.uuid4()), order_id, symbol, side, qty, price, f"{day}T10:00:00+09:00"),
+        )
+
+
+def test_isolate_subtracts_other_same_side_fills(db):
+    """396300 실사례: 매도 2건(1051@6324, 1052@6199) 합계 2103·13,168,230 → 두번째 주문은 자기분만."""
+    from backend.services.engine import fill_poller as fp
+
+    day = _today()
+    first = _insert_order("396300", side="sell", qty=1051, price=6200.0, status="filled", kis_order_no="A1")
+    _insert_fill(first, "396300", "sell", 1051, 6324.0, day)
+    second = {"id": "o2", "symbol": "396300", "side": "sell", "qty": 1052, "price": 0}
+    out2 = {"tot_ccld_qty": "2103", "tot_ccld_amt": str(1051 * 6324 + 1052 * 6199)}
+    iso = fp._isolate_order_fill(second, out2, day.replace("-", ""))
+    assert iso["tot_ccld_qty"] == "1052"
+    assert abs(float(iso["pchs_avg_pric"]) - 6199) < 0.01
+
+
+def test_isolate_unfilled_order_reports_zero(db):
+    """방향합계가 전부 타주문 기록분이면 이번 주문은 미체결(0) — '체결 오판'(008970 재편입) 방지."""
+    from backend.services.engine import fill_poller as fp
+
+    day = _today()
+    first = _insert_order("008970", side="sell", qty=100, price=1500.0, status="filled", kis_order_no="B1")
+    _insert_fill(first, "008970", "sell", 100, 1441.0, day)
+    iso = fp._isolate_order_fill({"id": "o9", "symbol": "008970", "side": "sell", "qty": 100},
+                                 {"tot_ccld_qty": "100", "tot_ccld_amt": "144100"}, day.replace("-", ""))
+    assert iso["tot_ccld_qty"] == "0"
+
+
+def test_isolated_buy_uses_actual_fill_price(db):
+    """격리된 매수는 주문가(6200)가 아닌 실제 체결평균가(6195)로 기록."""
+    from backend.services.engine import fill_poller as fp
+
+    order = {"id": "b1", "symbol": "396300", "side": "buy", "qty": 2103, "price": 6200.0, "kis_order_no": "X"}
+    iso = fp._isolate_order_fill(order, {"tot_ccld_qty": "2103", "tot_ccld_amt": "13028070"}, _today().replace("-", ""))
+    data = fp._make_output2_fill_data(order, iso)
+    assert abs(float(data["avg_prvs"]) - 6194.99) < 0.01
+
+
+def test_fetch_passes_side_code(monkeypatch):
+    """조회는 매수(02)/매도(01) 구분으로 나가야 한다(전체 00 합산 오염 금지)."""
+    import asyncio as _a
+    from backend.services.engine import fill_poller as fp
+    from backend.services.kis.common import client as kc
+
+    seen = {}
+
+    async def fake_request(**kw):
+        seen.update(kw["params"])
+        return {"output2": {"tot_ccld_qty": "1"}}
+
+    monkeypatch.setattr(kc.kis_client, "request", fake_request)
+    _a.run(fp._fetch_symbol_output2("005930", "20261006", "N1", side=fp._SIDE_CODE["sell"]))
+    assert seen["SLL_BUY_DVSN_CD"] == "01"

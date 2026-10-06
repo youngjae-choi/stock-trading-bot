@@ -147,15 +147,25 @@ def flush_bars() -> int:
         raise
 
 
-def cleanup_old_bars(retention_days: int = 30) -> int:
+def cleanup_old_bars(retention_days: int | None = None) -> int:
     """보존기간을 넘긴 봉을 삭제한다(trade_date < 오늘-retention).
 
     Args:
-        retention_days: 보존 일수(기본 30일).
+        retention_days: 보존 일수. None이면 설정 `data.intraday_bars_retention_days`(기본 0).
+            **0 이하 = 삭제 안 함(영구 보존).** 2026-10-06 PM: 30일 자동삭제가 전략 검증 데이터를
+            매일 지워 19일치만 남았던 문제 — 기본을 영구 보존으로 전환.
 
     Returns:
         삭제한 행 수.
     """
+    if retention_days is None:
+        try:
+            from ..settings_store import get_setting
+            retention_days = int(get_setting("data.intraday_bars_retention_days", 0) or 0)
+        except Exception:
+            retention_days = 0
+    if int(retention_days) <= 0:
+        return 0
     cutoff = (datetime.now(_KST) - timedelta(days=int(retention_days))).strftime("%Y-%m-%d")
     _ensure_table()
     with get_connection() as conn:

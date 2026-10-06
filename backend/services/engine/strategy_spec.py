@@ -59,7 +59,8 @@ INTENT_SETTINGS: dict[str, object] = {
     "momentum.enabled": False,                      # 모멘텀 진입 OFF(2026-09-18 꼭지추격 손실→09-23 pullback모드도 반증, 코드기본 True)
     "momentum.entry_mode": "pullback",              # (enabled=false라 미사용)
     # ── 매수·매도 타이밍(2026-10-01 exit 재시뮬: 승리조건 41건 +0.165%→+0.50~0.63%) ──
-    "engine.entry_reclaim_mode": "enforce",         # 되찾기 매수: arm→-dip→arm가 회복 시 매수(코드기본 off). 롤백=off
+    "engine.entry_paused": True,                    # ⛔ 신규매수 일시정지(2026-10-06 PM (A) — 전 구독종목 재현에서 전 변형 손실=엣지 미증명). 신호는 SHADOW_PAUSED 로그만. 재개=false
+    "engine.entry_reclaim_mode": "off",             # 되찾기 매수 OFF(2026-10-06: 라이브 구현 결함 + 넓은 표본 -0.60~-0.74%로 즉시매수보다 나쁨). 코드기본 off
     "engine.entry_reclaim_dip_pct": 0.2,            # arm가 대비 추가 하락폭(%) — 민감도 0.1~0.5 모두 양(+)
     "engine.entry_reclaim_window_min": 30,          # arm 유효시간(분)
     "engine.entry_reclaim_cutoff": "14:30",         # 이후 arm·매수 없음

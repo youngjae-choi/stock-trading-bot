@@ -1291,6 +1291,12 @@ class DecisionEngine:
         except Exception:
             pass
         now_hm = _now_kst().strftime("%H:%M")
+        # 신규매수 일시정지(2026-10-06 PM (A) — 엣지 미증명 동안 실주문 0, 신호는 기록). 보유 매도·
+        # 데이터 수집은 무영향. 전 진입경로(눌림·ABCD·교체·모멘텀)가 이 길목을 지난다. 롤백=false.
+        if _get_setting_str("engine.entry_paused", "false").lower() in ("true", "1", "yes"):
+            logger.info("SHADOW_PAUSED: [S6] 신규매수 일시정지 — 신호만 기록(무매매) symbol=%s price=%.0f",
+                        symbol, price)
+            return
         if now_hm < exec_start:
             try:
                 _vw = self._bar_engine.get_vwap(symbol)

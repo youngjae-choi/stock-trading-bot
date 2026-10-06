@@ -49,7 +49,7 @@ def _setup_poll_output2(monkeypatch, order, out2, *, already_filled=False):
 
     monkeypatch.setattr(fp, "get_daily_order_inquiry", _inquiry)
 
-    async def _fetch_out2(_symbol, _date_str, _order_no):
+    async def _fetch_out2(_symbol, _date_str, _order_no, **_kw):
         return out2
 
     monkeypatch.setattr(fp, "_fetch_symbol_output2", _fetch_out2)

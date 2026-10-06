@@ -1552,7 +1552,7 @@ async def job_postprocess_pipeline() -> None:
         await job_review_audit()
         logger.info("SUCCESS: [PostProcess] S10 Review & Audit 호출 완료")
 
-        # 10초봉 잔여 flush + 보존기간(30일) 초과분 정리 — 실패해도 후처리 계속
+        # 10초봉 잔여 flush + 보존기간 초과분 정리(data.intraday_bars_retention_days, 기본 0=영구보존) — 실패해도 후처리 계속
         try:
             from .engine import bar_store
             _bs_saved = bar_store.flush_bars()

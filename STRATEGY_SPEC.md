@@ -18,15 +18,28 @@
 
 ## A. 의도 — 이렇게 동작해야 한다
 
+> **⛔ 2026-10-06 PM 결정 (A): 신규 매수 일시정지 → 데이터·검증 기반 재구축.**
+> 진단: 7/23 1억 → 10/02 8,017만(-19.8%). 전 유니버스 재시뮬(360 종목·일)에서 현행 진입은 즉시매수 -0.29%·되찾기 -0.60%(t -3.08)
+> = **전략에 검증된 엣지가 없다.** 시스템 버그(되찾기 구현 결함·체결가 오염·유니버스 거래량 누락)가 손실을 키우고 측정을 망가뜨렸다.
+> 메타 원인 = 검증 데이터 19일(10초봉 자동삭제)로 109회 전략 수정 → 표본 위에서 과적합.
+> - `engine.entry_paused=true` — `_emit_signal`이 신호만 로그(`SHADOW_PAUSED`)하고 **매수 0**. 매도·손절·강제청산은 그대로. 재개=false.
+> - `engine.entry_reclaim_mode=off` — 10-01 되찾기 구현이 arm 후 반등 확인 없이 체결되는 결함(백테스트와 다른 동작). 재설계 전까지 off.
+> - `data.intraday_bars_retention_days=0` — 10초봉 **삭제 중지**(기존 19일치는 `data/archive/intraday_bars_upto_20261006.sqlite3` 백업).
+> - 버그 3건 수정: 체결조회 output2 오염(매수/매도 합산·타주문 혼입 → `fill_poller._isolate_order_fill`) · 등락률 순위 거래량 누락(`universe_service`) · 되찾기 off.
+> - **과거 시세 수집기 신설**: `scripts/collect_market_history.py`(cron 30분, 잠금 단일실행) → `data/market/`
+>   전 보통주 일봉(2년, 수정주가) + **전일 거래대금 상위 500 1분봉**(KIS 주식일별분봉조회, ~1년 롤링이라 오래된 날부터).
+> - **재개 조건(사전 등록):** 수집 데이터로 가설을 먼저 적고 → 표본 외(out-of-sample) 검증 → 수백 건·t>2 → 그때만 모의 재개.
+>
 > **🔍 전수점검 정합(2026-09-30):** 코드·라이브 DB 대조로 A절을 **실제 동작 그대로** 교정했다(불일치 20+건 해소).
 > 근거·논문 비교 보고서 = [`docs/STRATEGY_AUDIT_20260930.md`](docs/STRATEGY_AUDIT_20260930.md).
 >
 > **⚠ 지금 켜져 있는 실험 설정 (모의계좌 — 되돌릴 때 여기부터):**
 > | 설정 | 현재 | 원래/롤백 | 켠 날·이유 |
 > |---|---|---|---|
+> | `engine.entry_paused` | **true**(매수 정지) | false | 10-06 PM (A) 재구축 — 위 ⛔ |
 > | `engine.abcd_entry_mode` | **enforce**(상승장 한정 `abcd_enforce_regimes=up`) | shadow | 09-28 모의 실험 |
 > | `engine.entry_vol_dryup_mode` | **enforce** | shadow | 10-01 승리조건(표본 41건, 통계적 유의성 미달 — §A-8) |
-> | `engine.entry_reclaim_mode` | **enforce** | off | 10-01 되찾기 매수 타이밍(§A-3) |
+> | `engine.entry_reclaim_mode` | **off** (10-06 결함으로 내림) | off | 10-01 되찾기 매수 타이밍(§A-3) |
 > | `engine.breakeven_mode` | **enforce** | off | 10-01 본전 보호 매도(§A-4) |
 >
 > **✅ 10-01 장전 적용(PM):** 하락전환 래치 **복원**(`transition_response_active=true`, 래치 잔재 리셋) · ABCD **all→up** · VWAP밴드 레짐 **장중 SET 추종**(`engine.gate_regime_source=intraday`) · 인버스 예산상한 **버그 수정**. 09-29 하락장 테스트 종료.
@@ -147,7 +160,7 @@ base 점수 = `selection.change_weight`×등락률점수 + `selection.surge_weig
 | E6 상승장 밴드 | `uptrend_entry_mode`·`entry_vwap_ceiling_riskon`·`entry_vwap_floor_riskon`·`entry_require_strength_riskon` | **off**·1.0·-3.0·true | 켜면 상승장 밴드를 [floor, ceiling]로 교체 + 강세(시가대비>0) 요건. 09-23 실현손익 반증으로 OFF. ⚠ **코드기본이 enforce** — DB row 삭제 시 켜짐(드리프트 감시 등록) |
 | **바닥(falling knife)** | `entry_min_vwap_dist_pct` | **-5.0** | VWAP **5%↓ 딥눌림**(급락후 매수) 차단 — 전 레짐 공통(BackDB: <-5% 승률↓·순마이너스, 극심<-8은 44%). 09-04 300120 -11.3% 급락후매수 손실 재발방지 |
 | **거래량 마름(P2) ★승부처** | `entry_vol_dryup_mode`·`entry_vol_dryup_max` | **enforce**·**1.2** | 눌림 통과분 중 진입 직전 거래량이 급증(최근5봉/직전10봉 > 1.2, **10초봉 기준=최근50초/직전100초**, 봉<15면 fail-open)이면 **투매/분산**으로 보고 차단 — 건전한 눌림(거래량 마름)만 허용. **exit_backtest(청산 재시뮬) 확정(2026-10-01): 이 필터가 흑자/적자를 가름.** vwap≤-2 단독=순 **-0.605%**(적자), vwap≤-1 **+ 거래량마름**=순 **+0.165~0.200%**(흑자·승률 66~68%·~42거래). 즉 **거래량 터질 때(투매) 매수=패, 마를 때(건전눌림)=승.** R:R(청산)은 재설계해도 개선 없음(현행 최적)—진짜 레버는 이 진입필터. 2026-10-01 shadow→**enforce**(승리조건). 롤백=shadow |
-| **되찾기 매수 타이밍 ★** | `entry_reclaim_mode`·`entry_reclaim_dip_pct`·`entry_reclaim_window_min`·`entry_reclaim_cutoff` | **enforce**·0.2·30·14:30 | **위치 조건(위 게이트 전부) 통과 즉시 사지 않는다.** 첫 통과 = **arm(대기, 가격 기록)** → arm가 대비 **-0.2% 더 밀렸다가**(틱 + 저장 10초봉 저가) **arm가를 되찾는 순간 매수**(=지지 확인). 30분 안 되찾으면 만료→재arm, 14:30 이후 arm 없음. ABCD·교체매매·모멘텀 우회. 근거(exit 재시뮬): 즉시매수는 **이긴 거래도 42%가 사자마자 -1% 먼저 빠짐**(바닥 전 매수). 승리조건 41건 즉시 +0.165% → 되찾기 +0.26%, **+본전보호 +0.63%(t 2.29)**, dip 0.1~0.5% 모두 양(+). `decision_engine._reclaim_gate`. 롤백=off. ⚠ 되찾는 순간에도 위 게이트(거래량마름 등)를 다시 통과해야 하므로 백테스트보다 진입이 적을 수 있음 |
+| **되찾기 매수 타이밍 (10-06 off)** | `entry_reclaim_mode`·`entry_reclaim_dip_pct`·`entry_reclaim_window_min`·`entry_reclaim_cutoff` | **off**·0.2·30·14:30 | ⚠ 10-06: 전 유니버스 재시뮬에서 -0.60%(t -3.08)·구현 결함 → off. 아래는 10-01 설계 기록. **위치 조건(위 게이트 전부) 통과 즉시 사지 않는다.** 첫 통과 = **arm(대기, 가격 기록)** → arm가 대비 **-0.2% 더 밀렸다가**(틱 + 저장 10초봉 저가) **arm가를 되찾는 순간 매수**(=지지 확인). 30분 안 되찾으면 만료→재arm, 14:30 이후 arm 없음. ABCD·교체매매·모멘텀 우회. 근거(exit 재시뮬): 즉시매수는 **이긴 거래도 42%가 사자마자 -1% 먼저 빠짐**(바닥 전 매수). 승리조건 41건 즉시 +0.165% → 되찾기 +0.26%, **+본전보호 +0.63%(t 2.29)**, dip 0.1~0.5% 모두 양(+). `decision_engine._reclaim_gate`. 롤백=off. ⚠ 되찾는 순간에도 위 게이트(거래량마름 등)를 다시 통과해야 하므로 백테스트보다 진입이 적을 수 있음 |
 | **ABCD 눌림목(별도 진입엔진)** | `engine.abcd_entry_mode`·`engine.abcd_enforce_regimes` | **enforce**·**up**(모의 실험) | Aziz ABCD(A스윙고점→B눌림저점→C higher-low 반등, 임펄스 2%·눌림 1~5%, 09:35~13:30) — **상승장 한정**(`up`; 09-29~09-30 `all` 실험 후 10-01 복귀) + 수급리더(`supply_score≥0.5`, 중립·조회실패 포함) 성립 시 **VWAP 천장·바닥·거래량마름을 전부 우회**해 매수(시가대비 게이트는 미우회). 청산=상승장 regime_set 트레일링. **전 유니버스 백테스트는 손실(상승장 2.6~24%)** 이나 수급리더 한정 효과는 과거검증 불가 → **모의계좌 라이브 실험**(PM 승인 2026-09-28). 롤백=abcd_entry_mode=shadow/off. 감시=scripts/abcd_shadow_review.py. `backend/services/engine/abcd_pattern.py` |
 | **시가대비 추격 금지** | `entry_change_from_open_mode`·`entry_max_change_from_open_pct` | **shadow**·**+2.0** | 진입가가 **오늘 시가**보다 임계% 초과(갭 추격)면 차단. BackDB 335건: change_from_open>+2% = 승률 **33%**·순 -0.95%(최악). **VWAP 눌림과 독립**(눌림 안에서도 시가 위 48% vs 시가 아래 69%). 기존 등락률게이트는 전일종가(prdy_ctrt) 대비라 이걸 못 걸렀음. 기본 shadow(로그만)→관찰 후 enforce (2026-09-05 엣지검증) |
 | 고점추격 상한 | `max_price_change_pct` | 4.0 | **전일종가 대비**(prdy_ctrt) +4% 초과 매수 차단 |
@@ -318,9 +331,9 @@ base 점수 = `selection.change_weight`×등락률점수 + `selection.surge_weig
 ## B. 실측 — 지금 실제로 이렇게 돈다 (자동 생성, 손대지 마라)
 
 <!-- AUTO:LIVE START -->
-_자동 생성: 2026-09-30 22:52:04 · `scripts/strategy_spec_sync.py` · 손대지 마라._
+_자동 생성: 2026-10-06 10:56:36 · `scripts/strategy_spec_sync.py` · 손대지 마라._
 
-**현재 활성 레짐:** `neutral` (trigger=intraday, at=2026-09-30T11:00:03)
+**현재 활성 레짐:** `neutral` (trigger=intraday, at=2026-10-06T10:00:05)
 
 **전략 게이트/설정 (system_settings 실측 · 출처):**
 
@@ -352,7 +365,8 @@ _자동 생성: 2026-09-30 22:52:04 · `scripts/strategy_spec_sync.py` · 손대
 | `engine.entry_vwap_floor_riskon` | `-3.0` | DB |
 | `momentum.enabled` | `False` | DB |
 | `momentum.entry_mode` | `pullback` | DB |
-| `engine.entry_reclaim_mode` | `enforce` | DB |
+| `engine.entry_paused` | `True` | DB |
+| `engine.entry_reclaim_mode` | `off` | DB |
 | `engine.entry_reclaim_dip_pct` | `0.2` | DB |
 | `engine.entry_reclaim_window_min` | `30` | DB |
 | `engine.entry_reclaim_cutoff` | `14:30` | DB |
@@ -460,7 +474,7 @@ _드리프트 0건 (아래 C절 참조)_
 ## C. 드리프트 체크 — 실측이 의도를 벗어났나 (자동 생성, 손대지 마라)
 
 <!-- AUTO:DRIFT START -->
-_자동 생성: 2026-09-30 22:52:04_
+_자동 생성: 2026-10-06 10:56:36_
 
 ✅ **드리프트 없음** — 실측이 의도와 일치한다. 시스템이 사양대로 동작 중.
 <!-- AUTO:DRIFT END -->

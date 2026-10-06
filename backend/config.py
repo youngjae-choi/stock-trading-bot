@@ -10,6 +10,13 @@ class Settings(BaseSettings):
     KIS_APP_KEY: str = ""        # 한국투자증권 앱 키
     KIS_APP_SECRET: str = ""     # 한국투자증권 앱 시크릿
     KIS_URL: str = "https://openapi.koreainvestment.com:9443" # 실전/모의 URL
+    # 시세 데이터 수집 전용 키(선택, 2026-10-06) — 실전계좌 앱키를 넣으면 과거 분봉/일봉 수집이
+    # 매매 키(모의)와 별도 호출한도(실전 ~20rps)로 돈다. 주문에는 절대 쓰지 않는다(조회 전용).
+    # 비어 있으면 수집기는 매매 키(KIS_APP_KEY·KIS_URL)를 저속(2rps)으로 쓴다.
+    KIS_DATA_APP_KEY: str = ""
+    KIS_DATA_APP_SECRET: str = ""
+    KIS_DATA_URL: str = "https://openapi.koreainvestment.com:9443"
+    KIS_DATA_RPS: Optional[float] = None
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_CHAT_ID: str = ""
 

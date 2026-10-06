@@ -250,6 +250,9 @@ async def get_price_rank(
                 "name": str(_pick(row, *_NAME_KEYS, default="")),
                 "price": _pick_int(row, _PRICE_KEYS),
                 "change_rate": _pick_float(row, _CHANGE_RATE_KEYS),
+                # 2026-10-06: volume 누락으로 등락률/반등 순위 종목이 S3 '유동성 없음'(vol=0·amt=0)으로
+                # 전량 탈락하던 버그(후보 9~21개). 등락률 순위 응답의 acml_vol을 담는다.
+                "volume": _pick_int(row, _VOLUME_KEYS),
                 "trade_amount": _pick_int(row, _TRADE_AMOUNT_KEYS),
             }
         )

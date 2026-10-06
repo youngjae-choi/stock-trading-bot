@@ -443,13 +443,23 @@ def _mark_order_filled(order: dict[str, Any], kis_fill_data: dict[str, Any]) -> 
         )
 
 
-async def _fetch_symbol_output2(symbol: str, date_str: str, order_no: str) -> dict[str, Any]:
+_SIDE_CODE = {"sell": "01", "buy": "02"}
+
+
+async def _fetch_symbol_output2(symbol: str, date_str: str, order_no: str, side: str = "00") -> dict[str, Any]:
     """종목+날짜+주문번호 지정 KIS output2 조회 (모의투자 output1 미지원 환경 대응).
+
+    ⚠ output2는 **개별 주문이 아니라 조회조건 전체의 합계**다(모의투자는 ODNO 필터도 무시).
+    side="00"(전체)이면 같은 날 같은 종목의 매수+매도가 합산돼 매도가가 평균으로 오염되고,
+    미체결 매도가 매수 체결수량 때문에 '체결'로 오판된다(2026-10-06 확인: 396300 전체 6228 /
+    매도 6261 / 매수 6195). 호출부는 반드시 side(01=매도·02=매수)를 넘기고
+    `_isolate_order_fill`로 다른 주문분을 빼야 한다.
 
     Args:
         symbol: 종목코드 (PDNO).
         date_str: YYYYMMDD 형식 날짜.
         order_no: KIS 주문번호 (ODNO).
+        side: SLL_BUY_DVSN_CD — "01" 매도 · "02" 매수 · "00" 전체.
     Returns:
         KIS output2 dict (tot_ccld_qty, tot_ccld_amt, pchs_avg_pric 등).
     """
@@ -465,7 +475,7 @@ async def _fetch_symbol_output2(symbol: str, date_str: str, order_no: str) -> di
             "ACNT_PRDT_CD": settings.KIS_ACNT_PRDT_CD,
             "INQR_STRT_DT": date_str,
             "INQR_END_DT": date_str,
-            "SLL_BUY_DVSN_CD": "00",
+            "SLL_BUY_DVSN_CD": side,
             "INQR_DVSN": "00",
             "PDNO": symbol,
             "CCLD_DVSN": "00",
@@ -491,11 +501,57 @@ async def _fetch_symbol_output2(symbol: str, date_str: str, order_no: str) -> di
     return {}
 
 
+def _isolate_order_fill(order: dict[str, Any], out2: dict[str, Any], date_str: str) -> dict[str, Any]:
+    """방향별 output2 합계에서 같은 날·같은 종목·같은 방향 **다른 주문**의 기록 체결을 빼
+    이번 주문의 누적 체결수량·금액만 남긴다(2026-10-06 체결가 오염 수정).
+
+    합계 − 타주문 기록분 > 주문수량이면 아직 기록 안 된 다른 체결이 섞인 것(같은 폴링에 여러 주문
+    체결) — 주문수량으로 클램프하고 평균가를 쓴다(경고 로그). 금액이 없으면 원본 반환(격리 불가).
+    """
+    if not out2 or str(_kis_value(out2, "tot_ccld_qty")).strip() == "":
+        return out2
+    tot_qty = _to_int(_kis_value(out2, "tot_ccld_qty"))
+    tot_amt = _to_float(_kis_value(out2, "tot_ccld_amt"))
+    if tot_amt <= 0 or tot_qty <= 0:
+        return out2
+    side = str(order.get("side") or "")
+    day = f"{date_str[0:4]}-{date_str[4:6]}-{date_str[6:8]}" if len(date_str) == 8 else date_str
+    other_qty, other_amt = 0, 0.0
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(quantity),0) AS q, COALESCE(SUM(quantity*price),0) AS a FROM fills "
+                "WHERE substr(symbol,-6)=substr(?,-6) AND side=? AND substr(filled_at,1,10)=? "
+                "AND COALESCE(order_id,'')<>?",
+                (str(order.get("symbol") or ""), side, day, str(order.get("id") or "")),
+            ).fetchone()
+        other_qty, other_amt = int(row["q"] or 0), float(row["a"] or 0.0)
+    except Exception as exc:
+        logger.warning("WARN: [FillPoller] 타주문 체결 차감 실패 — 합계 그대로 사용 order_id=%s reason=%s",
+                       order.get("id"), exc)
+    qty = tot_qty - other_qty
+    amt = tot_amt - other_amt
+    order_qty = _to_int(order.get("qty"))
+    isolated = dict(out2)
+    if qty <= 0 or amt <= 0:
+        isolated.update({"tot_ccld_qty": "0", "tot_ccld_amt": "0", "pchs_avg_pric": "0"})
+        return isolated
+    price = amt / qty
+    if order_qty > 0 and qty > order_qty:
+        logger.warning(
+            "WARN: [FillPoller] 방향합계에 미기록 타체결 포함 — 수량 클램프·평균가 사용 order_id=%s symbol=%s side=%s isolated_qty=%d order_qty=%d",
+            order.get("id"), order.get("symbol"), side, qty, order_qty)
+        qty = order_qty
+    isolated.update({"tot_ccld_qty": str(qty), "tot_ccld_amt": str(round(price * qty, 2)),
+                     "pchs_avg_pric": f"{price:.4f}", "_isolated": True})
+    return isolated
+
+
 def _make_output2_fill_data(order: dict[str, Any], out2: dict[str, Any]) -> dict[str, Any]:
     """output2 결과를 _mark_order_filled 호환 형식으로 변환한다.
 
-    buy limit 주문: DB 주문가(order.price) 사용.
-    sell/market 주문: output2.pchs_avg_pric 또는 tot_ccld_amt/tot_ccld_qty 사용.
+    `_isolate_order_fill`로 이 주문분만 격리된 out2면 매수·매도 모두 실제 체결평균가를 쓴다.
+    (격리 안 된 경우) buy limit 주문: DB 주문가(order.price) · sell/market: pchs_avg_pric 또는 금액/수량.
     """
     fill_qty = _to_int(out2.get("tot_ccld_qty") or order.get("qty"))
     order_qty = _to_int(order.get("qty"))
@@ -504,7 +560,7 @@ def _make_output2_fill_data(order: dict[str, Any], out2: dict[str, Any]) -> dict
     side = str(order.get("side") or "")
     order_price = _to_float(order.get("price") or "0")
 
-    if side == "buy" and order_price > 0:
+    if side == "buy" and order_price > 0 and not out2.get("_isolated"):
         fill_price = order_price
     else:
         fill_price = _to_float(out2.get("pchs_avg_pric") or "0")
@@ -852,7 +908,9 @@ async def poll_once(trade_date: str) -> dict[str, Any]:
                 continue
             try:
                 await asyncio.sleep(0.12)  # KIS rate limit 여유
-                out2 = await _fetch_symbol_output2(symbol, date_str, kis_order_no)
+                out2 = await _fetch_symbol_output2(
+                    symbol, date_str, kis_order_no, side=_SIDE_CODE.get(str(order.get("side") or ""), "00"))
+                out2 = _isolate_order_fill(order, out2, date_str)  # 매수+매도·타주문 합산 오염 제거
                 raw_ccld_qty = _kis_value(out2, "tot_ccld_qty") if out2 else ""
                 if out2 and str(raw_ccld_qty).strip() == "":
                     # 체결수량 필드 부재 — 부분체결 판정 불가, 섣부른 partial/filled 처리 금지.

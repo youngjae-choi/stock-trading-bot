@@ -27,3 +27,18 @@ def test_trade_amount_segmented_empty_falls_back_to_single_J(monkeypatch):
     r = asyncio.run(us.get_price_rank(sort_by="trade_amount", market_code="J", top_n=60))
     assert r["count"] >= 1
     assert r["items"][0]["symbol"] == "005930"
+
+
+def test_price_rank_items_carry_volume(monkeypatch):
+    """2026-10-06: 등락률 순위 item에 volume(acml_vol)이 없어 S3 '유동성 없음'으로 전량 탈락하던 버그."""
+    import asyncio
+    import backend.services.kis.domestic.universe_service as us
+
+    async def fake_request(**kw):
+        return {"rt_cd": "0", "output": [
+            {"stck_shrn_iscd": "005930", "hts_kor_isnm": "삼성전자", "stck_prpr": "70000",
+             "prdy_ctrt": "2.5", "acml_vol": "1234567"}]}
+
+    monkeypatch.setattr(us.kis_client, "request", fake_request)
+    res = asyncio.run(us.get_price_rank(sort_by="change_rate", market_code="STK", top_n=5))
+    assert res["items"][0]["volume"] == 1234567
