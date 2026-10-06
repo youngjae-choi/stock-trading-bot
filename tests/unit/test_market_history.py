@@ -65,3 +65,19 @@ def test_market_hours_pause_window():
     assert h.in_market_hours(datetime(2026, 10, 6, 10, 0, tzinfo=h.KST))
     assert not h.in_market_hours(datetime(2026, 10, 6, 16, 0, tzinfo=h.KST))
     assert not h.in_market_hours(datetime(2026, 10, 4, 10, 0, tzinfo=h.KST))  # 일요일
+
+
+def test_map_bounded_caps_in_flight():
+    """동시 요청 수가 n을 넘지 않고 전 항목을 처리한다(모의키 2 → 초당 한도 보호)."""
+    state = {"now": 0, "peak": 0, "seen": []}
+
+    async def fn(x):
+        state["now"] += 1
+        state["peak"] = max(state["peak"], state["now"])
+        await asyncio.sleep(0.01)
+        state["seen"].append(x)
+        state["now"] -= 1
+
+    asyncio.run(h._map_bounded(2, list(range(9)), fn))
+    assert state["peak"] == 2
+    assert sorted(state["seen"]) == list(range(9))

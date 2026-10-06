@@ -12,7 +12,7 @@ KIS `주식일별분봉조회`(FHKST03010230)는 문서상 '모의 미지원'이
 유니버스(분봉) = **전일** 거래대금 상위 N(룩어헤드 방지). 1분봉은 원주가(무수정).
 
 키: settings.KIS_DATA_APP_KEY(실전계좌, 조회 전용)가 있으면 그 키·도메인·고속(기본 15rps),
-없으면 매매 키(모의)를 저속(2rps)·장중 일시정지로 쓴다. 토큰은 data/market/.token_*.json(0600) 캐시(24h).
+없으면 매매 키(모의)를 저속(1rps)·장중 일시정지로 쓴다. 토큰은 data/market/.token_*.json(0600) 캐시(24h).
 주문 API는 호출하지 않는다.
 """
 from __future__ import annotations
@@ -104,8 +104,9 @@ def resolve_credentials() -> _Cred:
     if settings.KIS_DATA_APP_KEY and settings.KIS_DATA_APP_SECRET:
         return _Cred(settings.KIS_DATA_APP_KEY, settings.KIS_DATA_APP_SECRET, settings.KIS_DATA_URL,
                      float(settings.KIS_DATA_RPS or 15.0), False)
+    # 모의(VTS) 시세조회 실측 한도 ≈ 1건/초(2rps면 절반이 EGW00201 → 재시도로 실효 1건/초, 2026-10-06)
     return _Cred(settings.KIS_APP_KEY, settings.KIS_APP_SECRET, settings.KIS_URL,
-                 float(settings.KIS_DATA_RPS or 2.0), True)
+                 float(settings.KIS_DATA_RPS or 1.0), True)
 
 
 def in_market_hours(now: datetime | None = None) -> bool:
@@ -121,14 +122,26 @@ class DataClient:
         self._token: str | None = None
         self._exp = 0.0
         self._last = 0.0
+        self.throttled = 0                # EGW00201(초당 한도) 거절 횟수 — 진행 로그로 rps 적정성 확인
+        self._gate = asyncio.Lock()       # 요청 시작 간격(1/rps) 직렬화 — 응답 대기는 겹친다
+        self._tok_lock = asyncio.Lock()   # 동시 요청이 토큰을 중복 발급(EGW00133)하지 않게
         self._http = httpx.AsyncClient(timeout=15.0)
         tag = hashlib.sha256((self.cred.base_url + self.cred.key).encode()).hexdigest()[:10]
         self._cache = ROOT / f".token_{tag}.json"
+
+    @property
+    def concurrency(self) -> int:
+        """동시 요청 수. 응답 지연(~0.9s)이 간격보다 길어 직렬이면 rps가 1 근처에 갇힌다."""
+        return max(1, min(8, int(self.cred.rps)))
 
     async def close(self) -> None:
         await self._http.aclose()
 
     async def _token_get(self) -> str:
+        async with self._tok_lock:
+            return await self._token_get_locked()
+
+    async def _token_get_locked(self) -> str:
         if self._token and self._exp > time.time() + 600:
             return str(self._token)
         try:
@@ -160,10 +173,11 @@ class DataClient:
             if self.cred.pause_market_hours:
                 while in_market_hours():
                     await asyncio.sleep(60)  # 모의 키 공유 — 장중엔 매매 엔진 호출한도 양보
-            wait = self._last + 1.0 / self.cred.rps - time.monotonic()
-            if wait > 0:
-                await asyncio.sleep(wait)
-            self._last = time.monotonic()
+            async with self._gate:
+                wait = self._last + 1.0 / self.cred.rps - time.monotonic()
+                if wait > 0:
+                    await asyncio.sleep(wait)
+                self._last = time.monotonic()
             token = await self._token_get()
             try:
                 r = await self._http.get(f"{self.cred.base_url}{path}", params=params, headers={
@@ -181,6 +195,8 @@ class DataClient:
                 except OSError:
                     pass
                 continue
+            if body.get("msg_cd") == "EGW00201":
+                self.throttled += 1
             if body.get("msg_cd") == "EGW00201" or r.status_code >= 500:
                 await asyncio.sleep(1.0 + attempt)  # 초당 한도 초과·서버 오류
                 continue
@@ -328,24 +344,39 @@ def liquidity_universe(prev_day: str, amounts: dict[str, list[tuple[float, str]]
     return [s for _, s in sorted(amounts.get(prev_day, []), reverse=True)[:top_n]]
 
 
+async def _map_bounded(n: int, items: list[Any], fn) -> None:
+    sem = asyncio.Semaphore(n)
+
+    async def one(x):
+        async with sem:
+            await fn(x)
+
+    await asyncio.gather(*(one(x) for x in items))
+
+
 async def update_daily(client: DataClient, master: list[dict[str, str]], years: float = 2.0) -> int:
     today = datetime.now(KST).strftime("%Y%m%d")
     floor = (datetime.now(KST) - timedelta(days=int(365 * years))).strftime("%Y%m%d")
-    total = 0
-    for i, item in enumerate(master, 1):
+    total = done = 0
+
+    async def one(item: dict[str, str]) -> None:
+        nonlocal total, done
         old = read_daily(item["symbol"])
         start = floor
         if len(old):
             last = str(old["date"].max())
-            if last >= today:
-                continue
             start = (datetime.strptime(last, "%Y%m%d") + timedelta(days=1)).strftime("%Y%m%d")
-        try:
-            total += write_daily(item["symbol"], await fetch_daily(client, item["symbol"], start, today))
-        except Exception as exc:
-            logger.warning("WARN: [MarketHistory] 일봉 실패 %s — %s", item["symbol"], exc)
-        if i % 200 == 0:
-            logger.info("INFO: [MarketHistory] 일봉 진행 %d/%d (+%d행)", i, len(master), total)
+        if start <= today:
+            try:
+                total += write_daily(item["symbol"], await fetch_daily(client, item["symbol"], start, today))
+            except Exception as exc:
+                logger.warning("WARN: [MarketHistory] 일봉 실패 %s — %s", item["symbol"], exc)
+        done += 1
+        if done % 200 == 0:
+            logger.info("INFO: [MarketHistory] 일봉 진행 %d/%d (+%d행, 한도거절 %d)",
+                        done, len(master), total, client.throttled)
+
+    await _map_bounded(client.concurrency, master, one)
     logger.info("SUCCESS: [MarketHistory] 일봉 갱신 완료 +%d행", total)
     return total
 
@@ -374,14 +405,18 @@ async def backfill_minutes(client: DataClient, master: list[dict[str, str]], top
             logger.info("INFO: [MarketHistory] %s 분봉 미제공 → 건너뜀", day)
             continue
         rows = list(probe)
-        for sym in universe[1:]:
+
+        async def one(sym: str) -> None:
             try:
-                rows += await fetch_minutes(client, sym, day)
+                rows.extend(await fetch_minutes(client, sym, day))
             except Exception as exc:
                 logger.warning("WARN: [MarketHistory] 분봉 실패 %s %s — %s", day, sym, exc)
+
+        await _map_bounded(client.concurrency, universe[1:], one)
         write_minute_day(day, rows)
         done_days += 1
-        logger.info("SUCCESS: [MarketHistory] %s 분봉 %d종목 %d행", day, len(universe), len(rows))
+        logger.info("SUCCESS: [MarketHistory] %s 분봉 %d종목 %d행 (한도거절 누적 %d)",
+                    day, len(universe), len(rows), client.throttled)
         if max_days and done_days >= max_days:
             break
     return done_days
