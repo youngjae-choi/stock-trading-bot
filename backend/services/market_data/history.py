@@ -354,10 +354,25 @@ async def _map_bounded(n: int, items: list[Any], fn) -> None:
     await asyncio.gather(*(one(x) for x in items))
 
 
+def _daily_final(day: str) -> bool:
+    """장 마감 후(또는 이후 날짜의 실행에서) 받아 확정된 일봉 날짜인지 — 마커 파일로 기록."""
+    return (ROOT / f".daily_final_{day}").exists()
+
+
+def daily_fetch_start(last: str, final: bool) -> str:
+    """증분 시작일. 마지막 행이 확정이면 다음날부터, 장중에 받은 미완성 행일 수 있으면 그 날부터 다시 받는다."""
+    if final:
+        return (datetime.strptime(last, "%Y%m%d") + timedelta(days=1)).strftime("%Y%m%d")
+    return last
+
+
 async def update_daily(client: DataClient, master: list[dict[str, str]], years: float = 2.0) -> int:
-    today = datetime.now(KST).strftime("%Y%m%d")
-    floor = (datetime.now(KST) - timedelta(days=int(365 * years))).strftime("%Y%m%d")
+    now = datetime.now(KST)
+    today = now.strftime("%Y%m%d")
+    after_close = now.strftime("%H:%M") >= "15:45"
+    floor = (now - timedelta(days=int(365 * years))).strftime("%Y%m%d")
     total = done = 0
+    lasts: set[str] = set()
 
     async def one(item: dict[str, str]) -> None:
         nonlocal total, done
@@ -365,7 +380,8 @@ async def update_daily(client: DataClient, master: list[dict[str, str]], years: 
         start = floor
         if len(old):
             last = str(old["date"].max())
-            start = (datetime.strptime(last, "%Y%m%d") + timedelta(days=1)).strftime("%Y%m%d")
+            lasts.add(last)
+            start = daily_fetch_start(last, _daily_final(last))
         if start <= today:
             try:
                 total += write_daily(item["symbol"], await fetch_daily(client, item["symbol"], start, today))
@@ -377,6 +393,9 @@ async def update_daily(client: DataClient, master: list[dict[str, str]], years: 
                         done, len(master), total, client.throttled)
 
     await _map_bounded(client.concurrency, master, one)
+    for d in lasts | {today}:  # 이번 실행이 그 날 마감 후거나 이후 날짜면 확정 처리
+        if d < today or after_close:
+            (ROOT / f".daily_final_{d}").touch()
     logger.info("SUCCESS: [MarketHistory] 일봉 갱신 완료 +%d행", total)
     return total
 

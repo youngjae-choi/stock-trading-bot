@@ -81,3 +81,9 @@ def test_map_bounded_caps_in_flight():
     asyncio.run(h._map_bounded(2, list(range(9)), fn))
     assert state["peak"] == 2
     assert sorted(state["seen"]) == list(range(9))
+
+
+def test_daily_fetch_start_refetches_unfinalized_last_row():
+    """장중에 받은 미완성 마지막 행은 확정 전까지 그 날부터 다시 받는다(2026-10-07 부분 일봉 버그)."""
+    assert h.daily_fetch_start("20261007", final=False) == "20261007"
+    assert h.daily_fetch_start("20261007", final=True) == "20261008"
