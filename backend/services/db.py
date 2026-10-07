@@ -1466,6 +1466,21 @@ CREATE TABLE IF NOT EXISTS strategy_knowledge_items (
 """,
         "CREATE INDEX IF NOT EXISTS idx_knowledge_items_scope ON strategy_knowledge_items(scope)",
         "CREATE INDEX IF NOT EXISTS idx_knowledge_items_status ON strategy_knowledge_items(status)",
+        # 외부 리서치(유튜브 등) 요약·전략 보관소 — 어떤 엔진 코드도 읽지 않는 순수 기록(2026-10-07).
+        # strategy_knowledge_items(approved→S3~S5 주입)와 분리해 매매 영향 0을 보장한다.
+        """
+CREATE TABLE IF NOT EXISTS external_strategy_research (
+    id          TEXT PRIMARY KEY,
+    source      TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    body        TEXT NOT NULL DEFAULT '{}',
+    fit         TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'recorded',
+    created_at  TEXT NOT NULL
+)
+""",
+        "CREATE INDEX IF NOT EXISTS idx_ext_research_source ON external_strategy_research(source, kind)",
         """
 CREATE TABLE IF NOT EXISTS pdf_analyses (
     analysis_id    TEXT PRIMARY KEY,
