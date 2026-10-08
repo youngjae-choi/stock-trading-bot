@@ -394,3 +394,34 @@ def test_review_split_second_keeps_update_count():
     import pandas as pd
     df = ob.merge_book(pd.DataFrame(agg.book_rows))
     assert int(df.n_updates.iloc[0]) == 3
+
+
+# ---- 2026-10-08 첫 실데이터: H0STASP0 레코드 폭 63(문서 59) ----
+REAL_ASP_20261008 = ("0|H0STASP0|001|005930^085010^B^271500^272000^272500^0^0^0^0^0^0^0^271000^270500^270000^0^0^0^0^0^0^0"
+                     "^1464^672^583^0^0^0^0^0^0^0^8448^716^11470^0^0^0^0^0^0^0^2719^20634^0^35077^271500^55612^55612^3000^2"
+                     "^1.12^61^-7^1^0^-752^0^0^0^0^5")
+
+
+def test_real_asp_width_63_parses_documented_prefix():
+    from backend.services.market_data import orderbook as ob
+    p = ob.parse_data_message(REAL_ASP_20261008)
+    assert p.anomaly is None and p.width == 63 and len(p.records) == 1
+    sym, sec, vals, kind = ob.book_record(p.records[0])
+    assert sym == "005930" and sec == 85010
+    assert vals["ask_px1"] == 271500 and vals["ask_px3"] == 272500 and vals["bid_px1"] == 271000
+    assert vals["ask_qty1"] == 1464 and vals["bid_qty3"] == 11470
+    assert vals["tot_ask"] == 2719 and vals["tot_bid"] == 20634
+
+
+def test_wider_multi_record_split_by_count():
+    from backend.services.market_data import orderbook as ob
+    body = REAL_ASP_20261008.split("|", 3)[3]
+    raw = "0|H0STASP0|002|" + body + "^" + body.replace("005930", "000660")
+    p = ob.parse_data_message(raw)
+    assert p.anomaly is None and [r[0] for r in p.records] == ["005930", "000660"]
+
+
+def test_narrower_than_documented_is_anomaly():
+    from backend.services.market_data import orderbook as ob
+    p = ob.parse_data_message("0|H0STASP0|001|" + "^".join(["1"] * 40))
+    assert p.anomaly and "width" in p.anomaly

@@ -44,7 +44,7 @@ BIG_TRADE_AMT = 30_000_000
 MAX_BYTES = 8 * 1024 ** 3        # data/market/orderbook 총 용량 상한
 MIN_FREE_BYTES = 5 * 1024 ** 3   # 파일시스템 여유공간 하한
 FLUSH_SEC = 600
-ANOMALY_MAX_PER_DAY = 20
+ANOMALY_MAX_PER_DAY = 20      # TR별 하루 상한(한 TR이 다른 TR의 샘플 자리를 다 쓰지 않게)
 MIN_SEC = 83000                  # 08:30:00 이전 레코드 버림
 
 START_HHMM = "0850"
@@ -101,6 +101,7 @@ class Parsed:
     tr_id: str
     records: list[list[str]]
     anomaly: str | None = None   # None이면 정상
+    width: int = 0               # 실제 레코드 폭(문서 정의보다 클 수 있음)
 
 
 def parse_data_message(raw: str) -> Parsed | None:
@@ -116,16 +117,27 @@ def parse_data_message(raw: str) -> Parsed | None:
     if n is None:
         return None
     fields = body.split("^")
-    if len(fields) % n != 0:
-        return Parsed(tr_id, [], f"field_count {len(fields)} % {n} != 0")
-    k = len(fields) // n
+    if fields and fields[-1] == "" and len(fields) % max(1, _safe_int(count_s)) != 0:
+        fields = fields[:-1]  # 끝 구분자 '^' 로 생긴 빈 필드
     try:
         count = int(count_s)
     except ValueError:
         return Parsed(tr_id, [], f"bad count {count_s!r}")
-    if count != k:
-        return Parsed(tr_id, [], f"count {count} != records {k}")
-    return Parsed(tr_id, [fields[i * n:(i + 1) * n] for i in range(k)])
+    if count <= 0 or len(fields) % count != 0:
+        return Parsed(tr_id, [], f"field_count {len(fields)} not divisible by count {count}")
+    width = len(fields) // count
+    if width < n:
+        return Parsed(tr_id, [], f"record width {width} < documented {n}")
+    # 실데이터(2026-10-08): H0STASP0 레코드 폭 63(문서 59) — 앞 59개는 문서 순서와 일치, 뒤에 필드가 추가됨.
+    # 레코드 폭은 COUNT로 나눠 구하고, 문서에 정의된 앞쪽 n개만 읽는다(추가 필드는 무시).
+    return Parsed(tr_id, [fields[i * width:i * width + n] for i in range(count)], None, width)
+
+
+def _safe_int(v: str) -> int:
+    try:
+        return int(v)
+    except ValueError:
+        return 0
 
 
 def _int(v: str) -> int:
@@ -197,6 +209,8 @@ def flow_record(rec: list[str]) -> Trade:
     if px <= 0 or qty < 0:
         raise ValueError(f"bad trade px={px} qty={qty}")
     d = rec[_FI["CCLD_DVSN"]].strip()
+    if d not in ("1", "3", "5"):  # 컬럼 위치가 어긋나면 여기서 걸린다(체결 형식 미검증 — 이상 처리·원문 샘플)
+        raise ValueError(f"bad CCLD_DVSN {d!r}")
     side = "buy" if d == "1" else "sell" if d == "5" else "other"
     return Trade(sym, sec, px, qty, side, _int(rec[_FI["ACML_VOL"]]))
 
@@ -548,6 +562,7 @@ class Collector:
         self.stop_reason = ""
         self._approval_key: str | None = None
         self._anomaly_logged = self._count_anomaly_lines()
+        self.widths: dict[str, dict[int, int]] = {}  # TR별 관측 레코드 폭 분포(형식 변경 감지)
 
     # 상태·이상 기록
     def request_stop(self, reason: str) -> None:
@@ -558,23 +573,32 @@ class Collector:
     def _anomaly_path(self) -> Path:
         return day_dir(self.day) / "_anomaly.log"
 
-    def _count_anomaly_lines(self) -> int:
+    def _count_anomaly_lines(self) -> dict[str, int]:
         p = self._anomaly_path()
+        out: dict[str, int] = {}
         if not p.exists():
-            return 0
-        return sum(1 for line in p.read_text(encoding="utf-8", errors="replace").splitlines()
-                   if line.startswith("#"))
+            return out
+        for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("#"):
+                parts = line.split()
+                if len(parts) >= 3:
+                    out[parts[2]] = out.get(parts[2], 0) + 1
+        return out
 
     def _anomaly(self, tr_id: str, reason: str, raw: str) -> None:
         self.anomalies[tr_id] = self.anomalies.get(tr_id, 0) + 1
-        if self._anomaly_logged >= ANOMALY_MAX_PER_DAY:
+        self._log_sample(tr_id, reason, raw, warn=True)
+
+    def _log_sample(self, tr_id: str, reason: str, raw: str, warn: bool) -> None:
+        if self._anomaly_logged.get(tr_id, 0) >= ANOMALY_MAX_PER_DAY:
             return
-        self._anomaly_logged += 1
+        self._anomaly_logged[tr_id] = self._anomaly_logged.get(tr_id, 0) + 1
         p = self._anomaly_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         with p.open("a", encoding="utf-8") as f:
             f.write(f"# {self.now().strftime('%H:%M:%S')} {tr_id} {reason}\n{raw[:300]}\n")
-        logger.warning("WARN: [Orderbook] 이상 레코드 %s %s", tr_id, reason)
+        if warn:
+            logger.warning("WARN: [Orderbook] 이상 레코드 %s %s", tr_id, reason)
 
     # 메시지 처리
     async def handle_message(self, raw: str | bytes, ws: Any = None) -> None:
@@ -609,6 +633,12 @@ class Collector:
         if parsed is None:
             return
         self.data_msgs += 1
+        if parsed.width:
+            wd = self.widths.setdefault(parsed.tr_id, {})
+            if parsed.width not in wd:  # 새 폭 첫 관측 → 원문 샘플(형식 검증용, 경고 아님)
+                self._log_sample(parsed.tr_id, f"sample width {parsed.width}", raw, warn=False)
+                logger.info("INFO: [Orderbook] %s 레코드 폭 %d 첫 관측", parsed.tr_id, parsed.width)
+            wd[parsed.width] = wd.get(parsed.width, 0) + 1
         if parsed.anomaly:
             self._anomaly(parsed.tr_id, parsed.anomaly, raw)
             return
@@ -748,9 +778,9 @@ class Collector:
         except Exception as e:  # noqa: BLE001
             logger.error("FAIL: [Orderbook] 마지막 part 기록 실패 %s: %s", type(e).__name__, str(e)[:160])
         res = compact_day(self.day)
-        logger.info("SUCCESS: [Orderbook] 종료(%s) compact=%s 수신 data=%d 레코드=%s 이상=%s ACK=%d 집계=%s",
+        logger.info("SUCCESS: [Orderbook] 종료(%s) compact=%s 수신 data=%d 레코드=%s 이상=%s ACK=%d 폭=%s 집계=%s",
                     self.stop_reason, res, self.data_msgs, self.records, self.anomalies, self.acks_ok,
-                    self.agg.counters)
+                    self.widths, self.agg.counters)
         return self.stop_reason
 
 
