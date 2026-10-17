@@ -96,8 +96,13 @@ def day_arrays(day: str, prev_day: str, closes: dict[str, pd.Series]):
         return None
     sel = np.where(keep)[0]
     cumv = np.cumsum(V, axis=1)
+    # v1.1: cum_amount(acml_tr_pbmn)에는 장전 시간외 거래대금이 들어 있지만 봉 거래량에는 없다 → 첫 실제 봉 기준으로
+    # (누적대금 − 그 봉 거래량×대표가)만큼을 빼서 정규장 VWAP로 맞춘다(독립 검토 지적: 장초 VWAP 최대 수십% 과대).
+    fi = np.argmax(real, axis=1); rr = np.arange(n)
+    typ = (O[rr, fi] + H[rr, fi] + L[rr, fi] + C[rr, fi]) / 4
+    off = np.maximum(A[rr, fi] - V[rr, fi] * typ, 0.0)
     with np.errstate(invalid="ignore", divide="ignore"):
-        VW = np.where(cumv > 0, A / cumv, np.nan)
+        VW = np.where(cumv > 0, (A - off[:, None]) / cumv, np.nan)
     return ([syms[i] for i in sel], O[sel], H[sel], L[sel], C[sel], V[sel], VW[sel], real[sel], pc[sel])
 
 
@@ -138,7 +143,7 @@ def signals(O, H, L, C, V, VW, real):
 
 
 def simulate(O, H, L, rows: np.ndarray, t: int):
-    """rows 종목들을 t+1 봉 시가에 진입 → (수익%, 청산사유, 청산 봉). 벡터화."""
+    """rows 종목들을 봉 t+1 시가에 진입(t = 진입 직전 봉) → (수익%, 청산사유, 청산 봉). 벡터화."""
     e = O[rows, t + 1]
     tp, sl = e * (1 + TP), e * (1 + SL)
     ret = np.full(len(rows), np.nan); why = np.full(len(rows), "", dtype=object)
@@ -166,6 +171,15 @@ def simulate(O, H, L, rows: np.ndarray, t: int):
     return ret, why, xbar
 
 
+def entry_bar(real: np.ndarray, t: int, wait: int = 3) -> np.ndarray:
+    """종목별 t 이후 첫 실제 봉 index(t+1..t+wait), 없으면 −1."""
+    out = np.full(real.shape[0], -1)
+    for k in range(t + wait, t, -1):
+        if k < real.shape[1]:
+            out = np.where(real[:, k], k, out)
+    return out
+
+
 def run_day(day, prev_day, closes):
     arr = day_arrays(day, prev_day, closes)
     if arr is None:
@@ -177,19 +191,32 @@ def run_day(day, prev_day, closes):
     for name, sig, grp in (("H1", h1, up), ("H2", h2, up), ("H3", h3, dn)):
         busy_until = np.full(len(syms), -1); entries = np.zeros(len(syms), int)
         for t in range(I_FIRST_RANK, I_LAST_SIGNAL + 1):
-            cand = np.where(sig[:, t] & grp[:, t] & (busy_until < t + 1) & (entries < MAX_ENTRIES)
-                            & real[:, t + 1] & (O[:, t + 1] < pc * LIMIT_UP))[0]
-            if not len(cand):
+            base = sig[:, t] & grp[:, t] & (busy_until < t + 1) & (entries < MAX_ENTRIES)
+            if not base.any():
                 continue
-            ret, why, xbar = simulate(O, H, L, cand, t)
-            ctrl_rows = np.where(grp[:, t] & ~sig[:, t] & real[:, t + 1] & (O[:, t + 1] < pc * LIMIT_UP))[0]
-            ctrl = np.nanmean(simulate(O, H, L, ctrl_rows, t)[0]) if len(ctrl_rows) else np.nan
-            for k, s in enumerate(cand):
-                if np.isnan(ret[k]):
+            # v1.1: 다음 봉이 비면(VI 단일가 등) 신호를 버리지 않고 **첫 실제 봉 시가**에 진입(최대 3봉 대기).
+            # 다음 봉 체결 여부로 거르면 미래 정보로 표본을 고르는 셈(독립 검토 지적: H2 극단 돌파 5~8% 누락).
+            ent = entry_bar(real, t)
+            ctrl_mask = grp[:, t] & ~sig[:, t]
+            ctrl_vals, cur = [], []
+            for k_bar in np.unique(ent[ctrl_mask | base]):
+                if k_bar < 0 or k_bar >= I_FORCE:
                     continue
-                busy_until[s] = xbar[k]; entries[s] += 1
-                out.append((day, name, syms[s], MIN_LIST[t], ret[k], why[k], ctrl))
-    return out
+                cr = np.where(ctrl_mask & (ent == k_bar) & (O[:, k_bar] < pc * LIMIT_UP))[0]
+                if len(cr):
+                    ctrl_vals.extend(simulate(O, H, L, cr, k_bar - 1)[0].tolist())
+                rows = np.where(base & (ent == k_bar) & (O[:, k_bar] < pc * LIMIT_UP))[0]
+                if not len(rows):
+                    continue
+                ret, why, xbar = simulate(O, H, L, rows, k_bar - 1)
+                for k, s_ in enumerate(rows):
+                    if np.isnan(ret[k]):
+                        continue
+                    busy_until[s_] = xbar[k]; entries[s_] += 1
+                    cur.append([day, name, syms[s_], MIN_LIST[t], ret[k], why[k]])
+            ctrl = float(np.nanmean(ctrl_vals)) if ctrl_vals else np.nan
+            out.extend(r + [ctrl] for r in cur)
+    return [tuple(r) for r in out]
 
 
 def cluster_t(df: pd.DataFrame, col: str) -> float:
@@ -204,13 +231,17 @@ def cluster_t(df: pd.DataFrame, col: str) -> float:
 def report(res: pd.DataFrame) -> None:
     res = res.assign(net=res.ret - COST, stress=res.ret - STRESS, ex=res.ret - res.ctrl)
     rows = []
+    raw = {}
     for h in ("H1", "H2", "H3"):
         for seg, q in (("IS", res[(res.h == h) & (res.day <= IS_END)]), ("OOS", res[(res.h == h) & (res.day >= OOS_START)])):
             if q.empty:
                 rows.append(dict(가설=h, 구간=seg, 거래=0)); continue
+            G = q.day.nunique()
+            raw[(h, seg)] = dict(n=len(q), days=G, net=q.net.mean(), t=cluster_t(q, "net"), stress=q.stress.mean())
             mix = q.why.value_counts(normalize=True)
             rows.append(dict(가설=h, 구간=seg, 거래=len(q), 거래일=q.day.nunique(),
                              총수익=round(q.ret.mean(), 3), 순수익=round(q.net.mean(), 3), t=round(cluster_t(q, "net"), 2),
+                             t_CR1=round(cluster_t(q, "net") * np.sqrt((G - 1) / G), 2) if G > 1 else np.nan,
                              스트레스=round(q.stress.mean(), 3), 승률=f"{(q.net > 0).mean():.0%}",
                              대조군대비=round(q.ex.mean(), 3), t_대조=round(cluster_t(q.dropna(subset=["ex"]), "ex"), 2),
                              익절=f"{mix.get('target', 0):.0%}", 손절=f"{mix.get('stop', 0):.0%}",
@@ -219,12 +250,12 @@ def report(res: pd.DataFrame) -> None:
     print(tab.to_string(index=False))
     print()
     for h in ("H1", "H2", "H3"):
-        o = tab[(tab.가설 == h) & (tab.구간 == "OOS")].iloc[0]
-        i = tab[(tab.가설 == h) & (tab.구간 == "IS")].iloc[0]
-        if o.get("거래", 0) == 0:
+        o, i = raw.get((h, "OOS")), raw.get((h, "IS"))
+        if not o:
             print(h, "판정: 거래 없음"); continue
-        ok = (o.순수익 > 0 and o.t >= T_PASS and o.거래 >= 300 and o.거래일 >= 60 and i.get("순수익", -1) > 0 and o.스트레스 > 0)
-        pend = (o.순수익 > 0 and i.get("순수익", -1) > 0 and 1.0 <= o.t < T_PASS)
+        i_net = i["net"] if i else -1
+        ok = (o["net"] > 0 and o["t"] >= T_PASS and o["n"] >= 300 and o["days"] >= 60 and i_net > 0 and o["stress"] > 0)
+        pend = (o["net"] > 0 and i_net > 0 and 1.0 <= o["t"] < T_PASS)
         print(h, "판정(OOS):", "통과" if ok else ("미결" if pend else "불통과"))
     if INDEX.exists():
         ix = pd.read_parquet(INDEX).set_index("date").sort_index()
