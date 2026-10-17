@@ -25,7 +25,7 @@ BURN_END = "20251219"            # 분위 경계·첫 학습 전용(평가 제�
 IS_END, OOS_START = "20260430", "20260501"
 NB, NF = 10, 13
 I_T0 = sb.MIDX["0919"]
-I_T1 = sb.MIDX["1430"] if "1430" in sb.MIDX else sb.I_LAST_SIGNAL
+I_T1 = sb.I_LAST_SIGNAL      # v1.1: 랭킹이 14:29 봉까지라 판단 봉 = 09:19~14:29
 FEATS = ["r1", "r5", "r15", "chg", "dhod", "dlod", "dvw", "v1", "v5", "rng5", "upruns", "tod", "grp"]
 
 
@@ -103,7 +103,8 @@ def design(df, edges):
 def walk_forward(S, edges):
     """월별 XᵀX·Xᵀy를 한 번씩 누적(구간 경계 고정이라 가능) → 평가 월 M은 M 이전 월 합으로만 풀이(확장창)."""
     S = S.copy()
-    S["month"] = S.day.str[:6]
+    # v1.1: 학습전용 기간이 끝나는 달(12월)의 이후 날짜(12-22~)는 별도 묶음으로 → 그 앞 데이터로 예측(독립 검토 지적)
+    S["month"] = np.where((S.day.str[:6] == BURN_END[:6]) & (S.day > BURN_END), BURN_END[:6] + "b", S.day.str[:6])
     months = sorted(S.month.unique())
     acc = {}
     for m in months:
