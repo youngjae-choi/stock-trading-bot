@@ -1481,6 +1481,24 @@ CREATE TABLE IF NOT EXISTS external_strategy_research (
 )
 """,
         "CREATE INDEX IF NOT EXISTS idx_ext_research_source ON external_strategy_research(source, kind)",
+        # 매수 정지 중 섀도우 신호(2026-10-16) — 모든 게이트를 통과했지만 entry_paused로 주문하지 않은
+        # 신호의 종목-일 첫 시각·가격·레짐·VWAP 거리. 로그(SHADOW_PAUSED)만으로는 재현이 어려웠다.
+        # scripts/shadow_replay.py가 분봉으로 결과를 재현한다. 엔진은 쓰기만 한다(읽지 않음).
+        """
+CREATE TABLE IF NOT EXISTS shadow_entry_signals (
+    trade_date   TEXT NOT NULL,
+    symbol       TEXT NOT NULL,
+    first_time   TEXT NOT NULL,
+    first_price  REAL NOT NULL,
+    last_time    TEXT NOT NULL,
+    hits         INTEGER NOT NULL DEFAULT 1,
+    regime       TEXT,
+    vwap_dist    REAL,
+    momentum     INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL,
+    PRIMARY KEY (trade_date, symbol)
+)
+""",
         """
 CREATE TABLE IF NOT EXISTS pdf_analyses (
     analysis_id    TEXT PRIMARY KEY,

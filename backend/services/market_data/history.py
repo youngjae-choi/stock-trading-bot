@@ -441,6 +441,128 @@ async def backfill_minutes(client: DataClient, master: list[dict[str, str]], top
     return done_days
 
 
+# ── 지수·ETF(2026-10-16) ───────────────────────────────────────────────────
+# 왜: 10-07~10-16 KOSPI −20.6% 폭락 때 인버스·지수 헤지를 검증할 데이터가 없었다(보통주만 수집).
+# ETF는 보통주 백테스트(거래대금 상위 유니버스)에 섞이면 안 되므로 **별도 폴더**에 둔다.
+#   daily_etf/{symbol}.parquet · minute_etf/{YYYY}/{YYYYMMDD}.parquet · index/{code}.parquet
+EXTRA_ETFS = {"069500": "KODEX 200", "114800": "KODEX 인버스",
+              "229200": "KODEX 코스닥150", "251340": "KODEX 코스닥150선물인버스"}
+INDEXES = {"0001": "KOSPI", "1001": "KOSDAQ", "2001": "KOSPI200"}
+INDEX_DAILY_PATH = "/uapi/domestic-stock/v1/quotations/inquire-daily-indexchartprice"
+INDEX_COLS = ["date", "open", "high", "low", "close", "volume", "amount"]
+
+
+def etf_daily_path(symbol: str) -> Path:
+    return ROOT / "daily_etf" / f"{symbol}.parquet"
+
+
+def etf_minute_path(day: str) -> Path:
+    return ROOT / "minute_etf" / day[:4] / f"{day}.parquet"
+
+
+def index_path(code: str) -> Path:
+    return ROOT / "index" / f"{code}.parquet"
+
+
+def _merge_write(p: Path, rows: list[dict[str, Any]], cols: list[str], key: str = "date") -> int:
+    if not rows:
+        return 0
+    pd = _pd()
+    new = pd.DataFrame(rows, columns=cols)
+    df = pd.concat([pd.read_parquet(p), new]) if p.exists() else new
+    df = df.drop_duplicates(key, keep="last").sort_values(key)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    df.to_parquet(tmp, index=False)
+    tmp.replace(p)
+    return len(rows)
+
+
+def parse_index_rows(rows: Iterable[dict[str, Any]], start: str, end: str) -> list[dict[str, Any]]:
+    """FHKUP03500100 output2 → 일봉 행. 날짜 범위 밖·빈 행 제외."""
+    out = []
+    for r in rows:
+        d = str(r.get("stck_bsop_date") or "")
+        if not d or not (start <= d <= end):
+            continue
+        out.append({"date": d, "open": _num(r.get("bstp_nmix_oprc")), "high": _num(r.get("bstp_nmix_hgpr")),
+                    "low": _num(r.get("bstp_nmix_lwpr")), "close": _num(r.get("bstp_nmix_prpr")),
+                    "volume": _num(r.get("acml_vol")), "amount": _num(r.get("acml_tr_pbmn"))})
+    return out
+
+
+async def fetch_index_daily(client: DataClient, code: str, start: str, end: str) -> list[dict[str, Any]]:
+    """업종지수 일봉 start~end. 역순 페이징(한 번에 약 100행)."""
+    out: dict[str, dict[str, Any]] = {}
+    hi = end
+    for _ in range(20):
+        body = await client.get(INDEX_DAILY_PATH, "FHKUP03500100", {
+            "FID_COND_MRKT_DIV_CODE": "U", "FID_INPUT_ISCD": code, "FID_INPUT_DATE_1": start,
+            "FID_INPUT_DATE_2": hi, "FID_PERIOD_DIV_CODE": "D"})
+        rows = parse_index_rows(body.get("output2") or [], start, end)
+        new = [r for r in rows if r["date"] not in out]
+        for r in new:
+            out[r["date"]] = r
+        if not new:
+            break
+        oldest = min(r["date"] for r in new)
+        if oldest <= start:
+            break
+        hi = (datetime.strptime(oldest, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
+    return [out[k] for k in sorted(out)]
+
+
+def _incremental_start(p: Path, floor: str) -> str:
+    """기존 파일 마지막 날짜(미확정일 수 있으니 그 날부터 다시) 또는 floor."""
+    if not p.exists():
+        return floor
+    return str(_pd().read_parquet(p, columns=["date"])["date"].max())
+
+
+async def update_extras(client: DataClient, years: float = 2.0, lookback_days: int = 380) -> dict[str, int]:
+    """지수 일봉 + ETF 일봉 + ETF 1분봉(미수집 날짜만, 오래된 날부터). 실패는 경고만(보통주 수집과 독립)."""
+    now = datetime.now(KST)
+    today = now.strftime("%Y%m%d")
+    floor = (now - timedelta(days=int(365 * years))).strftime("%Y%m%d")
+    res = {"index": 0, "etf_daily": 0, "etf_minute_days": 0}
+    for code in INDEXES:
+        try:
+            p = index_path(code)
+            res["index"] += _merge_write(p, await fetch_index_daily(client, code, _incremental_start(p, floor), today),
+                                         INDEX_COLS)
+        except Exception as exc:
+            logger.warning("WARN: [MarketHistory] 지수 일봉 실패 %s — %s", code, exc)
+    for sym in EXTRA_ETFS:
+        try:
+            p = etf_daily_path(sym)
+            res["etf_daily"] += _merge_write(p, await fetch_daily(client, sym, _incremental_start(p, floor), today),
+                                             DAILY_COLS)
+        except Exception as exc:
+            logger.warning("WARN: [MarketHistory] ETF 일봉 실패 %s — %s", sym, exc)
+    mfloor = (now - timedelta(days=lookback_days)).strftime("%Y%m%d")
+    after_close = now.strftime("%H:%M") >= "15:45"
+    for day in trading_days():
+        p = etf_minute_path(day)
+        if day < mfloor or p.exists() or p.with_suffix(".empty").exists() or (day == today and not after_close):
+            continue
+        rows: list[dict[str, Any]] = []
+        for sym in EXTRA_ETFS:
+            try:
+                rows.extend(await fetch_minutes(client, sym, day))
+            except Exception as exc:
+                logger.warning("WARN: [MarketHistory] ETF 분봉 실패 %s %s — %s", day, sym, exc)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if not rows:
+            p.with_suffix(".empty").write_text("KIS 미제공(보존기간 밖) 또는 휴장")
+            continue
+        tmp = p.with_suffix(".tmp")
+        _pd().DataFrame(rows, columns=MINUTE_COLS).to_parquet(tmp, index=False)
+        tmp.replace(p)
+        res["etf_minute_days"] += 1
+    logger.info("SUCCESS: [MarketHistory] 지수·ETF 갱신 %s", res)
+    return res
+
+
 def status() -> dict[str, Any]:
     minute_files = sorted((ROOT / "minute").glob("*/*.parquet")) if (ROOT / "minute").exists() else []
     daily_files = list((ROOT / "daily").glob("*.parquet")) if (ROOT / "daily").exists() else []

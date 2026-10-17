@@ -636,9 +636,11 @@
       color: var(--muted);
     }
 
-    .good { color: var(--green); font-family: var(--font-mono); }
+    /* 손익·등락 숫자: JetBrains Mono의 점 있는 0이 12px 빨강에서 8처럼 보였다(2026-10-16, KOSPI -0.92%가 -8.92%로 읽힘).
+       본문 글꼴(Inter)+고정폭 숫자(tnum)로 정렬은 유지하고 0/8 혼동을 없앤다. */
+    .good { color: var(--green); font-family: var(--font); font-variant-numeric: tabular-nums; }
     .warn { color: var(--yellow); }
-    .bad { color: var(--red); font-family: var(--font-mono); }
+    .bad { color: var(--red); font-family: var(--font); font-variant-numeric: tabular-nums; }
     .info { color: var(--blue); }
 
     .status {

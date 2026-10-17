@@ -59,7 +59,10 @@ INTENT_SETTINGS: dict[str, object] = {
     "momentum.enabled": False,                      # 모멘텀 진입 OFF(2026-09-18 꼭지추격 손실→09-23 pullback모드도 반증, 코드기본 True)
     "momentum.entry_mode": "pullback",              # (enabled=false라 미사용)
     # ── 매수·매도 타이밍(2026-10-01 exit 재시뮬: 승리조건 41건 +0.165%→+0.50~0.63%) ──
-    "engine.entry_paused": True,                    # ⛔ 신규매수 일시정지(2026-10-06 PM (A) — 전 구독종목 재현에서 전 변형 손실=엣지 미증명). 신호는 SHADOW_PAUSED 로그만. 재개=false
+    "engine.entry_paused": False,                   # 10-06 PM (A) 정지 → 10-16 PM 재개 결정(10-19~, 엣지 미증명 상태). 정지=true(신호는 shadow_entry_signals)
+    "regime.crash_rebound_guard": True,             # 폭락 반등 가드(10-16): 5거래일 −10%↓면 장중 risk_on→neutral. 롤백=false
+    "regime.crash_guard_drop_pct": -10.0,
+    "regime.vol_source": "max_vix_kospi_rv",        # 레짐 변동성=max(VIX, KOSPI 실현변동성)(10-16). 롤백=vix
     "engine.entry_reclaim_mode": "off",             # 되찾기 매수 OFF(2026-10-06: 라이브 구현 결함 + 넓은 표본 -0.60~-0.74%로 즉시매수보다 나쁨). 코드기본 off
     "engine.entry_reclaim_dip_pct": 0.2,            # arm가 대비 추가 하락폭(%) — 민감도 0.1~0.5 모두 양(+)
     "engine.entry_reclaim_window_min": 30,          # arm 유효시간(분)

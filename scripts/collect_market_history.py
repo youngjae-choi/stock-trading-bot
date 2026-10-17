@@ -36,6 +36,8 @@ async def _run(args) -> None:
             await h.update_daily(client, master, years=args.daily_years)
         n = await h.backfill_minutes(client, master, top_n=args.top, lookback_days=args.lookback_days,
                                      max_days=args.max_days)
+        if not args.skip_extras:
+            await h.update_extras(client, years=args.daily_years, lookback_days=args.lookback_days)
         logging.info("SUCCESS: 분봉 %d일 수집 · 상태=%s", n, json.dumps(h.status(), ensure_ascii=False))
     finally:
         await client.close()
@@ -50,6 +52,7 @@ def main() -> int:
     ap.add_argument("--max-days", type=int, default=None, help="이번 실행에서 받을 분봉 일수 상한(시험용)")
     ap.add_argument("--skip-daily", action="store_true")
     ap.add_argument("--refresh-master", action="store_true")
+    ap.add_argument("--skip-extras", action="store_true", help="지수·ETF 수집 건너뛰기")
     ap.add_argument("--limit-symbols", type=int, default=None, help="시험용: 종목 수 제한")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

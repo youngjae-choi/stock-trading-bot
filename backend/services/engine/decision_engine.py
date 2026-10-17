@@ -858,6 +858,34 @@ class DecisionEngine:
             await self._emit_signal(symbol, candidate, price, matched)
             return
 
+    def _record_shadow_signal(self, symbol: str, price: float, is_momentum: bool) -> None:
+        """매수 정지 중 섀도우 신호를 shadow_entry_signals에 종목-일 1행으로 누적(2026-10-16).
+
+        실매수 시작 시각(engine.entry_execute_start_time) 이후 신호만. 첫 시각·가격은 보존, 이후 반복 신호는 hits·last_time만 갱신. 실패해도 매매 경로 무영향(경고만).
+        """
+        try:
+            now = _now_kst()
+            if now.strftime("%H:%M") < _get_setting_str("engine.entry_execute_start_time", "09:30"):
+                return  # 실매수 불가 시간대(09:30 전) 신호는 첫 신호로 남기지 않는다 — 재현 왜곡 방지
+            vwap_dist = None
+            try:
+                _vw = self._bar_engine.get_vwap(symbol)
+                vwap_dist = round((price / _vw - 1) * 100, 3) if (_vw and price) else None
+            except Exception:
+                pass
+            with get_connection() as conn:
+                conn.execute(
+                    "INSERT INTO shadow_entry_signals(trade_date, symbol, first_time, first_price, last_time, hits,"
+                    " regime, vwap_dist, momentum, created_at) VALUES (?,?,?,?,?,1,?,?,?,?)"
+                    " ON CONFLICT(trade_date, symbol) DO UPDATE SET hits = hits + 1, last_time = excluded.last_time",
+                    (now.strftime("%Y-%m-%d"), symbol, now.strftime("%H:%M:%S"), float(price or 0),
+                     now.strftime("%H:%M:%S"), self._current_regime(), vwap_dist, int(bool(is_momentum)),
+                     now.isoformat()),
+                )
+                conn.commit()
+        except Exception as exc:
+            logger.warning("WARN: [S6] 섀도우 신호 기록 실패(무시) symbol=%s reason=%s", symbol, exc)
+
     def _current_regime(self) -> str | None:
         """현재 레짐 조회(60초 TTL 인스턴스 캐시) — VWAP 밴드·ABCD 범위·conviction 게이트용.
 
@@ -1296,6 +1324,7 @@ class DecisionEngine:
         if _get_setting_str("engine.entry_paused", "false").lower() in ("true", "1", "yes"):
             logger.info("SHADOW_PAUSED: [S6] 신규매수 일시정지 — 신호만 기록(무매매) symbol=%s price=%.0f",
                         symbol, price)
+            self._record_shadow_signal(symbol, price, _is_momentum)
             return
         if now_hm < exec_start:
             try:

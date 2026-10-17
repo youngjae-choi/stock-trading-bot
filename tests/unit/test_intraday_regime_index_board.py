@@ -85,6 +85,7 @@ class CheckIntradayRegimeWiringTest(unittest.IsolatedAsyncioTestCase):
         with patch("backend.services.settings_store.get_setting", side_effect=_force_judge_source), \
              patch.object(m, "get_today_application", return_value={"set_id": "S1", "regime_label": "neutral", "set_name": "n"}), \
              patch.object(m, "_should_skip_transition", return_value=False), \
+             patch.object(m, "_recent_kospi_closes", return_value=[]), \
              patch.object(m, "_intraday_live_driver_enabled", return_value=False), \
              patch.object(m, "_get_index_board_vix", return_value=18.84), \
              patch.object(m, "_fetch_kospi_change", new=AsyncMock(return_value=0.5)), \
@@ -111,6 +112,7 @@ class CheckIntradayRegimeWiringTest(unittest.IsolatedAsyncioTestCase):
         with patch("backend.services.settings_store.get_setting", side_effect=_force_judge_source), \
              patch.object(m, "get_today_application", return_value={"set_id": "S1", "regime_label": "risk_off", "set_name": "방어"}), \
              patch.object(m, "_should_skip_transition", return_value=False), \
+             patch.object(m, "_recent_kospi_closes", return_value=[]), \
              patch.object(m, "_get_index_board_vix", return_value=15.0), \
              patch.object(m, "_fetch_kospi_change", new=AsyncMock(return_value=0.6)), \
              patch.object(m, "_get_index_board_regime", return_value="risk_off"), \

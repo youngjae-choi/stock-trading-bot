@@ -221,6 +221,79 @@ def _get_index_board_vix(trade_date: str) -> float | None:
         return None
 
 
+def _sanitize_vix(vix: float | None) -> float | None:
+    """VIX 범위 검사(5~90). 밖이면 오입력으로 보고 None — 10-12 index-board 파싱 3.7 오입력 사례(2026-10-16)."""
+    if vix is None or not (5.0 <= float(vix) <= 90.0):
+        return None
+    return float(vix)
+
+
+def _recent_kospi_closes(trade_date: str, n: int = 11) -> list[float]:
+    """trade_date **이전** 거래일 KOSPI 종가 최근 n개(오래된→최신). daily_review_reports(S10 저장)."""
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT kospi_close FROM daily_review_reports WHERE trade_date < ? AND kospi_close > 0 "
+                "ORDER BY trade_date DESC LIMIT ?", (trade_date, n)).fetchall()
+        return [float(r[0]) for r in reversed(rows)]
+    except Exception as exc:
+        logger.warning("WARN: IntradayRegimeMonitor KOSPI 종가 이력 조회 실패 error=%s", exc)
+        return []
+
+
+def kospi_realized_vol(closes: list[float]) -> float | None:
+    """KOSPI 일간 수익률 표준편차 × √252 (%) — VKOSPI 대체(현 데이터 출처에 VKOSPI 없음). 종가 6개 미만 None.
+
+    미국 VIX는 한국 폭락(10-07~10-15 KOSPI −20.6%) 중에도 15 안팎이라 한국 변동성을 못 잡았다.
+    """
+    if len(closes) < 6:
+        return None
+    rets = [closes[i] / closes[i - 1] - 1 for i in range(1, len(closes)) if closes[i - 1] > 0]
+    if len(rets) < 5:
+        return None
+    m = sum(rets) / len(rets)
+    var = sum((r - m) ** 2 for r in rets) / (len(rets) - 1)
+    return round((var ** 0.5) * (252 ** 0.5) * 100, 2)
+
+
+def regime_vol_input(vix: float | None, kospi_rv: float | None, getter=None) -> float | None:
+    """레짐 판정용 변동성 = max(범위검사 VIX, KOSPI 실현변동성). `regime.vol_source=vix`면 VIX만(롤백)."""
+    if getter is None:
+        from ..settings_store import get_setting as getter
+    src = str(getter("regime.vol_source", "max_vix_kospi_rv") or "max_vix_kospi_rv").lower()
+    v = _sanitize_vix(vix)
+    if src == "vix":
+        return v
+    vals = [x for x in (v, kospi_rv) if x is not None]
+    return max(vals) if vals else None
+
+
+def crash_rebound_guard(regime: str, closes: list[float], getter=None) -> tuple[str, str | None]:
+    """폭락 구간의 장중 반등을 risk_on으로 올리지 않는다(2026-10-16) — 순수함수.
+
+    직전 종가가 5거래일 전 종가 대비 `regime.crash_guard_drop_pct`(기본 −10%) 이하면 risk_on→neutral.
+    10-14(+1.4%)·10-16(+2.44%) 10:00 risk_on 전환 → 매수 중이었다면 폭락 중 배포 95%·느슨한 게이트였다.
+    `regime.crash_rebound_guard=false`면 OFF(롤백). 반환 (regime, 사유 or None).
+    """
+    if getter is None:
+        from ..settings_store import get_setting as getter
+    if regime != "risk_on" or len(closes) < 6:
+        return regime, None
+    on = getter("regime.crash_rebound_guard", True)
+    if isinstance(on, str):
+        on = on.strip().lower() in ("true", "1", "yes")
+    if not on:
+        return regime, None
+    try:
+        thr = float(getter("regime.crash_guard_drop_pct", -10.0))
+    except (TypeError, ValueError):
+        thr = -10.0
+    drop = (closes[-1] / closes[-6] - 1) * 100
+    if drop <= thr:
+        return "neutral", "crash_rebound_guard 5일 %.1f%% ≤ %.1f%%" % (drop, thr)
+    return regime, None
+
+
 def _judge_regime(vix: float | None, kospi_change: float | None) -> str:
     """Judge the intraday regime from fixed morning VIX and current KOSPI change."""
     vix_value = vix if vix is not None else 20.0
@@ -544,9 +617,14 @@ async def check_intraday_regime(slot: str = "") -> dict[str, Any]:
 
     # 시황 단일출처(PM 확정): VIX는 index-board 파싱값 우선(미가용 시 morning VIX 폴백),
     # 실시간 KOSPI 등락은 KIS 거래데이터 유지(PM#2: 실시간가격은 KIS 전담).
-    ib_vix = _get_index_board_vix(trade_date)
-    vix = ib_vix if ib_vix is not None else _get_morning_vix(trade_date)
+    ib_vix = _sanitize_vix(_get_index_board_vix(trade_date))
+    vix = ib_vix if ib_vix is not None else _sanitize_vix(_get_morning_vix(trade_date))
     kospi_change = await _fetch_kospi_change()
+    # 레짐 판정용 변동성 = max(VIX, KOSPI 실현변동성) — 급락 방어(flash crash)는 기존대로 VIX만 쓴다
+    # (실현변동성은 폭락 뒤 며칠 높게 남아 방어모드가 종일 켜지는 것을 막기 위해).
+    _closes = _recent_kospi_closes(trade_date)
+    _kospi_rv = kospi_realized_vol(_closes)
+    regime_vol = regime_vol_input(vix, _kospi_rv)
 
     # P3-3: flash crash 감지 — 방어 모드 활성화 + 디바운스 우회(즉시 레짐 전환 허용).
     # 폭락은 25분 디바운스를 기다릴 수 없다.
@@ -567,17 +645,21 @@ async def check_intraday_regime(slot: str = "") -> dict[str, Any]:
     # regime 권위는 market_tone(index-board); 미가용 시에만 자체 판정 폴백.
     ib_regime = _get_index_board_regime(trade_date)
     # SET 매칭 regime = `regime.set_source` 스위치(§A-7#5, 기본 5tier=설정기반 활성 2026-08-23).
-    new_regime, regime_source = _resolve_set_regime(kospi_change, vix, ib_regime)
+    new_regime, regime_source = _resolve_set_regime(kospi_change, regime_vol, ib_regime)
+    new_regime, _guard_note = crash_rebound_guard(new_regime, _closes)
+    if _guard_note:
+        regime_source = "%s+%s" % (regime_source, "crash_guard")
+        logger.info("GUARD: IntradayRegimeMonitor risk_on→neutral (%s)", _guard_note)
     logger.info(
-        "[E2] REGIME 입력 vix=%s kospi=%s → 출력 regime=%s (source=%s)",
-        vix, kospi_change, new_regime, regime_source,
+        "[E2] REGIME 입력 vix=%s kospi_rv=%s vol=%s kospi=%s → 출력 regime=%s (source=%s)",
+        vix, _kospi_rv, regime_vol, kospi_change, new_regime, regime_source,
     )
     # [SHADOW] 엔진② 시장감지: KOSPI 시계열 저장 + would-be 5장세/전환 로그(라이브 불변).
-    _persist_and_shadow_sensing(kospi_change, vix, new_regime)
-    new_match = get_match_preview(new_regime, vix, kospi_change, trade_date)
+    _persist_and_shadow_sensing(kospi_change, regime_vol, new_regime)
+    new_match = get_match_preview(new_regime, regime_vol, kospi_change, trade_date)
     if not new_match.get("set_id"):
         logger.warning("WARN: IntradayRegimeMonitor preview has no SET; creating auto SET regime=%s", new_regime)
-        new_match = auto_create_set(new_regime, vix, kospi_change)
+        new_match = auto_create_set(new_regime, regime_vol, kospi_change)
     new_set_id = new_match.get("set_id")
 
     if new_set_id == current_set_id:

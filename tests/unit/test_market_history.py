@@ -87,3 +87,41 @@ def test_daily_fetch_start_refetches_unfinalized_last_row():
     """장중에 받은 미완성 마지막 행은 확정 전까지 그 날부터 다시 받는다(2026-10-07 부분 일봉 버그)."""
     assert h.daily_fetch_start("20261007", final=False) == "20261007"
     assert h.daily_fetch_start("20261007", final=True) == "20261008"
+
+
+def test_parse_index_rows_maps_fields_and_filters_range():
+    rows = [{"stck_bsop_date": "20261016", "bstp_nmix_prpr": "5668.05", "bstp_nmix_oprc": "5653.99",
+             "bstp_nmix_hgpr": "5809.94", "bstp_nmix_lwpr": "5590.33", "acml_vol": "286453", "acml_tr_pbmn": "20021281"},
+            {"stck_bsop_date": "20260930", "bstp_nmix_prpr": "1"}, {"stck_bsop_date": ""}]
+    out = h.parse_index_rows(rows, "20261001", "20261016")
+    assert out == [{"date": "20261016", "open": 5653.99, "high": 5809.94, "low": 5590.33, "close": 5668.05,
+                    "volume": 286453.0, "amount": 20021281.0}]
+
+
+class _FakeIndexClient:
+    """FHKUP03500100 흉내: DATE_2 이하 날짜를 최신순 최대 3개씩."""
+
+    def __init__(self, days):
+        self.days = days
+
+    async def get(self, path, tr_id, params):
+        sel = [d for d in sorted(self.days, reverse=True) if d <= params["FID_INPUT_DATE_2"]][:3]
+        return {"output2": [{"stck_bsop_date": d, "bstp_nmix_prpr": "100", "bstp_nmix_oprc": "99",
+                             "bstp_nmix_hgpr": "101", "bstp_nmix_lwpr": "98"} for d in sel]}
+
+
+def test_fetch_index_daily_pages_back_to_start():
+    days = ["20261001", "20261002", "20261005", "20261006", "20261007", "20261008", "20261012"]
+    out = asyncio.run(h.fetch_index_daily(_FakeIndexClient(days), "0001", "20261002", "20261012"))
+    assert [r["date"] for r in out] == days[1:]
+
+
+def test_extras_live_in_separate_folders(tmp_path, monkeypatch):
+    """ETF·지수는 보통주 폴더(daily/, minute/)에 섞이면 안 된다(유니버스 오염 방지)."""
+    monkeypatch.setattr(h, "ROOT", tmp_path)
+    assert h.etf_daily_path("069500").parent.name == "daily_etf"
+    assert h.etf_minute_path("20261016").parts[-3] == "minute_etf"
+    assert h.index_path("0001").parent.name == "index"
+    assert h._merge_write(h.index_path("0001"), [{"date": "20261016", "open": 1, "high": 1, "low": 1,
+                                                  "close": 1, "volume": 0, "amount": 0}], h.INDEX_COLS) == 1
+    assert not (tmp_path / "daily").exists()

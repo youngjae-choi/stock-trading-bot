@@ -18,7 +18,17 @@
 
 ## A. 의도 — 이렇게 동작해야 한다
 
-> **⛔ 2026-10-06 PM 결정 (A): 신규 매수 일시정지 → 데이터·검증 기반 재구축.**
+> **▶ 2026-10-16 PM 결정: 10-19(월)부터 신규 매수 재개(`engine.entry_paused=false`, 모의계좌).**
+> 10-06 재개 조건(사전등록·OOS·t>2)은 **충족되지 않은 상태의 PM 재개 결정**이다 — 엣지는 여전히 미증명.
+> 정지 기간(10-07~10-16) KOSPI −20.6% 폭락 관찰·조치 = [`docs/REVIEW_20261016_crash_shadow.md`](docs/REVIEW_20261016_crash_shadow.md):
+> - **폭락 반등 가드**(`regime.crash_rebound_guard=true`, `regime.crash_guard_drop_pct=-10`): 직전 종가가 5거래일 전 대비 −10% 이하면 장중 risk_on→neutral.
+> - **레짐 변동성 입력** = max(범위검사 VIX, KOSPI 10일 실현변동성)(`regime.vol_source=max_vix_kospi_rv`, 롤백=vix). VIX 5~90 밖은 오입력으로 무시.
+>   급락 방어(flash crash, VIX>35)는 기존대로 VIX만 사용. 폭락 직후엔 실현변동성이 높아 **volatile SET(배포 30%)**으로 시작할 가능성이 크다(의도).
+> - 섀도우 신호 DB 기록(`shadow_entry_signals`)·재현 `scripts/shadow_replay.py`(같은 분 유니버스 기준선 대비 초과 수익).
+> - 장중 역풍 사실: 유니버스 장중 −0.375%/일(1년). 오버나잇 보유 가설 H-ON은 **불통과**([`docs/BACKTEST_20261016_overnight.md`](docs/BACKTEST_20261016_overnight.md)) — 베타일 뿐.
+> - 재정지 기준(권고): 재개 후 20거래일 실현 순손실이 계좌 −3% 이하이거나, 섀도우 재현과 실체결 괴리가 크면 PM 보고 후 `entry_paused=true`.
+>
+> **(종료 10-16) 2026-10-06 PM 결정 (A): 신규 매수 일시정지 → 데이터·검증 기반 재구축.**
 > 진단: 7/23 1억 → 10/02 8,017만(-19.8%). 전 유니버스 재시뮬(360 종목·일)에서 현행 진입은 즉시매수 -0.29%·되찾기 -0.60%(t -3.08)
 > = **전략에 검증된 엣지가 없다.** 시스템 버그(되찾기 구현 결함·체결가 오염·유니버스 거래량 누락)가 손실을 키우고 측정을 망가뜨렸다.
 > 메타 원인 = 검증 데이터 19일(10초봉 자동삭제)로 109회 전략 수정 → 표본 위에서 과적합.
@@ -36,7 +46,7 @@
 > **⚠ 지금 켜져 있는 실험 설정 (모의계좌 — 되돌릴 때 여기부터):**
 > | 설정 | 현재 | 원래/롤백 | 켠 날·이유 |
 > |---|---|---|---|
-> | `engine.entry_paused` | **true**(매수 정지) | false | 10-06 PM (A) 재구축 — 위 ⛔ |
+> | `engine.entry_paused` | **false**(10-19 매수 재개) | true=정지 | 10-06 정지 → 10-16 PM 재개 결정 — 위 ▶ |
 > | `engine.abcd_entry_mode` | **enforce**(상승장 한정 `abcd_enforce_regimes=up`) | shadow | 09-28 모의 실험 |
 > | `engine.entry_vol_dryup_mode` | **enforce** | shadow | 10-01 승리조건(표본 41건, 통계적 유의성 미달 — §A-8) |
 > | `engine.entry_reclaim_mode` | **off** (10-06 결함으로 내림) | off | 10-01 되찾기 매수 타이밍(§A-3) |
